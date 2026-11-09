@@ -102,14 +102,14 @@ class DetectionScope(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     effective_labels: tuple[str, ...] = Field(description="Labels detection looked for, after exclusions.")
-    excluded_labels: tuple[str, ...] = Field(description="Configured exclusions (normalized).")
-    gliner_threshold: float = Field(description="GLiNER detection confidence threshold.")
-    augmentation_may_add_labels: bool = Field(
+    allowed_labels: tuple[str, ...] | None = Field(
         description=(
-            "True when the LLM augmenter may add labels outside effective_labels (entity_labels=None); "
-            "False when final entities are restricted to effective_labels."
+            "Labels final entities are restricted to (effective_labels when entity_labels is set). "
+            "None when entity_labels is unset: final entities may then carry labels outside effective_labels."
         )
     )
+    excluded_labels: tuple[str, ...] = Field(description="Configured exclusions (normalized).")
+    gliner_threshold: float = Field(description="GLiNER detection confidence threshold.")
 
 
 class Detect(BaseModel):
@@ -183,21 +183,6 @@ class Detect(BaseModel):
         ),
     )
 
-    @property
-    def effective_labels(self) -> list[str]:
-        """Labels detection looks for: entity_labels (or the default set) minus exclusions."""
-        excluded = set(self.excluded_entity_labels or [])
-        return sorted(set(self.entity_labels or DEFAULT_ENTITY_LABELS) - excluded)
-
-    @property
-    def resolved_scope(self) -> DetectionScope:
-        return DetectionScope(
-            effective_labels=self.effective_labels,
-            excluded_labels=list(self.excluded_entity_labels or []),
-            gliner_threshold=self.gliner_threshold,
-            augmentation_may_add_labels=self.entity_labels is None,
-        )
-
     def detector_declaration_conflicts(self) -> list[str]:
         """Conflicts between the declared detector facts and this configuration; empty when consistent."""
         conflicts = []
@@ -210,7 +195,8 @@ class Detect(BaseModel):
             if self.detector_labels is None:
                 conflicts.append("detector_labels_fixed=True requires detector_labels.")
             else:
-                missing = sorted(set(self.effective_labels) - {normalize_label(x) for x in self.detector_labels})
+                effective = set(self.entity_labels or DEFAULT_ENTITY_LABELS) - set(self.excluded_entity_labels or [])
+                missing = sorted(effective - {normalize_label(x) for x in self.detector_labels})
                 if missing:
                     conflicts.append(f"Effective labels outside the fixed detector_labels: {missing}.")
         return conflicts

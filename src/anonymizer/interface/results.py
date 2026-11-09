@@ -100,8 +100,8 @@ class AnonymizerResult(_DisplayMixin):
             in-memory record input. File-backed input currently leaves this as
             ``None``.
         detection_scope: The resolved detection scope the run used: effective
-            labels, exclusions, GLiNER threshold, and whether augmentation may
-            add labels. ``None`` on ``evaluate()`` and hand-built results.
+            labels, allowed labels (``None`` when ``entity_labels`` is unset),
+            exclusions, and GLiNER threshold. ``None`` on ``evaluate()`` and hand-built results.
     """
 
     dataframe: pd.DataFrame
@@ -165,8 +165,8 @@ class PreviewResult(_DisplayMixin):
             in-memory record input. File-backed input currently leaves this as
             ``None``.
         detection_scope: The resolved detection scope the run used: effective
-            labels, exclusions, GLiNER threshold, and whether augmentation may
-            add labels. ``None`` on ``evaluate()`` and hand-built results.
+            labels, allowed labels (``None`` when ``entity_labels`` is unset),
+            exclusions, and GLiNER threshold. ``None`` on ``evaluate()`` and hand-built results.
     """
 
     dataframe: pd.DataFrame

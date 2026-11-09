@@ -222,7 +222,7 @@ Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["c
 
 ### Resolved detection scope
 
-`result.detection_scope` on `run()` and `preview()` results reports the scope the run used: `effective_labels` (after exclusions), `excluded_labels`, `gliner_threshold`, and `augmentation_may_add_labels`. The last is `True` when `entity_labels` is unset, because the augmenter may then add labels outside the effective set; with explicit `entity_labels`, final entities are restricted to them. Finding no entities describes the result under this scope, not proof that the text contains no sensitive information.
+`result.detection_scope` on `run()` and `preview()` results reports the scope the run used: `effective_labels` (after exclusions), `allowed_labels`, `excluded_labels`, and `gliner_threshold`. `allowed_labels` is None when `entity_labels` is unset; validation and augmentation may then produce labels outside `effective_labels`. With explicit `entity_labels`, `allowed_labels` equals `effective_labels` and final entities are restricted to them. Finding no entities describes the result under this scope, not proof that the text contains no sensitive information.
 
 ## Tuning the threshold
 

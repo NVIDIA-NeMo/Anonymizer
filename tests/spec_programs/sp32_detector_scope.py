@@ -52,7 +52,7 @@ def program() -> list[dict[str, str]]:
             and s.effective_labels == tuple(sorted(DEFAULT_ENTITY_LABELS))
             and s.excluded_labels == ()
             and s.gliner_threshold == 0.3
-            and s.augmentation_may_add_labels is True
+            and s.allowed_labels is None
             for s in scopes
         )
         return ok, f"scopes set={[s is not None for s in scopes]}"

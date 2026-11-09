@@ -23,6 +23,7 @@ from data_designer.interface.data_designer import DataDesigner
 from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
+    DetectionScope,
     EvaluateConfig,
     Rewrite,
     TextRecordsInput,
@@ -1076,7 +1077,12 @@ class Anonymizer:
             rewrite_config=admitted_goal,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
-            detection_scope=config.detect.resolved_scope,
+            detection_scope=DetectionScope(
+                effective_labels=sorted(label_config.labels),
+                allowed_labels=sorted(label_config.labels) if label_config.strict_labels else None,
+                excluded_labels=config.detect.excluded_entity_labels or [],
+                gliner_threshold=config.detect.gliner_threshold,
+            ),
             data_summary=data.data_summary,
             _outcomes=outcomes,
         )

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import inspect
 import sys
@@ -44,6 +45,7 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
+from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import load_default_model_providers, validate_model_alias_references
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
@@ -1588,5 +1590,19 @@ def test_matching_detector_declaration_runs_and_reports_scope(stub_input: Anonym
 
     assert result.detection_scope is not None
     assert result.detection_scope.effective_labels == ("first_name",)
+    assert result.detection_scope.allowed_labels == ("first_name",)
     assert result.detection_scope.excluded_labels == ("email",)
-    assert result.detection_scope.augmentation_may_add_labels is False
+    assert not hasattr(result.detection_scope, "augmentation_may_add_labels")
+
+
+def test_detection_scope_reports_the_run_label_policy(stub_input: AnonymizerInput) -> None:
+    resolved = resolve_entity_label_config(entity_labels=None)
+    patched = dataclasses.replace(resolved, labels=[*resolved.labels, "zz_extra"])
+    anonymizer, _, _, _ = _make_anonymizer()
+
+    with patch("anonymizer.interface.anonymizer.resolve_entity_label_config", return_value=patched):
+        scope = anonymizer.preview(config=AnonymizerConfig(replace=Redact()), data=stub_input).detection_scope
+
+    assert scope is not None
+    assert scope.allowed_labels is None
+    assert scope.effective_labels == tuple(sorted(patched.labels))
