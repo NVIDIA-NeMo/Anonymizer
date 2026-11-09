@@ -543,9 +543,20 @@ def test_validation_prompt_includes_label_examples() -> None:
     assert "tagged as a first_name but is not followed by a last_name, drop it" in prompt
 
 
-def test_validation_prompt_includes_data_summary() -> None:
-    prompt = _get_validation_prompt(data_summary="Medical records", labels=["first_name"])
-    assert "Data summary: Medical records" in prompt
+def test_validation_prompt_prioritizes_explicit_summary_sensitivity_rules() -> None:
+    summary = "Medical records. Public hospital names are not sensitive."
+    prompt = _get_validation_prompt(data_summary=summary, labels=["first_name", "organization"])
+
+    assert f"Data summary: {summary}" in prompt
+    assert (
+        "Follow its explicit sensitivity rules when they conflict with the generic guidance or examples below."
+        in prompt
+    )
+    assert "Drop candidates that the data summary explicitly identifies as not sensitive" in prompt
+    assert "even when their entity label is correct" in prompt
+    assert "For categories or situations it does not address, use the generic guidance below." in prompt
+    assert "Do not infer that a value is non-sensitive merely because the data summary does not mention it." in prompt
+    assert "it does not mean every instance of that category is sensitive" in prompt
 
 
 def test_validation_prompt_adds_configured_examples_to_full_label_config() -> None:
@@ -567,6 +578,31 @@ def test_validation_prompt_adds_configured_examples_to_full_label_config() -> No
     assert "sk-abc123def456" in prompt
     assert "sk-ant-api03-abc123" in prompt
     assert "- vendor_api_key: acme_live_abc123" in prompt
+
+
+@pytest.mark.parametrize("strict_labels", [False, True])
+def test_augment_prompt_prioritizes_explicit_summary_sensitivity_rules(strict_labels: bool) -> None:
+    summary = "Medical records. Public hospital names are not sensitive."
+    prompt = _get_augment_prompt(
+        data_summary=summary,
+        labels=["first_name", "organization"],
+        strict_labels=strict_labels,
+    )
+
+    assert f"Data summary: {summary}" in prompt
+    assert (
+        "Follow its explicit sensitivity rules when they conflict with the generic guidance or examples below."
+        in prompt
+    )
+    assert "Add only values that are sensitive in the context shown" in prompt
+    assert "applying explicit sensitivity rules from the data summary where provided" in prompt
+    assert "Do not add a value merely because it matches an allowed label" in prompt
+    assert "For categories or situations it does not address, use the generic guidance below." in prompt
+    assert "Do not infer that a value is non-sensitive merely because the data summary does not mention it." in prompt
+    assert "it does not mean every instance of that category is sensitive" in prompt
+    assert "Direct identifiers:" in prompt
+    assert "Quasi-identifiers:" in prompt
+    assert "Technical secrets:" in prompt
 
 
 def test_augment_prompt_permissive_when_using_defaults() -> None:
