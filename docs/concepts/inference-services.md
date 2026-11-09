@@ -94,7 +94,7 @@ must demonstrate dynamic labels, offsets, and scores. The launch receipt
 records the process group and Linux start marker so later commands do not
 signal a reused PID or an unrelated process group.
 
-The v2 profile schema has four sections:
+The v2 profile schema has four top-level sections, with `[vllm.config]` nested under `[vllm]`:
 
 - `[task]` selects generation or entity detection and its required capabilities.
 - `[model]` pins the Hugging Face model and optional LoRA adapter.

@@ -51,7 +51,7 @@ through unchanged; omitted fields use the server's defaults.
 The native splitter preserves source offsets and avoids cutting words. Unspaced
 Chinese or Japanese text can form a single long token, so word-window size does
 not guarantee a subword-token limit; evaluate chunk sizes for your language.
-Returned entities use character offsets into the original source text.
+Returned entities use character offsets into the original source text, and each entity's text must match that span.
 
 The response must use the chat-completion shape. `message.content` is a JSON string containing an
 `entities` list. Each entity has `text`, `label`, `start`, `end`, and `score` fields:
