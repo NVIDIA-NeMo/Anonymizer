@@ -113,6 +113,18 @@ structural checks (such as IP parsing and the card-number Luhn checksum).
 Format validity is not proof that a value identifies a person; contextual
 LLM validation is enabled by default.
 
+Import the immutable `BUILTIN_REGEX_LABELS` tuple from `anonymizer` to discover
+supported built-in labels programmatically:
+
+```python
+from anonymizer import BUILTIN_REGEX_LABELS, BuiltinRegex
+
+rules = [BuiltinRegex(label=label) for label in BUILTIN_REGEX_LABELS]
+```
+
+This lists supported recognizers, not the labels enabled by a particular config;
+the effective detection scope and exclusions still apply.
+
 The URL recognizer supports explicit `http://`, `https://`, `ftp://`, `ftps://`,
 `sftp://`, `ws://`, and `wss://` addresses, plus `www.` forms. Explicit-scheme
 addresses may use internal single-label hosts or `localhost`, as well as DNS
@@ -125,6 +137,12 @@ the label's detection limit; neither GLiNER nor augmentation fills its gaps.
 Surrounding prose punctuation is trimmed while balanced delimiters are kept;
 ambiguous literal trailing punctuation can require a custom rule with exact
 match boundaries.
+
+A standalone, case-insensitive `url:` field prefix is supported without a space
+(for example, `URL:https://example.org/path`). The prefix is not part of the
+detected span or replacement. Other immediately adjacent colon prefixes, such
+as `Visit:` or `custom:`, and embedded prefixes such as `myurl:` remain outside
+the built-in's scope; add whitespace or use a custom rule for those forms.
 
 Use the same `regex_rules` list to configure built-ins or add custom patterns:
 

@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from anonymizer.config.regex import RegexRule
+from anonymizer.config.regex import BuiltinRegex, RegexRule
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
     COL_ADMITTED_CANDIDATES,
@@ -62,14 +62,15 @@ from anonymizer.engine.schemas import (
 
 def _row(
     text: str,
-    rules: list[RegexRule],
+    rules: list[RegexRule | BuiltinRegex],
     *,
     detector: list[dict[str, Any]] | None = None,
     constrained: list[str] | None = None,
+    builtins: bool = False,
 ) -> dict[str, Any]:
     labels = sorted({rule.label for rule in rules})
     matches = detect_regex_entities(
-        text, rules=resolve_regex_rules(labels=labels, builtin_regexes=False, rules=[*rules])
+        text, rules=resolve_regex_rules(labels=labels, builtin_regexes=builtins, rules=[*rules])
     )
     row = {
         COL_TEXT: text,
@@ -148,6 +149,48 @@ def test_direct_regex_and_detector_claims_are_admitted_independently(decision: s
         {"regex_user", "initial_detector"} if decision == "keep" else {"regex_user"}
     )
     assert [(entity["start_position"], entity["end_position"]) for entity in _finalize(row)] == [(6, 9)]
+
+
+@pytest.mark.parametrize(
+    ("label", "value"),
+    [
+        ("credit_debit_card", "4111 1111 1111 1111"),
+        ("email", "synthetic@example.org"),
+        ("ipv4", "192.0.2.10"),
+        ("ipv6", "2001:db8::1"),
+        ("mac_address", "00:1A:2B:3C:4D:5E"),
+        ("url", "https://example.org/private"),
+    ],
+)
+@pytest.mark.parametrize("validate_matches", [False, True])
+@pytest.mark.parametrize("decision", ["keep", "drop"])
+@pytest.mark.parametrize("excluded", [False, True])
+def test_builtin_validation_and_exclusion_admission(
+    label: str, value: str, validate_matches: bool, decision: str, excluded: bool
+) -> None:
+    text = f"Start {value} end"
+    row = _row(
+        text,
+        [BuiltinRegex(label=label, validate_matches_with_llm=validate_matches, detect_additional_matches=False)],
+        builtins=True,
+        constrained=[label],
+    )
+    _admit(
+        row,
+        [{"id": "c1", "decision": decision}],
+        allowed=[label],
+        excluded=[label] if excluded else [],
+        constrained=[label],
+    )
+    entities = _finalize(row)
+    expected = not excluded and (not validate_matches or decision == "keep")
+    assert [(e["value"], e["label"], e["start_position"], e["end_position"]) for e in entities] == (
+        [(value, label, len("Start "), len("Start ") + len(value))] if expected else []
+    )
+    inventories = row[COL_VALIDATION_INVENTORIES]
+    # The helper injects matches before policy filtering; admission must still
+    # reject excluded labels, even if a validator returned "keep" for them.
+    assert sum(len(inventory["entries"]) for inventory in inventories) == int(validate_matches)
 
 
 @pytest.mark.parametrize(("allowed", "excluded"), [(None, ["token"]), (["organization"], []), ([], [])])

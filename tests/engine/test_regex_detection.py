@@ -142,6 +142,91 @@ def test_builtin_regexes_detect_valid_values(label: str, text: str, expected: st
     assert result.accepted_entities == []
 
 
+@pytest.mark.parametrize("validate_matches", [False, True])
+@pytest.mark.parametrize(
+    ("label", "value", "valid"),
+    [
+        ("credit_debit_card", "4111 1111 1111 1111", True),
+        ("credit_debit_card", "4111 1111 1111 1112", False),
+        ("email", "synthetic@example.org", True),
+        ("email", "a" * 65 + "@example.org", False),
+        ("ipv4", "192.0.2.10", True),
+        ("ipv4", "256.0.2.10", False),
+        ("ipv6", "2001:db8::1", True),
+        ("ipv6", "2001::db8::1", False),
+        ("mac_address", "00:1A:2B:3C:4D:5E", True),
+        ("mac_address", "00:1A-2B:3C:4D:5E", False),
+        ("url", "https://example.org/private", True),
+        ("url", "https://example.org:65536/private", False),
+    ],
+)
+def test_builtin_local_validation_is_independent_of_llm_routing(
+    label: str, value: str, valid: bool, validate_matches: bool
+) -> None:
+    text = f"Synthetic [{value}] end"
+    rules = resolve_regex_rules(
+        labels=[label],
+        builtin_regexes=True,
+        rules=[BuiltinRegex(label=label, validate_matches_with_llm=validate_matches, detect_additional_matches=False)],
+    )
+    result = detect_regex_entities(text, rules=rules)
+
+    # Each invalid fixture matches the builtin pattern: rejection must come from
+    # its structural validator, even when contextual LLM validation is disabled.
+    assert len(result.validation_trace) == 1
+    assert result.validation_trace[0].valid is valid
+    expected = [(value, label, text.index(value), text.index(value) + len(value))] if valid else []
+    routed = result.llm_entities if validate_matches else result.accepted_entities
+    assert [(e.value, e.label, e.start_position, e.end_position) for e in routed] == expected
+    assert (result.accepted_entities if validate_matches else result.llm_entities) == []
+
+
+@pytest.mark.parametrize("validate_matches", [False, True])
+@pytest.mark.parametrize("prefix", ["url:", "URL:", "UrL:", "(url:", "url: ", "(", "[", ""])
+@pytest.mark.parametrize("locator", ["http://", "https://", "ftp://", "ftps://", "sftp://", "ws://", "wss://", "www."])
+def test_builtin_url_after_field_prefix_keeps_exact_offsets(prefix: str, locator: str, validate_matches: bool) -> None:
+    value = f"{locator}example.org/private/alice"
+    text = f"{prefix}{value})."
+    rules = resolve_regex_rules(
+        labels=["url"],
+        builtin_regexes=True,
+        rules=[BuiltinRegex(label="url", validate_matches_with_llm=validate_matches, detect_additional_matches=False)],
+    )
+    result = detect_regex_entities(text, rules=rules)
+    entities = result.llm_entities if validate_matches else result.accepted_entities
+    assert [(e.value, e.start_position, e.end_position) for e in entities] == [
+        (value, len(prefix), len(prefix) + len(value))
+    ]
+
+
+@pytest.mark.parametrize("validate_matches", [False, True])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "myurl:https://example.org/private",
+        "myURL:www.example.org/private",
+        "_url:https://example.org/private",
+        "not-url:https://example.org/private",
+        "éurl:https://example.org/private",
+        "custom:url:https://example.org/private",
+        "Visit:https://example.org/private",
+        "custom:https://example.org/private",
+        "git+https://example.org/private",
+        "s3://www.example.org/private",
+        "url:git+https://example.org/private",
+        "url:s3://www.example.org/private",
+    ],
+)
+def test_builtin_url_field_prefix_does_not_relax_other_boundaries(text: str, validate_matches: bool) -> None:
+    rules = resolve_regex_rules(
+        labels=["url"],
+        builtin_regexes=True,
+        rules=[BuiltinRegex(label="url", validate_matches_with_llm=validate_matches, detect_additional_matches=False)],
+    )
+    result = detect_regex_entities(text, rules=rules)
+    assert result.llm_entities == result.accepted_entities == []
+
+
 def test_builtin_rule_and_validator_ids_use_product_namespace() -> None:
     rules = resolve_regex_rules(
         labels=["credit_debit_card", "email", "ipv4", "ipv6", "mac_address", "url"],

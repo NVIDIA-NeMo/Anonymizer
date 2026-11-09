@@ -656,7 +656,12 @@ _BUILTIN_RULES: tuple[ResolvedRegexRule, ...] = (
     ResolvedRegexRule(
         rule_id="nemo-anonymizer.url.v1",
         label="url",
-        pattern=rf"(?i)(?<![A-Za-z0-9_+./:@-])(?:(?:{'|'.join(_URL_SCHEMES)})://|www\.)[^\s<>\"']+",
+        # Permit the standalone field prefix without consuming it: offsets must
+        # cover only the URL. Other colon prefixes retain the conservative guard.
+        pattern=(
+            r"(?i)(?:(?<![A-Za-z0-9_+./:@-])|(?<=(?<![\w+./:@-])url:))"
+            rf"(?:(?:{'|'.join(_URL_SCHEMES)})://|www\.)[^\s<>\"']+"
+        ),
         validator_id="nemo-anonymizer.url.v1",
         source="regex_builtin",
     ),

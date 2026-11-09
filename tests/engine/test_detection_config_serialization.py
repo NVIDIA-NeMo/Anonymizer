@@ -393,7 +393,16 @@ def test_regex_constrained_detection_config_round_trips_with_model_columns_skipp
 
 @pytest.mark.parametrize("preview_num_records", [2, None], ids=["preview", "create"])
 @pytest.mark.parametrize(
-    "workload", ["custom-ticket", "builtin-card-with-code", "all-builtins-100-rows", "network-urls"]
+    "workload",
+    [
+        "custom-ticket",
+        "builtin-card-with-code",
+        "all-builtins-100-rows",
+        "network-urls",
+        "colon-url",
+        "builtin-invalid",
+        "unsupported-urls",
+    ],
 )
 def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designer(
     tmp_path: Path,
@@ -415,6 +424,44 @@ def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designe
     values = [(value, label)]
     rules: list[BuiltinRegex | RegexRule] = [rule]
     labels = [label]
+    if workload == "colon-url":
+        value = "https://example.org/private/alice"
+        label = "url"
+        values = [(value, label)]
+        labels = [label]
+        rules = [BuiltinRegex(label=label, validate_matches_with_llm=False, detect_additional_matches=False)]
+        input_df = pd.DataFrame({COL_TEXT: [f"url:{value}.", f"url: {value}.", f"URL:{value}."]})
+    if workload in {"builtin-invalid", "unsupported-urls"}:
+        labels = ["credit_debit_card", "email", "ipv4", "ipv6", "mac_address", "url"]
+        values = []
+        rules = [
+            BuiltinRegex(label=label, validate_matches_with_llm=False, detect_additional_matches=False)
+            for label in labels
+        ]
+        text = " | ".join(
+            [
+                "4111 1111 1111 1112",
+                "a" * 65 + "@example.org",
+                "256.0.2.10",
+                "2001::db8::1",
+                "00:1A-2B:3C:4D:5E",
+                "https://example.org:65536/private",
+            ]
+        )
+        if workload == "unsupported-urls":
+            labels = ["url"]
+            rules = [BuiltinRegex(label="url", validate_matches_with_llm=False, detect_additional_matches=False)]
+            text = " | ".join(
+                [
+                    "example.org/private",
+                    "//example.org/private",
+                    "file:///private/report.csv",
+                    "s3://www.example.org/private",
+                    "git+https://example.org/private",
+                    r"https:\/\/example.org/private",
+                ]
+            )
+        input_df = pd.DataFrame({COL_TEXT: [text, "nothing"]})
     if workload in {"all-builtins-100-rows", "network-urls"}:
         values = [
             ("4111 1111 1111 1111", "credit_debit_card"),
@@ -498,6 +545,17 @@ def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designe
     assert result.failed_records == []
     assert len(result.dataframe) == len(input_df)
     detected = result.dataframe[COL_DETECTED_ENTITIES].tolist()
+
+    replacement_input = result.dataframe[[COL_TEXT]].copy()
+    replacement_input[COL_FINAL_ENTITIES] = detected
+    replaced = apply_local_replace_strategy(replacement_input, strategy=Redact())
+    expected_replaced = []
+    for text in input_df[COL_TEXT]:
+        for value, label in values:
+            text = text.replace(value, f"[REDACTED_{label.upper()}]")
+        expected_replaced.append(text)
+    assert replaced[COL_REPLACED_TEXT].tolist() == expected_replaced
+
     assert [
         [
             (
@@ -514,15 +572,59 @@ def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designe
         for text in input_df[COL_TEXT]
     ]
 
-    replacement_input = result.dataframe[[COL_TEXT]].copy()
-    replacement_input[COL_FINAL_ENTITIES] = detected
-    replaced = apply_local_replace_strategy(replacement_input, strategy=Redact())
-    expected_replaced = []
-    for text in input_df[COL_TEXT]:
-        for value, label in values:
-            text = text.replace(value, f"[REDACTED_{label.upper()}]")
-        expected_replaced.append(text)
-    assert replaced[COL_REPLACED_TEXT].tolist() == expected_replaced
+
+@pytest.mark.parametrize("label", ["credit_debit_card", "email", "ipv4", "ipv6", "mac_address", "url"])
+@pytest.mark.parametrize("validate_matches", [False, True])
+@pytest.mark.parametrize("additional_matches", [False, True])
+@pytest.mark.parametrize("excluded", [False, True])
+def test_builtin_controls_and_validators_survive_config_export(
+    tmp_path: Path, label: str, validate_matches: bool, additional_matches: bool, excluded: bool
+) -> None:
+    seed_path = tmp_path / "seed.parquet"
+    pd.DataFrame({COL_TEXT: ["Synthetic fixture"]}).to_parquet(seed_path, index=False)
+    models = parse_model_configs(None)
+    # Keep a second builtin active when excluding the target, so this tests
+    # exclusion rather than the documented empty-effective-label-set error.
+    control = "ipv4" if label == "email" else "email"
+    workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
+    builder = workflow.build_detection_builder_for_seed(
+        seed_path=seed_path,
+        model_configs=models.model_configs,
+        selected_models=models.selected_models.detection,
+        gliner_detection_threshold=0.3,
+        entity_labels=[label, control] if excluded else [label],
+        excluded_entity_labels=[label] if excluded else [],
+        builtin_regexes=True,
+        regex_rules=[
+            BuiltinRegex(
+                label=label,
+                validate_matches_with_llm=validate_matches,
+                detect_additional_matches=additional_matches,
+            ),
+            *(
+                [BuiltinRegex(label=control, validate_matches_with_llm=False, detect_additional_matches=False)]
+                if excluded
+                else []
+            ),
+        ],
+    )
+    payload = builder.get_builder_config().to_json()
+    assert payload is not None
+    restored = DataDesignerConfigBuilder.from_config(payload)
+    assert restored.get_builder_config().to_dict() == builder.get_builder_config().to_dict()
+    columns = restored.get_column_configs()
+    regex = next(column for column in columns if isinstance(column, RegexDetectionConfig))
+    augmenter = next(column for column in columns if isinstance(column, AugmentationConfig))
+    assert _get_gliner_labels_from_builder(restored) == ([label] if additional_matches and not excluded else [])
+    assert augmenter.enabled is (additional_matches and not excluded)
+    assert len(regex.rules) == 1
+    rule = regex.rules[0]
+    assert rule.label == (control if excluded else label)
+    assert rule.source == "regex_builtin"
+    assert rule.validator_id is not None
+    assert rule.validator_id.startswith("nemo-anonymizer.")
+    assert rule.validate_matches_with_llm is (False if excluded else validate_matches)
+    assert rule.detect_additional_matches is (False if excluded else additional_matches)
 
 
 @pytest.mark.parametrize("builder_kind", ["dataframe", "seed"])

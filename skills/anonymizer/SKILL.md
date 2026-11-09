@@ -50,6 +50,7 @@ regulatory and business context.
 - **GLiNER is zero-shot** — entity labels are natural-language concept names (e.g. `"clinical_facility"`, `"internal_project_codename"`), not codes or enum values. Any concept you can name in English is a label GLiNER can detect.
 - **Built-in regex recognition is on by default** for `credit_debit_card`, `email`, `ipv4`, `ipv6`, `mac_address`, and `url` whenever those labels are in scope. Users normally omit `builtin_regexes=True`; use `builtin_regexes=False` to disable all built-ins. The single `regex_rules` list accepts `BuiltinRegex(label="email", enabled=False)` to configure one built-in and `RegexRule(...)` for custom patterns. Set `validate_matches_with_llm=False` to accept locally valid regex matches directly. Set `detect_additional_matches=False` to prevent GLiNER and augmentation from finding other spans for the label. Both settings default to `True`.
 - **An entity for a label whose enabled rules set `detect_additional_matches=False` must match regex evidence at the exact label and character span.** Model reclassification and derived spans cannot create entities for that label without matching regex evidence.
+- **Discover supported built-in regex labels with `from anonymizer import BUILTIN_REGEX_LABELS`.** This immutable tuple describes supported recognizers, not which labels are active in a config; detection scope and exclusions still apply.
 - **`Rewrite.instructions` is a dead field today** — it exists on the model but the rewrite engine never reads it. Do not use it. Put rewriter guidance in `privacy_goal.protect` / `privacy_goal.preserve` instead.
 - **`risk_tolerance` only applies to Rewrite mode**, not Replace.
 - **`PrivacyGoal.protect` and `.preserve` must each be 10–1000 chars and at least 3 words.** Be specific (categories, named identifiers, structural facets); avoid generic phrasing like "preserve meaning".
@@ -110,6 +111,7 @@ from anonymizer import (
     AnonymizerInput,
     Detect,
     BuiltinRegex, RegexCandidate, RegexRule, RegexValidationResult,
+    # Optional discovery: from anonymizer import BUILTIN_REGEX_LABELS
     # Pick what you need:
     # Replace mode:
     Substitute, Redact, Annotate, Hash,
