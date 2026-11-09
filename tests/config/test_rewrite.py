@@ -58,9 +58,9 @@ def test_privacy_goal_to_prompt_string() -> None:
 @pytest.mark.parametrize(
     "tolerance,expected_threshold",
     [
-        (RiskTolerance.minimal, 0.6),
-        (RiskTolerance.low, 1.0),
-        (RiskTolerance.moderate, 1.5),
+        (RiskTolerance.minimal, 0.4),
+        (RiskTolerance.low, 0.5),
+        (RiskTolerance.moderate, 1.0),
         (RiskTolerance.high, 2.0),
     ],
 )
@@ -72,7 +72,7 @@ def test_repair_threshold_per_tolerance(tolerance: RiskTolerance, expected_thres
 def test_default_is_low() -> None:
     criteria = EvaluationCriteria()
     assert criteria.risk_tolerance == RiskTolerance.low
-    assert criteria.repair_threshold == 1.0
+    assert criteria.repair_threshold == 0.5
     assert criteria.max_repair_iterations == 3
 
 
@@ -83,7 +83,7 @@ def test_combined_graph_is_opt_in() -> None:
 def test_minimal_bundles_aggressive_review_flags() -> None:
     criteria = EvaluationCriteria(risk_tolerance=RiskTolerance.minimal)
     assert criteria.flag_utility_below == 0.6
-    assert criteria.flag_leakage_above == 1.0
+    assert criteria.flag_leakage_above == 0.5
     assert criteria.repair_any_high_leak is True
 
 

@@ -161,9 +161,9 @@ Symptom: rewrite output is generic-sounding even though the input is clearly in 
 
 | Tolerance | Repair triggers above | Flagged for review above |
 |---|---|---|
-| `minimal` | 0.6 | 1.0 |
-| `low` | 1.0 | 2.0 |
-| `moderate` | 1.5 | 2.5 |
+| `minimal` | 0.4 | 0.5 |
+| `low` | 0.5 | 2.0 |
+| `moderate` | 1.0 | 2.5 |
 | `high` | 2.0 | 3.0 |
 
 If you're consistently above your threshold:

@@ -13,6 +13,7 @@ import pytest
 
 from anonymizer.config.rewrite import (
     _RISK_TOLERANCE_BUNDLES,
+    SENSITIVITY_WEIGHTS,
     EvaluationCriteria,
     Finding,
     RepairFinding,
@@ -25,7 +26,9 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT,
     COL_UTILITY_SCORE,
 )
+from anonymizer.engine.rewrite.evaluate import compute_leakage_mass
 from anonymizer.engine.rewrite.findings import needs_human_review, needs_repair, present_findings
+from anonymizer.engine.schemas.rewrite import PrivacyAnswerItemSchema, PrivacyQAPairsSchema
 
 _NAN = math.nan
 _MISSING = object()
@@ -109,6 +112,104 @@ def test_presets_repair_only_on_repair_findings() -> None:
     assert Finding.unavailable_evidence not in get_args(RepairFinding)
     for bundle in _RISK_TOLERANCE_BUNDLES.values():
         assert set(bundle.repair_on) <= set(get_args(RepairFinding))
+
+
+# ---------------------------------------------------------------------------
+# Threshold behaviour on single, realistic leaks. Repair needs leakage mass strictly above the
+# threshold, so one confident medium-sensitivity leak (0.6 x 1.0) must still reach repair on the
+# stricter presets, while a faint low-sensitivity one must reach neither repair nor review.
+# ---------------------------------------------------------------------------
+
+
+def _leak_row(sensitivity: str, confidence: float, count: int = 1) -> dict[str, Any]:
+    """A row whose leakage mass comes from ``count`` leaked entities, via the real ``compute_leakage_mass``."""
+    qa = PrivacyQAPairsSchema.model_validate(
+        {
+            "items": [
+                {
+                    "id": item_id,
+                    "question": f"Can attribute {item_id} be deduced?",
+                    "sensitivity": sensitivity,
+                    "entity_label": "occupation",
+                    "entity_value": f"value {item_id}",
+                    "category": "quasi_identifier",
+                }
+                for item_id in range(1, count + 1)
+            ]
+        }
+    )
+    answers = [
+        PrivacyAnswerItemSchema(id=item_id, answer="yes", confidence=confidence, reason="evidence in text")
+        for item_id in range(1, count + 1)
+    ]
+    mass = compute_leakage_mass(answers, qa, dict(SENSITIVITY_WEIGHTS))
+    return _row(**{COL_LEAKAGE_MASS: mass})
+
+
+@pytest.mark.parametrize(
+    ("risk_tolerance", "expect_repair", "expect_flag"),
+    [
+        (RiskTolerance.minimal, True, True),
+        (RiskTolerance.low, True, False),
+        (RiskTolerance.moderate, False, False),
+        (RiskTolerance.high, False, False),
+    ],
+)
+def test_confident_medium_leak_repairs_on_stricter_presets(
+    risk_tolerance: RiskTolerance, expect_repair: bool, expect_flag: bool
+) -> None:
+    ev = EvaluationCriteria(risk_tolerance=risk_tolerance)
+    row = _leak_row("medium", 1.0)
+    assert row[COL_LEAKAGE_MASS] == pytest.approx(SENSITIVITY_WEIGHTS["medium"])
+    assert (Finding.leakage_above_repair in present_findings(row, ev)) is expect_repair
+    assert needs_repair(row, ev) is expect_repair
+    assert needs_human_review(row, ev) is expect_flag
+
+
+@pytest.mark.parametrize(
+    ("risk_tolerance", "expect_repair"),
+    [
+        (RiskTolerance.minimal, True),
+        (RiskTolerance.low, True),
+        (RiskTolerance.moderate, True),
+        (RiskTolerance.high, False),
+    ],
+)
+def test_two_confident_medium_leaks_repair_on_moderate_but_not_high(
+    risk_tolerance: RiskTolerance, expect_repair: bool
+) -> None:
+    ev = EvaluationCriteria(risk_tolerance=risk_tolerance)
+    row = _leak_row("medium", 1.0, count=2)
+    assert row[COL_LEAKAGE_MASS] == pytest.approx(2 * SENSITIVITY_WEIGHTS["medium"])
+    assert needs_repair(row, ev) is expect_repair
+    if risk_tolerance in (RiskTolerance.moderate, RiskTolerance.high):
+        assert needs_human_review(row, ev) is False
+
+
+@pytest.mark.parametrize("risk_tolerance", list(RiskTolerance))
+def test_faint_low_sensitivity_leak_neither_repairs_nor_flags(risk_tolerance: RiskTolerance) -> None:
+    ev = EvaluationCriteria(risk_tolerance=risk_tolerance)
+    row = _leak_row("low", 0.05)
+    assert row[COL_LEAKAGE_MASS] == pytest.approx(SENSITIVITY_WEIGHTS["low"] * 0.05)
+    assert present_findings(row, ev) == set()
+    assert needs_repair(row, ev) is False
+    assert needs_human_review(row, ev) is False
+
+
+def test_risk_tolerance_thresholds_are_strictly_ordered() -> None:
+    """Stricter presets repair and flag at lower leakage mass; no two presets share a repair threshold."""
+    ordered = [EvaluationCriteria(risk_tolerance=tolerance) for tolerance in RiskTolerance]
+    assert [tolerance for tolerance in RiskTolerance] == [
+        RiskTolerance.minimal,
+        RiskTolerance.low,
+        RiskTolerance.moderate,
+        RiskTolerance.high,
+    ]
+    repair = [criteria.repair_threshold for criteria in ordered]
+    flag = [criteria.flag_leakage_above for criteria in ordered]
+    assert repair == sorted(set(repair))
+    assert flag == sorted(set(flag))
+    assert all(repair_at < flag_at for repair_at, flag_at in zip(repair, flag, strict=True))
 
 
 # ---------------------------------------------------------------------------
