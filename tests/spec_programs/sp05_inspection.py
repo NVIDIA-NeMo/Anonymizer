@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-5 bounded, content-free inspection (E5.1-E5.6)."""
+"""SP-5 bounded, content-free inspection (E5.1-E5.8)."""
 
 from __future__ import annotations
 
 from anonymizer.engine.graph_core.authoring import Operation, Requests, Workflow
 from anonymizer.engine.graph_core.execution import prepare, protect
 from anonymizer.engine.graph_core.observe import report_requests
+from anonymizer.measurement import MeasurementCollector, measurement_session
 from tests.spec_programs._builder import Checks, Recorder, graph, run
 
 CANARY_IN, CANARY_OUT = "CANARYxIN7731", "CANARYxOUT4410"
@@ -98,4 +99,19 @@ def program() -> list[dict[str, str]]:
         and p.summary().budget is None,
         f"verdicts={[v for v, _ in verdicts]}",
     )
+    with measurement_session(MeasurementCollector(keep_records=True)) as collector:
+        measured = protect(_prepared(f"Hello {CANARY_IN}.")[0])
+    stages = [(m["stage"], m["status"], m["schema_version"]) for m in collector.records]
+    leaked = any(CANARY_IN in repr(m) or CANARY_OUT in repr(m) or "transform" in repr(m) for m in collector.records)
+    c.check(
+        "E5.7",
+        sorted(s for s, _, _ in stages) == ["graph_prepare", "graph_protect", "graph_reconcile"]
+        and all(st == "completed" and v is not None for _, st, v in stages)
+        and all(m["terminal_counts"] == {"success": 1} for m in collector.records if m["stage"] != "graph_prepare")
+        and not leaked,
+        f"stages={stages}, content in records={leaked}",
+    )
+    plain = protect(_prepared(f"Hello {CANARY_IN}.")[0])
+    same = plain.content()[0][1] == measured.content()[0][1] and plain.summary() == measured.summary()
+    c.check("E5.8", same, f"measured and unmeasured results equal={same}")
     return c.lines

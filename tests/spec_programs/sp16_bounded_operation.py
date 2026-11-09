@@ -393,7 +393,7 @@ def program() -> list[dict[str, str]]:
         workflow = _stubbed(CombinedRewriteWorkflow(Mock()))
         with measurement_session() as collector:
             workflow.run_with_detection(pd.DataFrame({COL_TEXT: ["a", "b"]}), detect=lambda _: detection, **_OPTIONS)
-        stages = [r["stage"] for r in collector.records if "stage" in r]
+        stages = [r["stage"] for r in collector.records if not r.get("stage", "graph_").startswith("graph_")]
         return stages == ["CombinedRewriteWorkflow.run"], f"recorded stages={stages}"
 
     c.guard("E16.18", combined_stage_name)

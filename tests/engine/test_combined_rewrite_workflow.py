@@ -344,7 +344,11 @@ def test_run_executes_one_data_designer_workflow(
     adapter.run_workflow.assert_called_once()
     assert adapter.run_workflow.call_args.kwargs["workflow_name"] == "rewrite-combined"
     assert result.dataframe[COL_REWRITTEN_TEXT].tolist() == ["Maria works at a company"]
-    stage_records = [record for record in collector.records if record["record_type"] == "stage"]
+    stage_records = [
+        record
+        for record in collector.records
+        if record["record_type"] == "stage" and not record["stage"].startswith("graph_")
+    ]
     assert len(stage_records) == 1
     assert stage_records[0]["stage"] == "CombinedRewriteWorkflow.run"
     assert stage_records[0]["input_row_count"] == 1

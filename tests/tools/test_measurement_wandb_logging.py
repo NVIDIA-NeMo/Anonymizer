@@ -318,6 +318,35 @@ def test_wandb_stage_summary_uses_only_terminal_stage_but_table_preserves_all(
         "ReplacementWorkflow.run",
         "Anonymizer._run_internal",
     ]
+    assert tables[0].columns == ("elapsed_sec", "input_row_count", "output_row_count", "record_type", "stage", "status")
+
+
+def test_wandb_stage_table_keeps_graph_stage_counts(
+    wandb_ingress_tool: ModuleType,
+    wandb_logging_tool: ModuleType,
+) -> None:
+    record = wandb_ingress_tool.StageMeasurement.model_validate(
+        {
+            "schema_version": 2,
+            "record_type": "stage",
+            "run_id": "run-a",
+            "run_tags": {},
+            "timestamp_unix_sec": 1.0,
+            "stage": "graph_protect",
+            "status": "completed",
+            "elapsed_sec": 2.5,
+            "operation_count": 3,
+            "target_count": 10,
+            "terminal_counts": {"success": 8, "failed": 2},
+        },
+        strict=True,
+    )
+
+    (table,) = wandb_logging_tool._typed_tables((record,))
+
+    assert table.data[0][table.columns.index("operation_count")] == 3
+    assert table.data[0][table.columns.index("target_count")] == 10
+    assert table.data[0][table.columns.index("terminal_counts")] == '{"failed":2,"success":8}'
 
 
 def test_wandb_scalar_registry_matches_package_field_catalog(wandb_logging_tool: ModuleType) -> None:

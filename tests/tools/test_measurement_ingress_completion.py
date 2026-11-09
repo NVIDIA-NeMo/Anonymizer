@@ -1180,3 +1180,47 @@ def test_wandb_ingress_rejects_inconsistent_rat_bench_reidentification_summary(
 
     with pytest.raises(wandb_ingress_tool.ValidationError, match=match):
         wandb_ingress_tool.RatBenchReidentificationMeasurement.model_validate(payload, strict=True)
+
+
+def test_measured_redact_run_passes_strict_ingress(tmp_path: Path, wandb_ingress_tool: ModuleType) -> None:
+    from unittest.mock import Mock
+
+    import pandas as pd
+
+    from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
+    from anonymizer.config.replace_strategies import Redact
+    from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_SEED_VALIDATION_CANDIDATES, COL_TEXT
+    from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
+    from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
+    from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+    from anonymizer.interface.anonymizer import Anonymizer
+    from anonymizer.measurement import MeasurementConfig, configured_measurement_session
+
+    source, path = tmp_path / "in.csv", tmp_path / "measurements.jsonl"
+    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(source, index=False)
+    entities = {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
+    detection = Mock(spec=EntityDetectionWorkflow)
+    detection.run.return_value = EntityDetectionResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice works at Acme"],
+                COL_FINAL_ENTITIES: [entities],
+                COL_SEED_VALIDATION_CANDIDATES: [{"candidates": entities["entities"]}],
+            }
+        ),
+        failed_records=[],
+    )
+    anonymizer = Anonymizer(
+        detection_workflow=detection,
+        replace_runner=ReplacementWorkflow(adapter=Mock()),
+        rewrite_runner=Mock(spec=RewriteWorkflow),
+    )
+    config = MeasurementConfig(output_path=path, run_id="run-a", record_hash_key="k", run_tags={})
+    with configured_measurement_session(config):
+        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=AnonymizerInput(source=str(source)))
+
+    snapshot = wandb_ingress_tool.read_measurement_snapshot(path, expected_statuses={"run-a": "completed"})
+
+    assert {"graph_prepare", "graph_protect", "graph_reconcile"} <= {
+        record.stage for record in snapshot.records if record.record_type == "stage"
+    }
