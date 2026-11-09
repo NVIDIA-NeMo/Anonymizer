@@ -1408,6 +1408,37 @@ def test_evaluate_rewrite_reports_each_judge_through_outcome(stub_input: Anonymi
     assert run_result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False]
 
 
+def test_evaluate_reports_a_scoring_rewrite_judge_as_scored(stub_input: AnonymizerInput) -> None:
+    anonymizer, _, _, rewrite_runner = _make_anonymizer()
+    run_result = anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input)
+    eval_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_REWRITTEN_TEXT: ["Beth works at Globex"],
+            COL_JUDGE_EVALUATION: [{"privacy": {"score": "low"}}],
+            COL_DETECTION_VALID: [1.0],
+        }
+    )
+    rewrite_runner.evaluate.return_value = RewriteResult(dataframe=eval_df, failed_records=[])
+    outcomes = []
+    for coverage in (1.0, 0.5):
+        coverage_df = eval_df.assign(**{COL_ENTITY_COVERAGE: [coverage], COL_MISSED_ENTITIES: [[]]})
+        with patch("anonymizer.interface.anonymizer.EntityCoverageWorkflow") as mock_coverage_wf:
+            mock_coverage_wf.return_value.run_non_critical.return_value = (coverage_df, [])
+            evaluated = anonymizer.evaluate(run_result, config=EvaluateConfig(compute_detection_validity=True))
+        outcomes.append((_assessments(evaluated, 0), evaluated.outcome(0).reason))
+
+    assert outcomes[0][0] == {
+        "coverage": ("passed", ""),
+        "rewrite-judge": ("scored", ""),
+        "detection-validity": ("passed", ""),
+    }
+    assert outcomes[0][1] == "scored"
+    assert outcomes[1][0]["rewrite-judge"] == ("scored", "")
+    assert outcomes[1][0]["coverage"] == ("failed", "entities_leaked")
+    assert outcomes[1][1] == "failed"
+
+
 def test_evaluate_config_detection_validity_defaults_off() -> None:
     """Goal 2: detection-validity scoring is opt-in — the config default must be False
     so a plain ``EvaluateConfig()`` never triggers the extra detection judge."""

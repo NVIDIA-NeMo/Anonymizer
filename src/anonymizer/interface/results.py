@@ -29,9 +29,10 @@ class _DisplayMixin:
         failed (its reasons name the check), and ``"not_assessed"`` when a check could not decide.
 
         On an ``evaluate()`` result the outcome only reports and is never protected: its ``reasons`` hold one
-        ``passed``, ``could_not_assess`` or ``failed`` reason per judge check, in that order, whose ``cause`` says why
-        (``"judge_unavailable"`` when the judge gave no score). A ``passed`` rewrite-judge check means the judge
-        returned a score, not that it approved. The evaluated result is not changed.
+        ``passed``, ``scored``, ``could_not_assess`` or ``failed`` reason per judge check, in that order (worst last), whose ``cause``
+        says why (``"judge_unavailable"`` when the judge gave no score). ``scored`` means the rewrite judge, which
+        has no pass threshold, returned scores; read them in the judge evaluation column. The evaluated result is
+        not changed.
 
         Raises:
             IndexError: ``row`` is not an output row, or this result carries no outcomes (a custom runner's or

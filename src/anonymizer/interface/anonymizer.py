@@ -215,10 +215,11 @@ def _evaluate_on_graph(
 
 def _reported_outcomes(result: ProtectionResult) -> tuple[TargetOutcome, ...]:
     """Each row's outcome with every verifier's assessment appended as a reason naming the verifier, ordered
-    ``passed`` < ``could_not_assess`` < ``failed`` so ``reason`` names the worst check; qualification and release
-    stay as derived."""
+    ``passed``, ``scored``, ``could_not_assess``, ``failed`` (worst last) so ``reason`` names the worst check; the ungraded
+    rewrite judge reports ``scored`` when it returned scores. Qualification and release stay as derived."""
     codes = {True: "passed", False: "failed", None: "could_not_assess"}
-    rank = {"passed": 0, "could_not_assess": 1, "failed": 2}
+    rank = {"passed": 0, "scored": 1, "could_not_assess": 2, "failed": 3}
+    ungraded = _ASSESSMENTS[COL_JUDGE_EVALUATION][0]
     names = result.prepared.names
     return tuple(
         replace(
@@ -227,7 +228,12 @@ def _reported_outcomes(result: ProtectionResult) -> tuple[TargetOutcome, ...]:
                 *outcome.reasons,
                 *sorted(
                     (
-                        Reason(codes[a.satisfied], names[i], names[i], a.reason)
+                        Reason(
+                            "scored" if a.satisfied and names[i] == ungraded else codes[a.satisfied],
+                            names[i],
+                            names[i],
+                            a.reason,
+                        )
                         for i, out in sorted(row.outputs.items())
                         if isinstance(a := out.get("assessment"), Assessment)
                     ),
