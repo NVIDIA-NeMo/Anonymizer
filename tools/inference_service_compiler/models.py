@@ -4,8 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Annotated, Literal, assert_never
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -95,19 +94,8 @@ class Vllm(FrozenModel):
 
     python_executable: str = Field(default="tools/inference-service-runtime/.venv/bin/python", min_length=1)
     served_model_name: str | None = Field(default=None, min_length=1)
-    reasoning_parser: str | None = Field(default=None, min_length=1)
     api_key_env: str | None = Field(default=None, min_length=1)
-    tensor_parallel_size: int | None = Field(default=None, ge=1)
-    gpu_memory_utilization: float | None = Field(default=None, gt=0, le=1)
-    max_model_len: int | None = Field(default=None, ge=1)
-    max_num_seqs: int | None = Field(default=None, ge=1)
-    eager: bool = False
-    enable_prefix_caching: bool = False
-    async_scheduling: bool = False
-    mamba_backend: Literal["triton", "flashinfer"] | None = None
-    mamba_ssm_cache_dtype: Literal["auto", "float32", "float16", "bfloat16"] = "auto"
-    enable_mamba_cache_stochastic_rounding: bool = False
-    mamba_cache_philox_rounds: int = Field(default=0, ge=0)
+    config: dict[str, Any] = Field(default_factory=dict)
     factory: VllmFactoryIntegration | None = None
 
 
@@ -147,73 +135,15 @@ class LiteralArgument(FrozenModel):
     value: str
 
 
-class EnvironmentVariable(FrozenModel):
-    """One ordinary non-secret process environment value."""
-
-    kind: Literal["literal"] = "literal"
-    name: str = Field(min_length=1)
-    value: str
-
-
-class SecretEnvironmentVariable(FrozenModel):
-    """One process environment value resolved from a named secret source."""
-
-    kind: Literal["secret-reference"] = "secret-reference"
-    name: str = Field(min_length=1)
-    source_environment_variable: str = Field(min_length=1)
-
-
-EnvironmentSpec = Annotated[EnvironmentVariable | SecretEnvironmentVariable, Field(discriminator="kind")]
-
-
 class CommandSpec(FrozenModel):
-    """Complete argv and ordinary environment for one managed service."""
+    """Complete non-secret argv for one managed service."""
 
     argv: tuple[LiteralArgument, ...] = Field(min_length=1)
-    environment: tuple[EnvironmentSpec, ...] = ()
     working_directory: str = "."
 
     def render_argv(self) -> tuple[str, ...]:
         """Render the complete non-secret process argument vector."""
         return tuple(argument.value for argument in self.argv)
-
-    @property
-    def secret_sources(self) -> tuple[str, ...]:
-        """Return the secret-source names this command owns."""
-        return tuple(
-            variable.source_environment_variable
-            for variable in self.environment
-            if isinstance(variable, SecretEnvironmentVariable)
-        )
-
-    def render_environment(self) -> dict[str, str]:
-        """Render an observable environment with every secret source redacted."""
-        values: dict[str, str] = {}
-        for variable in self.environment:
-            match variable:
-                case EnvironmentVariable(name=name, value=value):
-                    values[name] = value
-                case SecretEnvironmentVariable(name=name, source_environment_variable=source):
-                    values[name] = f"<secret:{source}>"
-                case _:
-                    assert_never(variable)
-        return values
-
-    def resolve_environment(self, secret_values: Mapping[str, str]) -> dict[str, str]:
-        """Strictly resolve this command's owned secret sources for execution."""
-        resolved = self.render_environment()
-        for variable in self.environment:
-            match variable:
-                case EnvironmentVariable():
-                    pass
-                case SecretEnvironmentVariable(name=name, source_environment_variable=source):
-                    try:
-                        resolved[name] = secret_values[source]
-                    except KeyError as exc:
-                        raise ValueError(f"secret environment variable {source!r} is not resolved") from exc
-                case _:
-                    assert_never(variable)
-        return resolved
 
 
 class EndpointAddress(FrozenModel):
@@ -239,14 +169,6 @@ class ReadinessCheck(FrozenModel):
     bearer_token_environment_variable: str | None = Field(default=None, min_length=1)
 
 
-class CompatibilityAssessment(FrozenModel):
-    """One compiler rule supporting or qualifying the selected combination."""
-
-    rule: str
-    outcome: Literal["characterized", "runtime-probe-required"]
-    detail: str
-
-
 class RunPlan(FrozenModel):
     """Portable, frozen, effect-free instructions for one service run."""
 
@@ -258,9 +180,6 @@ class RunPlan(FrozenModel):
     readiness: ReadinessCheck
     served_model_name: str = Field(min_length=1)
     required_capabilities: tuple[Capability, ...]
-    compatibility_assessments: tuple[CompatibilityAssessment, ...]
-    dependencies: tuple[str, ...] = ()
-    source_revision: str = Field(min_length=1)
 
 
 class ConnectionInfo(FrozenModel):

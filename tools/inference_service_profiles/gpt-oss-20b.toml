@@ -8,15 +8,16 @@ model_id = "openai/gpt-oss-20b"
 revision = "6cee5e81ee83917806bbde320786a8fb61efebee"
 
 [vllm]
-reasoning_parser = "openai_gptoss"
-python_executable = "tools/inference-service-runtime/.venv/bin/python"
 served_model_name = "gpt-oss-20b-local"
-gpu_memory_utilization = 0.85
-max_model_len = 8192
-max_num_seqs = 16
-enable_prefix_caching = true
-async_scheduling = true
 
+
+[vllm.config]
+reasoning-parser = "openai_gptoss"
+gpu-memory-utilization = 0.85
+max-model-len = 8192
+max-num-seqs = 16
+enable-prefix-caching = true
+async-scheduling = true
 [local]
 host = "127.0.0.1"
 port = 8000

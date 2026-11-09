@@ -14,7 +14,16 @@ from pathlib import Path
 
 
 class Handler(BaseHTTPRequestHandler):
+    def authenticated(self) -> bool:
+        key = os.environ.get("VLLM_API_KEY")
+        if key is not None and self.headers.get("Authorization") != f"Bearer {key}":
+            self.send_error(401)
+            return False
+        return True
+
     def do_GET(self) -> None:
+        if not self.authenticated():
+            return
         if self.path == "/_anonymizer/launch-ownership":
             token = os.environ["ANONYMIZER_INFERENCE_LAUNCH_TOKEN"]
             if self.headers.get("X-Anonymizer-Launch-Token") != token:
@@ -25,6 +34,8 @@ class Handler(BaseHTTPRequestHandler):
             self.respond({"data": [{"id": "openai/gpt-oss-20b"}]})
 
     def do_POST(self) -> None:
+        if not self.authenticated():
+            return
         self.rfile.read(int(self.headers["Content-Length"]))
         self.respond({"choices": [{"message": {"content": "ready"}}]})
 
@@ -37,10 +48,12 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("model")
-    parser.add_argument("--host")
-    parser.add_argument("--port", type=int)
+    parser.add_argument("--config-json", required=True)
+    parser.add_argument("--validate", action="store_true")
     args, _ = parser.parse_known_args()
+    if args.validate:
+        return
+    config = json.loads(args.config_json)
     Path("observed.json").write_text(
         json.dumps(
             {
@@ -55,12 +68,13 @@ def main() -> None:
                         "VIRTUAL_ENV",
                         "CUDA_VISIBLE_DEVICES",
                         "HF_HOME",
+                        "VLLM_API_KEY",
                     )
                 },
             }
         )
     )
-    HTTPServer((args.host, args.port), Handler).serve_forever()
+    HTTPServer((config["host"], config["port"]), Handler).serve_forever()
 
 
 if __name__ == "__main__":

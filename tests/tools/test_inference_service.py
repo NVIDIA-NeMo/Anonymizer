@@ -20,7 +20,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from inference_service_compiler import cli, compiler, lifecycle, models, runtime, vllm_runtime
+from inference_service_compiler import cli, compiler, lifecycle, models, runtime
 from inference_service_compiler.profiles import load_profile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -84,9 +84,7 @@ def test_cli_remains_a_directly_executable_source_entrypoint() -> None:
 
 
 def test_all_shipped_profiles_compile() -> None:
-    plans = [
-        compiler.compile_profile(load_profile(path), source_revision="test") for path in sorted(PROFILES.glob("*.toml"))
-    ]
+    plans = [compiler.compile_profile(load_profile(path)) for path in sorted(PROFILES.glob("*.toml"))]
     assert plans
     assert all(plan.schema_version == "inference-service.run-plan/v2" for plan in plans)
     assert all(plan.readiness.path == "/models" for plan in plans)
@@ -108,12 +106,9 @@ def test_all_shipped_profiles_compile() -> None:
     ],
 )
 def test_profile_reasoning_parser_reaches_server(filename: str, reasoning_parser: str | None) -> None:
-    plan = compiler.compile_profile(load_profile(PROFILES / filename), source_revision="test")
-    argv = plan.command.render_argv()
-
-    assert ("--reasoning-parser" in argv) == (reasoning_parser is not None)
-    parameters = vllm_runtime.parse_server_parameters(argv[2:])
-    assert parameters.reasoning_parser == reasoning_parser
+    plan = compiler.compile_profile(load_profile(PROFILES / filename))
+    config = json.loads(plan.command.render_argv()[3])
+    assert config.get("reasoning-parser") == reasoning_parser
 
 
 @pytest.mark.parametrize(
@@ -159,23 +154,23 @@ def test_dedicated_generation_profiles_are_pinned_and_compile_expected_flags(
     profile_path = PROFILES / filename
     assert profile_path.is_file(), f"missing dedicated profile: {filename}"
 
-    plan = compiler.compile_profile(load_profile(profile_path), source_revision="test")
+    plan = compiler.compile_profile(load_profile(profile_path))
     argv = plan.command.render_argv()
 
     assert plan.spec.model.model_id == model_id
     assert plan.spec.model.revision == revision
     assert plan.served_model_name == served_model_name
     assert plan.required_capabilities == ("chat-completions",)
-    assert argv[2] == model_id
+    config = json.loads(argv[3])
+    assert config["model"] == model_id
     for flag, expected_value in (("--revision", revision), ("--tokenizer-revision", revision), *valued_flags):
-        flag_index = argv.index(flag)
-        assert argv[flag_index + 1] == expected_value
-    assert all(switch in argv for switch in switches)
+        assert str(config[flag[2:]]) == expected_value
+    assert all(config[switch[2:]] is True for switch in switches)
     assert "--vllm-factory-plugin" not in argv
 
 
 def test_plan_keeps_one_endpoint_address_and_one_served_model_vocabulary() -> None:
-    plan = compiler.compile_profile(generation(served_model_name="local-generator"), source_revision="test")
+    plan = compiler.compile_profile(generation(served_model_name="local-generator"))
 
     serialized = plan.model_dump(mode="json")
     assert plan.endpoint.url == "http://127.0.0.1:8000/v1"
@@ -195,8 +190,6 @@ def test_compile_command_writes_a_digest_verified_plan(tmp_path: Path) -> None:
                 "compile",
                 "--profile",
                 str(PROFILES / "vllm-local.toml"),
-                "--source-revision",
-                "test",
                 "--output",
                 str(output),
             ]
@@ -209,7 +202,7 @@ def test_compile_command_writes_a_digest_verified_plan(tmp_path: Path) -> None:
 def test_connection_command_emits_only_non_secret_client_inputs(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    plan = compiler.compile_profile(generation(api_key_env="LOCAL_KEY"), source_revision="test")
+    plan = compiler.compile_profile(generation(api_key_env="LOCAL_KEY"))
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(plan.model_dump_json(), encoding="utf-8")
 
@@ -233,62 +226,36 @@ def test_compile_command_translates_non_directory_profile_paths(tmp_path: Path) 
                 "compile",
                 "--profile",
                 str(not_a_directory / "profile.toml"),
-                "--source-revision",
-                "test",
             ]
         )
 
     assert exc_info.value.code == 125
 
 
-def test_compile_command_translates_empty_source_revision() -> None:
-    """Known compiler input errors retain the documented bad-input exit."""
-    with pytest.raises(SystemExit) as exc_info:
-        cli.app(
-            [
-                "compile",
-                "--profile",
-                str(PROFILES / "vllm-local.toml"),
-                "--source-revision",
-                "",
-            ]
-        )
-
-    assert exc_info.value.code == 125
-
-
-def test_generation_argv_keeps_local_vllm_controls_and_omits_defaults() -> None:
+def test_generation_config_preserves_explicit_false_and_omissions() -> None:
     plan = compiler.compile_profile(
-        generation(api_key_env="LOCAL_KEY", tensor_parallel_size=2, max_model_len=4096, eager=True),
-        source_revision="test",
+        generation(api_key_env="LOCAL_KEY", config={"tensor-parallel-size": 2, "enable-prefix-caching": False})
     )
-    argv = plan.command.render_argv()
-    assert argv[:3] == (
-        "tools/inference-service-runtime/.venv/bin/python",
-        "tools/inference_service_compiler/vllm_server.py",
-        "openai/gpt-oss-20b",
-    )
-    assert ("--tensor-parallel-size", "2") == argv[
-        argv.index("--tensor-parallel-size") : argv.index("--tensor-parallel-size") + 2
-    ]
-    assert "--enforce-eager" in argv and "--enable-prefix-caching" not in argv
-    assert plan.command.secret_sources == ("LOCAL_KEY",)
-    assert plan.command.render_environment() == {"VLLM_API_KEY": "<secret:LOCAL_KEY>"}
-    assert plan.command.resolve_environment({"LOCAL_KEY": "secret-value"}) == {"VLLM_API_KEY": "secret-value"}
+    config = json.loads(plan.command.render_argv()[3])
+    assert config["tensor-parallel-size"] == 2
+    assert config["enable-prefix-caching"] is False
+    assert "gpu-memory-utilization" not in config
+    assert "LOCAL_KEY" not in plan.command.model_dump_json()
 
 
 def test_factory_detection_is_task_bounded() -> None:
     valid = models.LocalInferenceServiceSpec(
         task=models.EntityDetection(dynamic_labels=True, offsets=True, scores=True),
         model=models.HuggingFaceModel(model_id="nvidia/gliner-pii", revision="abc"),
-        vllm=models.Vllm(factory=models.VllmFactoryIntegration(plugin="deberta_gliner")),
+        vllm=models.Vllm(
+            factory=models.VllmFactoryIntegration(plugin="deberta_gliner"),
+            config={"runner": "pooling", "io-processor-plugin": "deberta_gliner_io"},
+        ),
         local=models.LocalProcess(),
     )
-    assert "--vllm-factory-plugin" in compiler.compile_profile(valid, source_revision="test").command.render_argv()
+    assert "--vllm-factory-plugin" in compiler.compile_profile(valid).command.render_argv()
     with pytest.raises(compiler.CompilationError, match="does not support"):
-        compiler.compile_profile(
-            generation(factory=models.VllmFactoryIntegration(plugin="deberta_gliner")), source_revision="test"
-        )
+        compiler.compile_profile(generation(factory=models.VllmFactoryIntegration(plugin="deberta_gliner")))
 
 
 def test_factory_plugin_is_closed_at_the_spec_boundary() -> None:
@@ -309,7 +276,7 @@ def test_factory_detection_requires_a_pin_and_characterized_model() -> None:
             local=models.LocalProcess(),
         )
         with pytest.raises(compiler.CompilationError, match=message):
-            compiler.compile_profile(spec, source_revision="test")
+            compiler.compile_profile(spec)
 
 
 def test_removed_domains_are_invalid_profile_fields() -> None:
@@ -327,7 +294,7 @@ def test_removed_domains_are_invalid_profile_fields() -> None:
 
 
 def test_plan_digest_detects_transport_mutation() -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
     changed = json.loads(plan.model_dump_json())
     changed["endpoint"]["port"] = 9000
     with pytest.raises(compiler.PlanIntegrityError, match="plan digest mismatch"):
@@ -344,12 +311,14 @@ def test_lora_is_rendered_as_a_model_artifact() -> None:
         vllm=models.Vllm(),
         local=models.LocalProcess(),
     )
-    argv = compiler.compile_profile(spec, source_revision="test").command.render_argv()
-    assert argv[-3:] == ("--enable-lora", "--lora-modules", "privacy=/models/privacy-adapter")
+    argv = compiler.compile_profile(spec).command.render_argv()
+    config = json.loads(argv[3])
+    assert config["enable-lora"] is True
+    assert config["lora-modules"] == ["privacy=/models/privacy-adapter"]
 
 
 def test_probe_payload_is_task_aware_and_reasoning_safe() -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -369,7 +338,7 @@ def test_probe_payload_is_task_aware_and_reasoning_safe() -> None:
 
 
 def test_probe_uses_bearer_secret_without_serializing_it() -> None:
-    plan = compiler.compile_profile(generation(api_key_env="LOCAL_KEY"), source_revision="test")
+    plan = compiler.compile_profile(generation(api_key_env="LOCAL_KEY"))
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["authorization"] == "Bearer test-secret"
@@ -384,7 +353,7 @@ def test_probe_uses_bearer_secret_without_serializing_it() -> None:
 
 
 def test_probe_rejects_wrong_model_and_status() -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
 
     def wrong_model(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/models":
@@ -399,15 +368,15 @@ def test_probe_rejects_wrong_model_and_status() -> None:
 
 
 def test_plan_integrity_is_enforced_before_launch(tmp_path: Path) -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
     with pytest.raises(compiler.PlanIntegrityError):
         runtime.launch_plan(
-            plan.model_copy(update={"source_revision": "changed"}), secret_values={}, log_directory=tmp_path
+            plan.model_copy(update={"served_model_name": "changed"}), secret_values={}, log_directory=tmp_path
         )
 
 
 def test_status_and_stop_reject_a_reused_pid_without_signaling(monkeypatch: pytest.MonkeyPatch) -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
     handle = models.LocalProcessHandle(
         external_id="1:x", pid=1, process_group_id=1, start_marker="old", stdout_path="out", stderr_path="err"
     )
@@ -428,7 +397,7 @@ def test_status_and_stop_reject_a_reused_pid_without_signaling(monkeypatch: pyte
 
 
 def test_stop_rejects_a_mismatched_process_group_without_signaling() -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
     handle = models.LocalProcessHandle(
         external_id="4242:100",
         pid=4242,
@@ -455,7 +424,7 @@ def test_stop_rejects_a_mismatched_process_group_without_signaling() -> None:
 
 
 def test_launch_records_process_identity_and_resolves_secrets(tmp_path: Path) -> None:
-    plan = compiler.compile_profile(generation(api_key_env="LOCAL_KEY"), source_revision="test")
+    plan = compiler.compile_profile(generation(api_key_env="LOCAL_KEY"))
     probe = models.CapabilityProbeReceipt(
         plan_digest=plan.plan_digest,
         endpoint=plan.endpoint,
@@ -478,7 +447,7 @@ def test_launch_records_process_identity_and_resolves_secrets(tmp_path: Path) ->
 
 
 def test_launch_requires_scoped_ownership_evidence(tmp_path: Path) -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
     handle = models.LocalProcessHandle(
         external_id="4242:100",
         pid=4242,
@@ -551,7 +520,7 @@ def test_launch_ownership_endpoint_requires_and_proves_the_scoped_token() -> Non
 
 
 def test_compatible_preexisting_endpoint_cannot_prove_launch_ownership() -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
     compatible_response = httpx.Response(200, json={"data": [{"id": plan.served_model_name}]})
 
     with (
@@ -564,7 +533,7 @@ def test_compatible_preexisting_endpoint_cannot_prove_launch_ownership() -> None
 
 
 def test_launch_ownership_probe_receives_endpoint_authentication() -> None:
-    plan = compiler.compile_profile(generation(api_key_env="LOCAL_KEY"), source_revision="test")
+    plan = compiler.compile_profile(generation(api_key_env="LOCAL_KEY"))
     probe = launch_receipt(
         plan,
         models.LocalProcessHandle(
@@ -601,7 +570,7 @@ def test_launch_ownership_probe_receives_endpoint_authentication() -> None:
 
 @pytest.mark.parametrize("failure", [RuntimeError("unexpected readiness failure"), KeyboardInterrupt()])
 def test_post_spawn_readiness_failures_always_clean_up(tmp_path: Path, failure: BaseException) -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
     handle = models.LocalProcessHandle(
         external_id="4242:100",
         pid=4242,
@@ -623,7 +592,7 @@ def test_post_spawn_readiness_failures_always_clean_up(tmp_path: Path, failure: 
 
 
 def test_launch_command_stops_service_when_receipt_write_fails(tmp_path: Path) -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(plan.model_dump_json(), encoding="utf-8")
     handle = models.LocalProcessHandle(
@@ -649,7 +618,7 @@ def test_launch_command_stops_service_when_receipt_write_fails(tmp_path: Path) -
 
 
 def test_launch_command_rejects_a_directory_receipt_target_before_launch(tmp_path: Path) -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(plan.model_dump_json(), encoding="utf-8")
     output = tmp_path / "receipt"
@@ -676,7 +645,7 @@ def test_launch_command_rejects_a_directory_receipt_target_before_launch(tmp_pat
 
 
 def test_launch_refuses_an_unmarked_process_and_cleans_up(tmp_path: Path) -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
     process = mock.Mock(pid=4242)
     process.poll.return_value = 0
     with (
@@ -693,7 +662,7 @@ def test_launch_refuses_an_unmarked_process_and_cleans_up(tmp_path: Path) -> Non
 
 
 def test_launch_refuses_an_unmarked_process_when_cleanup_cannot_reap(tmp_path: Path) -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
     process = mock.Mock(pid=4242)
     process.poll.return_value = None
     process.wait.side_effect = (
@@ -714,7 +683,7 @@ def test_launch_refuses_an_unmarked_process_when_cleanup_cannot_reap(tmp_path: P
 
 
 def test_missing_secret_fails_before_process_start(tmp_path: Path) -> None:
-    plan = compiler.compile_profile(generation(api_key_env="LOCAL_KEY"), source_revision="test")
+    plan = compiler.compile_profile(generation(api_key_env="LOCAL_KEY"))
     with mock.patch.object(runtime.subprocess, "Popen") as popen:
         with pytest.raises(runtime.RuntimeEffectError) as exc_info:
             runtime.launch_plan(plan, secret_values={}, log_directory=tmp_path)
@@ -724,7 +693,7 @@ def test_missing_secret_fails_before_process_start(tmp_path: Path) -> None:
 
 
 def test_status_stop_and_forced_cleanup_are_versioned(tmp_path: Path) -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
     handle = models.LocalProcessHandle(
         external_id="4242:100",
         pid=4242,
@@ -750,7 +719,7 @@ def test_status_stop_and_forced_cleanup_are_versioned(tmp_path: Path) -> None:
 
 
 def test_stop_forces_a_process_group_after_its_leader_exits(tmp_path: Path) -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
     handle = models.LocalProcessHandle(
         external_id="4242:100",
         pid=4242,
@@ -796,7 +765,7 @@ def test_process_stat_handles_spaces_and_zombies(tmp_path: Path) -> None:
 
 
 def test_failed_readiness_cleans_up_the_known_process(tmp_path: Path) -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
     process = mock.Mock(pid=4242)
     failure = runtime.RuntimeEffectError(models.RuntimeDiagnostic(code="probe-failed", message="not ready"))
     group = SimulatedProcessGroup(process_group_id=4242, exit_signal=runtime.signal.SIGTERM)
@@ -816,7 +785,7 @@ def test_failed_readiness_cleans_up_the_known_process(tmp_path: Path) -> None:
 
 
 def test_readiness_stops_when_the_managed_process_exits(tmp_path: Path) -> None:
-    plan = compiler.compile_profile(generation(), source_revision="test")
+    plan = compiler.compile_profile(generation())
     handle = models.LocalProcessHandle(
         external_id="4242:100",
         pid=4242,
@@ -852,7 +821,7 @@ def test_launch_uses_independent_interpreter_and_cleans_python_environment(
     spec = spec.model_copy(
         update={"local": models.LocalProcess(port=port, startup_timeout_seconds=10, shutdown_timeout_seconds=0.1)}
     )
-    plan = compiler.compile_profile(spec, source_revision="test")
+    plan = compiler.compile_profile(spec)
     monkeypatch.chdir(tmp_path)
     for variable in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"):
         monkeypatch.setenv(variable, str(tmp_path / "foreign-python"))
@@ -870,6 +839,7 @@ def test_launch_uses_independent_interpreter_and_cleans_python_environment(
             "VIRTUAL_ENV": None,
             "CUDA_VISIBLE_DEVICES": "0",
             "HF_HOME": str(tmp_path / "models"),
+            "VLLM_API_KEY": None,
         }
         assert receipt.probe.passed
         assert runtime.is_handle_running(receipt.handle)
@@ -877,3 +847,98 @@ def test_launch_uses_independent_interpreter_and_cleans_python_environment(
         runtime.stop_run(receipt)
         os.waitpid(receipt.handle.pid, 0)
     assert not runtime.is_handle_running(receipt.handle)
+
+
+def test_real_cli_compile_validate_connection_and_tampered_plan(tmp_path: Path) -> None:
+    """The source CLI validates through the configured interpreter and rejects modified plans."""
+    import subprocess
+
+    server = tmp_path / "tools/inference_service_compiler/vllm_server.py"
+    server.parent.mkdir(parents=True)
+    shutil.copyfile(Path(__file__).parent / "fixtures/inference_process.py", server)
+    profile = tmp_path / "profile.toml"
+    profile.write_text(
+        '[task]\nkind = "generation"\n[model]\nmodel_id = "model"\n'
+        f'[vllm]\npython_executable = "{sys.executable}"\n'
+        "[vllm.config]\nenable-prefix-caching = false\n[local]\nport = 8123\n"
+    )
+    plan_path = tmp_path / "plan.json"
+
+    def call(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(CLI), *args], cwd=tmp_path, text=True, capture_output=True, check=False
+        )
+
+    result = call("compile", "--profile", str(profile), "--output", str(plan_path))
+    assert result.returncode == 0, result.stderr
+    assert call("validate", "--plan", str(plan_path)).returncode == 0
+    result = call("connection", "--plan", str(plan_path))
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["model"] == "model"
+    plan = json.loads(plan_path.read_text())
+    plan["spec"]["vllm"]["config"]["enable-prefix-caching"] = True
+    plan_path.write_text(json.dumps(plan))
+    assert call("validate", "--plan", str(plan_path)).returncode == 125
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="managed process identity uses Linux /proc")
+def test_real_cli_authenticated_lifecycle(tmp_path: Path) -> None:
+    """The CLI delivers credentials only to the child and cleans up its owned process."""
+    import subprocess
+
+    serving = tmp_path / "serving"
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(serving)
+    server = tmp_path / "tools/inference_service_compiler/vllm_server.py"
+    server.parent.mkdir(parents=True)
+    shutil.copyfile(Path(__file__).parent / "fixtures/inference_process.py", server)
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    profile = tmp_path / "profile.toml"
+    profile.write_text(
+        '[task]\nkind = "generation"\n[model]\nmodel_id = "openai/gpt-oss-20b"\n'
+        f'[vllm]\npython_executable = "{serving / "bin/python"}"\napi_key_env = "LOCAL_KEY"\n'
+        f"[local]\nport = {port}\nstartup_timeout_seconds = 10\nshutdown_timeout_seconds = 0.1\n"
+    )
+    plan, receipt = tmp_path / "plan.json", tmp_path / "receipt.json"
+    env = os.environ | {"LOCAL_KEY": "private-secret", "PYTHONPATH": "/foreign", "VIRTUAL_ENV": "/foreign"}
+
+    def call(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(CLI), *args], cwd=tmp_path, text=True, capture_output=True, env=env, check=False
+        )
+
+    result = call("compile", "--profile", str(profile), "--output", str(plan))
+    assert result.returncode == 0, result.stderr
+    assert call("validate", "--plan", str(plan)).returncode == 0
+    result = call("launch", "--plan", str(plan), "--output", str(receipt), "--log-directory", str(tmp_path / "logs"))
+    assert result.returncode == 0, result.stderr
+    try:
+        observed = json.loads((tmp_path / "observed.json").read_text())
+        assert observed["prefix"] == str(serving)
+        assert observed["environment"]["VLLM_API_KEY"] == "private-secret"
+        assert observed["environment"]["PYTHONPATH"] is None
+        assert "private-secret" not in plan.read_text() + receipt.read_text()
+        result = call("status", "--receipt", str(receipt))
+        assert json.loads(result.stdout)["state"] == "running"
+    finally:
+        result = call("stop", "--receipt", str(receipt))
+        assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["outcome"] in ("terminated", "forced")
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["host", "port", "model", "revision", "tokenizer_revision", "served-model-name", "api-key", "hf-token", "config"],
+)
+def test_compiler_rejects_overrides_of_managed_fields(key: str) -> None:
+    with pytest.raises(compiler.CompilationError, match="owned by the profile"):
+        compiler.compile_profile(generation(config={key: "conflict"}))
+
+
+def test_compiler_rejects_factory_conflicting_settings() -> None:
+    spec = load_profile(PROFILES / "nvidia-gliner.toml")
+    config = spec.vllm.config | {"runner": "generate"}
+    spec = spec.model_copy(update={"vllm": spec.vllm.model_copy(update={"config": config})})
+    with pytest.raises(compiler.CompilationError, match="Factory requires runner"):
+        compiler.compile_profile(spec)

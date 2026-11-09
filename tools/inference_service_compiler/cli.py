@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import functools
 import os
+import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
@@ -17,7 +18,7 @@ import cyclopts
 from pydantic import BaseModel, ValidationError
 
 from inference_service_compiler.compiler import CompilationError, PlanIntegrityError, compile_profile, load_plan
-from inference_service_compiler.models import ConnectionInfo, LaunchReceipt
+from inference_service_compiler.models import ConnectionInfo, LaunchReceipt, RuntimeDiagnostic
 from inference_service_compiler.profiles import load_profile
 from inference_service_compiler.runtime import (
     RuntimeEffectError,
@@ -52,7 +53,8 @@ def command_errors(function: Callable[P, R]) -> Callable[P, R]:
             UnicodeDecodeError,
             ValidationError,
         ) as exc:
-            sys.stderr.write(f"error: {exc}\n")
+            diagnostic = getattr(exc, "diagnostic", None)
+            sys.stderr.write(f"error: {diagnostic.model_dump_json() if diagnostic is not None else exc}\n")
             raise SystemExit(125) from exc
 
     return wrapped
@@ -63,13 +65,30 @@ def command_errors(function: Callable[P, R]) -> Callable[P, R]:
 def compile_plan(
     *,
     profile: Path,
-    source_revision: str,
     output: Path | None = None,
 ) -> None:
     """Compile a v2 TOML profile without performing runtime effects."""
     parsed = load_profile(profile)
-    plan = compile_profile(parsed, source_revision=source_revision)
+    plan = compile_profile(parsed)
     write_json(plan, output)
+
+
+@app.command
+@command_errors
+def validate(*, plan: Path) -> None:
+    """Validate vLLM arguments in the configured serving environment without starting a server."""
+    parsed = load_plan(plan.read_text(encoding="utf-8"))
+    argv = (*parsed.command.render_argv(), "--validate")
+    environment = os.environ.copy()
+    for variable in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"):
+        environment.pop(variable, None)
+    result = subprocess.run(argv, cwd=parsed.command.working_directory, env=environment, check=False)
+    if result.returncode:
+        raise RuntimeEffectError(
+            RuntimeDiagnostic(
+                code="validation-failed", message=f"serving interpreter validation failed (exit {result.returncode})"
+            )
+        )
 
 
 @app.command
@@ -98,7 +117,8 @@ def launch(
     """Launch a compiled plan and record its observed handle and readiness."""
     _validate_output_destination(output)
     parsed = load_plan(plan.read_text(encoding="utf-8"))
-    secret_values = {name: os.environ[name] for name in parsed.command.secret_sources if name in os.environ}
+    source = parsed.spec.vllm.api_key_env
+    secret_values = {source: os.environ[source]} if source is not None and source in os.environ else {}
     receipt = launch_plan(parsed, secret_values=secret_values, log_directory=log_directory)
     try:
         write_json(receipt, output)

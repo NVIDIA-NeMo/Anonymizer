@@ -8,16 +8,16 @@ import argparse
 import hashlib
 import importlib
 import importlib.util
+import json
 import os
 import sys
+import tempfile
 from argparse import Namespace
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Literal
 
 from inference_service_compiler.lifecycle import LAUNCH_OWNERSHIP_MIDDLEWARE
-from inference_service_compiler.models import FactoryPlugin, parse_factory_plugin
+from inference_service_compiler.models import parse_factory_plugin
 from inference_service_compiler.vllm_factory_integration import (
     io_processor_for,
     prepare_model,
@@ -25,157 +25,6 @@ from inference_service_compiler.vllm_factory_integration import (
 
 ANONYMIZER_CHAT_MIDDLEWARE = "inference_service_compiler.vllm_factory_adapter.anonymizer_chat_compatibility"
 MINIMUM_VLLM_PYTHON = (3, 12)
-
-
-@dataclass(frozen=True, slots=True)
-class VllmServerParameters:
-    """Bounded settings accepted by the source-owned vLLM server process."""
-
-    model: str
-    host: str
-    port: int
-    revision: str | None = None
-    tokenizer_revision: str | None = None
-    served_model_name: str | None = None
-    reasoning_parser: str | None = None
-    tensor_parallel_size: int | None = None
-    gpu_memory_utilization: float | None = None
-    max_model_len: int | None = None
-    max_num_seqs: int | None = None
-    enforce_eager: bool = False
-    enable_prefix_caching: bool = False
-    async_scheduling: bool = False
-    mamba_backend: Literal["triton", "flashinfer"] | None = None
-    mamba_ssm_cache_dtype: Literal["auto", "float32", "float16", "bfloat16"] = "auto"
-    enable_mamba_cache_stochastic_rounding: bool = False
-    mamba_cache_philox_rounds: int = 0
-    lora_module: str | None = None
-    vllm_factory_plugin: FactoryPlugin | None = None
-    prepared_model_root: str = "/tmp/anonymizer-vllm-factory"
-
-
-def parse_server_parameters(argv: Sequence[str]) -> VllmServerParameters:
-    """Parse the compiler's bounded process contract without using vLLM's CLI."""
-    parser = argparse.ArgumentParser(description="Anonymizer-managed vLLM server")
-    parser.add_argument("model")
-    parser.add_argument("--host", required=True)
-    parser.add_argument("--port", required=True, type=int)
-    parser.add_argument("--revision")
-    parser.add_argument("--tokenizer-revision")
-    parser.add_argument("--served-model-name")
-    parser.add_argument("--reasoning-parser")
-    parser.add_argument("--tensor-parallel-size", type=int)
-    parser.add_argument("--gpu-memory-utilization", type=float)
-    parser.add_argument("--max-model-len", type=int)
-    parser.add_argument("--max-num-seqs", type=int)
-    parser.add_argument("--enforce-eager", action="store_true")
-    parser.add_argument("--enable-prefix-caching", action="store_true")
-    parser.add_argument("--async-scheduling", action="store_true")
-    parser.add_argument("--mamba-backend", choices=("triton", "flashinfer"))
-    parser.add_argument(
-        "--mamba-ssm-cache-dtype",
-        choices=("auto", "float32", "float16", "bfloat16"),
-        default="auto",
-    )
-    parser.add_argument("--enable-mamba-cache-stochastic-rounding", action="store_true")
-    parser.add_argument("--mamba-cache-philox-rounds", type=int, default=0)
-    parser.add_argument("--enable-lora", action="store_true")
-    parser.add_argument("--lora-modules")
-    parser.add_argument(
-        "--vllm-factory-plugin",
-        choices=("deberta_gliner", "deberta_gliner2"),
-    )
-    parser.add_argument("--prepared-model-root", default="/tmp/anonymizer-vllm-factory")
-    parsed = parser.parse_args(list(argv))
-    if parsed.enable_lora != (parsed.lora_modules is not None):
-        parser.error("--enable-lora and --lora-modules must be used together")
-    return VllmServerParameters(
-        model=parsed.model,
-        host=parsed.host,
-        port=parsed.port,
-        revision=parsed.revision,
-        tokenizer_revision=parsed.tokenizer_revision,
-        served_model_name=parsed.served_model_name,
-        reasoning_parser=parsed.reasoning_parser,
-        tensor_parallel_size=parsed.tensor_parallel_size,
-        gpu_memory_utilization=parsed.gpu_memory_utilization,
-        max_model_len=parsed.max_model_len,
-        max_num_seqs=parsed.max_num_seqs,
-        enforce_eager=parsed.enforce_eager,
-        enable_prefix_caching=parsed.enable_prefix_caching,
-        async_scheduling=parsed.async_scheduling,
-        mamba_backend=parsed.mamba_backend,
-        mamba_ssm_cache_dtype=parsed.mamba_ssm_cache_dtype,
-        enable_mamba_cache_stochastic_rounding=parsed.enable_mamba_cache_stochastic_rounding,
-        mamba_cache_philox_rounds=parsed.mamba_cache_philox_rounds,
-        lora_module=parsed.lora_modules,
-        vllm_factory_plugin=(
-            parse_factory_plugin(parsed.vllm_factory_plugin) if parsed.vllm_factory_plugin is not None else None
-        ),
-        prepared_model_root=parsed.prepared_model_root,
-    )
-
-
-def build_server_arguments(parameters: VllmServerParameters) -> Namespace:
-    """Construct vLLM frontend and async-engine configs through its Python API."""
-    arg_utils = importlib.import_module("vllm.engine.arg_utils")
-    mamba_config = importlib.import_module("vllm.config.mamba")
-    cli_args = importlib.import_module("vllm.entrypoints.launchers.cli_args")
-    model_protocol = importlib.import_module("vllm.entrypoints.openai.models.protocol")
-
-    lora_modules = None
-    if parameters.lora_module is not None:
-        name, separator, path = parameters.lora_module.partition("=")
-        if not separator or not name or not path:
-            raise ValueError("LoRA module must use the form NAME=PATH")
-        lora_modules = [model_protocol.LoRAModulePath(name=name, path=path)]
-
-    factory_plugin = parameters.vllm_factory_plugin
-    engine = arg_utils.AsyncEngineArgs(
-        model=parameters.model,
-        revision=parameters.revision,
-        tokenizer_revision=parameters.tokenizer_revision,
-        served_model_name=[parameters.served_model_name] if parameters.served_model_name is not None else None,
-        reasoning_parser=parameters.reasoning_parser or "",
-        tensor_parallel_size=parameters.tensor_parallel_size or 1,
-        gpu_memory_utilization=parameters.gpu_memory_utilization or 0.9,
-        max_num_seqs=parameters.max_num_seqs,
-        enforce_eager=parameters.enforce_eager,
-        enable_lora=lora_modules is not None,
-        runner="pooling" if factory_plugin is not None else "auto",
-        trust_remote_code=factory_plugin is not None,
-        dtype="bfloat16" if factory_plugin is not None else "auto",
-        enable_prefix_caching=False if factory_plugin is not None else parameters.enable_prefix_caching,
-        enable_chunked_prefill=False if factory_plugin is not None else None,
-        io_processor_plugin=io_processor_for(factory_plugin) if factory_plugin is not None else None,
-        async_scheduling=parameters.async_scheduling,
-        mamba_backend=mamba_config.MambaBackendEnum[(parameters.mamba_backend or "triton").upper()],
-        mamba_ssm_cache_dtype=parameters.mamba_ssm_cache_dtype,
-        enable_mamba_cache_stochastic_rounding=parameters.enable_mamba_cache_stochastic_rounding,
-        mamba_cache_philox_rounds=parameters.mamba_cache_philox_rounds,
-    )
-    if parameters.max_model_len is not None:
-        engine.max_model_len = parameters.max_model_len
-    middleware = [LAUNCH_OWNERSHIP_MIDDLEWARE]
-    if factory_plugin is not None:
-        middleware.append(ANONYMIZER_CHAT_MIDDLEWARE)
-    frontend = cli_args.FrontendArgs(
-        host=parameters.host,
-        port=parameters.port,
-        lora_modules=lora_modules,
-        middleware=middleware,
-    )
-    values = vars(engine) | vars(frontend)
-    values.update(
-        model_tag=None,
-        headless=False,
-        api_server_count=1,
-        config=None,
-        grpc=False,
-    )
-    arguments = Namespace(**values)
-    cli_args.validate_parsed_serve_args(arguments)
-    return arguments
 
 
 def expose_interpreter_tools() -> None:
@@ -248,42 +97,71 @@ def configure_flashinfer_toolchain() -> None:
     _prepend_environment_path("LD_LIBRARY_PATH", cuda_root / "lib")
 
 
-def prepare_runtime_environment(parameters: VllmServerParameters) -> VllmServerParameters:
-    """Prepare the selected stock vLLM or vLLM Factory runtime."""
+def load_and_validate_arguments(options: Namespace) -> Namespace:
+    """Initialize plugin discovery and delegate configuration parsing to vLLM."""
+    config = json.loads(options.config_json)
+    plugin = parse_factory_plugin(options.vllm_factory_plugin) if options.vllm_factory_plugin else None
     if sys.version_info < MINIMUM_VLLM_PYTHON:
         raise RuntimeError("vLLM 0.29.0 local serving requires Python 3.12 or later")
     expose_interpreter_tools()
-    os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
-    if parameters.mamba_backend == "flashinfer":
-        configure_flashinfer_toolchain()
-    plugin = parameters.vllm_factory_plugin
-    if plugin is None:
-        return parameters
-    os.environ["VLLM_PLUGINS"] = f"{plugin},{io_processor_for(plugin)}"
-    os.environ["ANONYMIZER_VLLM_FACTORY_PLUGIN"] = plugin
-    prepared_model = prepare_model(
-        model_id=parameters.model,
-        revision=parameters.revision,
-        plugin=plugin,
-        prepared_model_root=parameters.prepared_model_root,
-    )
-    public_name = parameters.served_model_name or parameters.model
-    return replace(
-        parameters,
-        model=prepared_model,
-        revision=None,
-        tokenizer_revision=None,
-        served_model_name=public_name,
-    )
+    if plugin is not None:
+        os.environ["VLLM_PLUGINS"] = f"{plugin},{io_processor_for(plugin)}"
+        os.environ["ANONYMIZER_VLLM_FACTORY_PLUGIN"] = plugin
+    middleware = config.get("middleware", [])
+    if not isinstance(middleware, list):
+        raise ValueError("middleware must be a list")
+    config["middleware"] = [*middleware, LAUNCH_OWNERSHIP_MIDDLEWARE]
+    if plugin is not None:
+        config["middleware"].append(ANONYMIZER_CHAT_MIDDLEWARE)
+    cli_args = importlib.import_module("vllm.entrypoints.launchers.cli_args")
+    parser_class = importlib.import_module("vllm.utils.argparse_utils").FlexibleArgumentParser
+    parser = cli_args.make_arg_parser(parser_class())
+    # vLLM's YAML loader discards false options without a negated flag. Reject
+    # unknown options and values it cannot faithfully express.
+    for key, value in config.items():
+        if value is False:
+            action = parser._option_string_actions.get(f"--{key}")
+            if action is None:
+                raise ValueError(f"unknown vLLM option {key!r}")
+            if f"--no-{key}" not in parser._option_string_actions and action.default is not False:
+                raise ValueError(f"vLLM cannot express false for option {key!r}")
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", encoding="utf-8") as config_file:
+        json.dump(config, config_file)
+        config_file.flush()
+        arguments = parser.parse_args(["--config", config_file.name])
+    if arguments.model_tag is not None:
+        arguments.model = arguments.model_tag
+    cli_args.validate_parsed_serve_args(arguments)
+    return arguments
 
 
 def run_server(argv: Sequence[str]) -> None:
-    """Construct and run vLLM's Python-owned server lifecycle."""
-    parameters = prepare_runtime_environment(parse_server_parameters(argv))
+    """Validate with vLLM's parser, then optionally prepare and run the server."""
+    bootstrap = argparse.ArgumentParser()
+    bootstrap.add_argument("--config-json", required=True)
+    bootstrap.add_argument("--vllm-factory-plugin", choices=("deberta_gliner", "deberta_gliner2"))
+    bootstrap.add_argument("--prepared-model-root", default="/tmp/anonymizer-vllm-factory")
+    bootstrap.add_argument("--validate", action="store_true")
+    options = bootstrap.parse_args(argv)
+    arguments = load_and_validate_arguments(options)
+    if options.validate:
+        return
+    if getattr(arguments.mamba_backend, "value", arguments.mamba_backend) == "flashinfer":
+        configure_flashinfer_toolchain()
+    if options.vllm_factory_plugin is not None:
+        plugin = parse_factory_plugin(options.vllm_factory_plugin)
+        public_name = arguments.served_model_name or [arguments.model]
+        arguments.model = prepare_model(
+            model_id=arguments.model,
+            revision=arguments.revision,
+            plugin=plugin,
+            prepared_model_root=options.prepared_model_root,
+        )
+        arguments.revision = None
+        arguments.tokenizer_revision = None
+        arguments.served_model_name = public_name
     uvloop = importlib.import_module("uvloop")
     api_server = importlib.import_module("vllm.entrypoints.launchers.api_server.entry")
     api_utils = importlib.import_module("vllm.entrypoints.serve.utils.api_utils")
-
     api_utils.cli_env_setup()
-    arguments = build_server_arguments(parameters)
     uvloop.run(api_server.run_server(arguments))

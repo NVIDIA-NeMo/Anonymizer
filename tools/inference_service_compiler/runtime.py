@@ -98,16 +98,18 @@ def launch_plan(
 ) -> LaunchReceipt:
     """Launch a checksummed plan and record its observed handle and readiness."""
     verify_plan(plan)
-    try:
-        command_environment = plan.command.resolve_environment(secret_values)
-    except ValueError as exc:
-        raise RuntimeEffectError(RuntimeDiagnostic(code="missing-secret", message=str(exc))) from exc
+    source = plan.spec.vllm.api_key_env
+    if source is not None and source not in secret_values:
+        raise RuntimeEffectError(
+            RuntimeDiagnostic(code="missing-secret", message=f"secret environment variable {source!r} is not resolved")
+        )
     argv = plan.command.render_argv()
     environment = os.environ.copy()
     # The configured interpreter owns its imports, even when the controller uses another environment.
     for variable in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"):
         environment.pop(variable, None)
-    environment.update(command_environment)
+    if source is not None:
+        environment["VLLM_API_KEY"] = secret_values[source]
     launch_token = secrets.token_urlsafe(32)
     environment[LAUNCH_TOKEN_ENVIRONMENT_VARIABLE] = launch_token
     log_directory.mkdir(parents=True, exist_ok=True)
