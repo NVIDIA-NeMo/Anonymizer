@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import random
+from contextlib import nullcontext
 from typing import Literal
 from unittest.mock import Mock
 
@@ -23,6 +24,7 @@ from anonymizer.engine.replace.llm_replace_workflow import (
     _fold_replacement_maps,
 )
 from anonymizer.engine.schemas.detection import EntitiesByValueSchema
+from anonymizer.measurement import measurement_session
 
 
 def _positional(dataframe: pd.DataFrame, failed_records: list) -> WorkflowRunResult:
@@ -498,3 +500,59 @@ def test_fold_never_emits_a_colliding_substitute(consistency: Literal["record", 
             run_wide.setdefault(value, set()).update(keys)
     if consistency == "run":
         assert all(len(keys) == 1 for keys in run_wide.values()), run_wide
+
+
+_FALLBACKS = _maps(
+    [("first_name", "Alice", "Maya"), ("first_name", "ALICE", "NORA"), ("first_name", "Bob", "Maya")],
+    [("city", "Paris", "Lyon"), ("city", "LYON", "Nice")],
+)
+
+
+@pytest.mark.parametrize("measured", [True, False])
+@pytest.mark.parametrize("consistency", ["record", "run"])
+def test_generate_map_only_records_fold_fallbacks(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+    consistency: Literal["record", "run"],
+    measured: bool,
+) -> None:
+    entities = [
+        {"entities_by_value": [{"value": e["original"], "labels": [e["label"]]} for e in m["replacements"]]}
+        for m in _FALLBACKS
+    ]
+    adapter = Mock()
+    adapter.run_workflow.return_value = _positional(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["a", "b"],
+                COL_ENTITIES_BY_VALUE: entities,
+                "tagged_text": ["a", "b"],
+                "_anonymizer_row_order": [0, 1],
+                COL_REPLACEMENT_MAP: _FALLBACKS,
+            }
+        ),
+        failed_records=[],
+    )
+    input_df = pd.DataFrame({COL_TEXT: ["a", "b"], COL_ENTITIES_BY_VALUE: entities, "tagged_text": ["a", "b"]})
+    with measurement_session() if measured else nullcontext() as collector:
+        result = LlmReplaceWorkflow(adapter=adapter).generate_map_only(
+            input_df,
+            model_configs=stub_model_configs,
+            selected_models=stub_replace_model_selection,
+            consistency=consistency,
+        )
+
+    assert result.dataframe[COL_REPLACEMENT_MAP].tolist() == _fold_replacement_maps(_FALLBACKS, consistency)
+    if collector is None:
+        return
+    [stage] = [r for r in collector.records if r.get("stage") == "LlmReplaceWorkflow.fold"]
+    assert {k: stage[k] for k in ("consistency", "input_row_count", "entry_count", "records_with_placeholder")} == {
+        "consistency": consistency,
+        "input_row_count": 2,
+        "entry_count": 5,
+        "records_with_placeholder": 2,
+    }
+    assert stage["fallback_counts"] == {
+        "city": {"placeholder_protected": 1},
+        "first_name": {"own": 1, "placeholder_taken": 1},
+    }
