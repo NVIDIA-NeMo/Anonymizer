@@ -91,7 +91,7 @@ with native_runtime(device="auto") as session:
 ```
 
 `device="auto"` selects CUDA, MPS, or CPU. You can also pass `"cuda"`, `"mps"`, or `"cpu"`.
-Use the client while the context is open; a client backed by a context-owned process is no longer valid after it closes. `session.endpoint` exposes the `GlinerEndpoint` connection. Nested contexts share the runtime until the last context exits. A context can borrow an existing singleton without stopping it on exit.
+Use the client while the context is open; a client backed by a context-owned process is no longer valid after it closes. `session.endpoint` exposes the `GlinerEndpoint` connection. Nested contexts share the runtime until the last context exits. A context can borrow an existing singleton on the same device without stopping it on exit. A device mismatch raises an error, and explicit shutdown is unavailable while a context is active.
 
 For compatibility, `create_anonymizer(gliner=NativeGliner(device="auto"))` retains the process-global singleton behavior and stops it at interpreter exit.
 
