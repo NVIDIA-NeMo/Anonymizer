@@ -1563,6 +1563,17 @@ def test_conflicting_detector_declarations_rejected_before_detection(stub_input:
     detection_wf.run.assert_not_called()
 
 
+def test_detection_scope_is_immutable_and_hashable(stub_input: AnonymizerInput) -> None:
+    anonymizer, _, _, _ = _make_anonymizer()
+
+    scope = anonymizer.preview(config=AnonymizerConfig(replace=Redact()), data=stub_input).detection_scope
+
+    assert scope is not None
+    hash(scope)
+    assert not hasattr(scope.effective_labels, "append")
+    assert not hasattr(scope.effective_labels, "clear")
+
+
 def test_matching_detector_declaration_runs_and_reports_scope(stub_input: AnonymizerInput) -> None:
     detect = {
         "entity_labels": ["first_name", "email"],
@@ -1576,6 +1587,6 @@ def test_matching_detector_declaration_runs_and_reports_scope(stub_input: Anonym
     result = anonymizer.preview(config=AnonymizerConfig(detect=detect, replace=Redact()), data=stub_input)
 
     assert result.detection_scope is not None
-    assert result.detection_scope.effective_labels == ["first_name"]
-    assert result.detection_scope.excluded_labels == ["email"]
+    assert result.detection_scope.effective_labels == ("first_name",)
+    assert result.detection_scope.excluded_labels == ("email",)
     assert result.detection_scope.augmentation_may_add_labels is False

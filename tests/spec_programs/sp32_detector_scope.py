@@ -25,9 +25,13 @@ def program() -> list[dict[str, str]]:
     # E32.1 an effective label outside a declared fixed label set is rejected before the detector runs.
     def e1() -> tuple[bool, str]:
         detector = Mock(spec=EntityDetectionWorkflow)
-        detect = Detect(entity_labels=["first_name", "email"], detector_labels=["first_name"], detector_labels_fixed=True)
+        detect = Detect(
+            entity_labels=["first_name", "email"], detector_labels=["first_name"], detector_labels_fixed=True
+        )
         try:
-            Anonymizer(detection_workflow=detector).run(config=AnonymizerConfig(detect=detect, replace=Redact()), data=data)
+            Anonymizer(detection_workflow=detector).run(
+                config=AnonymizerConfig(detect=detect, replace=Redact()), data=data
+            )
         except InvalidConfigError:
             return detector.run.call_count == 0, f"detector calls={detector.run.call_count}"
         return False, "no InvalidConfigError"
@@ -45,8 +49,8 @@ def program() -> list[dict[str, str]]:
         scopes.append(anonymizer.preview(config=config, data=data, num_records=1).detection_scope)
         ok = all(
             s is not None
-            and s.effective_labels == sorted(DEFAULT_ENTITY_LABELS)
-            and s.excluded_labels == []
+            and s.effective_labels == tuple(sorted(DEFAULT_ENTITY_LABELS))
+            and s.excluded_labels == ()
             and s.gliner_threshold == 0.3
             and s.augmentation_may_add_labels is True
             for s in scopes

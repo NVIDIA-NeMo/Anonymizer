@@ -101,8 +101,8 @@ class DetectionScope(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    effective_labels: list[str] = Field(description="Labels detection looked for, after exclusions.")
-    excluded_labels: list[str] = Field(description="Configured exclusions (normalized).")
+    effective_labels: tuple[str, ...] = Field(description="Labels detection looked for, after exclusions.")
+    excluded_labels: tuple[str, ...] = Field(description="Configured exclusions (normalized).")
     gliner_threshold: float = Field(description="GLiNER detection confidence threshold.")
     augmentation_may_add_labels: bool = Field(
         description=(
