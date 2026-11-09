@@ -104,6 +104,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     out_dir = Path(args.out)
+    if out_dir.exists() and any(out_dir.iterdir()):
+        print(f"--out {out_dir} is not empty; choose a new or empty directory", file=sys.stderr)
+        return 2
     out_dir.mkdir(parents=True, exist_ok=True)
 
     import anonymizer

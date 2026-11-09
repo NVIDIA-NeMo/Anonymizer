@@ -47,9 +47,8 @@ def _entity_values_from_cells(cells: list[Any]) -> set[str]:
 
     Handles both forms the column can arrive in: a pandas ArrowDtype struct (from
     reading result.parquet with pyarrow -- already plain Python dicts/lists via
-    to_pylist()) and a stringified dict/list (from reading a CSV -- JSON first, then a
-    best-effort `ast.literal_eval` fallback for the numpy-repr form pandas sometimes
-    produces, e.g. `array([...])`).
+    to_pylist()) and a stringified dict/list (from reading a CSV -- parsed as JSON or a
+    Python literal only; any other cell yields no entities).
     """
     values: set[str] = set()
     for cell in cells:
@@ -59,7 +58,7 @@ def _entity_values_from_cells(cells: list[Any]) -> set[str]:
                 parsed = json.loads(cell)
             except (json.JSONDecodeError, TypeError):
                 try:
-                    parsed = ast.literal_eval(re.sub(r"\barray\(", "list(", cell))
+                    parsed = ast.literal_eval(cell)
                 except (ValueError, SyntaxError):
                     parsed = {}
         entities = parsed.get("entities") if isinstance(parsed, dict) else parsed

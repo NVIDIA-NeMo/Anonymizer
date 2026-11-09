@@ -49,7 +49,7 @@ Files:
 3. Export the gateway provider key named in `providers.yaml` (`NVIDIA_INFERENCE_API_KEY`), and
    `ANONYMIZER_LOCAL_GLINER2_TOKEN` if your detector server requires one.
 4. Create a second environment with the released wheel, pinned to the **same** `pandas` and
-   `data-designer` versions as the branch (see "Version pin" below) — otherwise dtype and behavior
+   `data-designer` versions as the branch (see "DataDesigner version" below) — otherwise dtype and behavior
    differences you see may be dependency drift, not a code difference.
 
 ## Model IDs
@@ -226,14 +226,13 @@ string, `category`, `large_string`, zero rows, and a row with odd passthrough-co
 - **`AnonymizerInput.id_column`** appears only in `trace_dataframe`, not in `result.dataframe` — by
   design, not a bug to report.
 
-## Version pin
+## DataDesigner version
 
-This branch pins `data-designer` to an exact version
-(`src/anonymizer/engine/ndd/_graph_requests.py` raises `AnonymizerWorkflowError` if
-`importlib.metadata.version("data-designer") != "0.9.4"`). When you set up the two comparison
-environments, make sure both install `data-designer==0.9.4` — a fresh `uv sync` / `pip install` that
-resolves a newer `data-designer` will make this branch fail every route after detection, which is a
-dependency-resolution artifact, not necessarily a code regression.
+This branch supports the `data-designer` range declared as `SUPPORTED_DATA_DESIGNER_RANGE`
+(`>=0.10.0,<0.11`) in `src/anonymizer/engine/ndd/_graph_requests.py`. The code does not check the
+version number; before any DataDesigner work it checks that the private DataDesigner hooks it relies
+on exist, and raises `AnonymizerWorkflowError` naming a missing hook. When you set up the two
+comparison environments, install the same `data-designer` version in both, within that range.
 
 ## Claims not independently verified in this pass
 
