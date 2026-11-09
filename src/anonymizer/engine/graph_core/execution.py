@@ -266,6 +266,7 @@ class InspectionSummary:
     observed: tuple[tuple[str, Count], ...] = ()
     protected: int | None = None
     consistent: bool | None = None
+    budget: str | None = None  # exceeded | within | unknown: observed requests against planned_requests
 
     def render(self) -> str:
         ops = ", ".join(name[:64] for name in self.operations)
@@ -280,7 +281,7 @@ class InspectionSummary:
             lines += [
                 f"terminals: {fmt(self.terminals)}; qualification: {fmt(self.qualifications or ())}",
                 f"reasons: {fmt(self.reasons)}; protected: {self.protected}; consistent: {self.consistent}",
-                f"observed: {fmt(self.observed)}",
+                f"observed: {fmt(self.observed)}; budget: {self.budget}",
             ]
         return "\n".join(lines)
 
@@ -383,7 +384,17 @@ class ProtectionResult:
         zero_or_unknown = Count(0 if silent else None, "exact" if silent else "unknown")
         binding = Count(sum(r.status != "not_started" for r in self.retrievals))
         total = binding if silent else Count(None, "unknown")
-        requests = self._observed_requests()
+        requests, seen = self._observed_requests()
+        plan = p.planned_requests.value
+        budget = (
+            "unknown"
+            if plan is None
+            else "exceeded"
+            if seen > plan
+            else "within"
+            if requests.value is not None
+            else "unknown"
+        )
         return InspectionSummary(
             p.names,
             len(self.targets),
@@ -400,10 +411,12 @@ class ProtectionResult:
             ),
             sum(o.protected for o in self.outcomes),
             self.consistent,
+            budget,
         )
 
-    def _observed_requests(self) -> Count:
-        """Exact total when every dispatched step declared ``none`` or reported (an invocation step once), else unknown."""
+    def _observed_requests(self) -> tuple[Count, int]:
+        """Exact total when every dispatched step declared ``none`` or reported (an invocation step once), else
+        unknown; and the reported sum, a lower bound when the total is unknown."""
         ops = self.prepared.workflow.flatten()
         total, covered = 0, True
         for node in {e.node for e in self.state.entries}:
@@ -413,7 +426,7 @@ class ProtectionResult:
             _, op = ops[node]
             needed = 1 if op.scope == "phase_scoped" else len(entries)
             covered = covered and (op.requests.bound == "none" or len(reports) >= needed)
-        return Count(total) if covered else Count(None, "unknown")
+        return (Count(total) if covered else Count(None, "unknown")), total
 
     def _final(self, target: Datum) -> Any:
         """The final candidate: the last text operation's own output; earlier text is never substituted."""
