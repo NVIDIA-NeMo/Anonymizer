@@ -199,7 +199,20 @@ def test_native_factory_preserves_word_chunk_defaults(tmp_path: Path, monkeypatc
     from contextlib import nullcontext
 
     monkeypatch.setattr(_runtime, "singleton_runtime", lambda _device: nullcontext(runtime))
-    client = anonymizer.create_anonymizer(gliner=anonymizer.NativeGliner(device="cpu"), artifact_path=tmp_path)
+    provider = ModelProvider(name="custom", endpoint="https://example.test/v1", api_key="CUSTOM_KEY")
+    source = json.dumps({"model_configs": [{"alias": "custom-llm", "model": "test/llm", "provider": "custom"}]})
+    run_config = anonymizer.RunConfig(buffer_size=123)
+    client = anonymizer.create_anonymizer(
+        gliner=anonymizer.NativeGliner(device="cpu"),
+        model_configs=source,
+        model_providers=[provider],
+        artifact_path=tmp_path,
+        data_designer_run_config=run_config,
+    )
+    assert any(item.alias == "custom-llm" for item in client._model_configs)
+    assert client._resolved_providers[0] is provider
+    assert client._data_designer._artifact_path == tmp_path
+    assert client._data_designer._run_config == run_config
     detector = next(
         model for model in client._model_configs if model.alias == client._selected_models.detection.entity_detector
     )
@@ -214,12 +227,20 @@ def test_session_builds_real_client_and_preserves_configuration(tmp_path: Path) 
     candidate = controller._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
     provider = ModelProvider(name="custom", endpoint="https://example.test/v1", api_key="CUSTOM_KEY")
     source = json.dumps({"model_configs": [{"alias": "custom-llm", "model": "test/llm", "provider": "custom"}]})
+    run_config = anonymizer.RunConfig(buffer_size=123)
     with (
         patch.object(controller, "_start_runtime", return_value=candidate),
         patch.object(controller, "_wait_until_ready"),
         anonymizer.native_runtime(device="cpu") as session,
     ):
-        client = session.create_anonymizer(model_configs=source, model_providers=[provider], artifact_path=tmp_path)
+        client = session.create_anonymizer(
+            model_configs=source,
+            model_providers=[provider],
+            artifact_path=tmp_path,
+            data_designer_run_config=run_config,
+        )
+        assert client._data_designer._artifact_path == tmp_path
+        assert client._data_designer._run_config == run_config
         assert session.endpoint.url == candidate.endpoint
         assert client._selected_models.detection.entity_detector == "anonymizer-gliner-detector"
         assert any(item.alias == "custom-llm" for item in client._model_configs)
