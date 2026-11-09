@@ -188,10 +188,10 @@ def _structured_payload(schema: dict[str, Any], text: str) -> Any:
     if props == {"entities"}:
         return {"entities": []}  # augmenter: nothing beyond the detector
     if props == {"decisions"}:
-        match = re.search(r"Template: (\{.*?\})\s*$", text, re.M)
-        if match:
+        # The prompt includes example templates before the actual candidate skeleton.
+        for template_text in reversed(re.findall(r"^Template: (\{.*\})[ \t]*$", text, re.M)):
             try:
-                template = ast.literal_eval(match.group(1))
+                template = ast.literal_eval(template_text)
                 return {"decisions": [{**d, "decision": "keep", "reason": "stub keep"} for d in template["decisions"]]}
             except (ValueError, SyntaxError, KeyError, TypeError):
                 pass
