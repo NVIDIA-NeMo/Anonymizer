@@ -53,3 +53,18 @@ Source search was used because astnav was unavailable. Scope is the merged imple
 ## Remaining limits
 
 The new validation command performs upstream argument and preliminary cross-option checks. It does not construct a complete model engine configuration or establish GPU/model compatibility. Native runtime tests use synthetic process/model fixtures; no model download or paid service call was performed.
+
+## Astra review follow-up
+
+The operator requested one Terra worker per reproduced correctness finding, followed by parent implementation of the three streamlining opportunities. The independent review targets `e765d5d2`; its report and reproductions are retained outside the repository under `/stable-cache/anonymizer-serving-reduction/astra-review/`.
+
+1. Preserve Factory model identity and the full middleware sequence through the real upstream parser. A native YAML list cannot be assumed equivalent to repeated append-action flags.
+2. Reject accepted abbreviations of Anonymizer-owned credential/configuration options before plan serialization, without importing vLLM during compilation or copying its option schema.
+3. Reject restart/replacement while native contexts are active, including when the process has died. Preserve healthy borrowing, nesting, and cleanup; do not add reconnection machinery.
+4. Preserve representable explicit empty lists, and clearly reject unknown or unrepresentable values instead of silently using defaults. Keep explicit false and omitted-default behavior.
+
+Four isolated Terra producers own these findings. The empty-list producer follows the middleware producer to avoid concurrent edits to the same parser path; credentials and native leases proceed independently. Each producer records failing regressions before its fix, targeted passing tests afterward, signed commits, and applicable real-parser evidence.
+
+After integration, streamline caller configuration parsing into one validated input snapshot before native acquisition, move validation subprocess/environment preparation into the controller runtime, and inline the extra private facade-constructor forwarding layer while preserving lazy imports. Retain the typed configuration result. No additional manager hierarchy, generic command abstraction, or upstream option schema is authorized by this follow-up.
+
+Final verification will rerun all four review reproductions against the assembled source, check effective parser values for both Factory profiles and generation middleware, and run the full unit suite, repository gates, and relevant docs checks. No GPU/model serving, weight downloads, or paid requests are needed.
