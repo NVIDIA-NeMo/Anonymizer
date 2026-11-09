@@ -194,7 +194,8 @@ Factory project, or for vLLM generation:
 
 ```bash
 uv sync --project tools/inference-service-runtime --locked
-uv run --project tools/inference-service-runtime --locked python tools/inference_service.py compile --profile tools/inference_service_profiles/nvidia-gliner.toml --source-revision 3f68c145 --output plan.json
+uv run --project tools/inference-service-runtime --locked python tools/inference_service.py compile --profile tools/inference_service_profiles/nvidia-gliner.toml --output plan.json
+uv run --project tools/inference-service-runtime --locked python tools/inference_service.py validate --plan plan.json
 uv run --project tools/inference-service-runtime --locked python tools/inference_service.py launch --plan plan.json --output launch.json
 uv run --project tools/inference-service-runtime --locked python tools/inference_service.py status --receipt launch.json
 uv run --project tools/inference-service-runtime --locked python tools/inference_service.py stop --receipt launch.json

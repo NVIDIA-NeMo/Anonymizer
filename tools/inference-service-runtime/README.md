@@ -16,6 +16,8 @@ uv run --project tools/inference-service-runtime --locked python -m vllm_factory
 
 The shipped profiles launch `tools/inference-service-runtime/.venv/bin/python`
 directly. See the [deployment guide](../../docs/concepts/inference-services.md)
-for supported hardware, model profiles, compilation, launch, and cleanup.
+for supported hardware, model profiles, compilation, validation, launch, and cleanup.
+Compilation does not import vLLM; `validate --plan` uses the configured serving
+interpreter to check arguments before launch without starting a server.
 See [development instructions](../../DEVELOPMENT.md#local-inference-service-environment)
 for tests.

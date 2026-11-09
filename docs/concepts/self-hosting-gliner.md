@@ -4,9 +4,8 @@
 # Self-hosting GLiNER2
 
 Anonymizer uses [`fastino/gliner2-privacy-filter-PII-multi`](https://huggingface.co/fastino/gliner2-privacy-filter-PII-multi)
-for first-pass entity detection. The public `create_anonymizer()` factory supports two lifecycle
-models. `NativeGliner` starts and reuses the library-managed GLiNER2 runtime. `GlinerEndpoint`
-connects to a service that you already manage. Plain `Anonymizer()` remains unchanged and uses the
+for first-pass entity detection. Use `native_runtime()` to manage the lifetime of a local GLiNER2 runtime, or use
+`GlinerEndpoint` with `create_anonymizer()` to connect to a service that you already manage. Plain `Anonymizer()` remains unchanged and uses the
 bundled model and provider files.
 
 ## Server contract
@@ -52,7 +51,7 @@ through unchanged; omitted fields use the server's defaults.
 The native splitter preserves source offsets and avoids cutting words. Unspaced
 Chinese or Japanese text can form a single long token, so word-window size does
 not guarantee a subword-token limit; evaluate chunk sizes for your language.
-Returned entities must match the original source text at their reported offsets.
+Returned entities use character offsets into the original source text.
 
 The response must use the chat-completion shape. `message.content` is a JSON string containing an
 `entities` list. Each entity has `text`, `label`, `start`, `end`, and `score` fields:
@@ -84,13 +83,17 @@ pip install "nemo-anonymizer[notebooks]"
 ```
 
 ```python
-from anonymizer import NativeGliner, create_anonymizer
+from anonymizer import native_runtime
 
-anonymizer = create_anonymizer(gliner=NativeGliner(device="auto"))
+with native_runtime(device="auto") as session:
+    anonymizer = session.create_anonymizer()
+    # Run preview or anonymization here.
 ```
 
 `device="auto"` selects CUDA, MPS, or CPU. You can also pass `"cuda"`, `"mps"`, or `"cpu"`.
-The native runtime is a process-global singleton and stops at interpreter exit.
+Use the client while the context is open; a client backed by a context-owned process is no longer valid after it closes. `session.endpoint` exposes the `GlinerEndpoint` connection. Nested contexts share the runtime until the last context exits. A context can borrow an existing singleton without stopping it on exit.
+
+For compatibility, `create_anonymizer(gliner=NativeGliner(device="auto"))` retains the process-global singleton behavior and stops it at interpreter exit.
 
 ## Notebook Compatibility Wrapper
 

@@ -39,7 +39,7 @@ vLLM. The two detector profiles use the pinned external
 Anonymizer's OpenAI-compatible detector adapter.
 
 The generation profiles select vLLM reasoning parsers through
-`[vllm].reasoning_parser`: `openai_gptoss` for GPT-OSS, `nemotron_v3` for
+`[vllm.config].reasoning-parser`: `openai_gptoss` for GPT-OSS, `nemotron_v3` for
 Nemotron, and `gemma4` for Gemma. These parsers separate reasoning from the
 answer and allow JSON-schema constraints to apply to the answer after
 reasoning ends. The Qwen3 Instruct profile supports only non-thinking mode
@@ -70,23 +70,24 @@ the GPT-OSS 120B profile with another model on an 80 GB GPU.
 The workflow has two durable files:
 
 ```text
-profile.toml -> compile -> plan.json -> launch -> launch.json
-                              |                    |
-                              +-> probe            +-> status
-                                                   +-> stop
+profile.toml -> compile -> plan.json -> validate -> launch -> launch.json
+                              |                                |
+                              +-> probe                        +-> status / stop
 ```
 
-`compile` has no runtime effects. The plan contains the full command, endpoint,
-dependencies, compatibility assessments, and a SHA-256 digest. Runtime commands
-verify that digest before acting.
+`compile` has no runtime effects. The plan contains the launch configuration, endpoint, and a SHA-256 digest.
+Runtime commands verify that digest before acting. `validate` uses the configured
+serving Python environment to check vLLM arguments without starting a server.
+It does not establish model or hardware compatibility; startup and task probes
+provide additional checks.
 
 The digest detects accidental changes while a plan is stored or transported.
 This developer tool trusts whoever can write the profile and plan: it does not
 authenticate the plan's author, sign the plan, or recompile the embedded spec to
 prove that every derived field is semantically consistent.
 
-`launch` first requires a launch-scoped ownership proof from the new process,
-then waits for `/v1/models` and a task-specific request. The ownership check
+`launch` repeats argument validation before model preparation and startup. It then
+requires a launch-scoped ownership proof from the new process and waits for `/v1/models` and a task-specific request. The ownership check
 prevents an existing compatible service on the target port from satisfying a
 new launch. A generation service must return a chat completion. A detector
 must demonstrate dynamic labels, offsets, and scores. The launch receipt
@@ -97,7 +98,8 @@ The v2 profile schema has four sections:
 
 - `[task]` selects generation or entity detection and its required capabilities.
 - `[model]` pins the Hugging Face model and optional LoRA adapter.
-- `[vllm]` sets the served name, reasoning parser, memory limits, parallelism, caching, Mamba controls, authentication source, and optional Factory plugin.
+- `[vllm]` sets the served name, serving interpreter, authentication source, and optional Factory plugin.
+- `[vllm.config]` supplies vLLM options using upstream configuration names, such as `reasoning-parser` and `gpu-memory-utilization`. Omitted options use the pinned vLLM defaults; explicit values, including `false`, are retained.
 - `[local]` sets the bind address, port, startup timeout, and shutdown timeout.
 
 ## Deploy on the GPU host
@@ -135,8 +137,10 @@ on `127.0.0.1:8001`:
 ```bash
 uv run --project tools/inference-service-runtime --locked python tools/inference_service.py compile \
   --profile tools/inference_service_profiles/nvidia-gliner.toml \
-  --source-revision "$(git rev-parse HEAD)" \
   --output gliner-plan.json
+
+uv run --project tools/inference-service-runtime --locked python tools/inference_service.py validate \
+  --plan gliner-plan.json
 
 uv run --project tools/inference-service-runtime --locked python tools/inference_service.py launch \
   --plan gliner-plan.json \
@@ -257,12 +261,14 @@ or place the service behind authenticated TLS before exposing it.
 ### Compile and launch inside the container
 
 ```bash
-SOURCE_REVISION="$(git rev-parse HEAD)"
 docker exec anonymizer-local-models \
   python tools/inference_service.py compile \
   --profile tools/inference_service_profiles/nvidia-gliner.toml \
-  --source-revision "$SOURCE_REVISION" \
   --output /state/gliner-plan.json
+
+docker exec anonymizer-local-models \
+  python tools/inference_service.py validate \
+  --plan /state/gliner-plan.json
 
 docker exec anonymizer-local-models \
   python tools/inference_service.py launch \
@@ -335,6 +341,6 @@ every alias needed by the selected pipeline. See
 For the detector request and response contract, chunking behavior, and a live
 PII request, see [Self-hosting GLiNER](self-hosting-gliner.md).
 
-Compilation records static compatibility assessments. The launch probe observes
+Validation checks the serving arguments. The launch probe observes
 the endpoint shape and required task behavior. Run Anonymizer preview and
 evaluation before accepting a model for a privacy-sensitive workload.
