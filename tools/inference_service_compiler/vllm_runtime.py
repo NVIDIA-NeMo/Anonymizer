@@ -118,20 +118,32 @@ def load_and_validate_arguments(options: Namespace) -> Namespace:
     cli_args = importlib.import_module("vllm.entrypoints.launchers.cli_args")
     parser_class = importlib.import_module("vllm.utils.argparse_utils").FlexibleArgumentParser
     parser = cli_args.make_arg_parser(parser_class())
-    # vLLM's YAML loader discards false options without a negated flag. Reject
-    # unknown options and values it cannot faithfully express.
+    # The upstream YAML loader drops empty lists and some false values.
+    empty_args = []
     for key, value in config.items():
+        option = f"--{key.replace('_', '-')}"
         if value is False:
-            action = parser._option_string_actions.get(f"--{key}")
+            action = parser._option_string_actions.get(option)
             if action is None:
                 raise ValueError(f"unknown vLLM option {key!r}")
-            if f"--no-{key}" not in parser._option_string_actions and action.default is not False:
+            if f"--no-{key.replace('_', '-')}" not in parser._option_string_actions and action.default is not False:
                 raise ValueError(f"vLLM cannot express false for option {key!r}")
+        elif value == []:
+            action = parser._option_string_actions.get(option)
+            if action is None:
+                raise ValueError(f"unknown vLLM option {key!r}")
+            if (
+                not isinstance(action, argparse._StoreAction)
+                or action.type is not json.loads
+                or action.nargs is not None
+            ):
+                raise ValueError(f"vLLM cannot express an empty list for option {key!r}")
+            empty_args.extend((option, "[]"))
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", encoding="utf-8") as config_file:
         json.dump(config, config_file)
         config_file.flush()
         middleware_args = [token for item in middleware for token in ("--middleware", item)]
-        arguments = parser.parse_args(["--config", config_file.name, *middleware_args])
+        arguments = parser.parse_args(["--config", config_file.name, *empty_args, *middleware_args])
     if arguments.model_tag is not None:
         arguments.model = arguments.model_tag
     cli_args.validate_parsed_serve_args(arguments)
