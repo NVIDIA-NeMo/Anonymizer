@@ -30,7 +30,9 @@ def test_retrieved_context_counts_on_top_of_static_context() -> None:
     target = scope.datum("hello")
     source = graph.ContextSource("src", lambda: ["RRRRRR"], max_items=1)
     calls: list[str] = []
-    op = graph.Operation("read", lambda text, context: calls.append(text) or text, inputs={"text": "text", "context": "context"})
+    op = graph.Operation(
+        "read", lambda text, context: calls.append(text) or text, inputs={"text": "text", "context": "context"}
+    )
 
     def protect(*items: graph.Datum | graph.ContextSource) -> graph.ProtectionResult:
         g = graph.ProtectionGraph(scope, (target,), context=(graph.ContextScope(target, items),))
@@ -45,9 +47,19 @@ def test_retrieved_context_counts_on_top_of_static_context() -> None:
 
 def test_cancel_token_is_followed_but_never_rewired() -> None:
     token, outer = graph.CancelToken(), graph.CancelToken()
-    inner = lambda text: _run(lambda t: t, token) and text  # noqa: E731
-    assert _run(lambda text: _run(inner) and text, token) == "success"
+    nested: list[str] = []
+
+    def inner(text: str) -> str:
+        nested.append(_run(lambda text: text, token))
+        return text
+
+    def middle(text: str) -> str:
+        nested.append(_run(inner))
+        return text
+
+    assert _run(middle, token) == "success"
     assert _run(inner, outer) == "success"
+    assert nested == ["success"] * 3
     outer.cancel()
     assert not token.cancelled
     assert _run(lambda text: text, token) == "success"
@@ -57,7 +69,7 @@ def test_cancel_token_is_followed_but_never_rewired() -> None:
 
     def cancels_outer(text: str) -> str:
         late.cancel()
-        seen.append(_run(lambda t: t))
+        seen.append(_run(lambda text: text))
         return text
 
     _run(cancels_outer, late)
@@ -70,5 +82,7 @@ def test_verifier_only_release_maps_target_to_its_source_text() -> None:
     check = graph.Operation.verifier(
         "v", lambda text, target: graph.Assessment(True, target), {"text": "text", "target": "datum"}, checks=("c",)
     )
-    result = graph.protect(graph.prepare(graph.ProtectionGraph(scope, (target,)), graph.Workflow("w", (check,), requires=("c",))))
+    result = graph.protect(
+        graph.prepare(graph.ProtectionGraph(scope, (target,)), graph.Workflow("w", (check,), requires=("c",)))
+    )
     assert result.protected == {target: "verified text"}
