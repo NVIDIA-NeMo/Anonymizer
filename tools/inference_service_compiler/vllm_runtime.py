@@ -107,12 +107,14 @@ def load_and_validate_arguments(options: Namespace) -> Namespace:
     if plugin is not None:
         os.environ["VLLM_PLUGINS"] = f"{plugin},{io_processor_for(plugin)}"
         os.environ["ANONYMIZER_VLLM_FACTORY_PLUGIN"] = plugin
-    middleware = config.get("middleware", [])
-    if not isinstance(middleware, list):
-        raise ValueError("middleware must be a list")
-    config["middleware"] = [*middleware, LAUNCH_OWNERSHIP_MIDDLEWARE]
+    middleware = config.pop("middleware", [])
+    if isinstance(middleware, str):
+        middleware = [middleware]
+    if not isinstance(middleware, list) or not all(isinstance(item, str) for item in middleware):
+        raise ValueError("middleware must be a string or list of strings")
+    middleware = [*middleware, LAUNCH_OWNERSHIP_MIDDLEWARE]
     if plugin is not None:
-        config["middleware"].append(ANONYMIZER_CHAT_MIDDLEWARE)
+        middleware.append(ANONYMIZER_CHAT_MIDDLEWARE)
     cli_args = importlib.import_module("vllm.entrypoints.launchers.cli_args")
     parser_class = importlib.import_module("vllm.utils.argparse_utils").FlexibleArgumentParser
     parser = cli_args.make_arg_parser(parser_class())
@@ -128,7 +130,8 @@ def load_and_validate_arguments(options: Namespace) -> Namespace:
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", encoding="utf-8") as config_file:
         json.dump(config, config_file)
         config_file.flush()
-        arguments = parser.parse_args(["--config", config_file.name])
+        middleware_args = [token for item in middleware for token in ("--middleware", item)]
+        arguments = parser.parse_args(["--config", config_file.name, *middleware_args])
     if arguments.model_tag is not None:
         arguments.model = arguments.model_tag
     cli_args.validate_parsed_serve_args(arguments)
