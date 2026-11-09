@@ -507,7 +507,8 @@ def _bind(g: ProtectionGraph, limits: Limits, cancelled: Any) -> tuple[list[Retr
     retrievals: list[Retrieval] = []
     bound: dict[str, tuple | None] = {}
     static = (_static_text(i) for cs in g.context for i in cs.items if not isinstance(i, ContextSource))
-    total_bytes = sum(map(utf8_size, static))  # retrieved bytes count on top of the static context
+    # retrieved bytes count on top of the static context, measured only under a ceiling as at admission
+    total_bytes = sum(map(utf8_size, static)) if limits.max_context_bytes is not None else 0
     for src in dict.fromkeys(i for cs in g.context for i in cs.items if isinstance(i, ContextSource)):
         if cancelled():
             retrievals.append(Retrieval(src.name, "not_started", src.max_items, None, None))

@@ -86,3 +86,11 @@ def test_verifier_only_release_maps_target_to_its_source_text() -> None:
         graph.prepare(graph.ProtectionGraph(scope, (target,)), graph.Workflow("w", (check,), requires=("c",)))
     )
     assert result.protected == {target: "verified text"}
+
+
+def test_static_context_is_not_encoded_without_a_byte_ceiling() -> None:
+    scope = graph.GraphScope()
+    target = scope.datum("hello")
+    op = graph.Operation("read", lambda text, context: text, inputs={"text": "text", "context": "context"})
+    g = graph.ProtectionGraph(scope, (target,), context=(graph.ContextScope(target, (scope.datum("\ud800"),)),))
+    assert graph.protect(graph.prepare(g, graph.Workflow("w", (op,)))).outcome(target).terminal == "success"
