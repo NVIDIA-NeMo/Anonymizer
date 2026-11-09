@@ -291,7 +291,7 @@ def _publish(
     for unit, raw, observed in published:
         try:
             accepted.append((unit, _outputs(node, raw), observed))
-        except TypeError as exc:
+        except Exception as exc:  # a registered kind's check or copy may raise anything
             events[unit] = Failed(unit, index, "invalid_output", exc, observed)
     rejected = review(index, [(unit, outputs) for unit, outputs, _ in accepted]) if review and accepted else {}
     for unit, outputs, observed in accepted:
@@ -389,19 +389,14 @@ class CancelToken:
 
     def __init__(self) -> None:
         self._event = threading.Event()
-        self._parent: CancelToken | None = None
-
-    def link(self, parent: CancelToken | None) -> None:
-        """Follow ``parent``'s cancellation unless a parent is already linked."""
-        if self._parent is None and parent is not None and parent is not self:
-            self._parent = parent
+        self._follows: tuple[CancelToken, ...] = ()
 
     def cancel(self) -> None:
         self._event.set()
 
     @property
     def cancelled(self) -> bool:
-        return self._event.is_set() or (self._parent is not None and self._parent.cancelled)
+        return self._event.is_set() or any(t.cancelled for t in self._follows)
 
 
 _FRAME_TOKEN: contextvars.ContextVar[CancelToken | None] = contextvars.ContextVar(
@@ -416,8 +411,9 @@ def current_token() -> CancelToken | None:
 
 def run_in_frame(fn: Callable[..., Any], *args: Any, token: CancelToken | None = None, **kwargs: Any) -> Any:
     """Run ``fn`` on the calling thread in a copy of the calling context (copy-in without copy-out)."""
-    frame_token = token or CancelToken()
-    frame_token.link(_FRAME_TOKEN.get())
+    # A fresh token per frame: the caller's token is followed, never re-parented.
+    frame_token = CancelToken()
+    frame_token._follows = tuple(t for t in (token, _FRAME_TOKEN.get()) if t is not None)
     frame = contextvars.copy_context()
     frame.run(_FRAME_TOKEN.set, frame_token)
     return frame.run(fn, *args, **kwargs)

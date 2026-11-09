@@ -348,7 +348,9 @@ class ProtectionResult:
     @property
     def protected(self) -> dict[Datum, str]:
         """Only qualified, releasable output."""
-        return {d: self._final(d) for d, o in zip(self.targets, self.outcomes) if o.protected}
+        # With no text-producing operation, the verified text is the source text.
+        verified = (lambda d: d.text) if self.prepared.final_text is None else self._final
+        return {d: verified(d) for d, o in zip(self.targets, self.outcomes) if o.protected}
 
     @property
     def attempts(self) -> tuple[Attempt, ...]:
@@ -504,7 +506,9 @@ def _bind(g: ProtectionGraph, limits: Limits, cancelled: Any) -> tuple[list[Retr
     """Initial context binding: one retrieval per declared source; no truncation, no silent empty context."""
     retrievals: list[Retrieval] = []
     bound: dict[str, tuple | None] = {}
-    total_bytes = 0
+    static = (_static_text(i) for cs in g.context for i in cs.items if not isinstance(i, ContextSource))
+    # retrieved bytes count on top of the static context, measured only under a ceiling as at admission
+    total_bytes = sum(map(utf8_size, static)) if limits.max_context_bytes is not None else 0
     for src in dict.fromkeys(i for cs in g.context for i in cs.items if isinstance(i, ContextSource)):
         if cancelled():
             retrievals.append(Retrieval(src.name, "not_started", src.max_items, None, None))
