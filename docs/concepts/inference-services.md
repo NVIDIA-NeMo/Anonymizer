@@ -111,6 +111,9 @@ enter plans or process arguments. Recompile existing plans after migrating
 profiles to `[vllm.config]`.
 
 The owned-option restrictions also apply to abbreviated and dotted spellings.
+Put values on the right side of each TOML assignment; option keys containing
+`=` are rejected. Use the full `middleware` option name. Dotted options retain
+their nested field spelling, such as `"compilation-config.cudagraph_mode"`.
 Unsupported empty-list settings fail validation instead of silently falling
 back to defaults.
 

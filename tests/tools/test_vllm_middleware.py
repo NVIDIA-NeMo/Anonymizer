@@ -16,8 +16,9 @@ from inference_service_compiler import vllm_runtime
 
 @pytest.mark.parametrize("middleware", [["user.first"], ["user.first", "user.second"], "user.first"])
 @pytest.mark.parametrize("plugin", [None, "deberta_gliner"])
+@pytest.mark.parametrize("key", ["middleware", "midd", "middlewar"])
 def test_middleware_preserves_model_and_order(
-    monkeypatch: pytest.MonkeyPatch, middleware: str | list[str], plugin: str | None
+    monkeypatch: pytest.MonkeyPatch, middleware: str | list[str], plugin: str | None, key: str
 ) -> None:
     # vLLM's loader flattens list values after a single option token.
     class Parser:
@@ -45,7 +46,13 @@ def test_middleware_preserves_model_and_order(
     }
     monkeypatch.setattr(vllm_runtime.sys, "version_info", (3, 12))
     monkeypatch.setattr(vllm_runtime.importlib, "import_module", lambda name: modules[name])
-    config = {"model": "org/model", "revision": "pin", "served-model-name": "alias", "middleware": middleware}
+    config = {"model": "org/model", "revision": "pin", "served-model-name": "alias", key: middleware}
+    if key != "middleware":
+        with pytest.raises(ValueError, match="middleware"):
+            vllm_runtime.load_and_validate_arguments(
+                argparse.Namespace(config_json=json.dumps(config), vllm_factory_plugin=plugin)
+            )
+        return
     args = vllm_runtime.load_and_validate_arguments(
         argparse.Namespace(config_json=json.dumps(config), vllm_factory_plugin=plugin)
     )

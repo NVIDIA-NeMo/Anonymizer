@@ -107,6 +107,8 @@ def load_and_validate_arguments(options: Namespace) -> Namespace:
     if plugin is not None:
         os.environ["VLLM_PLUGINS"] = f"{plugin},{io_processor_for(plugin)}"
         os.environ["ANONYMIZER_VLLM_FACTORY_PLUGIN"] = plugin
+    if any(key != "middleware" and "middleware".startswith(key.partition(".")[0]) for key in config):
+        raise ValueError("Use the full 'middleware' option name without a dotted suffix")
     middleware = config.pop("middleware", [])
     if isinstance(middleware, str):
         middleware = [middleware]

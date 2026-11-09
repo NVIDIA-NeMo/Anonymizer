@@ -101,7 +101,18 @@ def _compile_vllm(spec: LocalInferenceServiceSpec) -> CommandSpec:
                 _raise_unsupported_task_engine(task.kind, "vllm")
         case _:
             assert_never(spec.task)
-    config = {key.replace("_", "-"): value for key, value in spec.vllm.config.items()}
+    if any("=" in key for key in spec.vllm.config):
+        raise CompilationError(
+            CompilerDiagnostic(
+                code="invalid-vllm-option-key",
+                message="vLLM option keys must not contain '='; supply values separately",
+                details={},
+            )
+        )
+    config = {}
+    for key, value in spec.vllm.config.items():
+        root, dot, field = key.partition(".")
+        config[root.replace("_", "-") + dot + field] = value
     if len(config) != len(spec.vllm.config):
         raise CompilationError(
             CompilerDiagnostic(

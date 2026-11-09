@@ -80,12 +80,17 @@ def runtime_context(requested_device: str) -> Iterator[_LocalRuntime]:
     """Borrow a singleton or own a runtime until the last nested context exits."""
     global _context_count, _context_owned
     with _runtime_lock:
-        existing = _runtime is not None and _runtime.process.poll() is None
-        if not _context_count and existing and _runtime is not None and _runtime.requested_device != requested_device:
+        previous = _runtime
+        if (
+            not _context_count
+            and previous is not None
+            and previous.requested_device != requested_device
+            and previous.process.poll() is None
+        ):
             raise RuntimeError("Cannot borrow a native runtime with a different device.")
         runtime = _ensure_runtime(requested_device)
         if _context_count == 0:
-            _context_owned = not existing
+            _context_owned = runtime is not previous
         _context_count += 1
     try:
         yield runtime
@@ -120,12 +125,13 @@ def _shutdown_runtime() -> None:
 
 def _ensure_runtime(requested_device: str) -> _LocalRuntime:
     global _runtime
-    if _context_count and (
-        _runtime is None or _runtime.process.poll() is not None or _runtime.requested_device != requested_device
-    ):
-        raise RuntimeError(
-            "Cannot replace a native runtime while a context is active, including after the process exits."
-        )
+    if _context_count:
+        if _runtime is None or _runtime.process.poll() is not None or _runtime.requested_device != requested_device:
+            raise RuntimeError(
+                "Cannot replace a native runtime while a context is active, including after the process exits."
+            )
+        _verify_readiness(_runtime)
+        return _runtime
     if _runtime is not None and _runtime.process.poll() is None:
         if _runtime.requested_device == requested_device:
             _verify_readiness(_runtime)

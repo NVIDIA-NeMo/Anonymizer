@@ -315,3 +315,65 @@ def test_dead_runtime_is_not_replaced_during_active_context(
             assert _runtime.os.environ[_runtime.LOCAL_TOKEN_ENV] == "original"
     finally:
         _runtime.stop_local_runtime()
+
+
+@pytest.mark.parametrize("alive_observations", [1, 2])
+def test_child_exit_during_nested_acquisition_never_replaces_runtime(alive_observations: int) -> None:
+    # A scoped endpoint must never silently move when its child exits (self-hosting docs).
+    _runtime.stop_local_runtime()
+    process = Mock()
+    process.poll.return_value = None
+    existing = _runtime._LocalRuntime(process, "http://127.0.0.1:1111/v1", "cpu", "cpu", "old")
+    replacement = _runtime._LocalRuntime(Mock(), "http://127.0.0.1:2222/v1", "cpu", "cpu", "new")
+    _runtime._runtime = existing
+    try:
+        with (
+            patch.object(_runtime, "_verify_readiness"),
+            patch.object(_runtime, "_wait_until_ready"),
+            patch.object(_runtime, "_start_runtime", return_value=replacement) as start,
+        ):
+            with _runtime.runtime_context("cpu") as outer:
+                observations = iter([None] * alive_observations)
+                process.poll.side_effect = lambda: next(observations, 1)
+                try:
+                    with _runtime.runtime_context("cpu") as inner:
+                        assert inner.endpoint == outer.endpoint
+                except RuntimeError:
+                    pass
+                start.assert_not_called()
+    finally:
+        _runtime.stop_local_runtime()
+
+
+def test_replacement_during_first_acquisition_is_owned_and_stopped(monkeypatch: pytest.MonkeyPatch) -> None:
+    _runtime.stop_local_runtime()
+    monkeypatch.setenv(_runtime.LOCAL_TOKEN_ENV, "original")
+    old_process, new_process = Mock(), Mock()
+    old_process.poll.return_value = None
+    new_process.poll.return_value = None
+    old = _runtime._LocalRuntime(old_process, "http://127.0.0.1:1111/v1", "cpu", "cpu", "old")
+    new = _runtime._LocalRuntime(new_process, "http://127.0.0.1:2222/v1", "cpu", "cpu", "new")
+    _runtime._runtime = old
+    ensure_runtime = _runtime._ensure_runtime
+
+    def acquire_after_exit(device: str) -> _runtime._LocalRuntime:
+        old_process.poll.return_value = 1
+        return ensure_runtime(device)
+
+    def start(_: str) -> _runtime._LocalRuntime:
+        _runtime._set_token_environment(new.token)
+        return new
+
+    try:
+        with (
+            patch.object(_runtime, "_ensure_runtime", side_effect=acquire_after_exit),
+            patch.object(_runtime, "_start_runtime", side_effect=start),
+            patch.object(_runtime, "_wait_until_ready"),
+        ):
+            with _runtime.runtime_context("cpu") as runtime:
+                assert runtime is new
+            new_process.terminate.assert_called_once()
+            assert _runtime._runtime is None
+            assert _runtime.os.environ[_runtime.LOCAL_TOKEN_ENV] == "original"
+    finally:
+        _runtime.stop_local_runtime()
