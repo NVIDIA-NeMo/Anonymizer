@@ -19,6 +19,7 @@ from anonymizer.engine.ndd.model_loader import parse_model_configs, parse_model_
 if TYPE_CHECKING:
     from data_designer.config.run_config import RunConfig
 
+    from anonymizer.engine.ndd.model_loader import ParsedModelConfigs
     from anonymizer.interface.anonymizer import Anonymizer
 
 GLINER_MODEL_ALIAS = "anonymizer-gliner-detector"
@@ -64,28 +65,27 @@ def create_anonymizer(
     ``NativeGliner`` owns a library-managed singleton process. ``GlinerEndpoint``
     only configures a client connection and never starts or stops the endpoint.
     """
+    if not isinstance(gliner, (NativeGliner, GlinerEndpoint)):
+        raise TypeError("gliner must be NativeGliner or GlinerEndpoint")
+    parsed, providers = _parse_gliner_model_inputs(model_configs=model_configs, model_providers=model_providers)
     if isinstance(gliner, NativeGliner):
         from anonymizer.engine.local_inference.gliner2 import MODEL_ID
         from anonymizer.engine.local_inference.gliner2.backend import DEFAULT_CHUNK_LENGTH, DEFAULT_OVERLAP
         from anonymizer.engine.local_inference.runtime import LOCAL_TOKEN_ENV, singleton_runtime
 
-        _validate_gliner_model_inputs(model_configs=model_configs, model_providers=model_providers)
         with singleton_runtime(gliner.device) as runtime:
             return _create_endpoint_anonymizer(
                 endpoint=GlinerEndpoint(url=runtime.endpoint, model=MODEL_ID, api_key_env=LOCAL_TOKEN_ENV),
-                model_configs=model_configs,
-                model_providers=model_providers,
+                parsed=parsed,
+                providers=providers,
                 artifact_path=artifact_path,
                 data_designer_run_config=data_designer_run_config,
                 extra_body={"chunk_length": DEFAULT_CHUNK_LENGTH, "overlap": DEFAULT_OVERLAP},
             )
-    if not isinstance(gliner, GlinerEndpoint):
-        raise TypeError("gliner must be NativeGliner or GlinerEndpoint")
-
     return _create_endpoint_anonymizer(
         endpoint=gliner,
-        model_configs=model_configs,
-        model_providers=model_providers,
+        parsed=parsed,
+        providers=providers,
         artifact_path=artifact_path,
         data_designer_run_config=data_designer_run_config,
         extra_body=None,
@@ -95,19 +95,21 @@ def create_anonymizer(
 def _create_endpoint_anonymizer(
     *,
     endpoint: GlinerEndpoint,
-    model_configs: str | Path | None,
-    model_providers: list[ModelProvider] | str | Path | None,
+    parsed: ParsedModelConfigs,
+    providers: list[ModelProvider],
     artifact_path: str | Path | None,
     data_designer_run_config: RunConfig | None,
     extra_body: dict[str, int] | None,
 ) -> Anonymizer:
     configuration = _build_gliner_model_configuration(
-        model_configs=model_configs,
-        model_providers=model_providers,
+        parsed=parsed,
+        providers=providers,
         endpoint=endpoint,
         extra_body=extra_body,
     )
-    return _new_anonymizer(
+    from anonymizer.interface.anonymizer import Anonymizer
+
+    return Anonymizer(
         model_configs=configuration.model_configs,
         model_providers=configuration.model_providers,
         artifact_path=artifact_path,
@@ -132,11 +134,12 @@ class NativeRuntimeSession:
         """Construct a client connected to this session's endpoint."""
         from anonymizer.engine.local_inference.gliner2.backend import DEFAULT_CHUNK_LENGTH, DEFAULT_OVERLAP
 
+        parsed, providers = _parse_gliner_model_inputs(model_configs=model_configs, model_providers=model_providers)
         return _create_endpoint_anonymizer(
             endpoint=self.endpoint,
             extra_body={"chunk_length": DEFAULT_CHUNK_LENGTH, "overlap": DEFAULT_OVERLAP},
-            model_configs=model_configs,
-            model_providers=model_providers,
+            parsed=parsed,
+            providers=providers,
             artifact_path=artifact_path,
             data_designer_run_config=data_designer_run_config,
         )
@@ -159,49 +162,29 @@ def native_runtime(*, device: Literal["auto", "cpu", "cuda", "mps"] = "auto") ->
         )
 
 
-def _new_anonymizer(
-    *,
-    model_configs: str,
-    model_providers: list[ModelProvider],
-    artifact_path: str | Path | None,
-    data_designer_run_config: RunConfig | None,
-) -> Anonymizer:
-    """Import the facade only when construction is requested."""
-    from anonymizer.interface.anonymizer import Anonymizer
-
-    return Anonymizer(
-        model_configs=model_configs,
-        model_providers=model_providers,
-        artifact_path=artifact_path,
-        data_designer_run_config=data_designer_run_config,
-    )
-
-
-def _validate_gliner_model_inputs(
+def _parse_gliner_model_inputs(
     *,
     model_configs: str | Path | None,
     model_providers: list[ModelProvider] | str | Path | None,
-) -> None:
-    """Reject names reserved for factory-managed detector configuration."""
+) -> tuple[ParsedModelConfigs, list[ModelProvider]]:
+    """Parse and validate caller inputs before acquiring a native runtime."""
     parsed = parse_model_configs(model_configs)
     if any(config.alias == GLINER_MODEL_ALIAS for config in parsed.model_configs):
         raise ValueError(f"Model alias {GLINER_MODEL_ALIAS!r} is reserved by the GLiNER factory.")
-    providers = parse_model_providers(model_providers)
+    providers = list(parse_model_providers(model_providers))
     if any(provider.name == GLINER_PROVIDER_NAME for provider in providers):
         raise ValueError(f"Provider name {GLINER_PROVIDER_NAME!r} is reserved by the GLiNER factory.")
+    return parsed, providers
 
 
 def _build_gliner_model_configuration(
     *,
-    model_configs: str | Path | None,
-    model_providers: list[ModelProvider] | str | Path | None,
+    parsed: ParsedModelConfigs,
+    providers: list[ModelProvider],
     endpoint: GlinerEndpoint,
     extra_body: dict[str, int] | None = None,
 ) -> _AnonymizerModelConfiguration:
     """Inject one detector while preserving all unrelated caller configuration."""
-    _validate_gliner_model_inputs(model_configs=model_configs, model_providers=model_providers)
-    parsed = parse_model_configs(model_configs)
-    providers = parse_model_providers(model_providers)
     model_entries = [config.model_dump(mode="json", exclude_none=True) for config in parsed.model_configs]
     model_entries.append(
         {

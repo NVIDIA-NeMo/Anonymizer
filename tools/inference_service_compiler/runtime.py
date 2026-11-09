@@ -57,6 +57,23 @@ class StopOutcome:
     cleanup_complete: bool
 
 
+def validate_plan(plan: RunPlan) -> None:
+    """Validate a verified plan in its configured interpreter without starting the service."""
+    verify_plan(plan)
+    result = subprocess.run(
+        (*plan.command.render_argv(), "--validate"),
+        cwd=plan.command.working_directory,
+        env=_child_environment(),
+        check=False,
+    )
+    if result.returncode:
+        raise RuntimeEffectError(
+            RuntimeDiagnostic(
+                code="validation-failed", message=f"serving interpreter validation failed (exit {result.returncode})"
+            )
+        )
+
+
 def probe_endpoint(
     plan: RunPlan,
     *,
@@ -104,10 +121,7 @@ def launch_plan(
             RuntimeDiagnostic(code="missing-secret", message=f"secret environment variable {source!r} is not resolved")
         )
     argv = plan.command.render_argv()
-    environment = os.environ.copy()
-    # The configured interpreter owns its imports, even when the controller uses another environment.
-    for variable in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"):
-        environment.pop(variable, None)
+    environment = _child_environment()
     if source is not None:
         environment["VLLM_API_KEY"] = secret_values[source]
     launch_token = secrets.token_urlsafe(32)
@@ -122,6 +136,14 @@ def launch_plan(
         handle=handle,
         probe=probe,
     )
+
+
+def _child_environment() -> dict[str, str]:
+    """Keep the serving interpreter's imports isolated from the controller's environment."""
+    environment = os.environ.copy()
+    for variable in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"):
+        environment.pop(variable, None)
+    return environment
 
 
 def _probe_or_cleanup(

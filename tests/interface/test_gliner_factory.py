@@ -7,6 +7,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -15,6 +17,44 @@ from data_designer.config.models import ModelProvider
 from pydantic import ValidationError
 
 import anonymizer
+
+
+def test_native_factory_uses_inputs_validated_before_runtime_acquisition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from anonymizer.engine.local_inference import runtime as controller
+
+    model_path = tmp_path / "models.yaml"
+    provider_path = tmp_path / "providers.yaml"
+    model_path.write_text(
+        json.dumps(
+            {
+                "model_configs": [{"alias": "custom-llm", "model": "test/llm", "provider": "custom"}],
+                "selected_models": {"replace": {"replacement_generator": "custom-llm"}},
+            }
+        )
+    )
+    provider_path.write_text(
+        json.dumps({"providers": [{"name": "custom", "endpoint": "https://example.test/v1", "api_key": "KEY"}]})
+    )
+    runtime = controller._LocalRuntime(Mock(), "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
+
+    @contextmanager
+    def acquire(device: str) -> Iterator[controller._LocalRuntime]:
+        model_path.unlink()
+        provider_path.unlink()
+        yield runtime
+
+    monkeypatch.setattr(controller, "singleton_runtime", acquire)
+    client = anonymizer.create_anonymizer(
+        gliner=anonymizer.NativeGliner(device="cpu"),
+        model_configs=model_path,
+        model_providers=provider_path,
+        artifact_path=tmp_path / "artifacts",
+    )
+    assert client._selected_models.replace.replacement_generator == "custom-llm"
+    assert next(model for model in client._model_configs if model.alias == "custom-llm").model == "test/llm"
+    assert client._resolved_providers[0].name == "custom"
 
 
 def test_external_endpoint_preserves_bundled_generation_providers() -> None:
@@ -124,10 +164,7 @@ def test_external_endpoint_rejects_reserved_name_collisions(collision: str) -> N
 def test_external_endpoint_does_not_import_or_control_native_runtime() -> None:
     GlinerEndpoint = anonymizer.GlinerEndpoint
     create_anonymizer = anonymizer.create_anonymizer
-    with (
-        patch("anonymizer.interface.factory._new_anonymizer", return_value=Mock()),
-        patch("subprocess.Popen") as popen,
-    ):
+    with patch("subprocess.Popen") as popen:
         create_anonymizer(
             gliner=GlinerEndpoint(
                 url="https://gliner.example.test/v1",

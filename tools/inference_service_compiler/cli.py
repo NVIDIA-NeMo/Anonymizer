@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import functools
 import os
-import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
@@ -18,7 +17,7 @@ import cyclopts
 from pydantic import BaseModel, ValidationError
 
 from inference_service_compiler.compiler import CompilationError, PlanIntegrityError, compile_profile, load_plan
-from inference_service_compiler.models import ConnectionInfo, LaunchReceipt, RuntimeDiagnostic
+from inference_service_compiler.models import ConnectionInfo, LaunchReceipt
 from inference_service_compiler.profiles import load_profile
 from inference_service_compiler.runtime import (
     RuntimeEffectError,
@@ -26,6 +25,7 @@ from inference_service_compiler.runtime import (
     probe_endpoint,
     status_run,
     stop_run,
+    validate_plan,
 )
 
 app = cyclopts.App(help="Compile and manage local inference services from TOML profiles.")
@@ -78,17 +78,7 @@ def compile_plan(
 def validate(*, plan: Path) -> None:
     """Validate vLLM arguments in the configured serving environment without starting a server."""
     parsed = load_plan(plan.read_text(encoding="utf-8"))
-    argv = (*parsed.command.render_argv(), "--validate")
-    environment = os.environ.copy()
-    for variable in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"):
-        environment.pop(variable, None)
-    result = subprocess.run(argv, cwd=parsed.command.working_directory, env=environment, check=False)
-    if result.returncode:
-        raise RuntimeEffectError(
-            RuntimeDiagnostic(
-                code="validation-failed", message=f"serving interpreter validation failed (exit {result.returncode})"
-            )
-        )
+    validate_plan(parsed)
 
 
 @app.command

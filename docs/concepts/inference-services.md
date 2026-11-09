@@ -110,6 +110,10 @@ by `[vllm].api_key_env`, and use `HF_TOKEN` for Hugging Face access. Literal
 enter plans or process arguments. Recompile existing plans after migrating
 profiles to `[vllm.config]`.
 
+The owned-option restrictions also apply to abbreviated and dotted spellings.
+Unsupported empty-list settings fail validation instead of silently falling
+back to defaults.
+
 ## Deploy on the GPU host
 
 ### Install
