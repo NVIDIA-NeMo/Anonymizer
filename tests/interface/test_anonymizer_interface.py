@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import inspect
 import sys
@@ -44,6 +45,7 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
+from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import load_default_model_providers, validate_model_alias_references
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
@@ -1546,3 +1548,61 @@ def test_evaluate_rewrite_flags_rows_with_missed_entities(
     assert evaluated.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [expected_flag]
     assert str(evaluated.dataframe[COL_NEEDS_HUMAN_REVIEW].dtype) == "boolean"
     assert run_result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False] * len(run_result.dataframe)
+
+
+@pytest.mark.parametrize(
+    "detect",
+    [
+        {"entity_labels": ["first_name", "email"], "detector_labels": ["first_name"], "detector_labels_fixed": True},
+        {"detector_labels_fixed": True},
+        {"detector_offset_unit": "utf16_code_unit"},
+    ],
+)
+def test_conflicting_detector_declarations_rejected_before_detection(stub_input: AnonymizerInput, detect: dict) -> None:
+    anonymizer, detection_wf, _, _ = _make_anonymizer()
+    with pytest.raises(InvalidConfigError):
+        anonymizer.run(config=AnonymizerConfig(detect=detect, replace=Redact()), data=stub_input)
+    detection_wf.run.assert_not_called()
+
+
+def test_detection_scope_is_immutable_and_hashable(stub_input: AnonymizerInput) -> None:
+    anonymizer, _, _, _ = _make_anonymizer()
+
+    scope = anonymizer.preview(config=AnonymizerConfig(replace=Redact()), data=stub_input).detection_scope
+
+    assert scope is not None
+    hash(scope)
+    assert not hasattr(scope.effective_labels, "append")
+    assert not hasattr(scope.effective_labels, "clear")
+
+
+def test_matching_detector_declaration_runs_and_reports_scope(stub_input: AnonymizerInput) -> None:
+    detect = {
+        "entity_labels": ["first_name", "email"],
+        "excluded_entity_labels": ["email"],
+        "detector_labels": ["first_name", "email", "city"],
+        "detector_labels_fixed": True,
+        "detector_offset_unit": "code_point",
+    }
+    anonymizer, _, _, _ = _make_anonymizer()
+
+    result = anonymizer.preview(config=AnonymizerConfig(detect=detect, replace=Redact()), data=stub_input)
+
+    assert result.detection_scope is not None
+    assert result.detection_scope.effective_labels == ("first_name",)
+    assert result.detection_scope.allowed_labels == ("first_name",)
+    assert result.detection_scope.excluded_labels == ("email",)
+    assert not hasattr(result.detection_scope, "augmentation_may_add_labels")
+
+
+def test_detection_scope_reports_the_run_label_policy(stub_input: AnonymizerInput) -> None:
+    resolved = resolve_entity_label_config(entity_labels=None)
+    patched = dataclasses.replace(resolved, labels=[*resolved.labels, "zz_extra"])
+    anonymizer, _, _, _ = _make_anonymizer()
+
+    with patch("anonymizer.interface.anonymizer.resolve_entity_label_config", return_value=patched):
+        scope = anonymizer.preview(config=AnonymizerConfig(replace=Redact()), data=stub_input).detection_scope
+
+    assert scope is not None
+    assert scope.allowed_labels is None
+    assert scope.effective_labels == tuple(sorted(patched.labels))
