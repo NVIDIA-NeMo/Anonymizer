@@ -260,3 +260,58 @@ def test_exit_cleanup_stops_runtime_with_active_context(monkeypatch: pytest.Monk
             assert _runtime.os.environ[_runtime.LOCAL_TOKEN_ENV] == "original"
             assert _runtime._runtime is None
     process.terminate.assert_called_once()
+
+
+@pytest.mark.parametrize("borrowed,acquire_singleton", [(False, False), (True, False), (True, True)])
+def test_dead_runtime_is_not_replaced_during_active_context(
+    monkeypatch: pytest.MonkeyPatch, borrowed: bool, acquire_singleton: bool
+) -> None:
+    # Active contexts retain their endpoint and credentials even when the child exits.
+    _runtime.stop_local_runtime()
+    monkeypatch.setenv(_runtime.LOCAL_TOKEN_ENV, "original")
+    processes = [Mock(), Mock()]
+    for process in processes:
+        process.poll.return_value = None
+    candidates = [
+        _runtime._LocalRuntime(processes[0], "http://127.0.0.1:1111/v1", "cpu", "cpu", "first"),
+        _runtime._LocalRuntime(processes[1], "http://127.0.0.1:2222/v1", "cpu", "cpu", "second"),
+    ]
+
+    def start(_: str) -> _runtime._LocalRuntime:
+        candidate = candidates[start_mock.call_count - 1]
+        _runtime._set_token_environment(candidate.token)
+        return candidate
+
+    try:
+        with (
+            patch.object(_runtime, "_start_runtime", side_effect=start) as start_mock,
+            patch.object(_runtime, "_wait_until_ready"),
+            patch.object(_runtime, "_verify_readiness"),
+        ):
+            if borrowed:
+                with _runtime.singleton_runtime("cpu"):
+                    pass
+            with _runtime.runtime_context("cpu") as outer:
+                processes[0].poll.return_value = 1
+                error = None
+                try:
+                    acquire = _runtime.singleton_runtime if acquire_singleton else _runtime.runtime_context
+                    with acquire("cpu"):
+                        pass
+                except RuntimeError as exc:
+                    error = exc
+                assert error is not None
+                assert "context" in str(error)
+                assert start_mock.call_count == 1
+                assert _runtime._runtime is outer is candidates[0]
+                assert _runtime.os.environ[_runtime.LOCAL_TOKEN_ENV] == "first"
+                assert _runtime._context_count == 1
+                assert _runtime._context_owned is not borrowed
+            assert _runtime._context_count == 0
+            assert not _runtime._context_owned
+            with _runtime.runtime_context("cpu") as fresh:
+                assert fresh is candidates[1]
+                assert start_mock.call_count == 2
+            assert _runtime.os.environ[_runtime.LOCAL_TOKEN_ENV] == "original"
+    finally:
+        _runtime.stop_local_runtime()
