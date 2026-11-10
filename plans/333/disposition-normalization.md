@@ -11,25 +11,23 @@ API or configuration changes are required.
 
 ## Policy and tradeoffs
 
-For an explicit direct identifier assigned `leave_as_is`, set sensitivity to
-`high`, method to `replace`, and clear any low-sensitivity reason. Supply the
-classified direct-identifier IDs as validation context when reconstructing raw
-responses; do not trust model-generated identity or categories.
+Normalize `leave_as_is` according to sensitivity alone, before field and
+consistency validation: `high` becomes `replace`, and `medium` becomes
+`generalize`. Clear low-sensitivity reasons on both paths. Apply the same rule
+in regular and strict schemas, without consulting direct/quasi classification.
+Preserve valid protective decisions and sensitivity levels during this correction.
 
-For any `medium` decision assigned `leave_as_is`, use `generalize` before field
-validation, including strict schemas. Coverage normalization continues to turn
-protected latent methods into `suppress_inference`. Preserve existing protective
-methods for direct identifiers. High-sensitivity retention without a direct
-classification still fails closed. Low decisions still require justification
-unless direct-identifier policy already mandates replacement. Incomplete coverage
-and unknown categories continue to fail the record.
+Coverage normalization still applies its existing separate policies: direct
+identifiers are high sensitivity, and protected latent entities use
+`suppress_inference`. Low retention still requires contextual justification;
+incomplete coverage and unknown categories continue to fail the record.
 
 This favors deterministic protection over losing a record to a recoverable model
 mistake; it does not retry generation or relax inventory coverage.
 
 ## Validation and rollout
 
-Exercise raw reconstruction for low/medium/high retained direct identifiers,
-medium quasi-identifier retention, strict medium normalization, and unchanged
-high-retention failure. Run schema, disposition, workflow, and skill integration
-tests plus repository checks. Ship as an internal policy correction on this branch.
+Exercise high/medium retention across direct, quasi, and latent categories;
+verify both regular and strict raw schemas and authoritative reconstruction.
+Run schema, disposition, workflow, and skill integration tests plus repository
+checks. Ship as an internal policy correction on this branch.

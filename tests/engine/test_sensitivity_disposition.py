@@ -699,14 +699,14 @@ def test_summary_precedes_input_and_preserves_protection_policy(strict: bool) ->
     assert ("<strict_entity_protection>" in prompt) == strict
 
 
-@pytest.mark.parametrize("sensitivity", ["low", "medium", "high"])
-def test_compact_retained_direct_identifier_is_normalized_before_validation(sensitivity: str) -> None:
+@pytest.mark.parametrize(("sensitivity", "method"), [("high", "replace"), ("medium", "generalize")])
+def test_compact_retention_normalizes_independently_of_category(sensitivity: str, method: str) -> None:
     explicit, latent = build_numbered_entities(_TWO_ENTITIES, None)
     row = {
         COL_RAW_SENSITIVITY_DISPOSITION: {
             "sensitivity_disposition": [
                 {"id": 1, "sensitivity": sensitivity, "protection_method_suggestion": "leave_as_is"},
-                {"id": 2, "sensitivity": "medium", "protection_method_suggestion": "leave_as_is"},
+                {"id": 2, "sensitivity": sensitivity, "protection_method_suggestion": "leave_as_is"},
             ]
         },
         COL_DISPOSITION_EXPLICIT_ENTITIES: explicit,
@@ -715,16 +715,23 @@ def test_compact_retained_direct_identifier_is_normalized_before_validation(sens
     }
     result = _verify_disposition_coverage(row)
     direct, quasi = result[COL_SENSITIVITY_DISPOSITION]["sensitivity_disposition"]
-    assert (direct["sensitivity"], direct["protection_method_suggestion"]) == ("high", "replace")
-    assert (quasi["sensitivity"], quasi["protection_method_suggestion"]) == ("medium", "generalize")
+    assert (direct["sensitivity"], direct["protection_method_suggestion"]) == ("high", method)
+    assert (quasi["sensitivity"], quasi["protection_method_suggestion"]) == (sensitivity, method)
     assert result[COL_DISPOSITION_COVERAGE] is True
 
 
 @pytest.mark.parametrize("schema", [RawSensitivityDispositionSchema, StrictRawSensitivityDispositionSchema])
-def test_compact_medium_retention_normalizes_in_both_modes(schema: type[RawSensitivityDispositionSchema]) -> None:
+@pytest.mark.parametrize(("sensitivity", "method"), [("high", "replace"), ("medium", "generalize")])
+def test_compact_retention_normalizes_in_both_modes(
+    schema: type[RawSensitivityDispositionSchema], sensitivity: str, method: str
+) -> None:
     disposition = schema.model_validate(
-        {"sensitivity_disposition": [{"id": 1, "sensitivity": "medium", "protection_method_suggestion": "leave_as_is"}]}
+        {
+            "sensitivity_disposition": [
+                {"id": 1, "sensitivity": sensitivity, "protection_method_suggestion": "leave_as_is"}
+            ]
+        }
     )
     entry = disposition.sensitivity_disposition[0]
-    assert entry.sensitivity == "medium"
-    assert entry.protection_method_suggestion == "generalize"
+    assert entry.sensitivity == sensitivity
+    assert entry.protection_method_suggestion == method

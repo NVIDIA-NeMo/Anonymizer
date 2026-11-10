@@ -275,12 +275,15 @@ def test_entity_disposition_low_sensitivity_with_protection_promotes_to_medium(m
     assert "combined_risk_level" not in dumped
 
 
-@pytest.mark.parametrize("sensitivity", ["high"])
-def test_entity_disposition_rejects_protected_level_with_leave_as_is(sensitivity: str) -> None:
-    with pytest.raises(ValidationError, match="cannot have protection_method_suggestion='leave_as_is'"):
-        EntityDispositionSchema.model_validate(
-            _make_entity(sensitivity=sensitivity, protection_method_suggestion="leave_as_is")
-        )
+@pytest.mark.parametrize(("sensitivity", "method"), [("high", "replace"), ("medium", "generalize")])
+@pytest.mark.parametrize("category", ["direct_identifier", "quasi_identifier", "latent_identifier"])
+def test_entity_disposition_normalizes_retention_by_sensitivity(sensitivity: str, method: str, category: str) -> None:
+    entity = EntityDispositionSchema.model_validate(
+        _make_entity(sensitivity=sensitivity, category=category, protection_method_suggestion="leave_as_is")
+    )
+    assert entity.sensitivity == sensitivity
+    assert entity.protection_method_suggestion == method
+    assert entity.low_sensitivity_reason is None
 
 
 def test_entity_disposition_accepts_low_leave_as_is() -> None:

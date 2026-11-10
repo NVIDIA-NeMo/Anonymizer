@@ -168,24 +168,15 @@ class RawEntityDispositionSchema(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _normalize_protection_policy(cls, data: object, info: ValidationInfo) -> object:
-        """Use authoritative direct-identifier IDs before rejecting inconsistent retention."""
-        if not isinstance(data, dict):
+    def _normalize_protection_policy(cls, data: object) -> object:
+        """Resolve inconsistent retention from sensitivity, independent of entity category."""
+        if not isinstance(data, dict) or data.get("protection_method_suggestion") != ProtectionMethod.leave_as_is:
             return data
-        direct_ids = (info.context or {}).get("direct_identifier_ids", set())
-        if data.get("id") in direct_ids and data.get("protection_method_suggestion") == ProtectionMethod.leave_as_is:
-            return {
-                **data,
-                "sensitivity": "high",
-                "protection_method_suggestion": "replace",
-                "low_sensitivity_reason": None,
-            }
-        if (
-            data.get("sensitivity") == SensitivityLevel.medium
-            and data.get("protection_method_suggestion") == ProtectionMethod.leave_as_is
-        ):
-            return {**data, "protection_method_suggestion": "generalize", "low_sensitivity_reason": None}
-        return data
+        methods = {SensitivityLevel.high: "replace", SensitivityLevel.medium: "generalize"}
+        method = methods.get(data.get("sensitivity"))
+        if method is None:
+            return data
+        return {**data, "protection_method_suggestion": method, "low_sensitivity_reason": None}
 
     @model_validator(mode="after")
     def _validate_protection_consistency(self) -> RawEntityDispositionSchema:
@@ -201,7 +192,7 @@ class RawEntityDispositionSchema(BaseModel):
             # Normalize toward more protection: trust the protection intent over the level.
             self.sensitivity = SensitivityLevel.medium.value  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
         elif self.sensitivity != SensitivityLevel.low and retained:
-            # No safe normalization exists (the schema cannot pick a method), so fail closed.
+            # Retained protected levels must have been normalized before field validation.
             raise ValueError(
                 f"Entity {self.id}: sensitivity={self.sensitivity!r} cannot have protection_method_suggestion='leave_as_is'"
             )
