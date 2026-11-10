@@ -14,7 +14,7 @@ from data_designer.config.column_configs import CustomColumnConfig, LLMStructure
 from data_designer.interface.data_designer import DataDesigner
 
 from anonymizer.config.models import RewriteModelSelection
-from anonymizer.config.rewrite import PrivacyGoal
+from anonymizer.config.rewrite import SENSITIVITY_WEIGHTS, PrivacyGoal
 from anonymizer.engine.constants import (
     COL_DISPOSITION_COVERAGE,
     COL_DISPOSITION_EXPLICIT_ENTITIES,
@@ -30,10 +30,12 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
+from anonymizer.engine.rewrite.evaluate import compute_leakage_mass
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import _generate_privacy_qa_column
 from anonymizer.engine.rewrite.rewrite_generation import _format_rewrite_disposition_block
 from anonymizer.engine.rewrite.sensitivity_disposition import (
+    DispositionCoverageParams,
     SensitivityDispositionWorkflow,
     _get_sensitivity_disposition_prompt,
     _number_disposition_entities,
@@ -42,7 +44,7 @@ from anonymizer.engine.rewrite.sensitivity_disposition import (
     build_numbered_entities,
     verify_disposition_coverage,
 )
-from anonymizer.engine.schemas import SensitivityDispositionSchema
+from anonymizer.engine.schemas import PrivacyAnswerItemSchema, PrivacyQAPairsSchema, SensitivityDispositionSchema
 from anonymizer.engine.schemas.rewrite import RawSensitivityDispositionSchema, StrictRawSensitivityDispositionSchema
 
 _STUB_PRIVACY_GOAL = PrivacyGoal(
@@ -128,11 +130,18 @@ def test_prompt_has_no_unfilled_placeholders() -> None:
         assert "<<" not in prompt
 
 
-def test_strict_block_only_present_in_strict_mode() -> None:
-    assert "<strict_entity_protection>" not in _get_sensitivity_disposition_prompt(_STUB_PRIVACY_GOAL)
+def test_prompt_includes_only_active_protection_policy() -> None:
+    normal = _get_sensitivity_disposition_prompt(_STUB_PRIVACY_GOAL)
     strict = _get_sensitivity_disposition_prompt(_STUB_PRIVACY_GOAL, strict_entity_protection=True)
-    assert "<strict_entity_protection>" in strict
-    assert "Override the low eligibility rules: every supplied entity must be protected." in strict
+    assert "Low requires leave_as_is." in normal
+    assert "Low requires leave_as_is." not in strict
+    assert "Every supplied entity requires protection" in strict
+    assert "Every supplied entity requires protection" not in normal
+    assert "- leave_as_is:" in normal
+    assert "- leave_as_is:" not in strict
+    for prompt in (normal, strict):
+        assert "normal mode" not in prompt
+        assert "strict mode" not in prompt
 
 
 def test_prompt_does_not_mention_combined_risk_level() -> None:
@@ -453,15 +462,11 @@ def test_compact_disposition_rejects_missing_category() -> None:
         _verify_disposition_coverage(row)
 
 
-def test_compact_response_checks_low_sensitivity_reason_before_reconstruction() -> None:
-    with pytest.raises(ValueError, match="low sensitivity requires a non-empty"):
-        RawSensitivityDispositionSchema.model_validate(
-            {
-                "sensitivity_disposition": [
-                    {"id": 1, "sensitivity": "low", "protection_method_suggestion": "leave_as_is"}
-                ]
-            }
-        )
+def test_compact_response_accepts_missing_low_reason() -> None:
+    disposition = RawSensitivityDispositionSchema.model_validate(
+        {"sensitivity_disposition": [{"id": 1, "sensitivity": "low", "protection_method_suggestion": "leave_as_is"}]}
+    )
+    assert disposition.sensitivity_disposition[0].low_sensitivity_reason is None
 
 
 @pytest.mark.parametrize(("sensitivity", "method"), [("low", "leave_as_is")])
@@ -696,7 +701,7 @@ def test_summary_precedes_input_and_preserves_protection_policy(strict: bool) ->
     assert "where consistent with the privacy goal and the protection rules below" in prompt
     assert "For situations it does not address, use the sensitivity policy below." in prompt
     assert "Assign high. They must always be protected." in prompt
-    assert ("<strict_entity_protection>" in prompt) == strict
+    assert ("Every supplied entity requires protection" in prompt) == strict
 
 
 @pytest.mark.parametrize(("sensitivity", "method"), [("high", "replace"), ("medium", "generalize")])
@@ -735,3 +740,91 @@ def test_compact_retention_normalizes_in_both_modes(
     entry = disposition.sensitivity_disposition[0]
     assert entry.sensitivity == sensitivity
     assert entry.protection_method_suggestion == method
+
+
+def test_strict_raw_schema_allows_low_but_excludes_retention() -> None:
+    schema = StrictRawSensitivityDispositionSchema.model_json_schema()
+    assert schema["$defs"]["StrictSensitivityLevel"]["enum"] == ["low", "medium", "high"]
+    assert "leave_as_is" not in schema["$defs"]["StrictProtectionMethod"]["enum"]
+    disposition = StrictRawSensitivityDispositionSchema.model_validate(
+        {
+            "sensitivity_disposition": [
+                {
+                    "id": 1,
+                    "sensitivity": "low",
+                    "protection_method_suggestion": "generalize",
+                    "low_sensitivity_reason": "Low linkage risk.",
+                }
+            ]
+        }
+    )
+    entry = disposition.sensitivity_disposition[0]
+    assert entry.protection_method_suggestion == "generalize"
+    assert entry.sensitivity == "low"
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("method", ["replace", "generalize", "remove", "suppress_inference"])
+def test_low_disposition_method_depends_on_protection_mode(strict: bool, method: str) -> None:
+    explicit, latent = build_numbered_entities(_TWO_ENTITIES, None)
+    reason = "The broad location adds no distinguishing information in context."
+    row = {
+        COL_RAW_SENSITIVITY_DISPOSITION: {
+            "sensitivity_disposition": [
+                {"id": 1, "sensitivity": "high", "protection_method_suggestion": "replace"},
+                {
+                    "id": 2,
+                    "sensitivity": "low",
+                    "protection_method_suggestion": method,
+                    "low_sensitivity_reason": reason,
+                },
+            ]
+        },
+        COL_DISPOSITION_EXPLICIT_ENTITIES: explicit,
+        COL_DISPOSITION_LATENT_ENTITIES: latent,
+        COL_ENTITY_CLASSIFICATION: _CLASSIFICATIONS,
+    }
+    result = _verify_disposition_coverage(row, DispositionCoverageParams(strict_entity_protection=strict))
+    entry = result[COL_SENSITIVITY_DISPOSITION]["sensitivity_disposition"][1]
+    assert entry["sensitivity"] == "low"
+    assert entry["protection_method_suggestion"] == (method if strict else "leave_as_is")
+    assert entry["low_sensitivity_reason"] == reason
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("reason", [None, "", "   ", "The broad location adds no meaningful linkage in context."])
+def test_low_disposition_through_privacy_qa_and_leakage_scoring(strict: bool, reason: str | None) -> None:
+    explicit, latent = build_numbered_entities({"entities_by_value": [{"value": "a city", "labels": ["city"]}]}, None)
+    row = {
+        COL_RAW_SENSITIVITY_DISPOSITION: {
+            "sensitivity_disposition": [
+                {
+                    "id": 1,
+                    "sensitivity": "low",
+                    "protection_method_suggestion": "generalize",
+                    "low_sensitivity_reason": reason,
+                }
+            ]
+        },
+        COL_DISPOSITION_EXPLICIT_ENTITIES: explicit,
+        COL_DISPOSITION_LATENT_ENTITIES: latent,
+        COL_ENTITY_CLASSIFICATION: {"city": "quasi_identifier"},
+    }
+    params = DispositionCoverageParams(strict_entity_protection=strict)
+    normalized = _verify_disposition_coverage(row, params)
+    entry = normalized[COL_SENSITIVITY_DISPOSITION]["sensitivity_disposition"][0]
+    assert entry["sensitivity"] == "low"
+    assert entry["low_sensitivity_reason"] == reason
+    assert entry["protection_method_suggestion"] == ("generalize" if strict else "leave_as_is")
+
+    evaluated = _generate_privacy_qa_column(normalized)
+    qa = PrivacyQAPairsSchema.model_validate(evaluated[COL_PRIVACY_QA])
+    assert len(qa.items) == (1 if strict else 0)
+    answers = [
+        PrivacyAnswerItemSchema(id=item.id, answer="yes", confidence=0.8, reason="Still deducible.")
+        for item in qa.items
+    ]
+    if strict:
+        assert qa.items[0].sensitivity == "low"
+        assert qa.items[0].entity_value == "a city"
+    assert compute_leakage_mass(answers, qa, dict(SENSITIVITY_WEIGHTS)) == pytest.approx(0.24 if strict else 0.0)

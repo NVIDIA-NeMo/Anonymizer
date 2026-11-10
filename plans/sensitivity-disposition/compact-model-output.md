@@ -12,7 +12,7 @@ This experiment is confined to the integration branch; no public configuration c
 ## Implementation
 
 - Add compact raw schemas containing ID, sensitivity, method, and low-sensitivity reason,
-  including a strict variant that excludes low sensitivity and leave-as-is.
+  including a strict variant that allows all sensitivity levels but excludes leave-as-is.
 - Update the prompt to request only those fields, retaining the full document context,
   inventory, classification table, and existing protection policy.
 - Validate sequential IDs and complete coverage before reconstructing source, category,

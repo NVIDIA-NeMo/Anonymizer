@@ -262,15 +262,14 @@ def mixed_disposition() -> SensitivityDispositionSchema:
 
 
 @pytest.mark.parametrize("method", ["replace", "generalize", "remove", "suppress_inference"])
-def test_entity_disposition_low_sensitivity_with_protection_promotes_to_medium(method: str) -> None:
+def test_entity_disposition_low_sensitivity_with_protection_stays_low(method: str) -> None:
     entity = EntityDispositionSchema.model_validate(
         _make_entity(sensitivity="low", protection_method_suggestion=method)
     )
-    assert entity.sensitivity == "medium"
+    assert entity.sensitivity == "low"
     assert entity.protection_method_suggestion == method
-    # Coerced and non-coerced paths must produce the same serialization type (plain string, not enum).
     dumped = entity.model_dump()
-    assert dumped["sensitivity"] == "medium"
+    assert dumped["sensitivity"] == "low"
     assert type(dumped["sensitivity"]) is str
     assert "combined_risk_level" not in dumped
 
@@ -295,21 +294,22 @@ def test_entity_disposition_accepts_low_leave_as_is() -> None:
 
 
 @pytest.mark.parametrize("reason", [None, "", "   "])
-def test_low_sensitivity_requires_contextual_reason(reason: str | None) -> None:
-    with pytest.raises(ValidationError, match="low sensitivity requires"):
-        EntityDispositionSchema.model_validate(
-            _make_entity(sensitivity="low", protection_method_suggestion="leave_as_is", low_sensitivity_reason=reason)
-        )
+def test_low_sensitivity_accepts_unavailable_contextual_reason(reason: str | None) -> None:
+    entity = EntityDispositionSchema.model_validate(
+        _make_entity(sensitivity="low", protection_method_suggestion="leave_as_is", low_sensitivity_reason=reason)
+    )
+    assert entity.low_sensitivity_reason == reason
+    assert entity.sensitivity == "low"
 
 
-def test_low_sensitivity_rejects_missing_reason() -> None:
+def test_low_sensitivity_accepts_missing_reason() -> None:
     payload = _make_entity(sensitivity="low", protection_method_suggestion="leave_as_is")
     del payload["low_sensitivity_reason"]
-    with pytest.raises(ValidationError, match="low sensitivity requires"):
-        EntityDispositionSchema.model_validate(payload)
+    entity = EntityDispositionSchema.model_validate(payload)
+    assert entity.low_sensitivity_reason is None
 
 
-@pytest.mark.parametrize("sensitivity", ["low", "medium", "high"])
+@pytest.mark.parametrize("sensitivity", ["medium", "high"])
 def test_protected_entity_clears_low_reason(sensitivity: str) -> None:
     entity = EntityDispositionSchema.model_validate(
         _make_entity(
@@ -396,7 +396,7 @@ def test_sensitivity_disposition_format_for_rewrite_context_empty_when_no_protec
     assert schema.format_for_rewrite_context() == "No entities needing protection."
 
 
-def test_sensitivity_disposition_format_for_rewrite_context_promotes_low_when_protected() -> None:
+def test_sensitivity_disposition_format_for_rewrite_context_preserves_protected_low() -> None:
     schema = SensitivityDispositionSchema.model_validate(
         {
             "sensitivity_disposition": [
@@ -411,7 +411,7 @@ def test_sensitivity_disposition_format_for_rewrite_context_promotes_low_when_pr
         }
     )
     context = schema.format_for_rewrite_context()
-    assert "[MEDIUM]" in context  # low + protecting method is promoted to medium
+    assert "[LOW]" in context
     assert "Portland" in context
     assert "→ generalize" in context
 
@@ -614,11 +614,17 @@ def test_strict_entity_normalizes_medium_leave_as_is() -> None:
     assert entity.protection_method_suggestion == "generalize"
 
 
-def test_strict_entity_rejects_low_sensitivity() -> None:
-    with pytest.raises(ValidationError):
-        StrictEntityDispositionSchema.model_validate(
-            _make_strict_entity(sensitivity="low", protection_method_suggestion="replace")
+def test_strict_entity_preserves_protected_low_sensitivity() -> None:
+    schema = StrictEntityDispositionSchema.model_json_schema()
+    assert schema["$defs"]["StrictSensitivityLevel"]["enum"] == ["low", "medium", "high"]
+    assert "leave_as_is" not in schema["$defs"]["StrictProtectionMethod"]["enum"]
+    entity = StrictEntityDispositionSchema.model_validate(
+        _make_strict_entity(
+            sensitivity="low", protection_method_suggestion="replace", low_sensitivity_reason="Low linkage risk."
         )
+    )
+    assert entity.needs_protection is True
+    assert entity.sensitivity == "low"
 
 
 def test_strict_entity_accepts_valid_protected_entity() -> None:

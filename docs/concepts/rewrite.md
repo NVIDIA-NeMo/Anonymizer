@@ -17,7 +17,9 @@ The text is then rewritten to reduce identifiability, applying targeted transfor
 
 ## Key concepts
 
-**Sensitivity** measures an entity’s privacy risk in the context of the document, considering the information retained alongside it. It determines the protection decision: entities rated `low` must use `leave_as_is`, while entities rated `medium` or `high` must receive protection. Sensitivity also feeds downstream leakage scoring.
+**Sensitivity** measures an entity’s privacy risk in the context of the document, considering the information retained alongside it. In normal mode, entities rated `low` use `leave_as_is`, while entities rated `medium` or `high` receive protection. With `strict_entity_protection=True`, every entity receives protection, including entities rated `low`; protection alone does not raise their sensitivity. Sensitivity also feeds downstream leakage scoring.
+
+The prompt requests a `low_sensitivity_reason` for every low rating, whether the entity is protected or retained. A missing or blank reason does not fail the record or change its sensitivity or protection method. The reason explains the original information’s limited linkage or recognition risk; a planned edit does not justify a low rating.
 
 | Level | Meaning | Examples | Leakage weight |
 |-------|---------|---------|----------------|
@@ -99,6 +101,8 @@ The **repair threshold** is the leakage mass above which a record is sent for re
 > Leakage mass is a confidence-weighted sum of leaked entities, where each entity's weight reflects its sensitivity (high=1.0, medium=0.6, low=0.3).
 > A leakage mass of 1.0 roughly equals one high-sensitivity entity leaked at full confidence.
 
+Privacy questions are generated only for entities assigned a protective method. Entities assigned `leave_as_is` receive no privacy question and do not contribute to leakage mass. A protected low-sensitivity entity does receive a question: if the judge answers yes with confidence 0.8, it contributes `0.3 × 0.8 = 0.24`.
+
 ```python
 config = AnonymizerConfig(
     rewrite=Rewrite(
@@ -110,7 +114,9 @@ config = AnonymizerConfig(
 
 ### Strict entity protection
 
-By default, some entities — particularly quasi-identifiers judged to be low-risk in context — may be left unchanged. Setting `strict_entity_protection=True` overrides this: every detected entity is forced into an active protection method, and no entity can be left as-is.
+By default, some entities — particularly quasi-identifiers judged to be low-risk in context — may be left unchanged. Setting `strict_entity_protection=True` overrides this: every detected entity is forced into an active protection method, and no entity can be left as-is. Sensitivity can still be `low`, `medium`, or `high`; strict mode does not promote a low rating merely because the entity must be protected.
+
+`strict_entity_protection` controls which entities require protection. `risk_tolerance` controls repair and human-review decisions after evaluation. Enabling strict protection does not change the preset thresholds.
 
 ```python
 config = AnonymizerConfig(

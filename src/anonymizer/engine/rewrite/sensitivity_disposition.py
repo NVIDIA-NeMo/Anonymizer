@@ -11,6 +11,7 @@ from typing import Any
 from data_designer.config import custom_column_generator
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from data_designer.config.column_types import ColumnConfigT
+from pydantic import BaseModel
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
@@ -34,7 +35,11 @@ from anonymizer.engine.schemas import (
     LatentEntitiesSchema,
     SensitivityDispositionSchema,
 )
-from anonymizer.engine.schemas.rewrite import RawSensitivityDispositionSchema, StrictRawSensitivityDispositionSchema
+from anonymizer.engine.schemas.rewrite import (
+    ProtectionMethod,
+    RawSensitivityDispositionSchema,
+    StrictRawSensitivityDispositionSchema,
+)
 
 logger = logging.getLogger("anonymizer.rewrite.sensitivity_disposition")
 
@@ -110,14 +115,42 @@ def _get_sensitivity_disposition_prompt(
     )
     summary_block = f"<data_summary>\n{data_summary}\n</data_summary>\n\n" if data_summary else ""
 
-    strict_protection_block = ""
-    if strict_entity_protection:
-        strict_protection_block = """<strict_entity_protection>
-Override the low eligibility rules: every supplied entity must be protected.
-Assign high to direct identifiers and medium to all other entities.
-Do not use leave_as_is. Keep the category-specific method preferences.
-</strict_entity_protection>
-"""
+    protection_policy = (
+        "Every supplied entity requires protection, including low-sensitivity entities.\n"
+        "Preserve the assessed sensitivity; do not raise it merely because protection\n"
+        "is required.\nDo not use leave_as_is."
+        if strict_entity_protection
+        else "High and medium require protection.\nLow requires leave_as_is."
+    )
+    retention_method = (
+        ""
+        if strict_entity_protection
+        else "\n- leave_as_is: Retain an explicit value or permit a latent inference to remain.\n"
+        "  Use only for low sensitivity."
+    )
+    retention_guidance = (
+        ""
+        if strict_entity_protection
+        else "\nDo not require changing another supplied entity assigned leave_as_is;\n"
+        "if its value must change for protection, assign it a protected disposition."
+    )
+    output_methods = (
+        "replace, generalize, remove, or suppress_inference"
+        if strict_entity_protection
+        else "replace, generalize, remove,\n  suppress_inference, or leave_as_is"
+    )
+    low_reason_guidance = (
+        "Explain every low rating even though the entity will be protected.\n"
+        "    A planned edit is not a reason to rate it low."
+        if strict_entity_protection
+        else "Justify the low rating based on the original information.\n"
+        "    A planned edit is not a reason to rate it low."
+    )
+    protection_check = (
+        "Every entity has a protective method; none uses leave_as_is."
+        if strict_entity_protection
+        else "High/medium entities are protected; low entities use leave_as_is."
+    )
 
     prompt = """Create a sensitivity disposition for privacy-preserving rewriting.
 Do not rewrite the document or generate replacement values.
@@ -199,8 +232,11 @@ Do not assume another planned edit makes information safe.
 Do not equate commonness with safety or require unique identification to
 establish risk. Do not invent unsupported identification paths.
 
-High and medium require protection. Low requires leave_as_is.
 </sensitivity_policy>
+
+<protection_policy>
+<<PROTECTION_POLICY>>
+</protection_policy>
 
 <methods>
 Choose exactly one method per entity:
@@ -213,29 +249,23 @@ Choose exactly one method per entity:
 - remove: Omit information when replacement or generalization cannot provide
   effective, faithful protection.
 - suppress_inference: Change supporting evidence so a protected latent value
-  cannot be reliably inferred. Use for protected latent entities.
-- leave_as_is: Retain an explicit value or permit a latent inference to remain.
-  Use only for low sensitivity.
+  cannot be reliably inferred. Use for protected latent entities.<<RETENTION_METHOD>>
 
 Choose methods that work across the complete document. A surface change is
-insufficient if other retained evidence still reveals the protected value.
-Do not require changing another supplied entity assigned leave_as_is;
-if its value must change for protection, assign it a protected disposition.
+insufficient if other retained evidence still reveals the protected value.<<RETENTION_GUIDANCE>>
 </methods>
-
-<<STRICT_PROTECTION_BLOCK>>
 
 <output>
 Return sensitivity_disposition. Each entry contains:
 - id
 - sensitivity: high, medium, or low
-- protection_method_suggestion: replace, generalize, remove,
-  suppress_inference, or leave_as_is
+- protection_method_suggestion: <<OUTPUT_METHODS>>
 - low_sensitivity_reason: required for low sensitivity; null for medium/high.
   - For generic information, explain what distinguishing detail it lacks
     and why the document does not make it identifying.
-  - For specific information or a latent inference, explain why retaining
-    it adds no meaningful linkage or recognition risk in context.
+  - For specific information or a latent inference, explain why the original
+    information adds no meaningful linkage or recognition risk in context.
+  - <<LOW_REASON_GUIDANCE>>
   - Confirm consistency with the privacy goal and other protection decisions.
 
 Return only these four fields per entry. Do not repeat source, category,
@@ -244,9 +274,9 @@ entity_label, or entity_value; they are supplied by code using the ID.
 Before returning, verify:
 - Complete coverage, input order, and unchanged IDs.
 - Direct identifiers are high.
-- High/medium entities are protected; low entities use leave_as_is.
+- <<PROTECTION_CHECK>>
 - Protected latent entities use suppress_inference.
-- Low decisions have contextual explanations; medium/high reasons are null.
+- Every low rating has a contextual explanation; medium/high reasons are null.
 - Decisions do not contradict one another.
 - If retaining a low entity would reveal a value or sustain an inference
   assigned protection, promote that low entity to medium and choose an
@@ -266,7 +296,12 @@ Before returning, verify:
             "<<FINAL_ENTITIES>>": _jinja(COL_DISPOSITION_EXPLICIT_ENTITIES),
             "<<ENTITY_CLASSIFICATIONS>>": _jinja(COL_ENTITY_CLASSIFICATION),
             "<<LATENT_ENTITIES>>": _jinja(COL_DISPOSITION_LATENT_ENTITIES),
-            "<<STRICT_PROTECTION_BLOCK>>": strict_protection_block,
+            "<<PROTECTION_POLICY>>": protection_policy,
+            "<<RETENTION_METHOD>>": retention_method,
+            "<<RETENTION_GUIDANCE>>": retention_guidance,
+            "<<OUTPUT_METHODS>>": output_methods,
+            "<<LOW_REASON_GUIDANCE>>": low_reason_guidance,
+            "<<PROTECTION_CHECK>>": protection_check,
         },
     )
 
@@ -354,6 +389,10 @@ def verify_disposition_coverage(
             )
 
 
+class DispositionCoverageParams(BaseModel):
+    strict_entity_protection: bool = False
+
+
 @custom_column_generator(
     required_columns=[
         COL_RAW_SENSITIVITY_DISPOSITION,
@@ -363,14 +402,22 @@ def verify_disposition_coverage(
     ],
     side_effect_columns=[COL_DISPOSITION_COVERAGE],
 )
-def _verify_disposition_coverage(row: dict[str, Any]) -> dict[str, Any]:
+def _verify_disposition_coverage(
+    row: dict[str, Any], generator_params: DispositionCoverageParams | None = None
+) -> dict[str, Any]:
     explicit = _parse_numbered_lines(row.get(COL_DISPOSITION_EXPLICIT_ENTITIES))
     expected = explicit + _parse_numbered_lines(row.get(COL_DISPOSITION_LATENT_ENTITIES))
     classifications = normalize_payload(row.get(COL_ENTITY_CLASSIFICATION)) or {}
-    raw = RawSensitivityDispositionSchema.model_validate(
+    strict = generator_params is not None and generator_params.strict_entity_protection
+    schema = StrictRawSensitivityDispositionSchema if strict else RawSensitivityDispositionSchema
+    raw = schema.model_validate(
         normalize_payload(row.get(COL_RAW_SENSITIVITY_DISPOSITION)),
     )
     decisions = raw.sensitivity_disposition
+    if not strict:
+        for decision in decisions:
+            if decision.sensitivity == "low":
+                decision.protection_method_suggestion = ProtectionMethod.leave_as_is
     if len(decisions) != len(expected):
         raise ValueError(
             f"Disposition has {len(decisions)} entries but {len(expected)} entities were supplied; "
@@ -441,5 +488,6 @@ class SensitivityDispositionWorkflow:
             CustomColumnConfig(
                 name=COL_SENSITIVITY_DISPOSITION,
                 generator_function=_verify_disposition_coverage,
+                generator_params=DispositionCoverageParams(strict_entity_protection=strict_entity_protection),
             ),
         ]

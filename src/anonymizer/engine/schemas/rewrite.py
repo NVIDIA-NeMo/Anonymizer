@@ -41,13 +41,10 @@ Supporting enums: Domain, EntitySource, EntityCategory, SensitivityLevel,
 
 from __future__ import annotations
 
-import logging
 from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
-
-logger = logging.getLogger("anonymizer.schemas.rewrite")
 
 # ---------------------------------------------------------------------------
 # Domain
@@ -159,7 +156,7 @@ class RawEntityDispositionSchema(BaseModel):
     protection_method_suggestion: ProtectionMethod
     low_sensitivity_reason: str | None = Field(
         default=None,
-        description="Diagnostic justification for retaining a low-sensitivity entity; null for protected entities.",
+        description="Justification for every low-sensitivity rating, whether protected or retained; null for medium/high.",
     )
 
     @property
@@ -181,25 +178,12 @@ class RawEntityDispositionSchema(BaseModel):
     @model_validator(mode="after")
     def _validate_protection_consistency(self) -> RawEntityDispositionSchema:
         retained = not self.needs_protection
-        if self.sensitivity == SensitivityLevel.low and not retained:
-            logger.warning(
-                "Entity %d (label=%r): sensitivity='low' conflicts with "
-                "protection_method_suggestion=%r; promoting sensitivity to 'medium'.",
-                self.id,
-                getattr(self, "entity_label", None),
-                self.protection_method_suggestion,
-            )
-            # Normalize toward more protection: trust the protection intent over the level.
-            self.sensitivity = SensitivityLevel.medium.value  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
-        elif self.sensitivity != SensitivityLevel.low and retained:
+        if self.sensitivity != SensitivityLevel.low and retained:
             # Retained protected levels must have been normalized before field validation.
             raise ValueError(
                 f"Entity {self.id}: sensitivity={self.sensitivity!r} cannot have protection_method_suggestion='leave_as_is'"
             )
-        if self.sensitivity == SensitivityLevel.low:
-            if self.low_sensitivity_reason is None or not self.low_sensitivity_reason.strip():
-                raise ValueError(f"Entity {self.id}: low sensitivity requires a non-empty low_sensitivity_reason")
-        else:
+        if self.sensitivity != SensitivityLevel.low:
             self.low_sensitivity_reason = None
         return self
 
@@ -208,7 +192,7 @@ class EntityDispositionSchema(RawEntityDispositionSchema):
     """Protection decision with authoritative identity for one supplied entity.
 
     Each instance represents a unique entity value/label pair rather than each
-    repeated text span. Low sensitivity means leave_as_is; medium/high require protection.
+    repeated text span. Low sensitivity may be protected or retained; medium/high require protection.
     """
 
     model_config = ConfigDict(use_enum_values=True, extra="ignore")
@@ -281,12 +265,13 @@ class StrictProtectionMethod(str, Enum):
 
 
 class StrictSensitivityLevel(str, Enum):
+    low = "low"
     medium = "medium"
     high = "high"
 
 
 class StrictEntityDispositionSchema(EntityDispositionSchema):
-    """Strict variant: leave_as_is and low sensitivity are excluded."""
+    """Strict variant: every sensitivity level is allowed; leave_as_is is excluded."""
 
     sensitivity: StrictSensitivityLevel
     protection_method_suggestion: StrictProtectionMethod
