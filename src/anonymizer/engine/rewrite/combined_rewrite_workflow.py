@@ -37,7 +37,6 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
     COL_REWRITTEN_TEXT_NEXT,
-    COL_SENSITIVITY_DISPOSITION,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
@@ -334,7 +333,6 @@ def _finalization_column(
         )
     )
     required_columns.append(COL_REWRITE_REPLACEMENT_READY)
-    required_columns.append(COL_SENSITIVITY_DISPOSITION)
     side_effect_columns = [
         COL_QUALITY_QA_REANSWER,
         COL_PRIVACY_QA_REANSWER,

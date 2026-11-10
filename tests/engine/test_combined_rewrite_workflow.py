@@ -34,7 +34,6 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
     COL_REWRITTEN_TEXT_NEXT,
-    COL_SENSITIVITY_DISPOSITION,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
@@ -276,7 +275,6 @@ def test_conditional_repairs_execute_independently_per_row(
                 {
                     _REPAIRS_NEEDED: [0, 1, 2, 3],
                     COL_REWRITE_REPLACEMENT_READY: replacement_ready,
-                    COL_SENSITIVITY_DISPOSITION: [None] * 4,
                 }
             ),
             model_configs=[],
@@ -458,7 +456,6 @@ def test_combined_and_legacy_paths_return_equivalent_repaired_result(
             COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
             COL_REWRITE_REPLACEMENT_READY: [True],
             _REPAIRS_NEEDED: [2],
-            COL_SENSITIVITY_DISPOSITION: [None],
         }
     )
     pipeline = dataframe.copy()
@@ -574,7 +571,6 @@ def test_conditional_graph_handles_larger_mixed_batches(
             {
                 _REPAIRS_NEEDED: repairs_needed,
                 COL_REWRITE_REPLACEMENT_READY: True,
-                COL_SENSITIVITY_DISPOSITION: [None] * len(repairs_needed),
             }
         ),
         model_configs=[],
