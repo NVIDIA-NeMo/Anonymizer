@@ -160,7 +160,7 @@ def run_template(
         }
         monkeypatch.setattr(sys, "argv", ["anonymize_template.py", *args])
         capsys.readouterr()
-        exec(compile(source, "anonymize_template.py", "exec"), namespace)  # noqa: S102
+        exec(compile(source, "anonymize_template.py", "exec"), namespace)
         return capsys.readouterr().out
 
     return run

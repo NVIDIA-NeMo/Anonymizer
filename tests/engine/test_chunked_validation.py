@@ -13,8 +13,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -100,7 +101,7 @@ class FakeFacade:
             raise RuntimeError(f"forced failure from {self.alias}")
         response = self._response
         if callable(response):
-            response = response(prompt)  # ty: ignore[call-top-callable]
+            response = response(prompt)
         raw = response if isinstance(response, str) else f"```json\n{json.dumps(response)}\n```"
         return parser(raw), []
 

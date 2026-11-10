@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Collection, Iterator
+from collections.abc import Collection, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -100,7 +100,7 @@ def _run(
 
 
 @contextmanager
-def _measurement(tmp_path: Path, *, enabled: bool) -> Iterator[None]:
+def _measurement(tmp_path: Path, *, enabled: bool) -> Generator[None]:
     if not enabled:
         yield
         return

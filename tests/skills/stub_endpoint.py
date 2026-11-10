@@ -226,9 +226,9 @@ def _completion(content: str, model: str) -> dict[str, Any]:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server: StubEndpoint
+    server: StubEndpoint  # ty: ignore[invalid-mutable-override]
 
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+    def log_message(self, format: str, *args: Any) -> None:
         return
 
     def _send(self, payload: dict[str, Any]) -> None:
@@ -239,10 +239,10 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         self._send({"object": "list", "data": []})
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         body = json.loads(raw) if raw else {}
         model = str(body.get("model", ""))

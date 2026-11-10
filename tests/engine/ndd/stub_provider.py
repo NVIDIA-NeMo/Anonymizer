@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -26,12 +26,12 @@ def cut_off(prefix: str = "") -> Reply:
 
 
 @contextmanager
-def stub_provider(script: Script) -> Iterator[ModelProvider]:
+def stub_provider(script: Script) -> Generator[ModelProvider]:
     seen: dict[tuple[str, str], int] = {}
     lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             prompt = json.dumps(body["messages"])
             with lock:
@@ -63,7 +63,7 @@ def stub_provider(script: Script) -> Iterator[ModelProvider]:
             self.end_headers()
             self.wfile.write(data)
 
-        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+        def log_message(self, format: str, *args: object) -> None:
             return
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
