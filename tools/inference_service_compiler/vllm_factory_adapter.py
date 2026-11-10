@@ -72,7 +72,7 @@ async def anonymizer_chat_compatibility(
     call_next: Callable[[Any], Awaitable[Any]],
 ) -> Any:
     """Serve Anonymizer's chat contract through the active factory IOProcessor."""
-    if request.url.path != "/v1/chat/completions":
+    if request.url.path != "/v1/chat/completions" or request.method != "POST":
         return await call_next(request)
 
     responses = importlib.import_module("starlette.responses")
@@ -125,7 +125,7 @@ async def anonymizer_chat_compatibility(
 
 def _has_valid_api_key(request: Any) -> bool:
     api_key = os.environ.get(VLLM_API_KEY_ENV)
-    if not api_key or getattr(request, "method", None) == "OPTIONS":
+    if not api_key:
         return True
     authorization = request.headers.get("Authorization")
     if not authorization:

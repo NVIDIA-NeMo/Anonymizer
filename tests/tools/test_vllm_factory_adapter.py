@@ -171,6 +171,7 @@ def test_chat_compatibility_rejects_invalid_configured_api_key(
 
         headers = Headers({} if authorization is None else {"authorization": authorization})
         request = SimpleNamespace(
+            method="POST",
             url=SimpleNamespace(path="/v1/chat/completions"),
             headers=headers,
             json=request_json,
@@ -210,6 +211,7 @@ def test_chat_compatibility_accepts_valid_or_disabled_api_key(
 
         headers = Headers({} if authorization is None else {"authorization": authorization})
         request = SimpleNamespace(
+            method="POST",
             url=SimpleNamespace(path="/v1/chat/completions"),
             headers=headers,
             json=request_json,
@@ -223,6 +225,35 @@ def test_chat_compatibility_accepts_valid_or_disabled_api_key(
         monkeypatch.delenv("VLLM_API_KEY", raising=False)
     else:
         monkeypatch.setenv("VLLM_API_KEY", api_key)
+    monkeypatch.setenv("ANONYMIZER_VLLM_FACTORY_PLUGIN", "deberta_gliner")
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("method", ["OPTIONS", "GET", "PUT"])
+def test_chat_compatibility_passes_non_post_requests_to_vllm(
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+) -> None:
+    """Only POST runs detection; other methods stay behind vLLM's own auth and routing."""
+
+    async def exercise() -> None:
+        async def request_json() -> dict[str, object]:
+            raise AssertionError("a non-POST request must not be parsed")
+
+        async def call_next(_: object) -> object:
+            return sentinel
+
+        sentinel = object()
+        request = SimpleNamespace(
+            method=method,
+            url=SimpleNamespace(path="/v1/chat/completions"),
+            headers=Headers({}),
+            json=request_json,
+        )
+
+        assert await adapter.anonymizer_chat_compatibility(request, call_next) is sentinel
+
+    monkeypatch.setenv("VLLM_API_KEY", "expected-secret")
     monkeypatch.setenv("ANONYMIZER_VLLM_FACTORY_PLUGIN", "deberta_gliner")
     asyncio.run(exercise())
 
@@ -270,6 +301,7 @@ def test_chat_compatibility_bounds_aggregate_pooling_concurrency(monkeypatch: py
                 }
 
             return SimpleNamespace(
+                method="POST",
                 url=SimpleNamespace(path="/v1/chat/completions"),
                 app=SimpleNamespace(state=app_state),
                 json=request_json,

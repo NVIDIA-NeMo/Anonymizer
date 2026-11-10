@@ -220,7 +220,7 @@ def _raise_readiness_failure(
 
 def status_run(launch: LaunchReceipt) -> StatusReceipt:
     """Observe a recorded handle without changing process state."""
-    state = "running" if is_handle_running(launch.handle) else "stopped"
+    state = "running" if is_process_group_active(launch.handle) else "stopped"
     return StatusReceipt(
         plan_digest=launch.plan_digest,
         observed_at=_now(),
@@ -232,7 +232,7 @@ def status_run(launch: LaunchReceipt) -> StatusReceipt:
 def stop_run(launch: LaunchReceipt) -> StopReceipt:
     """Stop the exact process group recorded by a launch receipt."""
     handle = launch.handle
-    if not is_handle_running(handle):
+    if not is_process_group_active(handle):
         return StopReceipt(
             plan_digest=launch.plan_digest,
             stopped_at=_now(),
@@ -288,6 +288,16 @@ def is_handle_running(handle: LocalProcessHandle) -> bool:
     return True
 
 
+def is_process_group_active(handle: LocalProcessHandle) -> bool:
+    """Report whether the leader or any worker in the recorded process group remains.
+
+    The leader's start marker and group are verified first, so a reused PID still
+    raises. Once the leader is gone, a surviving group is still the recorded one:
+    the kernel does not reissue a PID while a group with that ID exists.
+    """
+    return is_handle_running(handle) or _is_process_group_running(handle.process_group_id)
+
+
 def _process_identity_mismatch(handle: LocalProcessHandle, detail: str) -> RuntimeEffectError:
     return RuntimeEffectError(
         RuntimeDiagnostic(
@@ -305,11 +315,44 @@ def _is_process_group_running(process_group_id: int) -> bool:
         return False
     except PermissionError:
         return True
-    return True
+    return not _group_members_are_all_zombies(process_group_id)
+
+
+def _group_members_are_all_zombies(process_group_id: int) -> bool:
+    """Return whether /proc shows members of the group and every one is a zombie.
+
+    ``killpg(pgid, 0)`` succeeds while a zombie remains, but a zombie holds no GPU
+    memory and cannot be signaled away. When /proc yields no member, the
+    ``killpg`` answer stands.
+    """
+    states: list[str] = []
+    try:
+        entries = list(Path("/proc").iterdir())
+    except OSError:
+        return False
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            payload = (entry / "stat").read_text(encoding="utf-8")
+        except OSError:
+            continue
+        parsed = _parse_process_group_stat(payload)
+        if parsed is not None and parsed[1] == process_group_id:
+            states.append(parsed[0])
+    return bool(states) and all(state in {"Z", "X"} for state in states)
+
+
+def _parse_process_group_stat(payload: str) -> tuple[str, int] | None:
+    _prefix, separator, suffix = payload.rpartition(")")
+    fields = suffix.strip().split() if separator else []
+    if len(fields) < 3 or not fields[2].lstrip("-").isdigit():
+        return None
+    return fields[0], int(fields[2])
 
 
 def _cleanup_handle(handle: LocalProcessHandle, timeout_seconds: float) -> bool:
-    if not is_handle_running(handle):
+    if not is_process_group_active(handle):
         return True
     return _stop_running_handle(handle, timeout_seconds).cleanup_complete
 

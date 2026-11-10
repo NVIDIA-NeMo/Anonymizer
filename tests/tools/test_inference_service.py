@@ -744,6 +744,81 @@ def test_stop_forces_a_process_group_after_its_leader_exits(tmp_path: Path) -> N
     assert group.signals == [runtime.signal.SIGTERM, runtime.signal.SIGKILL]
 
 
+def test_stop_and_status_see_workers_after_the_leader_has_exited(tmp_path: Path) -> None:
+    """A crashed leader must not hide workers that still hold GPU memory."""
+    plan = compiler.compile_profile(generation())
+    handle = models.LocalProcessHandle(
+        external_id="4242:100",
+        pid=4242,
+        process_group_id=4242,
+        start_marker="100",
+        stdout_path=str(tmp_path / "stdout.log"),
+        stderr_path=str(tmp_path / "stderr.log"),
+    )
+    launch = launch_receipt(plan, handle)
+    group = SimulatedProcessGroup(handle.process_group_id, runtime.signal.SIGKILL)
+
+    with (
+        mock.patch.object(runtime, "read_process_start_marker", return_value=None),
+        mock.patch.object(runtime.os, "killpg", side_effect=group.signal),
+        mock.patch.object(runtime.time, "monotonic", side_effect=[0.0, 0.0, 1.0]),
+        mock.patch.object(runtime.time, "sleep"),
+    ):
+        assert runtime.status_run(launch).state == "running"
+        stopped = runtime.stop_run(launch)
+        group_gone = runtime.stop_run(launch)
+
+    assert stopped.outcome == "forced"
+    assert stopped.cleanup_complete is True
+    assert group.signals[:2] == [runtime.signal.SIGTERM, runtime.signal.SIGKILL]
+    assert group_gone.outcome == "already-stopped"
+
+
+def test_failed_launch_cleanup_signals_workers_after_the_leader_has_exited(tmp_path: Path) -> None:
+    handle = models.LocalProcessHandle(
+        external_id="4242:100",
+        pid=4242,
+        process_group_id=4242,
+        start_marker="100",
+        stdout_path=str(tmp_path / "stdout.log"),
+        stderr_path=str(tmp_path / "stderr.log"),
+    )
+    group = SimulatedProcessGroup(handle.process_group_id, runtime.signal.SIGTERM)
+
+    with (
+        mock.patch.object(runtime, "read_process_start_marker", return_value=None),
+        mock.patch.object(runtime.os, "killpg", side_effect=group.signal),
+        mock.patch.object(runtime.time, "sleep"),
+    ):
+        assert runtime._cleanup_handle(handle, 5.0) is True
+
+    assert group.signals == [runtime.signal.SIGTERM]
+
+
+def test_process_group_of_only_zombies_counts_as_stopped(tmp_path: Path) -> None:
+    """A group left holding only zombies has nothing to signal and nothing on the GPU."""
+    proc = tmp_path / "proc"
+    for pid, state, group in ((4242, "Z", 4242), (4300, "Z", 4242), (4400, "S", 9999), (4500, "R", 7777)):
+        (proc / str(pid)).mkdir(parents=True)
+        (proc / str(pid) / "stat").write_text(f"{pid} (worker with spaces) {state} 1 {group} 0 0\n", encoding="utf-8")
+    (proc / "self").mkdir()
+    real_path = runtime.Path
+
+    def rooted(*parts: object) -> Path:
+        first = str(parts[0]) if parts else ""
+        return real_path(proc if first == "/proc" else first, *(str(part) for part in parts[1:]))
+
+    with (
+        mock.patch.object(runtime.os, "killpg"),
+        mock.patch.object(runtime, "Path", side_effect=rooted),
+    ):
+        assert runtime._is_process_group_running(4242) is False
+        # A live member of another group does not change the answer, and an
+        # unknown group falls back to the killpg result.
+        assert runtime._is_process_group_running(9999) is True
+        assert runtime._is_process_group_running(1111) is True
+
+
 def test_process_stat_handles_spaces_and_zombies(tmp_path: Path) -> None:
     fields = ["S", *(str(index) for index in range(4, 22)), "98765"]
     assert runtime._parse_process_stat(f"4242 (worker with spaces) {' '.join(fields)}") == ("S", "98765")
