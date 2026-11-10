@@ -171,13 +171,15 @@ def _fold_replacement_maps(
     """Give entries with the same (label, case- and whitespace-folded value) one substitute, re-cased to each original.
 
     ``"record"`` shares within each record; ``"run"`` also gives each key the first record's substitute. An emitted
-    substitute collides when its folded form equals a value in its record (its map's originals and ``requested``) or a substitute another key already emitted
-    there; a shared substitute also collides with another key's own proposal. A colliding entry falls back to its own
-    substitute, then to a placeholder. The first entry of a key fixes the record's shared substitute; a later
-    colliding variant falls back for itself only, so a third variant still tries the shared one. In ``"run"`` mode a
-    substitute emitted for one key anywhere in the run collides for every other key, placeholders are numbered across
-    the run, and a key holding a run-wide mapping ignores other keys' proposals, even when it uses its own fallback in
-    that record, so the proposer falls back.
+    substitute collides when its folded form equals a value in its record (its map's originals and ``requested``) or a
+    substitute another key already emitted there; a shared substitute also collides with another key's own proposal.
+    A colliding entry falls back to its own substitute, then to a placeholder. The first entry of a key fixes the
+    record's shared substitute; a later colliding variant falls back for itself only, so a third variant still tries
+    the shared one. In ``"run"`` mode a substitute emitted for one key anywhere in the run collides for every other
+    key, and placeholders are numbered across the run. A key holding a run-wide mapping ignores other keys'
+    proposals, so its run-wide substitute wins over them. When that substitute collides in a record and the key falls
+    back, its fallback is checked like any other key's: a key earlier in the record that already emitted the same
+    value keeps it, and the holder moves on to a placeholder.
 
     When given, ``tally`` counts each fallback as ``(label, step)`` with step ``own``, ``placeholder_taken`` or
     ``placeholder_protected`` (its own proposal folds to a value in its record), plus ``("records_with_placeholder",)``.

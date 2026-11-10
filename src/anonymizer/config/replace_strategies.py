@@ -49,7 +49,12 @@ class Substitute(ReplaceMethodBase):
         default=None, description="Additional instructions for the LLM replacement generator."
     )
     consistency: Literal["record", "run"] = Field(
-        default="record", description="Share one substitute per value within each record, or across the whole run."
+        default="record",
+        description=(
+            "Share each value's substitute within its record, or across the whole run. A mention can still get a"
+            " different substitute where the shared one would clash with another value, or another value's"
+            " substitute, in the same record."
+        ),
     )
 
 
