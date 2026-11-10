@@ -90,6 +90,9 @@ runs:
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"
         echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
         if [ -n "${{ inputs.python-version }}" ]; then
+          # Persist for later steps: `uv run` otherwise falls back to
+          # .python-version and silently tests on the wrong interpreter.
           export UV_PYTHON="${{ inputs.python-version }}"
+          echo "UV_PYTHON=${UV_PYTHON}" >> "$GITHUB_ENV"
         fi
         MISE_YES=1 mise run setup "${{ inputs.dependency-profile }}" --no-hooks

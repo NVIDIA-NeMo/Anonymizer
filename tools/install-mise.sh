@@ -32,7 +32,8 @@
 #     bundled DNS resolver hangs indefinitely on some corporate networks
 #     and GnuPG 2.x ignores legacy keyserver timeout options), assert the
 #     imported key fingerprint matches MISE_GPG_KEY, fetch install.sh.sig,
-#     verify its GPG signature against a temporary GNUPGHOME (so we don't
+#     verify its GPG signature was made by MISE_GPG_KEY (not merely by any
+#     key in the keyring) in a temporary GNUPGHOME (so we don't
 #     mutate the user's keyring), and run the embedded install script. All
 #     HTTP fetches are bounded by timeouts and retried a few times on failure.
 #   - If any of the above fails and MISE_REQUIRE_SIGNED_INSTALL != 1, fall
@@ -118,6 +119,20 @@ gpg_import_release_key() {
     # trusting any signature it makes.
     gpg --batch --no-tty --with-colons --list-keys "0x${MISE_GPG_KEY}" \
         | grep -q "^fpr:::::::::${MISE_GPG_KEY}:"
+}
+
+# Decrypt the signed installer and succeed only when a valid signature was made
+# by the pinned key. `gpg --decrypt` alone succeeds for a signature from any key
+# in the keyring, so a bundle carrying the pinned key plus a second key would
+# pass. VALIDSIG's last field is the primary-key fingerprint, which also
+# matches signatures made by a subkey of the pinned key.
+verify_installer_signature() {
+    local sig_file="$1" out_file="$2" status
+    status="$(gpg --batch --no-tty --yes --status-fd 1 --output "$out_file" --decrypt "$sig_file" 2>/dev/null)" \
+        || return 1
+    printf '%s\n' "$status" | awk -v pin="$MISE_GPG_KEY" '
+        $1 == "[GNUPG:]" && $2 == "VALIDSIG" && toupper($NF) == toupper(pin) { ok = 1 }
+        END { exit !ok }'
 }
 
 unsigned_install_or_fail() {
@@ -216,7 +231,7 @@ if command -v gpg >/dev/null 2>&1; then
     if ! gpg_import_release_key; then
         unsigned_install_or_fail "failed to fetch/import/verify mise release key from ${MISE_GPG_KEY_URL}"
     elif ! curl_fetch -o "$tmpsig" "$MISE_SIG_URL" \
-        || ! gpg --batch --no-tty --decrypt "$tmpsig" >"$tmpscript"; then
+        || ! verify_installer_signature "$tmpsig" "$tmpscript"; then
         unsigned_install_or_fail "failed to fetch/verify ${MISE_SIG_URL}"
     else
         MISE_VERSION="$MISE_VERSION" sh "$tmpscript"

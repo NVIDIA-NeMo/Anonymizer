@@ -4,12 +4,17 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import subprocess
+import tempfile
 import tomllib
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -258,7 +263,19 @@ def test_github_setup_preserves_requested_python_and_dependency_profile() -> Non
     action = (REPO_ROOT / ".github/actions/setup-python-env/action.yml").read_text(encoding="utf-8")
 
     assert 'export UV_PYTHON="${{ inputs.python-version }}"' in action
+    assert 'echo "UV_PYTHON=${UV_PYTHON}" >> "$GITHUB_ENV"' in action
     assert 'mise run setup "${{ inputs.dependency-profile }}" --no-hooks' in action
+
+
+def test_ci_matrix_jobs_assert_requested_interpreter_before_tests() -> None:
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["test"]["steps"]
+    names = [step.get("name") for step in steps]
+    assert_step = steps[names.index("Assert matrix interpreter")]
+
+    assert names.index("Assert matrix interpreter") < names.index("Run tests with coverage")
+    assert assert_step["env"]["EXPECTED_PYTHON"] == "${{ matrix.python-version }}"
+    assert "uv run --locked --group dev python" in assert_step["run"]
 
 
 def test_precommit_lock_check_is_read_only() -> None:
@@ -311,3 +328,132 @@ def test_mise_python_tool_versions_match_project_versions() -> None:
         assert requirement == f"{tool}=={mise['tools'][tool]}"
 
     assert project["tool"]["uv"]["required-version"] == f">={mise['tools']['uv']}"
+
+
+def _gpg_supported() -> bool:
+    """Return True when gpg and gpgconf exist and gpg is 2.2 or newer."""
+    if shutil.which("gpg") is None or shutil.which("gpgconf") is None:
+        return False
+    first_line = subprocess.run(["gpg", "--version"], capture_output=True, text=True, check=False).stdout.splitlines()
+    match = re.search(r"(\d+)\.(\d+)", first_line[0]) if first_line else None
+    return match is not None and (int(match[1]), int(match[2])) >= (2, 2)
+
+
+requires_gpg = pytest.mark.skipif(not _gpg_supported(), reason="gpg >= 2.2 with gpgconf is required")
+
+
+@pytest.fixture
+def short_dir() -> Iterator[Path]:
+    """Short scratch directory: gpg-agent socket paths must fit the 104-byte unix limit on macOS."""
+    path = Path(tempfile.mkdtemp(prefix="mi-", dir="/tmp"))
+    try:
+        yield path
+    finally:
+        for home in path.glob("gnupg*"):
+            subprocess.run(["gpgconf", "--homedir", str(home), "--kill", "all"], capture_output=True, check=False)
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def _run_installer_with_signed_script(tmp_path: Path, signer: str) -> tuple[subprocess.CompletedProcess[str], Path]:
+    """Run install-mise.sh against a keyring served by a stub curl.
+
+    The served key bundle always holds the pinned key and a second key. The
+    installer payload is signed by ``signer`` (``pinned`` or ``other``) and
+    touches a marker file when executed.
+    """
+    gnupg = tmp_path / "gnupg"
+    gnupg.mkdir(mode=0o700)
+    env = {"GNUPGHOME": str(gnupg), "PATH": os.environ["PATH"]}
+
+    def gpg(*args: str, stdin: bytes | None = None) -> bytes:
+        result = subprocess.run(
+            ["gpg", "--batch", "--no-tty", "--pinentry-mode", "loopback", "--passphrase", "", *args],
+            input=stdin,
+            capture_output=True,
+            env=env,
+            check=True,
+        )
+        return result.stdout
+
+    fingerprints: dict[str, str] = {}
+    for name in ("pinned", "other"):
+        try:
+            gpg("--quick-generate-key", f"{name} <{name}@example.invalid>", "ed25519", "sign", "1d")
+        except subprocess.CalledProcessError as error:
+            pytest.skip(f"gpg cannot generate keys here: {error.stderr.decode(errors='replace')[:200]}")
+        listing = gpg("--with-colons", "--list-keys", f"{name}@example.invalid").decode()
+        fingerprints[name] = next(line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr:"))
+
+    bundle = tmp_path / "bundle.asc"
+    bundle.write_bytes(gpg("--armor", "--export", fingerprints["pinned"], fingerprints["other"]))
+
+    marker = tmp_path / "payload-ran"
+    payload = f"touch '{marker}'\n".encode()
+    signature = tmp_path / "install.sh.sig"
+    signature.write_bytes(gpg("--local-user", fingerprints[signer], "--sign", "--output", "-", stdin=payload))
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "curl").write_text(
+        "#!/bin/sh\n"
+        'while [ "$#" -gt 0 ]; do\n'
+        '  case "$1" in -o) out="$2"; shift 2;; *) url="$1"; shift;; esac\n'
+        "done\n"
+        'case "$url" in\n'
+        f'  */by-fingerprint/*) cp "{bundle}" "$out";;\n'
+        f'  */install.sh.sig) cp "{signature}" "$out";;\n'
+        "  *) exit 22;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "curl").chmod(0o755)
+    for tool in (
+        "bash",
+        "sh",
+        "gpg",
+        "gpgconf",
+        "awk",
+        "grep",
+        "sed",
+        "head",
+        "mktemp",
+        "chmod",
+        "rm",
+        "touch",
+        "cp",
+        "dirname",
+    ):
+        located = shutil.which(tool)
+        assert located is not None, tool
+        (fake_bin / tool).symlink_to(located)
+
+    result = subprocess.run(
+        [str(fake_bin / "bash"), str(REPO_ROOT / "tools/install-mise.sh")],
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": str(fake_bin),
+            "HOME": str(tmp_path / "home"),
+            "TMPDIR": str(tmp_path),
+            "MISE_GPG_KEY": fingerprints["pinned"],
+            "MISE_REQUIRE_SIGNED_INSTALL": "1",
+        },
+        check=False,
+    )
+    return result, marker
+
+
+@requires_gpg
+def test_installer_runs_payload_signed_by_pinned_key(short_dir: Path) -> None:
+    result, marker = _run_installer_with_signed_script(short_dir, signer="pinned")
+
+    assert marker.exists(), result.stderr
+
+
+@requires_gpg
+def test_installer_rejects_payload_signed_by_extra_key_in_bundle(short_dir: Path) -> None:
+    result, marker = _run_installer_with_signed_script(short_dir, signer="other")
+
+    assert not marker.exists()
+    assert result.returncode != 0
+    assert "MISE_REQUIRE_SIGNED_INSTALL=1 forbids unsigned fallback" in result.stderr
