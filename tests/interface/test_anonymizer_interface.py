@@ -1378,6 +1378,29 @@ def test_evaluate_replace_reports_each_judge_through_outcome(stub_input: Anonymi
     pd.testing.assert_frame_equal(run_result.trace_dataframe, before[2])
 
 
+def test_evaluate_reports_a_raising_verifier_as_the_reason(stub_input: AnonymizerInput) -> None:
+    class Unreadable:
+        def __eq__(self, other: object) -> bool:
+            raise RuntimeError("unreadable verdict")
+
+    anonymizer, _, replace_runner, _ = _make_anonymizer()
+    run_result = anonymizer.run(config=AnonymizerConfig(replace=Substitute()), data=stub_input)
+    eval_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_REPLACED_TEXT: ["Beth works at Globex"],
+            COL_ENTITY_COVERAGE: [1.0],
+            COL_TYPE_FIDELITY_VALID: [Unreadable()],
+        }
+    )
+    replace_runner.evaluate.return_value = ReplacementResult(dataframe=eval_df, failed_records=[])
+
+    outcome = anonymizer.evaluate(run_result).outcome(0)
+
+    assert (outcome.terminal, outcome.qualification, outcome.reason) == ("failed", "not_met", "raised")
+    assert ("passed", "coverage") in [(r.code, r.check) for r in outcome.reasons]
+
+
 def test_evaluate_rewrite_reports_each_judge_through_outcome(stub_input: AnonymizerInput) -> None:
     anonymizer, _, _, rewrite_runner = _make_anonymizer()
     run_result = anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input)
