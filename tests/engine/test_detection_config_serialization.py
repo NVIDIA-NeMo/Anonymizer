@@ -52,6 +52,7 @@ from anonymizer.engine.workflow_columns.detection.config import (
     DetectionTransformOperation,
     RegexDetectionConfig,
 )
+from anonymizer.engine.workflow_columns.detection.impl import AugmentationGenerator
 from anonymizer.engine.workflow_columns.detection.plugins import (
     augmentation_plugin,
     chunked_validation_plugin,
@@ -65,6 +66,33 @@ from anonymizer.engine.workflow_columns.detection.plugins import (
 )
 def test_detection_plugin_satisfies_data_designer_contract(plugin: Plugin) -> None:
     assert_valid_plugin(plugin)
+
+
+def test_regex_constrained_augmentation_retains_async_only_entrypoint() -> None:
+    config = AugmentationConfig(
+        name=COL_AUGMENTED_ENTITIES,
+        model_alias="stub",
+        prompt_template="Synthetic fixture",
+        enabled=False,
+        regex_constrained_entity_labels=["url"],
+    )
+    assert COL_ADMITTED_CANDIDATES in config.required_columns
+    generator = AugmentationGenerator(config, resource_provider=Mock())
+    with pytest.raises(NotImplementedError, match="async-only; use agenerate"):
+        generator.generate({COL_TEXT: "url:https://example.org/private"})
+
+
+def test_regex_validation_plugin_dependencies_do_not_require_downstream_results() -> None:
+    config = ChunkedValidationConfig(
+        name=COL_VALIDATION_DECISIONS,
+        pool=["stub"],
+        max_entities_per_call=5,
+        excerpt_window_chars=100,
+        prompt_template="Synthetic fixture",
+    )
+    assert COL_REGEX_DETECTION_RESULTS in config.required_columns
+    assert COL_RECONCILED_CANDIDATES not in config.required_columns
+    assert COL_AUGMENTED_CANDIDATES not in config.required_columns
 
 
 def test_detection_builder_round_trips_through_native_data_designer_config(tmp_path: Path) -> None:
