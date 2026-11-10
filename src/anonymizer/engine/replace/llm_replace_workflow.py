@@ -31,7 +31,7 @@ from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
-from anonymizer.measurement import stage_timer
+from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
 REPLACEMENT_MAP_SOURCE_LLM = "llm"
@@ -82,6 +82,15 @@ class LlmReplaceWorkflow:
         passthrough_rows[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
 
         if entity_rows.empty:
+            record_stage(
+                "LlmReplaceWorkflow.fold",
+                elapsed_sec=0.0,
+                consistency=consistency,
+                input_row_count=len(dataframe),
+                entry_count=0,
+                records_with_placeholder=0,
+                fallback_counts={},
+            )
             return LlmReplaceResult(
                 dataframe=merge_and_reorder(passthrough_rows).drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
                 failed_records=[],
