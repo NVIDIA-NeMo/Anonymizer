@@ -46,6 +46,19 @@ jobs:
           fetch-depth: "0"
           python-version: ${{ matrix.python-version }}
 
+      - name: Assert matrix interpreter
+        env:
+          EXPECTED_PYTHON: ${{ matrix.python-version }}
+        run: |
+          uv run --locked --group dev python - <<'PY'
+          import os
+          import sys
+
+          actual = f"{sys.version_info.major}.{sys.version_info.minor}"
+          expected = os.environ["EXPECTED_PYTHON"]
+          assert actual == expected, f"expected Python {expected}, got {actual}"
+          PY
+
       - name: Run tests with coverage
         run: mise run test:coverage
 
