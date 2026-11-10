@@ -31,6 +31,7 @@ from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
+from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
 REPLACEMENT_MAP_SOURCE_LLM = "llm"
@@ -81,6 +82,15 @@ class LlmReplaceWorkflow:
         passthrough_rows[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
 
         if entity_rows.empty:
+            record_stage(
+                "LlmReplaceWorkflow.fold",
+                elapsed_sec=0.0,
+                consistency=consistency,
+                input_row_count=len(dataframe),
+                entry_count=0,
+                records_with_placeholder=0,
+                fallback_counts={},
+            )
             return LlmReplaceResult(
                 dataframe=merge_and_reorder(passthrough_rows).drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
                 failed_records=[],
@@ -121,9 +131,16 @@ class LlmReplaceWorkflow:
         positions = tuple(sorted((*passthrough_rows[ROW_ORDER_COL], *output_df[ROW_ORDER_COL])))
         combined = merge_and_reorder(output_df, passthrough_rows)
         requested = [_requested_values(EntitiesByValueSchema.from_raw(v)) for v in combined[entities_column]]
-        combined[COL_REPLACEMENT_MAP] = _fold_replacement_maps(
-            combined[COL_REPLACEMENT_MAP].tolist(), consistency, requested
-        )
+        tally: Counter[tuple[str, ...]] = Counter()
+        with stage_timer("LlmReplaceWorkflow.fold", consistency=consistency, input_row_count=len(combined)) as fields:
+            maps = _fold_replacement_maps(combined[COL_REPLACEMENT_MAP].tolist(), consistency, requested, tally)
+            fields["entry_count"] = sum(len(m.get("replacements", [])) for m in maps)
+            fields["records_with_placeholder"] = tally.pop(("records_with_placeholder",), 0)
+            fallbacks: dict[str, dict[str, int]] = {}
+            for (label, step), n in sorted(tally.items()):
+                fallbacks.setdefault(label, {})[step] = n
+            fields["fallback_counts"] = fallbacks
+        combined[COL_REPLACEMENT_MAP] = maps
         return LlmReplaceResult(
             dataframe=combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
             failed_records=run_result.failed_records,
@@ -146,7 +163,10 @@ def _recase(synthetic: str, *, like: str, source: str) -> str:
 
 
 def _fold_replacement_maps(
-    maps: list[dict], consistency: Literal["record", "run"], requested: list[set[str]] | None = None
+    maps: list[dict],
+    consistency: Literal["record", "run"],
+    requested: list[set[str]] | None = None,
+    tally: Counter[tuple[str, ...]] | None = None,
 ) -> list[dict]:
     """Give entries with the same (label, case- and whitespace-folded value) one substitute, re-cased to each original.
 
@@ -158,6 +178,9 @@ def _fold_replacement_maps(
     substitute emitted for one key anywhere in the run collides for every other key, placeholders are numbered across
     the run, and a key holding a run-wide mapping ignores other keys' proposals, even when it uses its own fallback in
     that record, so the proposer falls back.
+
+    When given, ``tally`` counts each fallback as ``(label, step)`` with step ``own``, ``placeholder_taken`` or
+    ``placeholder_protected`` (its own proposal folds to a value in its record), plus ``("records_with_placeholder",)``.
     """
     run_wide: dict[tuple[str, str], tuple[str, str]] = {}
     taken: dict[str, set[tuple[str, str]]] = {}
@@ -186,9 +209,12 @@ def _fold_replacement_maps(
             source = record.setdefault(key, run_wide.get(key, own))
             synthetic = _recase(source[1], like=entry["original"], source=source[0])
             if collides(_fold(synthetic), key, shared=True):
+                step = "own" if entry["synthetic"] != synthetic else None
                 source = own
                 synthetic = entry["synthetic"]
                 if collides(_fold(synthetic), key, shared=False):
+                    in_record = _fold(synthetic) in originals
+                    step = "placeholder_protected" if in_record else "placeholder_taken"
                     placeholders[entry["label"]] += 1
                     used += 1
                     synthetic = _collision_safe_synthetic(
@@ -199,8 +225,12 @@ def _fold_replacement_maps(
                     source = (entry["original"], synthetic)
                 if first:
                     record[key] = source
+                if tally is not None and step:
+                    tally[(entry["label"], step)] += 1
             emitted.setdefault(_fold(synthetic), set()).add(key)
             out.append({**entry, "synthetic": synthetic})
+        if used and tally is not None:
+            tally[("records_with_placeholder",)] += 1
         if used:
             logger.warning("Replacement map used placeholder substitutes to avoid collisions; replaced=%d", used)
         if consistency == "run":

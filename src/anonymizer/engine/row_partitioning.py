@@ -69,9 +69,9 @@ def resolve_source_positions(
         elif RECORD_ID_COLUMN in source and RECORD_ID_COLUMN in returned:
             original = source[RECORD_ID_COLUMN].astype(str).tolist()
             surviving = returned[RECORD_ID_COLUMN].astype(str).tolist()
-            if len(set(original)) != len(original) or any(value not in original for value in surviving):
-                raise AnonymizerWorkflowError("Unassociated workflow result has ambiguous source correspondence")
             lookup = {value: index for index, value in enumerate(original)}
+            if len(lookup) != len(original) or any(value not in lookup for value in surviving):
+                raise AnonymizerWorkflowError("Unassociated workflow result has ambiguous source correspondence")
             positions = tuple(lookup[value] for value in surviving)
         else:
             raise AnonymizerWorkflowError("Workflow result has no source correspondence (uncorrelated_output)")

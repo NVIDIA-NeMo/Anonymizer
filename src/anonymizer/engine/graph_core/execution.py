@@ -677,14 +677,14 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
             if nxt in released:
                 released.discard(nxt)
                 withheld.append(nxt)
-    # A group member withheld only by its group names every member withheld for another cause.
+    # A group member withheld only by its group names every member withheld for another cause. Those members
+    # share one tuple; each has no entry yet, since a member with an entry is itself a cause.
+    shared: dict[Datum, tuple[Datum, ...]] = {}
     for i in spent - {-1}:
         members = g.groups[i].members
-        causes = [m for m in members if m not in releasable or m in withheld_by]
+        causes = tuple(m for m in members if m not in releasable or m in withheld_by)
         cause_set = set(causes)
-        for m in members:
-            if m not in cause_set:
-                withheld_by.setdefault(m, []).extend(causes)
+        shared.update((m, causes) for m in members if m not in cause_set)
     outcomes = []
     for u, (d, (terminal, qual, reasons)) in enumerate(zip(g.targets, verdicts)):
         available = "text" in state.rows[u].outputs.get(p.final_text, {})
@@ -692,9 +692,6 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
             reasons.append(Reason("withheld" if p.workflow.release == "protected" else "annotation"))
         failed = failures.get(u)
         error = failed.error if failed is not None and terminal != "success" else None
-        outcomes.append(
-            TargetOutcome(
-                terminal, qual, available, d in released, tuple(reasons), error, tuple(withheld_by.get(d, ()))
-            )
-        )
+        by = shared.get(d) or tuple(withheld_by.get(d, ()))
+        outcomes.append(TargetOutcome(terminal, qual, available, d in released, tuple(reasons), error, by))
     return ProtectionResult(p, state, retrievals, tuple(outcomes), consistent)
