@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
+from collections.abc import Container
 from dataclasses import dataclass
 from typing import Literal
 
@@ -153,9 +154,14 @@ def _fold_replacement_maps(
     substitute collides when its folded form equals a value in its record (its map's originals and ``requested``) or a substitute another key already emitted
     there; a shared substitute also collides with another key's own proposal. A colliding entry falls back to its own
     substitute, then to a placeholder. The first entry of a key fixes the record's shared substitute; a later
-    colliding variant falls back for itself only, so a third variant still tries the shared one.
+    colliding variant falls back for itself only, so a third variant still tries the shared one. In ``"run"`` mode a
+    substitute emitted for one key anywhere in the run collides for every other key, placeholders are numbered across
+    the run, and a key holding a run-wide mapping ignores other keys' proposals, even when it uses its own fallback in
+    that record, so the proposer falls back.
     """
     run_wide: dict[tuple[str, str], tuple[str, str]] = {}
+    taken: dict[str, set[tuple[str, str]]] = {}
+    run_placeholders: Counter[str] = Counter()
     folded: list[dict] = []
     for index, raw in enumerate(maps):
         keyed = [((e["label"], _fold(e["original"])), e) for e in raw.get("replacements", [])]
@@ -166,11 +172,13 @@ def _fold_replacement_maps(
         emitted: dict[str, set[tuple[str, str]]] = {}
 
         def collides(value: str, key: tuple[str, str], *, shared: bool) -> bool:
-            others = (proposed.get(value, set()) if shared else set()) | emitted.get(value, set())
+            rivals = proposed.get(value, set()) if shared and key not in run_wide else set()
+            others = rivals | emitted.get(value, set()) | taken.get(value, set())
             return value in originals or bool(others - {key})
 
         record: dict[tuple[str, str], tuple[str, str]] = {}
-        placeholders: Counter[str] = Counter()
+        placeholders: Counter[str] = run_placeholders if consistency == "run" else Counter()
+        used = 0
         out = []
         for key, entry in keyed:
             own = (entry["original"], entry["synthetic"])
@@ -182,22 +190,24 @@ def _fold_replacement_maps(
                 synthetic = entry["synthetic"]
                 if collides(_fold(synthetic), key, shared=False):
                     placeholders[entry["label"]] += 1
-                    taken = originals | proposed.keys() | emitted.keys()
+                    used += 1
                     synthetic = _collision_safe_synthetic(
-                        entry["label"], index=placeholders[entry["label"]], protected_original_values=taken
+                        entry["label"],
+                        index=placeholders[entry["label"]],
+                        protected_original_values=(originals, proposed, emitted, taken),
                     )
                     source = (entry["original"], synthetic)
                 if first:
                     record[key] = source
             emitted.setdefault(_fold(synthetic), set()).add(key)
             out.append({**entry, "synthetic": synthetic})
-        if placeholders:
-            logger.warning(
-                "Replacement map used placeholder substitutes to avoid collisions; replaced=%d", placeholders.total()
-            )
+        if used:
+            logger.warning("Replacement map used placeholder substitutes to avoid collisions; replaced=%d", used)
         if consistency == "run":
             for key, source in record.items():
                 run_wide.setdefault(key, source)
+            for value, keys in emitted.items():
+                taken.setdefault(value, set()).update(keys)
         folded.append({**raw, "replacements": out})
     return folded
 
@@ -277,11 +287,11 @@ def _filter_replacement_map_to_input_entities(
     return {"replacements": filtered}
 
 
-def _collision_safe_synthetic(label: str, *, index: int, protected_original_values: set[str]) -> str:
+def _collision_safe_synthetic(label: str, *, index: int, protected_original_values: tuple[Container[str], ...]) -> str:
     label_token = "".join(char.upper() if char.isalnum() else "_" for char in label).strip("_") or "VALUE"
     while True:
         candidate = f"[SUBSTITUTE_{label_token}_{index}]"
-        if _fold(candidate) not in protected_original_values:
+        if not any(_fold(candidate) in values for values in protected_original_values):
             return candidate
         index += 1
 
