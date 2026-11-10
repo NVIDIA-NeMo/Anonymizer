@@ -399,6 +399,22 @@ _COLLISION = _maps([("company", "Acme", "Nova")], [("company", "Acme", "Zeta"), 
 _COLLISION_RUN = _maps(
     [("company", "Acme", "Nova")], [("company", "Acme", "Nova"), ("company", "Initech", "[SUBSTITUTE_COMPANY_1]")]
 )
+_NEWCOMER_FIRST = _maps([("company", "Acme", "Nova")], [("company", "Initech", "Nova"), ("company", "Acme", "Zeta")])
+_NEWCOMER_FIRST_RUN = _maps(
+    [("company", "Acme", "Nova")], [("company", "Initech", "[SUBSTITUTE_COMPANY_1]"), ("company", "Acme", "Nova")]
+)
+_HOLDER_AFTER = _maps(
+    [("first_name", "Alice", "Maya")],
+    [("first_name", "Bob", "Nora"), ("first_name", "Alice", "Nora"), ("first_name", "Maya", "Lena")],
+)
+_HOLDER_AFTER_FOLDED = _maps(
+    [("first_name", "Alice", "Maya")],
+    [
+        ("first_name", "Bob", "Nora"),
+        ("first_name", "Alice", "[SUBSTITUTE_FIRST_NAME_1]"),
+        ("first_name", "Maya", "Lena"),
+    ],
+)
 _CROSS_KEY = _maps([("first_name", "Alice", "Maya")], [("first_name", "Carl", "Maya")])
 _CROSS_KEY_RUN = _maps([("first_name", "Alice", "Maya")], [("first_name", "Carl", "[SUBSTITUTE_FIRST_NAME_1]")])
 _SINGLE = _maps([("company", "Acme", "Nova"), ("person", "Bob", "Tim")])
@@ -438,6 +454,8 @@ _RUN_VARIANT = _maps(
             (_RUN_VARIANT, _RUN_VARIANT, _RUN_VARIANT),
             (_DOTLESS, _DOTLESS, _DOTLESS),
             (_SAME_OWN, *[_SAME_OWN_FOLDED] * 2),
+            (_NEWCOMER_FIRST, _NEWCOMER_FIRST, _NEWCOMER_FIRST_RUN),
+            (_HOLDER_AFTER, *[_HOLDER_AFTER_FOLDED] * 2),
         ]
     ]
     + [(_UNMAPPED, *[_UNMAPPED_FOLDED] * 2, [{"Alice", "Maya"}])],
@@ -454,6 +472,8 @@ _RUN_VARIANT = _maps(
         "run-variant",
         "dotless-i",
         "same-own",
+        "newcomer-first",
+        "holder-fallback-after-proposer",
         "unmapped-entity",
     ],
 )
