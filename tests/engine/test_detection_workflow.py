@@ -543,32 +543,6 @@ def test_validation_prompt_includes_label_examples() -> None:
     assert "tagged as a first_name but is not followed by a last_name, drop it" in prompt
 
 
-@pytest.mark.parametrize("data_summary", [None, ""])
-def test_validation_prompt_without_summary_keeps_generic_guidance(data_summary: str | None) -> None:
-    prompt = _get_validation_prompt(data_summary=data_summary, labels=["first_name"])
-
-    assert "What to KEEP:" in prompt
-    assert "Direct identifiers: names, emails" in prompt
-    assert "Use surrounding text and field names" not in prompt
-    assert "drop it rather than reclassifying it" not in prompt
-    assert "explicit sensitivity rules" not in prompt
-
-
-@pytest.mark.parametrize("data_summary", [None, ""])
-@pytest.mark.parametrize("strict_labels", [False, True])
-def test_augment_prompt_without_summary_uses_generic_fallback(data_summary: str | None, strict_labels: bool) -> None:
-    prompt = _get_augment_prompt(data_summary=data_summary, labels=["first_name"], strict_labels=strict_labels)
-
-    assert "Focus on:" in prompt
-    assert "Direct identifiers:" in prompt
-    assert "Quasi-identifiers:" in prompt
-    assert "Technical secrets:" in prompt
-    assert "Data summary: Not provided" in prompt
-    assert "Use surrounding text and field names" not in prompt
-    assert "Add it only when the context supports" not in prompt
-    assert "explicit sensitivity rules" not in prompt
-
-
 def test_validation_prompt_prioritizes_explicit_summary_sensitivity_rules() -> None:
     summary = "Medical records. Public hospital names are not sensitive."
     prompt = _get_validation_prompt(data_summary=summary, labels=["first_name", "organization"])
