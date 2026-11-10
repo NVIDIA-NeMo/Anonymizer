@@ -275,7 +275,7 @@ def test_entity_disposition_low_sensitivity_with_protection_promotes_to_medium(m
     assert "combined_risk_level" not in dumped
 
 
-@pytest.mark.parametrize("sensitivity", ["medium", "high"])
+@pytest.mark.parametrize("sensitivity", ["high"])
 def test_entity_disposition_rejects_protected_level_with_leave_as_is(sensitivity: str) -> None:
     with pytest.raises(ValidationError, match="cannot have protection_method_suggestion='leave_as_is'"):
         EntityDispositionSchema.model_validate(
@@ -604,11 +604,11 @@ def _make_strict_entity(**kwargs) -> dict:
     return {**defaults, **kwargs}
 
 
-def test_strict_entity_rejects_leave_as_is() -> None:
-    with pytest.raises(ValidationError):
-        StrictEntityDispositionSchema.model_validate(
-            _make_strict_entity(protection_method_suggestion="leave_as_is", sensitivity="medium")
-        )
+def test_strict_entity_normalizes_medium_leave_as_is() -> None:
+    entity = StrictEntityDispositionSchema.model_validate(
+        _make_strict_entity(protection_method_suggestion="leave_as_is", sensitivity="medium")
+    )
+    assert entity.protection_method_suggestion == "generalize"
 
 
 def test_strict_entity_rejects_low_sensitivity() -> None:
@@ -643,3 +643,12 @@ def test_sensitivity_disposition_output_contains_only_entities() -> None:
     disposition = SensitivityDispositionSchema.model_validate(payload)
     assert set(disposition.model_dump()) == {"sensitivity_disposition"}
     assert set(SensitivityDispositionSchema.model_json_schema()["properties"]) == {"sensitivity_disposition"}
+
+
+def test_medium_retained_disposition_normalizes_to_generalize() -> None:
+    entity = EntityDispositionSchema.model_validate(
+        _make_entity(sensitivity="medium", protection_method_suggestion="leave_as_is")
+    )
+    assert entity.sensitivity == "medium"
+    assert entity.protection_method_suggestion == "generalize"
+    assert entity.low_sensitivity_reason is None

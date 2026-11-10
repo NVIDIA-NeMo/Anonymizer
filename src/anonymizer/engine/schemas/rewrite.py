@@ -166,6 +166,27 @@ class RawEntityDispositionSchema(BaseModel):
     def needs_protection(self) -> bool:
         return self.protection_method_suggestion != ProtectionMethod.leave_as_is
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_protection_policy(cls, data: object, info: ValidationInfo) -> object:
+        """Use authoritative direct-identifier IDs before rejecting inconsistent retention."""
+        if not isinstance(data, dict):
+            return data
+        direct_ids = (info.context or {}).get("direct_identifier_ids", set())
+        if data.get("id") in direct_ids and data.get("protection_method_suggestion") == ProtectionMethod.leave_as_is:
+            return {
+                **data,
+                "sensitivity": "high",
+                "protection_method_suggestion": "replace",
+                "low_sensitivity_reason": None,
+            }
+        if (
+            data.get("sensitivity") == SensitivityLevel.medium
+            and data.get("protection_method_suggestion") == ProtectionMethod.leave_as_is
+        ):
+            return {**data, "protection_method_suggestion": "generalize", "low_sensitivity_reason": None}
+        return data
+
     @model_validator(mode="after")
     def _validate_protection_consistency(self) -> RawEntityDispositionSchema:
         retained = not self.needs_protection

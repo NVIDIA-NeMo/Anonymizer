@@ -364,16 +364,20 @@ def verify_disposition_coverage(
     side_effect_columns=[COL_DISPOSITION_COVERAGE],
 )
 def _verify_disposition_coverage(row: dict[str, Any]) -> dict[str, Any]:
-    raw = RawSensitivityDispositionSchema.model_validate(normalize_payload(row.get(COL_RAW_SENSITIVITY_DISPOSITION)))
     explicit = _parse_numbered_lines(row.get(COL_DISPOSITION_EXPLICIT_ENTITIES))
     expected = explicit + _parse_numbered_lines(row.get(COL_DISPOSITION_LATENT_ENTITIES))
+    classifications = normalize_payload(row.get(COL_ENTITY_CLASSIFICATION)) or {}
+    direct_ids = {entity["id"] for entity in explicit if classifications.get(entity["label"]) == "direct_identifier"}
+    raw = RawSensitivityDispositionSchema.model_validate(
+        normalize_payload(row.get(COL_RAW_SENSITIVITY_DISPOSITION)),
+        context={"direct_identifier_ids": direct_ids},
+    )
     decisions = raw.sensitivity_disposition
     if len(decisions) != len(expected):
         raise ValueError(
             f"Disposition has {len(decisions)} entries but {len(expected)} entities were supplied; "
             "every supplied entity must receive exactly one disposition."
         )
-    classifications = normalize_payload(row.get(COL_ENTITY_CLASSIFICATION)) or {}
     entries = []
     for index, (supplied, decision) in enumerate(zip(expected, decisions, strict=True)):
         source = "tagged" if index < len(explicit) else "latent"
