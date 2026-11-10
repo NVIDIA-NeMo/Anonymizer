@@ -458,6 +458,7 @@ def test_combined_and_legacy_paths_return_equivalent_repaired_result(
             COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
             COL_REWRITE_REPLACEMENT_READY: [True],
             _REPAIRS_NEEDED: [2],
+            COL_SENSITIVITY_DISPOSITION: [None],
         }
     )
     pipeline = dataframe.copy()
