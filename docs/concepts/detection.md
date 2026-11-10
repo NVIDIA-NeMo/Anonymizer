@@ -11,7 +11,25 @@ Entity detection is the first stage of every Anonymizer pipeline. Both replace a
 
 Detection combines a lightweight GLiNER2 PII model with LLM-based refinement. GLiNER2 produces an initial set of entity spans, an LLM validates those candidates by keeping, reclassifying, or dropping them based on context, and then an augmenter finds entities GLiNER2 missed. Augmented findings are merged directly and are not independently revalidated.
 
+Augmenter suggestions must match the source text and their supplied context exactly. If some do not, Anonymizer keeps the matching suggestions and asks the augmenter to correct only the others once. Suggestions that still do not match are dropped; the record and its other detections are retained. Transport errors or responses that do not match the required schema still fail the record.
+
+Unknown fields in augmentation responses are ignored, but required fields and their types are still checked. Passing those checks does not guarantee that a suggestion is grounded in the source or correctly classified.
+
 When rewrite is configured, an additional step identifies **latent entities** -- sensitive information inferable from context but not explicitly stated in the text.
+
+### Occurrences and boundaries
+
+Each detection refers to a specific source span. Accepting one occurrence does not automatically accept every occurrence of the same text: in `May visited in May`, the two occurrences can have different meanings. Accepting `John Smith` also does not synthesize separate `first_name` and `last_name` detections.
+
+An augmenter suggestion can identify multiple occurrences when its exact value and surrounding context match at multiple positions. This is contextual matching, not propagation of an accepted value throughout the document. Other occurrences need their own detector observation or grounded augmentation suggestion; the augmenter is not guaranteed to recover them.
+
+Published values are sliced from the original source at their character offsets. Augmenter values and context must be verbatim; leading or trailing whitespace in a suggested value is moved into its context rather than included in the entity span. Exact grounding prevents invented text or mismatched offsets, but does not establish the right semantic boundary. Ambiguous boundaries still require review against the user's intended policy; Anonymizer does not trim emails to a list of familiar domain endings.
+
+### Overlapping detections
+
+Label eligibility is checked before overlap selection. Eligible detections with the same normalized label and source bounds are combined while retaining their independently accepted origins. Labels are normalized by trimming surrounding whitespace and case-folding.
+
+The final selection is deterministic and greedy: longer spans are considered first, with earlier starts breaking equal-length ties, and any later candidate overlapping a selected span is discarded. This is not an optimizer for maximum total covered characters. For identical bounds, explicit acceptance outranks fallback protection, then source priority applies; native confidence scores break ties only within a shared source/model calibration domain. Touching spans do not overlap.
 
 ### Example: standard vs. latent entities
 
@@ -73,14 +91,16 @@ records use the same caller-provided IDs in `result.failed_records`. Use
 | `entity_label_examples` | `{}` | User-configured positive examples organized by label. Examples for default labels extend their built-in examples; every referenced non-default label must also appear in an explicit `entity_labels` set. |
 | `excluded_entity_labels` | `None` | List of labels to exclude from detection, even if present in `entity_labels` or the default set. Excluded labels are removed from the active detection scope and filtered from the final entity output. |
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
-| `validation_max_entities_per_call` | `100` | Maximum candidate entities per validator LLM call. Rows with more candidates are split into chunks. See [Chunked validation](#chunked-validation). |
+| `validation_max_entities_per_call` | `100` | Number of detected entities to validate per LLM call. This limit may be exceeded to keep detections covering the same text together. See [Chunked validation](#chunked-validation). |
 | `validation_excerpt_window_chars` | `500` | Characters of context included before and after a chunk's entity spans in the validator prompt. Bounds per-chunk prompt size; not the model's context-window limit. |
 
 ---
 
 ## Chunked validation
 
-When a row yields many entity candidates, validating them in a single LLM call can often exceed the model's context window or the provider's rate limits (tokens-per-minute or requests-per-minute quotas that many hosted models enforce). Anonymizer automatically splits validation for such rows: candidates are grouped in position order into chunks of at most `validation_max_entities_per_call`, and each chunk is validated independently with its own bounded text excerpt (`validation_excerpt_window_chars` before and after the chunk's span). Decisions are merged back into a single per-row set.
+When a row has many detected entities, Anonymizer splits validation across LLM calls using `validation_max_entities_per_call`. Detections that cover some of the same text stay together so the validator can compare them—for example, `San Diego` detected as a city and `Diego` detected as a first name. If keeping related detections together requires exceeding the limit, Anonymizer sends them in a separate call and logs a warning. The call must still fit the model's context window.
+
+Each response is bound to its request inventory. Multi-chunk requests receive a source excerpt with `validation_excerpt_window_chars` before and after the assigned spans. Only candidates assigned to that request are tagged; neighboring detections remain plain text. Single-chunk requests receive the full text supplied to detection by default (currently the whole document).
 
 The chunked path is always on; if a row has fewer candidates than the limit, it runs as a single call and is exactly equivalent to the unchunked behavior. Tuning guidance:
 
@@ -97,13 +117,25 @@ Each validator call includes the full resolved label/example pairs. Lowering `va
 
 Pools also act as **failover**. If a chunk's assigned alias can't complete the call (an unrecoverable rate limit, a 5xx that didn't clear on retry, a malformed response), the same chunk is automatically retried against the other aliases in your pool before the row is given up on. A chunk only fails once every alias in the pool has failed for it. This is a cheap way to harden validation against any one endpoint having a bad day, on top of the load-spreading role.
 
+Validation aliases identify observations only within one request. Decisions are consumed once and cannot veto independently admitted augmenter findings. Unknown response aliases are ignored. Returning an assigned alias more than once invalidates the response, even if the decisions agree: a single-alias pool gets one bounded retry, while a multi-alias pool moves to the next member. Unresolved duplicate aliases fail the record rather than becoming fallback protection.
+
+In an otherwise successful response, a missing/unusable decision or an empty reclassification label can retain an eligible candidate's original exact span and label as `fallback_protected`. This is a conservative protection measure, not explicit model acceptance, and grants no accepted provenance. It does not override an explicit drop or configured label exclusions.
+
 #### What happens when a row can't be validated
 
-If validation can't get a complete answer for a row — every alias in the pool has failed on at least one of that row's chunks — the row is **dropped from the output** rather than passed through with some entities unvalidated. This is deliberate: the alternative would be writing the original text back out with those entities still un-scrubbed, which is an undesired outcome.
+If every alias fails on any required validation chunk, the row is **dropped from the output** rather than returned as a successful partial result. This differs from an omitted decision in a successful response, which can use the exact-span fallback described above. Transport failures, invalid required response fields, and unresolved duplicate assigned aliases are failures, not omissions.
+
+A detector text/source mismatch also fails the record instead of silently skipping the observation. This check allows case-folded comparison and surrounding-whitespace normalization of detector-echoed text, then publishes the actual source substring. It does not mean every malformed detector payload is rejected: malformed entries and unusable bounds can still be ignored by the parser.
 
 Dropped rows show up on `result.failed_records` with `step="entity-detection"`, so you can tell which inputs didn't make it through by comparing input IDs against output IDs and reprocess those on a follow-up pass.
 
 See [Validator pools](models.md#validator-pools) for the YAML syntax and caveats.
+
+### Inspecting detection diagnostics
+
+Use `result.dataframe["final_entities"]` for the public entity output. Its representative `source` can be `detector`, `augmenter`, or `fallback`; it is not a full provenance ledger. `score` is the available native score, or `0.0` when none is available, not a universal probability of correctness. Augmenter-only findings are no longer assigned synthetic confidence `1.0`.
+
+For internal debugging, `result.trace_dataframe` can include `_seed_detection_result`, `_validation_request_inventories`, `_validation_decisions`, `_admission_results`, `_admitted_candidates`, `_augmentation_detection_result`, `_augmentation_admission_results`, `_augmentation_attempts`, `_augmented_candidates`, and `_reconciled_candidates`. These underscore-prefixed structures are internal and may change between releases. `_augmentation_attempts` records attempt outcomes and grounding-failure categories without embedding suggested values or context; other trace columns and explicitly enabled raw message traces can contain sensitive source text.
 
 
 ## Entity labels
@@ -137,7 +169,7 @@ The following terms distinguish label scope from example origin:
 
 ### Label scope
 
-When you pass `entity_labels` explicitly, the augmenter operates in **strict mode** -- it only outputs entities matching your list. When `entity_labels=None`, the augmenter can create additional labels beyond the defaults (e.g., `clinic_name`, `server_name`).
+When you pass `entity_labels` explicitly, the augmenter operates in **strict mode** -- only suggestions whose normalized labels match your list are admitted. When `entity_labels=None`, the augmenter can create additional labels beyond the defaults (e.g., `clinic_name`, `server_name`).
 
 ```python
 # Strict: only detect these 3 labels

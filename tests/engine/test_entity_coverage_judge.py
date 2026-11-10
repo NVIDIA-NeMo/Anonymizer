@@ -17,6 +17,7 @@ from anonymizer.engine.constants import (
     COL_MISSED_ENTITIES,
     COL_REPLACEMENT_APPLICATION,
     COL_TEXT,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.evaluation.entity_coverage_judge import (
     _FINAL_ENTITIES_FOR_COVERAGE_COL,
@@ -29,7 +30,6 @@ from anonymizer.engine.evaluation.entity_coverage_judge import (
     _parse_candidate_entities,
 )
 from anonymizer.engine.evaluation.judge_base import JudgeResult
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN
 
 
 def test_coverage_prompt_omits_data_summary_context_when_summary_absent() -> None:
