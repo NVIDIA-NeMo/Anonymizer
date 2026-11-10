@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -1182,7 +1183,8 @@ def test_wandb_ingress_rejects_inconsistent_rat_bench_reidentification_summary(
         wandb_ingress_tool.RatBenchReidentificationMeasurement.model_validate(payload, strict=True)
 
 
-def test_measured_redact_run_passes_strict_ingress(tmp_path: Path, wandb_ingress_tool: ModuleType) -> None:
+def _measured_redact_run(tmp_path: Path, *, also: Callable[[], None] = lambda: None) -> Path:
+    """Write a measured Redact run, calling ``also`` inside the same measurement session."""
     from unittest.mock import Mock
 
     import pandas as pd
@@ -1218,9 +1220,104 @@ def test_measured_redact_run_passes_strict_ingress(tmp_path: Path, wandb_ingress
     config = MeasurementConfig(output_path=path, run_id="run-a", record_hash_key="k", run_tags={})
     with configured_measurement_session(config):
         anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=AnonymizerInput(source=str(source)))
+        also()
+    return path
+
+
+def test_measured_redact_run_passes_strict_ingress(tmp_path: Path, wandb_ingress_tool: ModuleType) -> None:
+    path = _measured_redact_run(tmp_path)
 
     snapshot = wandb_ingress_tool.read_measurement_snapshot(path, expected_statuses={"run-a": "completed"})
 
     assert {"graph_prepare", "graph_protect", "graph_reconcile"} <= {
         record.stage for record in snapshot.records if record.record_type == "stage"
     }
+
+
+def test_measured_substitute_fold_stages_pass_strict_ingress(
+    tmp_path: Path,
+    wandb_ingress_tool: ModuleType,
+    stub_model_configs: list[Any],
+    stub_replace_model_selection: Any,
+) -> None:
+    from unittest.mock import Mock
+
+    import pandas as pd
+
+    from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_REPLACEMENT_MAP, COL_TEXT
+    from anonymizer.engine.ndd.adapter import WorkflowRunResult
+    from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: ["Alice works at Acme"],
+                COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
+                "_anonymizer_row_order": [0],
+                COL_REPLACEMENT_MAP: [
+                    {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "alice"}]}
+                ],
+            }
+        ),
+        failed_records=[],
+        source_positions=(0,),
+    )
+    workflow = LlmReplaceWorkflow(adapter=adapter)
+    entity_path = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
+        }
+    )
+    passthrough_path = pd.DataFrame({COL_TEXT: ["No names here"], COL_ENTITIES_BY_VALUE: [{"entities_by_value": []}]})
+
+    def fold_twice() -> None:
+        for frame, consistency in ((entity_path, "run"), (passthrough_path, "record")):
+            workflow.generate_map_only(
+                frame,
+                model_configs=stub_model_configs,
+                selected_models=stub_replace_model_selection,
+                consistency=consistency,
+            )
+
+    path = _measured_redact_run(tmp_path, also=fold_twice)
+
+    snapshot = wandb_ingress_tool.read_measurement_snapshot(path, expected_statuses={"run-a": "completed"})
+
+    folds = [r for r in snapshot.records if r.record_type == "stage" and r.stage == "LlmReplaceWorkflow.fold"]
+    assert [(r.consistency, r.entry_count, r.records_with_placeholder, r.fallback_counts) for r in folds] == [
+        ("run", 1, 1, {"first_name": {"placeholder_protected": 1}}),
+        ("record", 0, 0, {}),
+    ]
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"fallback_counts": {"first_name": {"unknown_step": 1}}},
+        {"fallback_counts": {"first_name": {"own": -1}}},
+        {"entry_count": -1},
+        {"entity_values": ["Alice"]},
+    ],
+)
+def test_wandb_ingress_rejects_malformed_fold_stage(wandb_ingress_tool: ModuleType, updates: dict[str, Any]) -> None:
+    payload = {
+        "schema_version": 2,
+        "record_type": "stage",
+        "run_id": "run-a",
+        "run_tags": {},
+        "timestamp_unix_sec": 1.0,
+        "stage": "LlmReplaceWorkflow.fold",
+        "status": "completed",
+        "elapsed_sec": 0.0,
+        "consistency": "record",
+        "entry_count": 0,
+        "records_with_placeholder": 0,
+        "fallback_counts": {},
+    }
+    wandb_ingress_tool.StageMeasurement.model_validate(payload, strict=True)
+    payload.update(updates)
+
+    with pytest.raises(wandb_ingress_tool.ValidationError):
+        wandb_ingress_tool.StageMeasurement.model_validate(payload, strict=True)

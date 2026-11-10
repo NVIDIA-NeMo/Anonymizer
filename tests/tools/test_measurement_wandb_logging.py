@@ -349,6 +349,35 @@ def test_wandb_stage_table_keeps_graph_stage_counts(
     assert table.data[0][table.columns.index("terminal_counts")] == '{"failed":2,"success":8}'
 
 
+def test_wandb_stage_table_keeps_substitute_fold_counts(
+    wandb_ingress_tool: ModuleType,
+    wandb_logging_tool: ModuleType,
+) -> None:
+    record = wandb_ingress_tool.StageMeasurement.model_validate(
+        {
+            "schema_version": 2,
+            "record_type": "stage",
+            "run_id": "run-a",
+            "run_tags": {},
+            "timestamp_unix_sec": 1.0,
+            "stage": "LlmReplaceWorkflow.fold",
+            "status": "completed",
+            "elapsed_sec": 0.5,
+            "consistency": "run",
+            "entry_count": 4,
+            "records_with_placeholder": 1,
+            "fallback_counts": {"last_name": {"own": 1}, "first_name": {"placeholder_taken": 2, "own": 1}},
+        },
+        strict=True,
+    )
+
+    (table,) = wandb_logging_tool._typed_tables((record,))
+
+    row = dict(zip(table.columns, table.data[0], strict=True))
+    assert (row["consistency"], row["entry_count"], row["records_with_placeholder"]) == ("run", 4, 1)
+    assert row["fallback_counts"] == '{"first_name":{"own":1,"placeholder_taken":2},"last_name":{"own":1}}'
+
+
 def test_wandb_scalar_registry_matches_package_field_catalog(wandb_logging_tool: ModuleType) -> None:
     from anonymizer.measurement.fields import (
         SCALAR_ADDITIVE_FIELDS,
