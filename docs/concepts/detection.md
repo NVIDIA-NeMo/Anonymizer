@@ -267,3 +267,24 @@ The detection pipeline uses three model roles, each mapped to a model alias in t
 | `latent_detector` | [`nemotron-30b-thinking`](https://openrouter.ai/nvidia/nemotron-3-nano-30b-a3b) | Identifies inferable entities (rewrite only). |
 
 See [Models](models.md) for how to override these.
+
+
+### Ignoring specific entity values
+
+```python
+Detect(ignored_entity_values=["Example Corp", "Sample User"])
+```
+
+`ignored_entity_values` adds exact, case-sensitive entity values to a built-in set of literal
+values that should never be tagged, such as `credit card`, `Visa`, and `email`.
+Actual addresses such as `alice@example.com` do not match these defaults.
+The default configuration adds no user values (`[]`); supplying values never replaces the built-ins.
+
+Matches apply across all labels to the stored entity value, without trimming whitespace or matching
+substrings. For example, `credit_card_123` remains eligible for protection. Filtering happens after
+validation, augmentation, overlap resolution, and latent detection, when final explicit entities are
+materialized, before replacement or rewrite processing. Intermediate detection traces retain ignored
+entities for debugging. Each value-based exclusion emits an INFO log containing the entity value
+and label (including user-supplied ignored values). Latent entities and independent evaluation judges are unchanged, so judges
+may still report an ignored value as missed. Ignoring a detection leaves source text intact at this
+stage; it does not guarantee that rewriting preserves the text unchanged.

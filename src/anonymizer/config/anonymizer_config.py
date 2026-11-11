@@ -127,6 +127,16 @@ class Detect(BaseModel):
             "effective detection set, Detect raises a ValueError at config time."
         ),
     )
+    ignored_entity_values: list[str] = Field(
+        default_factory=list,
+        repr=False,
+        description=(
+            "Additional entity values to exclude from final results, across all labels. "
+            "Matches are exact and case sensitive, without whitespace normalization. "
+            "Always combined with built-in generic payment types, brands, and email references. "
+            "Ignored values remain eligible to change during rewriting."
+        ),
+    )
     gliner_threshold: float = Field(
         default=0.3, ge=0.0, le=1.0, description="GLiNER detection confidence threshold (0.0-1.0)."
     )

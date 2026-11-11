@@ -44,6 +44,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.chunked_validation import VALIDATION_EXCERPT_VAR
 from anonymizer.engine.detection.entity_label_examples import ResolvedEntityLabelConfig, resolve_entity_label_config
+from anonymizer.engine.detection.ignored_entity_values import DEFAULT_IGNORED_ENTITY_VALUES
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     group_entities_by_value,
@@ -431,6 +432,7 @@ class EntityDetectionWorkflow:
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
+        ignored_entity_values: list[str] | None = None,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         entity_label_examples: dict[str, list[str]] | None = None,
@@ -502,10 +504,12 @@ class EntityDetectionWorkflow:
             if COL_DETECTED_ENTITIES in final_df.columns:
                 allowed = set(label_config.labels) if label_config.strict_labels else None
                 excluded_entity_labels_set = set(excluded_entity_labels) if excluded_entity_labels else None
+                ignored_values = DEFAULT_IGNORED_ENTITY_VALUES.union(ignored_entity_values or [])
                 final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
                     lambda raw: _materialize_final_entities(
                         raw,
                         allowed_labels=allowed,
+                        ignored_entity_values=ignored_values,
                         excluded_entity_labels=excluded_entity_labels_set,
                     )
                 )
@@ -547,16 +551,25 @@ def _materialize_final_entities(
     *,
     allowed_labels: set[str] | None,
     excluded_entity_labels: set[str] | None = None,
+    ignored_entity_values: frozenset[str] = DEFAULT_IGNORED_ENTITY_VALUES,
 ) -> dict:
-    """Build COL_FINAL_ENTITIES, applying the configured label scope."""
+    """Build COL_FINAL_ENTITIES, applying label scope and exact value exclusions."""
     parsed = EntitiesSchema.from_raw(raw)
     allowed = normalize_labels(allowed_labels) if allowed_labels is not None else None
     excluded = normalize_labels(excluded_entity_labels)
-    kept = [
-        e
-        for e in parsed.entities
-        if (allowed is None or normalize_label(e.label) in allowed) and normalize_label(e.label) not in excluded
-    ]
+    kept = []
+    for entity in parsed.entities:
+        label = normalize_label(entity.label)
+        if (allowed is not None and label not in allowed) or label in excluded:
+            continue
+        if entity.value in ignored_entity_values:
+            logger.info(
+                "Excluded entity matching ignored_entity_values: value=%r label=%s",
+                entity.value,
+                entity.label,
+            )
+            continue
+        kept.append(entity)
     return EntitiesSchema(entities=kept).model_dump()
 
 
