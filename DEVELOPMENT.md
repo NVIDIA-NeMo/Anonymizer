@@ -6,8 +6,7 @@ This guide covers local setup, common development commands, testing, documentati
 
 - Python 3.11+
 - Git
-- [mise](https://mise.jdx.dev/) for pinned development tools and task execution
-- [uv](https://docs.astral.sh/uv/) 0.13.4 or newer for dependency management
+- [mise](https://mise.jdx.dev/) 2026.10.15 or newer, which installs the pinned uv, Ruff, and ty and runs every task
 - [gh](https://cli.github.com/) for optional GitHub CLI workflows
 
 Development tools such as Ruff, ty, pre-commit, pytest, and pytest-cov are installed by the development dependency group.
@@ -22,10 +21,11 @@ cd Anonymizer
 make setup
 ```
 
-`make setup` installs Mise when needed, then runs the default `dev` setup profile. If Mise is already installed, run the
-same onboarding flow directly:
+`make setup` installs Mise when needed, trusts the repository's `.mise.toml`, then runs the default `dev` setup profile.
+If Mise is already installed, trust the configuration once and run the same onboarding flow directly:
 
 ```bash
+mise trust
 mise run setup
 ```
 
@@ -281,3 +281,11 @@ mise run build:wheel
 Release tags use `vMAJOR.MINOR.PATCH` for stable releases and `vMAJOR.MINOR.PATCHrcN` for release candidates, while the Python package version is the unprefixed version.
 
 Release publishing is handled by `.github/workflows/release.yml`.
+
+Pushing a `v*` tag starts a production release immediately. The run builds the wheel, fails if the tag does not equal `v` plus the built package version, publishes to Test PyPI, then publishes to PyPI, creates the GitHub release for the tag, and deploys the versioned docs. Test PyPI runs first on every release, so a Test PyPI failure stops the run before PyPI.
+
+Create the tag on the exact commit you intend to release. The package version comes from Git tags (`uv-dynamic-versioning`), so a commit without a tag builds a version with a `+<hash>` suffix, which PyPI and Test PyPI do not accept.
+
+There is no side-effect-free rehearsal before the tag exists, because creating the tag starts the release. The manual workflow (`workflow_dispatch`, inputs `dry-run` and `create-gh-release`) can be run on an existing release tag with `dry-run` true and `create-gh-release` false, which publishes that version to Test PyPI only. `create-gh-release` defaults to true and is not tied to `dry-run`, so leaving it on creates the GitHub release and deploys docs even in a dry run. A manual run on a branch skips the tag check, and its untagged version is not accepted by Test PyPI.
+
+`mise run publish:pypi <version>` builds and publishes an explicit version straight to PyPI, with no Test PyPI step and no tag check. It is a manual fallback, not the release path; `--dry-run` builds and validates without uploading.
