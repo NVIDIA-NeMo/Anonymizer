@@ -19,10 +19,14 @@ on:
   workflow_dispatch:
     inputs:
       dry-run:
-        description: "Dry Run: only publish to Test PyPI"
+        description: "Dry run: never publishes to PyPI, creates a release, or deploys docs"
         required: true
         default: true
         type: boolean
+      version:
+        description: "Branch runs only, and required there: the version to build and validate (for example 0.5.0rc1). Nothing is uploaded."
+        required: false
+        type: string
       create-gh-release:
         description: Create a GitHub release
         required: true
@@ -38,7 +42,7 @@ permissions:
 
 jobs:
   publish-wheel:
-    name: Publish wheel (${{ inputs.dry-run && 'Test PyPI' || 'PyPI' }})
+    name: Build and publish wheel
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.build.outputs.version }}
@@ -56,16 +60,34 @@ jobs:
 
       - name: Build wheel
         id: build
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          mise run build:wheel
-          WHEEL=$(ls dist/*.whl)
-          VERSION=$(echo "$WHEEL" | sed -n 's/.*-\([0-9][^-]*\)-.*/\1/p')
-          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v${VERSION}" ]; then
-            echo "::error::Release tag ${GITHUB_REF_NAME} does not match package version v${VERSION}"
-            exit 1
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [ -n "$INPUT_VERSION" ]; then
+              echo "::error::The version input is for branch runs; on a tag the version comes from the tag"
+              exit 1
+            fi
+            case "$GITHUB_REF_NAME" in
+              v*) ;;
+              *)
+                echo "::error::Release tag ${GITHUB_REF_NAME} must start with v"
+                exit 1
+                ;;
+            esac
+            VERSION="${GITHUB_REF_NAME#v}"
+            mise run build:wheel
+            mise run release:verify "$VERSION"
+          else
+            if [ -z "$INPUT_VERSION" ] || [ "${{ inputs.dry-run }}" != "true" ]; then
+              echo "::error::Running from a branch requires dry-run enabled and the version input"
+              exit 1
+            fi
+            VERSION="$INPUT_VERSION"
+            mise run release:check "$VERSION"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Built: $WHEEL (version $VERSION)"
+          echo "Built: $(ls dist/*.whl) (version $VERSION)"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -73,7 +95,8 @@ jobs:
           path: dist/*.whl
           retention-days: 90
 
-      - name: Publish to Test PyPI (always, as pre-flight)
+      - name: Publish to Test PyPI (pre-flight)
+        if: ${{ github.ref_type == 'tag' }}
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.TEST_PYPI_PERSONAL_TOKEN }}
@@ -86,7 +109,7 @@ jobs:
             dist/*.whl
 
       - name: Publish to PyPI
-        if: ${{ github.event_name == 'push' || !inputs.dry-run }}
+        if: ${{ github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.dry-run) }}
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_PERSONAL_TOKEN }}
@@ -99,7 +122,7 @@ jobs:
   create-gh-release:
     name: Create GitHub release
     needs: publish-wheel
-    if: ${{ github.event_name == 'push' || inputs.create-gh-release }}
+    if: ${{ github.event_name == 'push' || (!inputs.dry-run && inputs.create-gh-release) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout triggering ref
@@ -134,7 +157,7 @@ jobs:
   deploy-release-docs:
     name: Deploy release docs
     needs: [publish-wheel, create-gh-release]
-    if: ${{ github.event_name == 'push' || inputs.create-gh-release }}
+    if: ${{ github.event_name == 'push' || (!inputs.dry-run && inputs.create-gh-release) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
