@@ -15,6 +15,7 @@ from anonymizer.config.models import (
 from anonymizer.engine.ndd.model_loader import (
     DEFAULT_CONFIG_DIR,
     WorkflowName,
+    _merge_selections,
     get_model_alias,
     load_default_model_providers,
     load_default_model_selection,
@@ -305,6 +306,24 @@ def test_parse_model_configs_rewrite_classifier_fallback(classifier: str | None)
     )
     result = parse_model_configs(yaml_str)
     assert result.selected_models.rewrite.entity_classifier == (classifier or "custom-disposition")
+
+
+@pytest.mark.parametrize(
+    "selections",
+    [None, {}, {"detection": {"entity_detector": "custom-detector"}}, {"rewrite": {"rewriter": "custom-rewriter"}}],
+)
+def test_unrelated_model_overrides_preserve_default_classifier(
+    selections: dict[str, dict[str, str]] | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    defaults = load_default_model_selection()
+    defaults.rewrite.entity_classifier = "default-classifier"
+    defaults.rewrite.disposition_analyzer = "default-disposition"
+    monkeypatch.setattr("anonymizer.engine.ndd.model_loader.load_default_model_selection", lambda: defaults)
+
+    selection = _merge_selections(selections)
+
+    assert selection.rewrite.entity_classifier == "default-classifier"
+    assert selection.rewrite.disposition_analyzer == "default-disposition"
 
 
 def test_parse_model_configs_rejects_empty_entity_validator_override() -> None:

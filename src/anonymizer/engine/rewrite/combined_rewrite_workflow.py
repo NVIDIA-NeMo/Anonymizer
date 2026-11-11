@@ -391,12 +391,15 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
         evaluation: EvaluationCriteria,
         data_summary: str | None = None,
         strict_entity_protection: bool = False,
+        label_categories: dict[str, str] | None = None,
     ) -> CombinedRewriteGraph:
         columns = _replacement_columns(replace_model_selection)
         columns.extend(
             DomainClassificationWorkflow().columns(selected_models=selected_models, data_summary=data_summary)
         )
-        columns.extend(EntityClassificationWorkflow().columns(selected_models=selected_models))
+        columns.extend(
+            EntityClassificationWorkflow().columns(selected_models=selected_models, label_categories=label_categories)
+        )
         columns.extend(
             SensitivityDispositionWorkflow().columns(
                 selected_models=selected_models,
@@ -500,6 +503,9 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 measurement.update(output_row_count=len(result.dataframe), failed_record_count=0)
                 return result
 
+            label_categories = self._entity_classification_wf.classify_dataset(
+                entity_rows, adapter=self._adapter, model_configs=model_configs, selected_models=selected_models
+            )
             graph = self.build_graph(
                 selected_models=selected_models,
                 replace_model_selection=replace_model_selection,
@@ -507,6 +513,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 evaluation=evaluation,
                 data_summary=data_summary,
                 strict_entity_protection=strict_entity_protection,
+                label_categories=label_categories,
             )
             seed = select_seed_cols(entity_rows, derive_seed_columns(graph.columns, entity_rows))
             run_result = self._adapter.run_workflow(

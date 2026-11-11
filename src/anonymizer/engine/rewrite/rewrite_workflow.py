@@ -291,6 +291,10 @@ class RewriteWorkflow:
                 )
                 return result
 
+            label_categories = self._entity_classification_wf.classify_dataset(
+                entity_rows, adapter=self._adapter, model_configs=model_configs, selected_models=selected_models
+            )
+
             # --- Step 1: replacement map (needs only detection output) ---
             replace_workflow = LlmReplaceWorkflow(adapter=self._adapter)
             replace_result = replace_workflow.generate_map_only(
@@ -304,7 +308,9 @@ class RewriteWorkflow:
             # --- Step 2: domain, entity classification, disposition, QA, rewrite (single adapter call) ---
             pipeline_columns = [
                 *self._domain_wf.columns(selected_models=selected_models, data_summary=data_summary),
-                *self._entity_classification_wf.columns(selected_models=selected_models),
+                *self._entity_classification_wf.columns(
+                    selected_models=selected_models, label_categories=label_categories
+                ),
                 *self._disposition_wf.columns(
                     selected_models=selected_models,
                     privacy_goal=privacy_goal,

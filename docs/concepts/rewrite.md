@@ -193,15 +193,16 @@ Rewrite uses multiple LLM roles. All default to models in the [default config](m
 | `evaluator` | `nemotron-30b-thinking` | Evaluates quality and leakage. |
 | `repairer` | `gpt-oss-120b` | Repairs high-leakage rewrites. |
 
-The entity-classification LLM runs only for records containing labels outside the default
-category table. If you omit `selected_models.rewrite.entity_classifier`, it uses the effective
-`disposition_analyzer` alias, including your override. Set it explicitly to use a separate model.
+The entity-classification LLM classifies the dataset's detected custom labels together once,
+then reuses the categories across all records. Default labels are resolved locally without
+an LLM call. An explicit `disposition_analyzer` override also supplies the classifier unless
+you select `entity_classifier` explicitly; unrelated overrides preserve the bundled default.
 
 Every requested custom label must have a classification. Conflicting categories for the
 same label are rejected; identical duplicate classifications are accepted. Invalid responses
 receive one correction attempt with validation feedback. If that attempt is also invalid,
-the record fails and is reported through the workflow's failed records instead of continuing
-to sensitivity disposition with incomplete or contradictory classifications.
+the shared classification step fails the run instead of continuing to sensitivity disposition
+with incomplete or contradictory classifications.
 
 ---
 

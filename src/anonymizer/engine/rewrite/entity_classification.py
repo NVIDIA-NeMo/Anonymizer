@@ -8,11 +8,14 @@ import logging
 from functools import partial
 from typing import Any
 
+import pandas as pd
 from data_designer.config import SkipConfig, custom_column_generator
 from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.column_types import ColumnConfigT
+from data_designer.config.models import ModelConfig
 from data_designer.engine.models.parsers.errors import ParserException
 from data_designer.engine.models.recipes.response_recipes import PydanticResponseRecipe
+from pydantic import BaseModel
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.engine.constants import (
@@ -24,10 +27,12 @@ from anonymizer.engine.constants import (
     DEFAULT_ENTITY_LABEL_CATEGORY,
     _jinja,
 )
+from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityLabelClassificationsSchema
+from anonymizer.interface.errors import AnonymizerWorkflowError
 
 logger = logging.getLogger("anonymizer.rewrite.entity_classification")
 
@@ -205,19 +210,69 @@ def _merge_entity_classifications(row: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+class LabelClassificationParams(BaseModel):
+    categories: dict[str, str]
+
+
+@custom_column_generator(required_columns=[COL_ENTITIES_BY_VALUE])
+def _apply_dataset_classifications(row: dict[str, Any], generator_params: LabelClassificationParams) -> dict[str, Any]:
+    row[COL_ENTITY_CLASSIFICATION] = {
+        label: generator_params.categories[label] for label in _unique_labels(row.get(COL_ENTITIES_BY_VALUE))
+    }
+    return row
+
+
 class EntityClassificationWorkflow:
     """Classifies each non-latent entity label as direct or quasi-identifier.
 
     Labels covered by DEFAULT_ENTITY_LABEL_CATEGORY are resolved locally
     (no LLM call). Only labels outside that table — i.e. custom user-supplied
-    entity_labels — go through an LLM call. Scoped per-document: only labels
-    actually present in a row's detected entities are ever sent to the LLM.
+    entity_labels — go through a single dataset-level LLM classification.
+    Each row then receives the categories for its own detected labels.
 
     Latent entities are out of scope — those are always classified as
     ``latent_identifier`` directly in the sensitivity disposition step.
     """
 
-    def columns(self, *, selected_models: RewriteModelSelection) -> list[ColumnConfigT]:
+    def classify_dataset(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        adapter: NddAdapter,
+        model_configs: list[ModelConfig],
+        selected_models: RewriteModelSelection,
+    ) -> dict[str, str]:
+        labels = sorted({label for raw in dataframe[COL_ENTITIES_BY_VALUE] for label in _unique_labels(raw)})
+        local, unmapped = classify_labels_locally(labels)
+        if not unmapped:
+            return local
+        seed = pd.DataFrame(
+            [{COL_ENTITY_CLASSIFICATION_LOCAL: local, COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS: unmapped}]
+        )
+        result = adapter.run_workflow(
+            seed,
+            model_configs=model_configs,
+            columns=self.columns(selected_models=selected_models)[1:],
+            workflow_name="rewrite-label-classification",
+        )
+        if result.failed_records or len(result.dataframe) != 1:
+            raise AnonymizerWorkflowError(
+                "Dataset custom-label classification failed; no shared taxonomy is available."
+            )
+        categories = normalize_payload(result.dataframe.iloc[0][COL_ENTITY_CLASSIFICATION])
+        return {label: categories[label] for label in labels}
+
+    def columns(
+        self, *, selected_models: RewriteModelSelection, label_categories: dict[str, str] | None = None
+    ) -> list[ColumnConfigT]:
+        if label_categories is not None:
+            return [
+                CustomColumnConfig(
+                    name=COL_ENTITY_CLASSIFICATION,
+                    generator_function=_apply_dataset_classifications,
+                    generator_params=LabelClassificationParams(categories=label_categories),
+                )
+            ]
         classifier_alias = resolve_model_alias("entity_classifier", selected_models)
         return [
             CustomColumnConfig(

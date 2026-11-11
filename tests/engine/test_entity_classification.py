@@ -28,9 +28,11 @@ from anonymizer.engine.constants import (
     DEFAULT_ENTITY_LABEL_CATEGORY,
     _jinja,
 )
-from anonymizer.engine.ndd.adapter import NddAdapter
+from anonymizer.engine.ndd.adapter import NddAdapter, WorkflowRunResult
 from anonymizer.engine.rewrite.entity_classification import (
     EntityClassificationWorkflow,
+    LabelClassificationParams,
+    _apply_dataset_classifications,
     _classify_labels_locally,
     _get_entity_classification_prompt,
     _make_classification_column,
@@ -38,6 +40,7 @@ from anonymizer.engine.rewrite.entity_classification import (
     _unique_labels,
     classify_labels_locally,
 )
+from anonymizer.interface.errors import AnonymizerWorkflowError
 
 
 def test_columns_returns_exactly_three_in_order(
@@ -56,6 +59,71 @@ def test_columns_returns_exactly_three_in_order(
 def test_prompt_references_unmapped_labels_column() -> None:
     prompt = _get_entity_classification_prompt()
     assert _jinja(COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS) in prompt
+
+
+def test_dataset_classification_resolves_custom_labels_once_and_reuses_categories(
+    stub_rewrite_model_selection: RewriteModelSelection,
+) -> None:
+    rows = [
+        {COL_ENTITIES_BY_VALUE: {"entities_by_value": [{"value": "A", "labels": ["custom_id", "first_name"]}]}},
+        {COL_ENTITIES_BY_VALUE: {"entities_by_value": [{"value": "B", "labels": ["custom_id", "custom_role"]}]}},
+    ]
+    categories = {
+        "custom_id": "direct_identifier",
+        "custom_role": "quasi_identifier",
+        "first_name": "direct_identifier",
+    }
+    adapter = Mock(spec=NddAdapter)
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame([{COL_ENTITY_CLASSIFICATION: categories}]), failed_records=[]
+    )
+    workflow = EntityClassificationWorkflow()
+    result = workflow.classify_dataset(
+        pd.DataFrame(rows), adapter=adapter, model_configs=[], selected_models=stub_rewrite_model_selection
+    )
+
+    adapter.run_workflow.assert_called_once()
+    seed = adapter.run_workflow.call_args.args[0]
+    assert len(seed) == 1
+    assert seed.iloc[0][COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS] == ["custom_id", "custom_role"]
+    columns = workflow.columns(selected_models=stub_rewrite_model_selection, label_categories=result)
+    assert len(columns) == 1
+    assert isinstance(columns[0], CustomColumnConfig)
+    assert columns[0].generator_params is not None
+    params = LabelClassificationParams.model_validate(columns[0].generator_params.model_dump())
+    applied = [_apply_dataset_classifications(row, params)[COL_ENTITY_CLASSIFICATION] for row in rows]
+    assert applied == [
+        {"custom_id": "direct_identifier", "first_name": "direct_identifier"},
+        {"custom_id": "direct_identifier", "custom_role": "quasi_identifier"},
+    ]
+
+
+def test_dataset_classification_skips_model_for_default_labels(
+    stub_rewrite_model_selection: RewriteModelSelection,
+) -> None:
+    adapter = Mock(spec=NddAdapter)
+    dataframe = pd.DataFrame(
+        [{COL_ENTITIES_BY_VALUE: {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}}]
+    )
+    result = EntityClassificationWorkflow().classify_dataset(
+        dataframe, adapter=adapter, model_configs=[], selected_models=stub_rewrite_model_selection
+    )
+    assert result == {"first_name": "direct_identifier"}
+    adapter.run_workflow.assert_not_called()
+
+
+def test_dataset_classification_does_not_continue_without_shared_taxonomy(
+    stub_rewrite_model_selection: RewriteModelSelection,
+) -> None:
+    adapter = Mock(spec=NddAdapter)
+    adapter.run_workflow.return_value = WorkflowRunResult(dataframe=pd.DataFrame(), failed_records=[])
+    dataframe = pd.DataFrame(
+        [{COL_ENTITIES_BY_VALUE: {"entities_by_value": [{"value": "A", "labels": ["custom_id"]}]}}]
+    )
+    with pytest.raises(AnonymizerWorkflowError, match="custom-label classification failed"):
+        EntityClassificationWorkflow().classify_dataset(
+            dataframe, adapter=adapter, model_configs=[], selected_models=stub_rewrite_model_selection
+        )
 
 
 def test_classify_labels_locally_resolves_default_labels() -> None:
