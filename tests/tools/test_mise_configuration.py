@@ -40,7 +40,7 @@ def test_release_workflow_uses_triggering_ref_and_completes_tag_releases() -> No
     dispatch_inputs = triggers["workflow_dispatch"]["inputs"]
 
     assert triggers["push"]["tags"] == ["v*"]
-    assert set(dispatch_inputs) == {"dry-run", "create-gh-release"}
+    assert set(dispatch_inputs) == {"dry-run", "create-gh-release", "version"}
     assert "release-ref" not in workflow_text
     assert "release-target" not in workflow_text
 
@@ -54,9 +54,6 @@ def test_release_workflow_uses_triggering_ref_and_completes_tag_releases() -> No
 
     build_step = next(step for step in publish_steps if step.get("id") == "build")
     assert "mise run build:wheel" in build_step["run"]
-    assert "dist/*.whl" in build_step["run"]
-    assert 'if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v${VERSION}" ]; then' in build_step["run"]
-    assert "exit 1" in build_step["run"]
 
     release_steps = workflow["jobs"]["create-gh-release"]["steps"]
     release_step = next(step for step in release_steps if step.get("name") == "Create GitHub release")
@@ -71,14 +68,21 @@ def test_release_workflow_uses_triggering_ref_and_completes_tag_releases() -> No
     )
 
     publish_to_pypi = next(step for step in publish_steps if step.get("name") == "Publish to PyPI")
-    assert publish_to_pypi["if"] == "${{ github.event_name == 'push' || !inputs.dry-run }}"
+    # A dry run must never create a release or deploy docs, whatever create-gh-release says.
+    gated = "${{ github.event_name == 'push' || (!inputs.dry-run && inputs.create-gh-release) }}"
+    assert workflow["jobs"]["create-gh-release"]["if"] == gated
+    assert workflow["jobs"]["deploy-release-docs"]["if"] == gated
+
+    # Nothing uploads from a branch run, whatever the inputs say.
+    test_pypi = next(step for step in publish_steps if step.get("name", "").startswith("Publish to Test PyPI"))
+    assert test_pypi["if"] == "${{ github.ref_type == 'tag' }}"
     assert (
-        workflow["jobs"]["create-gh-release"]["if"] == "${{ github.event_name == 'push' || inputs.create-gh-release }}"
+        publish_to_pypi["if"] == "${{ github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.dry-run) }}"
     )
-    assert (
-        workflow["jobs"]["deploy-release-docs"]["if"]
-        == "${{ github.event_name == 'push' || inputs.create-gh-release }}"
-    )
+
+    # Tag runs build from Git tags and verify the result; only branch rehearsals use the version override.
+    assert 'mise run release:verify "$VERSION"' in build_step["run"]
+    assert 'mise run release:check "$VERSION"' in build_step["run"]
 
 
 def test_release_tasks_use_current_checkout() -> None:
@@ -188,6 +192,11 @@ def test_mise_uses_native_task_composition() -> None:
         "check:type",
     }
     assert {"task": "build:wheel"} in publish_tasks["publish:pypi"]["run"]
+    verify_args = {"task": "release:verify", "args": ["{{usage.version}}"]}
+    assert verify_args in publish_tasks["publish:pypi"]["run"]
+    assert verify_args in publish_tasks["release:check"]["run"]
+    assert "twine upload" not in str(publish_tasks["release:check"]) + str(publish_tasks["release:verify"])
+    assert "UV_DYNAMIC_VERSIONING_BYPASS" not in str(publish_tasks["publish:pypi"])
     assert setup_tasks["setup"]["run"][2] == {"task": "deps:sync", "args": ["{{usage.profile}}"]}
     assert '#MISE depends=["clean:pycache"]' in clean_task
     assert "mise run clean:pycache" not in clean_task
