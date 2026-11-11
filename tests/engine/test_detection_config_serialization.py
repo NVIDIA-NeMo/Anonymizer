@@ -396,3 +396,20 @@ def test_finalization_generator_applies_allowed_and_excluded_labels() -> None:
     ]
     assert result[COL_TAGGED_TEXT] == "<first_name>Alice</first_name> uses alice@example.com in Boston."
     assert result[COL_DETECTED_ENTITIES] == raw
+
+
+@pytest.mark.parametrize(
+    "malformed", ["{not json", {"entities": [{"value": "SecretName", "start_position": "bad"}]}, 42]
+)
+def test_finalization_generator_rejects_malformed_payloads(malformed: object) -> None:
+    config = DetectionTransformConfig(
+        name=COL_FINAL_ENTITIES,
+        operation=DetectionTransformOperation.MATERIALIZE_FINAL_ENTITIES,
+        ignored_entity_values=["SecretName"],
+    )
+    row = {COL_TEXT: "SecretName", COL_DETECTED_ENTITIES: malformed}
+    with pytest.raises(ValueError) as exc:
+        DetectionTransformGenerator(config, resource_provider=Mock()).generate(row)
+    assert "SecretName" not in str(exc.value)
+    assert COL_FINAL_ENTITIES not in row
+    assert COL_TAGGED_TEXT not in row

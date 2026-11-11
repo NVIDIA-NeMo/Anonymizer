@@ -310,3 +310,5 @@ Older injected detection workflows that lack the `ignored_entity_values` paramet
 `run()` and `preview()` filter their results before replacement or rewriting, and the export methods
 append the serialized finalization transform to their builders. Built-in values and user additions
 are applied in both cases.
+Malformed legacy entity payloads are reported as failed records rather than treated as empty
+detections.
