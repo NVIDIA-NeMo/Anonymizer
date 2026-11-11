@@ -19,6 +19,7 @@ RECORD_ID_COLUMN = "_anonymizer_record_id"
 
 # Step 1: GLiNER detection
 COL_DETECTOR_SOURCE = "_detector_source"
+COL_DETECTED_TAGGED_TEXT = "_detected_tagged_text"
 COL_RAW_DETECTED = "_raw_detected_entities"
 
 # Step 2: parse_detected_entities

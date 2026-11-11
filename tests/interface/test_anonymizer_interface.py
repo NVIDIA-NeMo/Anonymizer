@@ -14,6 +14,7 @@ from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
+from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
 
 from anonymizer import RunConfig
@@ -30,6 +31,7 @@ from anonymizer.config.models import ModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Redact, Substitute
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
+    COL_DETECTED_TAGGED_TEXT,
     COL_DETECTION_VALID,
     COL_ENTITIES_BY_VALUE,
     COL_ENTITY_COVERAGE,
@@ -49,7 +51,14 @@ from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import load_default_model_providers, validate_model_alias_references
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
-from anonymizer.interface.anonymizer import Anonymizer, _accepts_entity_label_examples, _resolve_model_providers
+from anonymizer.engine.workflow_columns.detection.config import DetectionTransformConfig, DetectionTransformOperation
+from anonymizer.engine.workflow_columns.detection.impl import DetectionTransformGenerator
+from anonymizer.interface.anonymizer import (
+    Anonymizer,
+    _accepts_entity_label_examples,
+    _finalize_legacy_detection_result,
+    _resolve_model_providers,
+)
 from anonymizer.interface.errors import InvalidConfigError, InvalidInputError
 
 
@@ -280,7 +289,6 @@ class _Replay040DetectionWorkflow:
         model_configs: list[ModelConfig],
         selected_models: object,
         gliner_detection_threshold: float,
-        ignored_entity_values: list[str] | None = None,
         validation_max_entities_per_call: int = 20,
         validation_excerpt_window_chars: int = 200,
         validation_single_chunk_full_text: bool = True,
@@ -293,7 +301,6 @@ class _Replay040DetectionWorkflow:
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
         self.calls.append("run")
-        self.ignored_entity_values = ignored_entity_values
         return self._result
 
     def build_detection_config(
@@ -304,7 +311,6 @@ class _Replay040DetectionWorkflow:
         model_configs: list[ModelConfig],
         selected_models: object,
         gliner_detection_threshold: float,
-        ignored_entity_values: list[str] | None = None,
         validation_max_entities_per_call: int = 100,
         validation_excerpt_window_chars: int = 500,
         validation_single_chunk_full_text: bool = True,
@@ -313,7 +319,6 @@ class _Replay040DetectionWorkflow:
         data_summary: str | None = None,
     ) -> Mock:
         self.calls.append("config")
-        self.config_ignored_entity_values = ignored_entity_values
         return self.config_sentinel
 
     def build_detection_builder_for_seed(
@@ -323,7 +328,6 @@ class _Replay040DetectionWorkflow:
         model_configs: list[ModelConfig],
         selected_models: object,
         gliner_detection_threshold: float,
-        ignored_entity_values: list[str] | None = None,
         validation_max_entities_per_call: int = 100,
         validation_excerpt_window_chars: int = 500,
         validation_single_chunk_full_text: bool = True,
@@ -334,7 +338,6 @@ class _Replay040DetectionWorkflow:
         num_jobs: int = 1,
     ) -> Mock:
         self.calls.append("builder")
-        self.builder_ignored_entity_values = ignored_entity_values
         return self.builder_sentinel
 
 
@@ -357,7 +360,7 @@ def test_legacy_detection_workflow_without_examples(stub_input: AnonymizerInput,
     assert result.dataframe["text"].tolist() == ["Alice"]
     assert result.failed_records == []
     assert detector.calls == ["run"]
-    assert detector.ignored_entity_values == ["Example Corp"]
+    assert result.trace_dataframe[COL_FINAL_ENTITIES].iloc[0] == {"entities": []}
 
 
 def test_legacy_detection_exports_without_examples(stub_input: AnonymizerInput, tmp_path: Path) -> None:
@@ -380,8 +383,10 @@ def test_legacy_detection_exports_without_examples(stub_input: AnonymizerInput, 
         detector.builder_sentinel
     )
     assert detector.calls == ["config", "builder"]
-    assert detector.config_ignored_entity_values == ["Example Corp"]
-    assert detector.builder_ignored_entity_values == ["Example Corp"]
+    for builder in (detector.config_sentinel, detector.builder_sentinel):
+        kwargs = builder.add_column.call_args.kwargs
+        assert kwargs["name"] == COL_FINAL_ENTITIES
+        assert {"Visa", "email", "Example Corp"} <= set(kwargs["ignored_entity_values"])
 
 
 @pytest.mark.parametrize("mode", ["run", "preview", "export_detection_config", "export_detection_builder_for_seed"])
@@ -1549,3 +1554,82 @@ def test_evaluate_rewrite_flags_rows_with_missed_entities(
     assert evaluated.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [expected_flag]
     assert str(evaluated.dataframe[COL_NEEDS_HUMAN_REVIEW].dtype) == "boolean"
     assert run_result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False] * len(run_result.dataframe)
+
+
+@pytest.mark.parametrize("mode", ["run", "preview"])
+@pytest.mark.parametrize("ignored", [[], ["Alice"]])
+def test_legacy_detection_applies_ignored_values_and_updates_public_tags(
+    stub_input: AnonymizerInput, mode: str, ignored: list[str]
+) -> None:
+    text = "Alice uses Visa"
+    raw = {
+        "entities": [
+            {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+            {"value": "Visa", "label": "credit_debit_card", "start_position": 11, "end_position": 15},
+        ]
+    }
+    frame = pd.DataFrame({COL_TEXT: [text], COL_DETECTED_ENTITIES: [raw], COL_TAGGED_TEXT: ["old tags"]})
+    detector = _Replay040DetectionWorkflow(EntityDetectionResult(dataframe=frame, failed_records=[]))
+    anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, detector))
+    config = AnonymizerConfig(detect=Detect(ignored_entity_values=ignored), replace=Redact())
+    result = getattr(anonymizer, mode)(config=config, data=stub_input)
+    assert result.dataframe["text_with_spans"].iloc[0] == (
+        text if ignored else "<first_name>Alice</first_name> uses Visa"
+    )
+    assert result.dataframe["text_replaced"].iloc[0] == (text if ignored else "[REDACTED_FIRST_NAME] uses Visa")
+    assert result.trace_dataframe[COL_DETECTED_ENTITIES].iloc[0] == raw
+    assert result.trace_dataframe[COL_DETECTED_TAGGED_TEXT].iloc[0] == "old tags"
+    assert frame[COL_TAGGED_TEXT].iloc[0] == "old tags"
+
+
+@pytest.mark.parametrize("mode", ["export_detection_config", "export_detection_builder_for_seed"])
+def test_legacy_export_appends_serializable_ignore_filter(
+    stub_input: AnonymizerInput, tmp_path: Path, mode: str
+) -> None:
+    builder = DataDesignerConfigBuilder()
+    detector = _Replay040DetectionWorkflow(EntityDetectionResult(dataframe=pd.DataFrame(), failed_records=[]))
+    detector.config_sentinel = cast(Mock, builder)
+    detector.builder_sentinel = cast(Mock, builder)
+    anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, detector))
+    config = AnonymizerConfig(detect=Detect(ignored_entity_values=["Example Corp"]), replace=Redact())
+    if mode == "export_detection_config":
+        exported = anonymizer.export_detection_config(
+            config=config, data=stub_input, seed_path=tmp_path / "seed.parquet"
+        )
+    else:
+        exported = anonymizer.export_detection_builder_for_seed(config=config, seed_path=tmp_path / "seed.parquet")
+    payload = exported.get_builder_config().to_json()
+    assert payload is not None
+    restored = DataDesignerConfigBuilder.from_config(payload)
+    column = next(column for column in restored.get_column_configs() if column.name == COL_FINAL_ENTITIES)
+    assert isinstance(column, DetectionTransformConfig)
+    assert {"Visa", "email", "Example Corp"} <= set(column.ignored_entity_values)
+    assert column.operation == DetectionTransformOperation.MATERIALIZE_FINAL_ENTITIES
+    raw = {"entities": [{"value": "Example Corp", "label": "full_name", "start_position": 0, "end_position": 12}]}
+    row = DetectionTransformGenerator(column, resource_provider=Mock()).generate(
+        {COL_TEXT: "Example Corp", COL_DETECTED_ENTITIES: raw}
+    )
+    assert row[COL_FINAL_ENTITIES] == {"entities": []}
+    assert row[COL_TAGGED_TEXT] == "Example Corp"
+
+
+def test_legacy_finalization_preserves_existing_final_scope(stub_input: AnonymizerInput) -> None:
+    raw = {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
+    frame = pd.DataFrame({COL_TEXT: ["Alice"], COL_DETECTED_ENTITIES: [raw], COL_FINAL_ENTITIES: [{"entities": []}]})
+    detector = _Replay040DetectionWorkflow(EntityDetectionResult(dataframe=frame, failed_records=[]))
+    anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, detector))
+    result = anonymizer.preview(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+    assert result.dataframe[COL_FINAL_ENTITIES].iloc[0] == {"entities": []}
+    assert result.dataframe["text_with_spans"].iloc[0] == "Alice"
+    assert result.dataframe["text_replaced"].iloc[0] == "Alice"
+    assert result.trace_dataframe[COL_DETECTED_ENTITIES].iloc[0] == raw
+
+
+def test_legacy_finalization_preserves_all_failed_records() -> None:
+    failures = [FailedRecord(record_id="dropped", step="entity-detection", reason="provider failure")]
+    original = EntityDetectionResult(dataframe=pd.DataFrame({COL_TEXT: []}), failed_records=failures)
+    result = _finalize_legacy_detection_result(original, Detect())
+    assert result.dataframe.empty
+    assert {COL_FINAL_ENTITIES, COL_TAGGED_TEXT, COL_ENTITIES_BY_VALUE} <= set(result.dataframe.columns)
+    assert result.failed_records == failures
+    assert COL_FINAL_ENTITIES not in original.dataframe.columns
