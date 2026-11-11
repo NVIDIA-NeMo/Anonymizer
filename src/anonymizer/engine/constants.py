@@ -48,6 +48,7 @@ COL_REPLACED_TEXT = "__nemo_anonymizer_text_output__"
 COL_REPLACEMENT_MAP = "_replacement_map"
 COL_REPLACEMENT_MAP_RAW = COL_REPLACEMENT_MAP + "__raw"
 COL_REPLACEMENT_MAP_SOURCE = "_replacement_map_source"
+COL_REPLACEMENT_RETRY_CONTEXT = "_replacement_retry_context"
 
 # LlmReplaceWorkflow internal prompt-construction columns. Created by
 # `LlmReplaceWorkflow.generate_map_only` for the replacement-generator prompt
