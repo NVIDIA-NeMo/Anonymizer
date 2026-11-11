@@ -166,7 +166,7 @@ mise run hooks:install
 ```
 
 Before Git records a commit, the hooks check file hygiene, format and lint staged Python files, repair SPDX headers,
-verify `uv.lock` when `pyproject.toml` changes, and run `mise run check`. The aggregate check covers five read-only stages:
+and run `mise run check` on every commit. The aggregate check covers five read-only stages:
 
 - `mise run check:format`
 - `mise run check:lint`
