@@ -169,7 +169,7 @@ def test_second_unsuccessful_attempt_fails_only_the_incomplete_record(
         assert value not in caplog.text
 
 
-def test_unicode_space_mutation_does_not_count_as_the_requested_original(
+def test_unlisted_unicode_space_mutation_does_not_count_as_the_requested_original(
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
@@ -184,7 +184,7 @@ def test_unicode_space_mutation_does_not_count_as_the_requested_original(
             {
                 "replacements": [
                     {
-                        "original": "Bob\u2009Jones" if len(calls) == 1 else "Bob\u202fJones",
+                        "original": "Bob\u2003Jones" if len(calls) == 1 else "Bob\u202fJones",
                         "label": "full_name",
                         "synthetic": "Noah Smith",
                     }
