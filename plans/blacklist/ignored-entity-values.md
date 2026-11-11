@@ -4,12 +4,15 @@
 # Ignored entity values
 
 Add `Detect.ignored_entity_values` for additional exact, case-sensitive exclusions across labels.
-Always combine additions with 15 immutable built-in generic payment and email-reference values. No normalization,
+Always combine additions with the immutable built-in ignored-value set. Reject blank entries and
+remove exact duplicates while preserving casing and meaningful whitespace. No normalization,
 label-specific rules, default opt-out, or prompt changes are included.
 
-Wire config through the interface into detection finalization, after all detection stages and label
-scope filtering, before grouping and replacement/rewrite consumers. Preserve intermediate detections
-for debugging. Latent entities and independent evaluation judges retain their existing behavior;
+Wire config through the interface into a serializable detection finalization transform, after
+explicit detection stages and overlap resolution, before grouping and replacement/rewrite consumers.
+Export both pre-filter `_detected_entities` and filtered `final_entities`. Serialize the complete
+effective ignored-value list so external workers use the saved defaults and additions. Preserve
+intermediate detections for debugging. Latent entities and independent evaluation judges retain their existing behavior;
 this option ignores explicit detections and does not promise unchanged rewrite output.
 
 Case-sensitive whole-value matching limits accidental exclusion of identifiers containing payment

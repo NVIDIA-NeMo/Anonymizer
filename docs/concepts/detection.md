@@ -268,7 +268,6 @@ The detection pipeline uses three model roles, each mapped to a model alias in t
 
 See [Models](models.md) for how to override these.
 
-
 ### Ignoring specific entity values
 
 ```python
@@ -279,12 +278,26 @@ Detect(ignored_entity_values=["Example Corp", "Sample User"])
 values that should never be tagged, such as `credit card`, `Visa`, and `email`.
 Actual addresses such as `alice@example.com` do not match these defaults.
 The default configuration adds no user values (`[]`); supplying values never replaces the built-ins.
+Empty or whitespace-only entries are rejected. Exact duplicates are removed, preserving the order
+of the remaining entries and their original casing and whitespace.
 
 Matches apply across all labels to the stored entity value, without trimming whitespace or matching
 substrings. For example, `credit_card_123` remains eligible for protection. Filtering happens after
-validation, augmentation, overlap resolution, and latent detection, when final explicit entities are
-materialized, before replacement or rewrite processing. Intermediate detection traces retain ignored
+validation, augmentation, and overlap resolution, when final explicit entities are materialized,
+before replacement or rewrite processing. Intermediate detection traces retain ignored
 entities for debugging. Each value-based exclusion emits an INFO log containing the entity value
-and label (including user-supplied ignored values). Latent entities and independent evaluation judges are unchanged, so judges
-may still report an ignored value as missed. Ignoring a detection leaves source text intact at this
-stage; it does not guarantee that rewriting preserves the text unchanged.
+and label (including user-supplied ignored values). Latent entities and independent evaluation
+judges are unchanged, so judges may still report an ignored value as missed. Ignoring a detection
+leaves source text intact at this stage; it does not guarantee that rewriting preserves the text
+unchanged.
+
+Ignored values are filtered after overlap resolution. Removing an ignored entity does not restore
+any overlapping candidates that were discarded earlier. Longer spans take precedence during overlap
+resolution, so ignoring `Visa` does not remove a longer detected span such as
+`Visa card ending in 1234`.
+
+The same ignored-value filtering runs in `Anonymizer.run()`, `Anonymizer.preview()`, and workflows
+exported with `export_detection_config()` or `export_detection_builder_for_seed()`. Exported
+builders serialize the effective list, including built-in values and user additions, so workers use
+the saved values even if their packaged defaults differ. Outputs include pre-filter
+`_detected_entities` for debugging and filtered `final_entities` for downstream processing.
