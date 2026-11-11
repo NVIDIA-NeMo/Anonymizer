@@ -1633,3 +1633,69 @@ def test_legacy_finalization_preserves_all_failed_records() -> None:
     assert {COL_FINAL_ENTITIES, COL_TAGGED_TEXT, COL_ENTITIES_BY_VALUE} <= set(result.dataframe.columns)
     assert result.failed_records == failures
     assert COL_FINAL_ENTITIES not in original.dataframe.columns
+
+
+@pytest.mark.parametrize("source_column", [COL_FINAL_ENTITIES, COL_DETECTED_ENTITIES])
+@pytest.mark.parametrize(
+    "malformed", ["{not json", {"entities": [{"value": "SecretName", "start_position": "bad"}]}, 42]
+)
+def test_legacy_finalization_drops_malformed_rows_and_preserves_valid_rows(
+    source_column: str, malformed: object
+) -> None:
+    valid = {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
+    frame = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice", "SecretName", "nothing sensitive"],
+            source_column: [valid, malformed, {"entities": []}],
+            RECORD_ID_COLUMN: ["good", "bad", "empty"],
+        },
+        index=pd.Index([7, 7, 9]),
+    )
+    if source_column == COL_FINAL_ENTITIES:
+        frame[COL_DETECTED_ENTITIES] = [valid, valid, valid]
+    previous = [FailedRecord(record_id="previous", step="entity-detection", reason="provider failure")]
+    original = EntityDetectionResult(dataframe=frame, failed_records=previous)
+    result = _finalize_legacy_detection_result(original, Detect())
+    assert result.dataframe[RECORD_ID_COLUMN].tolist() == ["good", "empty"]
+    assert result.dataframe.index.tolist() == [7, 9]
+    assert result.dataframe[COL_TAGGED_TEXT].tolist() == ["<first_name>Alice</first_name>", "nothing sensitive"]
+    assert result.failed_records[0] == previous[0]
+    assert [(failure.record_id, failure.step) for failure in result.failed_records[1:]] == [
+        ("bad", "entity-finalization")
+    ]
+    assert "malformed entities" in result.failed_records[1].reason
+    assert "SecretName" not in result.failed_records[1].reason
+    assert previous == original.failed_records
+    assert len(previous) == 1
+    assert frame[source_column].iloc[1] == malformed
+
+
+@pytest.mark.parametrize("mode", ["run", "preview"])
+@pytest.mark.parametrize("all_malformed", [False, True])
+def test_legacy_malformed_payloads_never_pass_through_redaction(
+    stub_input: AnonymizerInput, mode: str, all_malformed: bool
+) -> None:
+    valid = {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
+    frame = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice", "SecretName"],
+            COL_FINAL_ENTITIES: ["{not json" if all_malformed else valid, "{not json"],
+            RECORD_ID_COLUMN: ["first", "second"],
+        }
+    )
+    detector = _Replay040DetectionWorkflow(EntityDetectionResult(dataframe=frame, failed_records=[]))
+    anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, detector))
+    result = getattr(anonymizer, mode)(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+    assert result.dataframe["text_replaced"].tolist() == ([] if all_malformed else ["[REDACTED_FIRST_NAME]"])
+    assert [failure.record_id for failure in result.failed_records] == (
+        ["first", "second"] if all_malformed else ["second"]
+    )
+    assert all(failure.step == "entity-finalization" for failure in result.failed_records)
+    assert "SecretName" not in str(result.failed_records)
+
+
+def test_legacy_malformed_payload_failure_falls_back_to_dataframe_index() -> None:
+    frame = pd.DataFrame({COL_TEXT: ["SecretName"], COL_FINAL_ENTITIES: ["{not json"]}, index=pd.Index([42]))
+    result = _finalize_legacy_detection_result(EntityDetectionResult(dataframe=frame, failed_records=[]), Detect())
+    assert result.dataframe.empty
+    assert result.failed_records[0].record_id == "42"

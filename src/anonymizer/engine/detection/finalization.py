@@ -16,7 +16,7 @@ logger = logging.getLogger("anonymizer.detection")
 
 def build_final_tagged_text(text: str, raw: object) -> str:
     """Render public tags from filtered entities while retaining pre-filter detections."""
-    parsed = EntitiesSchema.from_raw(raw)
+    parsed = EntitiesSchema.from_raw(raw, strict=True)
     return build_tagged_text(
         text=text,
         entities=[
@@ -60,7 +60,7 @@ def materialize_final_entities(
     ignored_entity_values: frozenset[str] = DEFAULT_IGNORED_ENTITY_VALUES,
 ) -> dict:
     """Build COL_FINAL_ENTITIES, applying label scope and exact value exclusions."""
-    parsed = EntitiesSchema.from_raw(raw)
+    parsed = EntitiesSchema.from_raw(raw, strict=True)
     allowed = normalize_labels(allowed_labels) if allowed_labels is not None else None
     excluded = normalize_labels(excluded_entity_labels)
     kept = []

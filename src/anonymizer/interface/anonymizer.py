@@ -55,6 +55,7 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
     DEFAULT_ENTITY_LABELS,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionResult,
@@ -82,7 +83,7 @@ from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
-from anonymizer.engine.schemas import EntitiesByValueSchema
+from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.workflow_columns.detection.config import DetectionTransformConfig, DetectionTransformOperation
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
@@ -228,19 +229,36 @@ def _finalize_legacy_detection_result(result: EntityDetectionResult, detect: Det
         frame[COL_DETECTED_TAGGED_TEXT] = frame[COL_TAGGED_TEXT]
     source_column = COL_FINAL_ENTITIES if COL_FINAL_ENTITIES in frame.columns else COL_DETECTED_ENTITIES
     config = _build_legacy_finalization_config(detect)
-    rows = [
-        materialize_final_entity_output(
-            {**row, COL_DETECTED_ENTITIES: row[source_column]},
-            allowed_labels=set(config.allowed_entity_labels) if config.allowed_entity_labels is not None else None,
-            excluded_entity_labels=set(config.excluded_entity_labels),
-            ignored_entity_values=frozenset(config.ignored_entity_values),
+    rows = []
+    positions = []
+    failed_records = list(result.failed_records)
+    for position, row in enumerate(frame.to_dict(orient="records")):
+        try:
+            EntitiesSchema.from_raw(row[source_column], strict=True)
+        except ValueError as exc:
+            record_id = row.get(RECORD_ID_COLUMN, frame.index[position])
+            failed_records.append(
+                FailedRecord(
+                    record_id=str(record_id),
+                    step="entity-finalization",
+                    reason=f"malformed entities: {exc}",
+                )
+            )
+            continue
+        rows.append(
+            materialize_final_entity_output(
+                {**row, COL_DETECTED_ENTITIES: row[source_column]},
+                allowed_labels=set(config.allowed_entity_labels) if config.allowed_entity_labels is not None else None,
+                excluded_entity_labels=set(config.excluded_entity_labels),
+                ignored_entity_values=frozenset(config.ignored_entity_values),
+            )
         )
-        for row in frame.to_dict(orient="records")
-    ]
+        positions.append(position)
+    frame = frame.iloc[positions].copy()
     for column in (COL_FINAL_ENTITIES, COL_TAGGED_TEXT):
         frame[column] = [row[column] for row in rows]
     frame[COL_ENTITIES_BY_VALUE] = frame[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
-    return EntityDetectionResult(dataframe=frame, failed_records=result.failed_records)
+    return EntityDetectionResult(dataframe=frame, failed_records=failed_records)
 
 
 def _detection_example_kwargs(method: Callable[..., object], examples: dict[str, list[str]]) -> _DetectionExampleKwargs:
