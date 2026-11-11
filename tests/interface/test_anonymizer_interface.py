@@ -44,8 +44,13 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     RECORD_ID_COLUMN,
 )
-from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
+from anonymizer.engine.detection.detection_workflow import (
+    EntityDetectionResult,
+    EntityDetectionWorkflow,
+    _build_entities_by_value,
+)
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
+from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import load_default_model_providers, validate_model_alias_references
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
@@ -1606,3 +1611,84 @@ def test_detection_scope_reports_the_run_label_policy(stub_input: AnonymizerInpu
     assert scope is not None
     assert scope.allowed_labels is None
     assert scope.effective_labels == tuple(sorted(patched.labels))
+
+
+class _FirstWordDetector:
+    """Detects each row's first word as a ``first_name``; records the row count of every call."""
+
+    def __init__(self) -> None:
+        self.calls: list[int] = []
+
+    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+        self.calls.append(len(dataframe))
+        frame = dataframe.copy()
+        names = [str(text).split()[0] for text in frame[COL_TEXT]]
+        entities = [
+            {"entities": [{"id": "a", "value": n, "label": "first_name", "start_position": 0, "end_position": len(n)}]}
+            for n in names
+        ]
+        frame[COL_FINAL_ENTITIES] = entities
+        frame[COL_ENTITIES_BY_VALUE] = [_build_entities_by_value(e) for e in entities]
+        return EntityDetectionResult(frame, [], tuple(range(len(frame))))
+
+
+def _dropped_second(dataframe: pd.DataFrame) -> list[FailedRecord]:
+    ids = dataframe[RECORD_ID_COLUMN] if RECORD_ID_COLUMN in dataframe.columns else dataframe.index
+    return [FailedRecord(str(ids[1]), "judge", "dropped")]
+
+
+class _PartialReplaceRunner(ReplacementWorkflow):
+    def evaluate(self, dataframe: pd.DataFrame, **_: object) -> ReplacementResult:
+        kept = dataframe.iloc[[0]].copy()
+        kept[COL_ENTITY_COVERAGE] = 1.0
+        return ReplacementResult(dataframe=kept, failed_records=_dropped_second(dataframe))
+
+
+class _StubRewriteRunner(RewriteWorkflow):
+    """Rewrite with the model stages stubbed; ``evaluate`` keeps the first row and fails the second."""
+
+    def _produce(self, rows, **options):
+        def produce() -> None:
+            rows.frame[COL_REWRITTEN_TEXT] = [f"R<{t}>" for t in rows.frame[COL_TEXT]]
+            for column in ("utility_score", "leakage_mass", "weighted_leakage_rate"):
+                rows.frame[column] = 1.0 if column == "utility_score" else 0.0
+            rows.frame["any_high_leaked"] = False
+
+        return produce
+
+    def evaluate(self, dataframe: pd.DataFrame, **_: object) -> RewriteResult:  # ty: ignore[invalid-method-override]
+        kept = dataframe.iloc[[0]].copy()
+        kept[COL_JUDGE_EVALUATION] = [{"privacy": 1}]
+        return RewriteResult(kept, _dropped_second(dataframe))
+
+
+def _two_row_anonymizer(tmp_path: Path) -> tuple[Anonymizer, _FirstWordDetector, AnonymizerInput]:
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["Alice Smith lives here", "Bob Jones is here"]}).to_csv(csv_path, index=False)
+    detector = _FirstWordDetector()
+    anonymizer = Anonymizer(
+        artifact_path=tmp_path / "artifacts",
+        detection_workflow=cast(EntityDetectionWorkflow, detector),
+        replace_runner=_PartialReplaceRunner(),
+        rewrite_runner=_StubRewriteRunner(Mock()),
+    )
+    return anonymizer, detector, AnonymizerInput(source=str(csv_path))
+
+
+def _stub_coverage(_self: object, dataframe: pd.DataFrame, **_: object) -> tuple[pd.DataFrame, list[FailedRecord]]:
+    return dataframe.assign(**{COL_ENTITY_COVERAGE: 1.0}), []
+
+
+_MODES = {"replace": AnonymizerConfig(replace=Redact()), "rewrite": AnonymizerConfig(rewrite=Rewrite())}
+
+
+@pytest.mark.parametrize("mode", list(_MODES))
+def test_evaluate_keeps_partial_result_from_custom_runner(tmp_path: Path, mode: str) -> None:
+    anonymizer, _, data = _two_row_anonymizer(tmp_path)
+    run_result = anonymizer.run(config=_MODES[mode], data=data)
+
+    with patch.object(EntityCoverageWorkflow, "run_non_critical", _stub_coverage):
+        evaluated = anonymizer.evaluate(run_result)
+
+    assert len(evaluated.dataframe) == 1
+    assert [(r.step, r.reason) for r in evaluated.failed_records] == [("judge", "dropped")]

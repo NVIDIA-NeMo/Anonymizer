@@ -78,6 +78,7 @@ from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, pr
 from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.ndd.backend import per_target
 from anonymizer.engine.ndd.model_loader import (
     parse_model_configs,
     parse_model_providers,
@@ -89,6 +90,7 @@ from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+from anonymizer.engine.row_partitioning import try_resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
@@ -182,7 +184,14 @@ def _evaluate_on_graph(
             current, failed = judge.run(current)
             failures.extend(failed)
             present = [c for c in judge.columns if c in current.columns]
-            return current[present].to_dict("records") if present else [{} for _ in range(len(current))]
+            rows = current[present].to_dict("records") if present else [{} for _ in range(len(current))]
+            if len(rows) == len(target):
+                return rows
+            # A judge dropped rows: map the survivors back to their targets; an unmatched target reads as unavailable.
+            positions = try_resolve_source_positions(frame, current, None)
+            if positions is None:
+                return [{} for _ in target]
+            return [row or {} for row in per_target(rows, positions, len(target))]
 
         return judge_rows
 
