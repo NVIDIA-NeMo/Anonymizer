@@ -51,9 +51,9 @@ from anonymizer.engine.detection.detection_workflow import (
     _get_augment_prompt,
     _get_latent_prompt,
     _get_validation_prompt,
-    _materialize_final_entities,
 )
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
+from anonymizer.engine.detection.finalization import materialize_final_entities
 from anonymizer.engine.detection.postprocess import TagNotation, _format_entity_tag
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import (
@@ -934,7 +934,7 @@ def test_materialize_final_entities_normalizes_configured_labels() -> None:
         ]
     }
 
-    result = _materialize_final_entities(
+    result = materialize_final_entities(
         raw,
         allowed_labels={" first_name ", " email "},
         excluded_entity_labels={" EMAIL "},
@@ -1484,7 +1484,7 @@ def test_materialize_ignores_all_defaults_across_labels(label: str) -> None:
         "email address",
     ]
     raw = {"entities": [{"value": value, "label": label} for value in values]}
-    assert _materialize_final_entities(raw, allowed_labels=None)["entities"] == []
+    assert materialize_final_entities(raw, allowed_labels=None)["entities"] == []
     assert len(raw["entities"]) == 15
 
 
@@ -1500,7 +1500,7 @@ def test_materialize_ignored_values_are_exact_and_case_sensitive() -> None:
         "alice@example.com",
     ]
     raw = {"entities": [{"value": value, "label": "payment_method_id"} for value in values]}
-    result = _materialize_final_entities(raw, allowed_labels=None)
+    result = materialize_final_entities(raw, allowed_labels=None)
     assert [entity["value"] for entity in result["entities"]] == values
 
 
@@ -1514,7 +1514,7 @@ def test_materialize_logs_ignored_entity_exclusions(caplog: pytest.LogCaptureFix
         ]
     }
     with caplog.at_level("INFO", logger="anonymizer.detection"):
-        result = _materialize_final_entities(
+        result = materialize_final_entities(
             raw,
             allowed_labels=None,
             excluded_entity_labels={"email"},

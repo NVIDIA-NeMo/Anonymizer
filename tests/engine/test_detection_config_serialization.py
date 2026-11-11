@@ -25,8 +25,10 @@ from anonymizer.engine.constants import (
     COL_AUGMENTED_CANDIDATES,
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
+    COL_DETECTED_TAGGED_TEXT,
     COL_FINAL_ENTITIES,
     COL_RECONCILED_CANDIDATES,
+    COL_TAGGED_TEXT,
     COL_TEXT,
     COL_VALIDATION_DECISIONS,
     DEFAULT_ENTITY_LABELS,
@@ -320,19 +322,77 @@ def test_exported_ignore_filter_roundtrips_and_executes(
     config = next(column for column in restored.get_column_configs() if column.name == COL_FINAL_ENTITIES)
     assert isinstance(config, DetectionTransformConfig)
     assert set(config.ignored_entity_values) == DEFAULT_IGNORED_ENTITY_VALUES | {"Example Corp"}
-    assert config.required_columns == [COL_DETECTED_ENTITIES]
+    assert config.required_columns == [COL_TEXT, COL_DETECTED_ENTITIES]
     # Workers must use the serialized list even if their packaged defaults change.
     monkeypatch.setattr("anonymizer.engine.detection.finalization.DEFAULT_IGNORED_ENTITY_VALUES", frozenset({"Alice"}))
     values = ["Visa", "email", "Example Corp", "EXAMPLE CORP", "credit_card_123", "Alice"]
     raw = {"entities": [{"value": value, "label": "full_name"} for value in values]}
     generator = DetectionTransformGenerator(config, resource_provider=Mock())
-    result = generator.generate({COL_DETECTED_ENTITIES: raw})
+    result = generator.generate({COL_TEXT: "example", COL_DETECTED_ENTITIES: raw})
     assert [entity["value"] for entity in result[COL_FINAL_ENTITIES]["entities"]] == values[3:]
     assert result[COL_DETECTED_ENTITIES] == raw
     # A saved list must also remain authoritative when it lacks a worker default.
     saved_config = config.model_copy(update={"ignored_entity_values": ["Example Corp"]})
     saved_generator = DetectionTransformGenerator(saved_config, resource_provider=Mock())
-    saved_result = saved_generator.generate({COL_DETECTED_ENTITIES: raw})
+    saved_result = saved_generator.generate({COL_TEXT: "example", COL_DETECTED_ENTITIES: raw})
     assert [entity["value"] for entity in saved_result[COL_FINAL_ENTITIES]["entities"]] == [
         value for value in values if value != "Example Corp"
     ]
+
+
+@pytest.mark.parametrize("ignore_alice", [False, True])
+def test_finalization_renders_tags_from_filtered_entities(ignore_alice: bool) -> None:
+    text = "Alice uses Visa and email."
+    raw = {
+        "entities": [
+            {
+                "value": value,
+                "label": label,
+                "start_position": text.index(value),
+                "end_position": text.index(value) + len(value),
+            }
+            for value, label in [("Alice", "first_name"), ("Visa", "credit_debit_card"), ("email", "email")]
+        ]
+    }
+    ignored = ["Visa", "email", *(["Alice"] if ignore_alice else [])]
+    config = DetectionTransformConfig(
+        name=COL_FINAL_ENTITIES,
+        operation=DetectionTransformOperation.MATERIALIZE_FINAL_ENTITIES,
+        ignored_entity_values=ignored,
+    )
+    prefilter_tags = "pre-filter tags retained for debugging"
+    row = {COL_TEXT: text, COL_DETECTED_ENTITIES: raw, COL_DETECTED_TAGGED_TEXT: prefilter_tags}
+    result = DetectionTransformGenerator(config, resource_provider=Mock()).generate(row)
+    assert result[COL_TAGGED_TEXT] == (text if ignore_alice else "<first_name>Alice</first_name> uses Visa and email.")
+    assert result[COL_DETECTED_TAGGED_TEXT] == prefilter_tags
+    assert result[COL_DETECTED_ENTITIES] == raw
+    assert config.side_effect_columns == [COL_TAGGED_TEXT]
+
+
+def test_finalization_generator_applies_allowed_and_excluded_labels() -> None:
+    text = "Alice uses alice@example.com in Boston."
+    raw = {
+        "entities": [
+            {
+                "value": value,
+                "label": label,
+                "start_position": text.index(value),
+                "end_position": text.index(value) + len(value),
+            }
+            for value, label in [("Alice", "first_name"), ("alice@example.com", "email"), ("Boston", "city")]
+        ]
+    }
+    config = DetectionTransformConfig(
+        name=COL_FINAL_ENTITIES,
+        operation=DetectionTransformOperation.MATERIALIZE_FINAL_ENTITIES,
+        allowed_entity_labels=["first_name", "email"],
+        excluded_entity_labels=["email"],
+    )
+    result = DetectionTransformGenerator(config, resource_provider=Mock()).generate(
+        {COL_TEXT: text, COL_DETECTED_ENTITIES: raw}
+    )
+    assert [(entity["value"], entity["label"]) for entity in result[COL_FINAL_ENTITIES]["entities"]] == [
+        ("Alice", "first_name")
+    ]
+    assert result[COL_TAGGED_TEXT] == "<first_name>Alice</first_name> uses alice@example.com in Boston."
+    assert result[COL_DETECTED_ENTITIES] == raw

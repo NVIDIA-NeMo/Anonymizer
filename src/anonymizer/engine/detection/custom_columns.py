@@ -21,6 +21,7 @@ from anonymizer.engine.constants import (
     COL_ADMITTED_CANDIDATES,
     COL_AUGMENTED_CANDIDATES,
     COL_DETECTED_ENTITIES,
+    COL_DETECTED_TAGGED_TEXT,
     COL_DETECTOR_SOURCE,
     COL_INITIAL_TAGGED_TEXT,
     COL_MERGED_ENTITIES,
@@ -31,7 +32,6 @@ from anonymizer.engine.constants import (
     COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
-    COL_TAGGED_TEXT,
     COL_TEXT,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
@@ -215,7 +215,7 @@ def admit_validation_decisions(
 
 @custom_column_generator(
     required_columns=[COL_TEXT, COL_RECONCILED_CANDIDATES],
-    side_effect_columns=[COL_TAGGED_TEXT],
+    side_effect_columns=[COL_DETECTED_TAGGED_TEXT],
 )
 def finalize_entities(row: dict[str, Any]) -> dict[str, Any]:
     """Publish the occurrence-specific candidates selected by reconciliation."""
@@ -225,7 +225,7 @@ def finalize_entities(row: dict[str, Any]) -> dict[str, Any]:
     row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[entity.as_dict() for entity in finalized]).model_dump(
         mode="json"
     )
-    row[COL_TAGGED_TEXT] = build_tagged_text(text=text, entities=finalized)
+    row[COL_DETECTED_TAGGED_TEXT] = build_tagged_text(text=text, entities=finalized)
     return row
 
 

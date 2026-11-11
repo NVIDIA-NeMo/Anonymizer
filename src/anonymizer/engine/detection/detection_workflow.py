@@ -24,6 +24,7 @@ from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
+    COL_DETECTED_TAGGED_TEXT,
     COL_DETECTOR_SOURCE,
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
@@ -36,6 +37,7 @@ from anonymizer.engine.constants import (
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
+    COL_TEXT,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
     ENTITY_LABEL_EXAMPLES,
@@ -44,7 +46,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.chunked_validation import VALIDATION_EXCERPT_VAR
 from anonymizer.engine.detection.entity_label_examples import ResolvedEntityLabelConfig, resolve_entity_label_config
-from anonymizer.engine.detection.finalization import _materialize_final_entities
+from anonymizer.engine.detection.finalization import build_final_tagged_text, materialize_final_entities
 from anonymizer.engine.detection.ignored_entity_values import DEFAULT_IGNORED_ENTITY_VALUES
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
@@ -282,6 +284,8 @@ class EntityDetectionWorkflow:
                 DetectionTransformConfig(
                     name=COL_FINAL_ENTITIES,
                     operation=DetectionTransformOperation.MATERIALIZE_FINAL_ENTITIES,
+                    # Any explicit entity_labels list enables strict scope, even if it matches
+                    # the defaults. Only entity_labels=None permits non-default augmented labels.
                     allowed_entity_labels=labels if label_config.strict_labels else None,
                     excluded_entity_labels=list(excluded_entity_labels or []),
                     ignored_entity_values=sorted(DEFAULT_IGNORED_ENTITY_VALUES.union(ignored_entity_values or [])),
@@ -520,13 +524,19 @@ class EntityDetectionWorkflow:
                 excluded_entity_labels_set = set(excluded_entity_labels) if excluded_entity_labels else None
                 ignored_values = DEFAULT_IGNORED_ENTITY_VALUES.union(ignored_entity_values or [])
                 final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
-                    lambda raw: _materialize_final_entities(
+                    lambda raw: materialize_final_entities(
                         raw,
                         allowed_labels=allowed,
                         ignored_entity_values=ignored_values,
                         excluded_entity_labels=excluded_entity_labels_set,
                     )
                 )
+                if COL_TAGGED_TEXT in final_df.columns:
+                    final_df[COL_DETECTED_TAGGED_TEXT] = final_df[COL_TAGGED_TEXT]
+                final_df[COL_TAGGED_TEXT] = [
+                    build_final_tagged_text(text, entities)
+                    for text, entities in zip(final_df[COL_TEXT], final_df[COL_FINAL_ENTITIES], strict=True)
+                ]
             if compute_grouped and COL_FINAL_ENTITIES in final_df.columns:
                 final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
             result = EntityDetectionResult(

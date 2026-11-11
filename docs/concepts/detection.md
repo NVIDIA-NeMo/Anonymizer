@@ -284,8 +284,9 @@ of the remaining entries and their original casing and whitespace.
 Matches apply across all labels to the stored entity value, without trimming whitespace or matching
 substrings. For example, `credit_card_123` remains eligible for protection. Filtering happens after
 validation, augmentation, and overlap resolution, when final explicit entities are materialized,
-before replacement or rewrite processing. Intermediate detection traces retain ignored
-entities for debugging. Each value-based exclusion emits an INFO log containing the entity value
+before replacement or rewrite processing. The public `{text_column}_with_spans` output is rendered
+from `final_entities`, so ignored values are not tagged. Intermediate detection traces retain ignored
+entities and pre-filter tags (`_detected_tagged_text`) for debugging. Each value-based exclusion emits an INFO log containing the entity value
 and label (including user-supplied ignored values). Latent entities and independent evaluation
 judges are unchanged, so judges may still report an ignored value as missed. Ignoring a detection
 leaves source text intact at this stage; it does not guarantee that rewriting preserves the text
@@ -301,3 +302,11 @@ exported with `export_detection_config()` or `export_detection_builder_for_seed(
 builders serialize the effective list, including built-in values and user additions, so workers use
 the saved values even if their packaged defaults differ. Outputs include pre-filter
 `_detected_entities` for debugging and filtered `final_entities` for downstream processing.
+
+Workers must use a compatible NeMo Anonymizer version that supports the serialized detection
+operations. Using the same version for export and execution is recommended.
+
+Older injected detection workflows that lack the `ignored_entity_values` parameter are adapted:
+`run()` and `preview()` filter their results before replacement or rewriting, and the export methods
+append the serialized finalization transform to their builders. Built-in values and user additions
+are applied in both cases.
