@@ -9,7 +9,11 @@ from pydantic import BaseModel, Field
 class EntityReplacementSchema(BaseModel):
     original: str = Field(min_length=1, description="The original entity value")
     label: str = Field(min_length=1, description="The entity label/type")
-    synthetic: str = Field(min_length=1, description="The synthetic replacement value")
+    synthetic: str = Field(
+        min_length=1,
+        pattern=r"\S",
+        description="The synthetic replacement value; must contain a non-whitespace character",
+    )
 
 
 class EntityReplacementMapSchema(BaseModel):
