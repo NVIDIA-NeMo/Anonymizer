@@ -44,15 +44,16 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.augmentation import _ground_augmentation_items
 from anonymizer.engine.detection.chunked_validation import VALIDATION_EXCERPT_VAR
 from anonymizer.engine.detection.detection_workflow import (
+    EntityDetectionResult,
     EntityDetectionWorkflow,
     _filter_excluded_latent_entities,
     _format_label_examples,
     _get_augment_prompt,
     _get_latent_prompt,
     _get_validation_prompt,
-    _materialize_final_entities,
 )
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
+from anonymizer.engine.detection.finalization import materialize_final_entities
 from anonymizer.engine.detection.postprocess import TagNotation, _format_entity_tag
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import (
@@ -933,7 +934,7 @@ def test_materialize_final_entities_normalizes_configured_labels() -> None:
         ]
     }
 
-    result = _materialize_final_entities(
+    result = materialize_final_entities(
         raw,
         allowed_labels={" first_name ", " email "},
         excluded_entity_labels={" EMAIL "},
@@ -1427,3 +1428,103 @@ def test_pool_size_one_does_not_emit_warning(
         if r.name == "anonymizer.detection" and "pool of" in r.getMessage() and "aliases" in r.getMessage()
     ]
     assert pool_warnings == []
+
+
+@pytest.mark.parametrize("tag_latent", [False, True])
+@pytest.mark.parametrize("all_ignored", [False, True])
+def test_run_filters_ignored_values_before_grouping(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+    tag_latent: bool,
+    all_ignored: bool,
+) -> None:
+    values = ["PayPal", "Example Corp"]
+    if not all_ignored:
+        values.extend(["EXAMPLE CORP", "paypal_123", "Example Corp Ltd"])
+    raw = {"entities": [{"value": value, "label": "payment_method_id"} for value in values]}
+    frame = pd.DataFrame({COL_TEXT: ["example"], COL_DETECTED_ENTITIES: [raw]})
+    workflow = EntityDetectionWorkflow(adapter=Mock())
+    workflow.detect_and_validate_entities = Mock(return_value=EntityDetectionResult(dataframe=frame, failed_records=[]))
+    workflow.identify_latent_entities = Mock(return_value=EntityDetectionResult(dataframe=frame, failed_records=[]))
+    result = workflow.run(
+        frame,
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.3,
+        ignored_entity_values=["Example Corp"],
+        tag_latent_entities=tag_latent,
+        privacy_goal=PrivacyGoal(
+            protect="Protect personal customer identifiers", preserve="Preserve the transaction details"
+        ),
+    )
+    final = result.dataframe[COL_FINAL_ENTITIES].iloc[0]["entities"]
+    assert [entity["value"] for entity in final] == values[2:]
+    grouped = result.dataframe[COL_ENTITIES_BY_VALUE].iloc[0]["entities_by_value"]
+    assert {entity["value"] for entity in grouped} == set(values[2:])
+    assert result.dataframe[COL_DETECTED_ENTITIES].iloc[0] == raw
+
+
+@pytest.mark.parametrize("label", ["payment_method_id", "first_name"])
+def test_materialize_ignores_all_defaults_across_labels(label: str) -> None:
+    values = [
+        "PayPal",
+        "paypal",
+        "Visa",
+        "visa",
+        "Visa card",
+        "Mastercard",
+        "mastercard",
+        "credit_card",
+        "credit card",
+        "Credit Card",
+        "gift_card",
+        "gift card",
+        "Gift Card",
+        "email",
+        "email address",
+    ]
+    raw = {"entities": [{"value": value, "label": label} for value in values]}
+    assert materialize_final_entities(raw, allowed_labels=None)["entities"] == []
+    assert len(raw["entities"]) == 15
+
+
+def test_materialize_ignored_values_are_exact_and_case_sensitive() -> None:
+    values = [
+        "VISA",
+        " PayPal ",
+        "PayPal account",
+        "credit_card_123",
+        "gift_card_123",
+        "Email",
+        "Email address",
+        "alice@example.com",
+    ]
+    raw = {"entities": [{"value": value, "label": "payment_method_id"} for value in values]}
+    result = materialize_final_entities(raw, allowed_labels=None)
+    assert [entity["value"] for entity in result["entities"]] == values
+
+
+@pytest.mark.parametrize("value", ["PayPal", "Example Corp"])
+def test_materialize_logs_ignored_entity_exclusions(caplog: pytest.LogCaptureFixture, value: str) -> None:
+    raw = {
+        "entities": [
+            {"value": value, "label": "payment_method_id"},
+            {"value": "retained_123", "label": "payment_method_id"},
+            {"value": value, "label": "email"},
+        ]
+    }
+    with caplog.at_level("INFO", logger="anonymizer.detection"):
+        result = materialize_final_entities(
+            raw,
+            allowed_labels=None,
+            excluded_entity_labels={"email"},
+            ignored_entity_values=frozenset({"PayPal", "Example Corp"}),
+        )
+    assert [entity["value"] for entity in result["entities"]] == ["retained_123"]
+    messages = {
+        record.getMessage()
+        for record in caplog.records
+        if "Excluded entity matching ignored_entity_values" in record.getMessage()
+    }
+    assert messages == {f"Excluded entity matching ignored_entity_values: value={value!r} label=payment_method_id"}
+    assert "retained_123" not in caplog.text

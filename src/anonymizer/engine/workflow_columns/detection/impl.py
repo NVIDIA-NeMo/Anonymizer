@@ -26,6 +26,7 @@ from anonymizer.engine.detection.custom_columns import (
     prepare_detector_source,
     prepare_validation_inputs,
 )
+from anonymizer.engine.detection.finalization import materialize_final_entity_output
 from anonymizer.engine.workflow_columns.detection.config import (
     AugmentationConfig,
     ChunkedValidationConfig,
@@ -45,6 +46,15 @@ _TRANSFORMS: dict[DetectionTransformOperation, Callable[[dict[str, Any]], dict[s
 class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformConfig]):
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:
         operation = DetectionTransformOperation(self.config.operation)
+        if operation == DetectionTransformOperation.MATERIALIZE_FINAL_ENTITIES:
+            return materialize_final_entity_output(
+                data,
+                allowed_labels=(
+                    set(self.config.allowed_entity_labels) if self.config.allowed_entity_labels is not None else None
+                ),
+                excluded_entity_labels=set(self.config.excluded_entity_labels),
+                ignored_entity_values=frozenset(self.config.ignored_entity_values),
+            )
         if operation == DetectionTransformOperation.PARSE_DETECTED_ENTITIES:
             return parse_detected_entities(
                 data,

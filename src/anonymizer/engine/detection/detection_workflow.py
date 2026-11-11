@@ -24,6 +24,7 @@ from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
+    COL_DETECTED_TAGGED_TEXT,
     COL_DETECTOR_SOURCE,
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
@@ -36,6 +37,7 @@ from anonymizer.engine.constants import (
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
+    COL_TEXT,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
     ENTITY_LABEL_EXAMPLES,
@@ -44,6 +46,8 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.chunked_validation import VALIDATION_EXCERPT_VAR
 from anonymizer.engine.detection.entity_label_examples import ResolvedEntityLabelConfig, resolve_entity_label_config
+from anonymizer.engine.detection.finalization import build_final_tagged_text, materialize_final_entities
+from anonymizer.engine.detection.ignored_entity_values import DEFAULT_IGNORED_ENTITY_VALUES
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     group_entities_by_value,
@@ -109,6 +113,7 @@ class EntityDetectionWorkflow:
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
+        ignored_entity_values: list[str] | None = None,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         entity_label_examples: dict[str, list[str]] | None = None,
@@ -128,6 +133,7 @@ class EntityDetectionWorkflow:
             model_configs=model_configs,
             selected_models=selected_models,
             gliner_detection_threshold=gliner_detection_threshold,
+            ignored_entity_values=ignored_entity_values,
             validation_max_entities_per_call=validation_max_entities_per_call,
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
@@ -156,6 +162,7 @@ class EntityDetectionWorkflow:
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
+        ignored_entity_values: list[str] | None = None,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         entity_label_examples: dict[str, list[str]] | None = None,
@@ -274,6 +281,15 @@ class EntityDetectionWorkflow:
                     name=COL_DETECTED_ENTITIES,
                     operation=DetectionTransformOperation.FINALIZE_ENTITIES,
                 ),
+                DetectionTransformConfig(
+                    name=COL_FINAL_ENTITIES,
+                    operation=DetectionTransformOperation.MATERIALIZE_FINAL_ENTITIES,
+                    # Any explicit entity_labels list enables strict scope, even if it matches
+                    # the defaults. Only entity_labels=None permits non-default augmented labels.
+                    allowed_entity_labels=labels if label_config.strict_labels else None,
+                    excluded_entity_labels=list(excluded_entity_labels or []),
+                    ignored_entity_values=sorted(DEFAULT_IGNORED_ENTITY_VALUES.union(ignored_entity_values or [])),
+                ),
             ],
         )
         return workflow_model_configs, columns
@@ -289,6 +305,7 @@ class EntityDetectionWorkflow:
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
+        ignored_entity_values: list[str] | None = None,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         entity_label_examples: dict[str, list[str]] | None = None,
@@ -303,6 +320,7 @@ class EntityDetectionWorkflow:
             model_configs=model_configs,
             selected_models=selected_models,
             gliner_detection_threshold=gliner_detection_threshold,
+            ignored_entity_values=ignored_entity_values,
             validation_max_entities_per_call=validation_max_entities_per_call,
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
@@ -328,6 +346,7 @@ class EntityDetectionWorkflow:
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
+        ignored_entity_values: list[str] | None = None,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         entity_label_examples: dict[str, list[str]] | None = None,
@@ -347,6 +366,7 @@ class EntityDetectionWorkflow:
             model_configs=model_configs,
             selected_models=selected_models,
             gliner_detection_threshold=gliner_detection_threshold,
+            ignored_entity_values=ignored_entity_values,
             validation_max_entities_per_call=validation_max_entities_per_call,
             validation_excerpt_window_chars=validation_excerpt_window_chars,
             validation_single_chunk_full_text=validation_single_chunk_full_text,
@@ -431,6 +451,7 @@ class EntityDetectionWorkflow:
         validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
         validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
         validation_single_chunk_full_text: bool = True,
+        ignored_entity_values: list[str] | None = None,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         entity_label_examples: dict[str, list[str]] | None = None,
@@ -462,6 +483,7 @@ class EntityDetectionWorkflow:
             )
             detected_result = self.detect_and_validate_entities(
                 dataframe,
+                ignored_entity_values=ignored_entity_values,
                 model_configs=model_configs,
                 selected_models=selected_models,
                 gliner_detection_threshold=gliner_detection_threshold,
@@ -496,21 +518,27 @@ class EntityDetectionWorkflow:
                 final_df = detected_result.dataframe.copy()
                 final_failures = detected_result.failed_records
 
-            # When entity_labels is explicitly provided (even if it matches DEFAULT_ENTITY_LABELS),
-            # the augmenter is strict and out-of-scope labels are filtered.
-            # entity_labels=None is the only way to get permissive augmentation.
-            if COL_DETECTED_ENTITIES in final_df.columns:
+            # Injected detection workflows may only publish the legacy detected column.
+            if COL_FINAL_ENTITIES not in final_df.columns and COL_DETECTED_ENTITIES in final_df.columns:
                 allowed = set(label_config.labels) if label_config.strict_labels else None
                 excluded_entity_labels_set = set(excluded_entity_labels) if excluded_entity_labels else None
+                ignored_values = DEFAULT_IGNORED_ENTITY_VALUES.union(ignored_entity_values or [])
                 final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
-                    lambda raw: _materialize_final_entities(
+                    lambda raw: materialize_final_entities(
                         raw,
                         allowed_labels=allowed,
+                        ignored_entity_values=ignored_values,
                         excluded_entity_labels=excluded_entity_labels_set,
                     )
                 )
-                if compute_grouped:
-                    final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
+                if COL_TAGGED_TEXT in final_df.columns:
+                    final_df[COL_DETECTED_TAGGED_TEXT] = final_df[COL_TAGGED_TEXT]
+                final_df[COL_TAGGED_TEXT] = [
+                    build_final_tagged_text(text, entities)
+                    for text, entities in zip(final_df[COL_TEXT], final_df[COL_FINAL_ENTITIES], strict=True)
+                ]
+            if compute_grouped and COL_FINAL_ENTITIES in final_df.columns:
+                final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
             result = EntityDetectionResult(
                 dataframe=final_df,
                 failed_records=final_failures,
@@ -540,24 +568,6 @@ class EntityDetectionWorkflow:
             config.inference_parameters.extra_body["flat_ner"] = False
             break
         return resolved
-
-
-def _materialize_final_entities(
-    raw: object,
-    *,
-    allowed_labels: set[str] | None,
-    excluded_entity_labels: set[str] | None = None,
-) -> dict:
-    """Build COL_FINAL_ENTITIES, applying the configured label scope."""
-    parsed = EntitiesSchema.from_raw(raw)
-    allowed = normalize_labels(allowed_labels) if allowed_labels is not None else None
-    excluded = normalize_labels(excluded_entity_labels)
-    kept = [
-        e
-        for e in parsed.entities
-        if (allowed is None or normalize_label(e.label) in allowed) and normalize_label(e.label) not in excluded
-    ]
-    return EntitiesSchema(entities=kept).model_dump()
 
 
 def _filter_excluded_latent_entities(raw: object, excluded_entity_labels: list[str] | None) -> object:

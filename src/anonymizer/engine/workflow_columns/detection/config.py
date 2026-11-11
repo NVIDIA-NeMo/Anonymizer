@@ -16,6 +16,8 @@ from anonymizer.engine.constants import (
     COL_AUGMENTATION_ATTEMPTS,
     COL_AUGMENTATION_DETECTION_RESULT,
     COL_AUGMENTED_CANDIDATES,
+    COL_DETECTED_ENTITIES,
+    COL_DETECTED_TAGGED_TEXT,
     COL_INITIAL_TAGGED_TEXT,
     COL_RAW_DETECTED,
     COL_RECONCILED_CANDIDATES,
@@ -78,6 +80,7 @@ class DetectionTransformOperation(str, Enum):
     APPLY_VALIDATION_TO_SEED_ENTITIES = "apply_validation_to_seed_entities"
     MERGE_AND_BUILD_CANDIDATES = "merge_and_build_candidates"
     FINALIZE_ENTITIES = "finalize_entities"
+    MATERIALIZE_FINAL_ENTITIES = "materialize_final_entities"
 
 
 class DetectionTransformConfig(SingleColumnConfig):
@@ -87,8 +90,10 @@ class DetectionTransformConfig(SingleColumnConfig):
     allowed_entity_labels: list[str] | None = None
     detection_result_id: str = SEED_DETECTION_RESULT_ID
     source_instance: str = "gliner"
+    ignored_entity_values: list[str] = Field(default_factory=list, repr=False)
 
     _REQUIRED_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
+        DetectionTransformOperation.MATERIALIZE_FINAL_ENTITIES: [COL_TEXT, COL_DETECTED_ENTITIES],
         DetectionTransformOperation.PREPARE_DETECTOR_SOURCE: [COL_TEXT],
         DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [
             RECORD_ID_COLUMN,
@@ -117,6 +122,7 @@ class DetectionTransformConfig(SingleColumnConfig):
         ],
     }
     _SIDE_EFFECT_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
+        DetectionTransformOperation.MATERIALIZE_FINAL_ENTITIES: [COL_TAGGED_TEXT],
         DetectionTransformOperation.PREPARE_DETECTOR_SOURCE: [],
         DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [
             COL_SEED_DETECTION_RESULT,
@@ -133,7 +139,7 @@ class DetectionTransformConfig(SingleColumnConfig):
             COL_RECONCILED_CANDIDATES,
             COL_VALIDATION_CANDIDATES,
         ],
-        DetectionTransformOperation.FINALIZE_ENTITIES: [COL_TAGGED_TEXT],
+        DetectionTransformOperation.FINALIZE_ENTITIES: [COL_DETECTED_TAGGED_TEXT],
     }
 
     @staticmethod

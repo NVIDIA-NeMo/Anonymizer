@@ -267,3 +267,48 @@ The detection pipeline uses three model roles, each mapped to a model alias in t
 | `latent_detector` | [`nemotron-30b-thinking`](https://openrouter.ai/nvidia/nemotron-3-nano-30b-a3b) | Identifies inferable entities (rewrite only). |
 
 See [Models](models.md) for how to override these.
+
+### Ignoring specific entity values
+
+```python
+Detect(ignored_entity_values=["Example Corp", "Sample User"])
+```
+
+`ignored_entity_values` adds exact, case-sensitive entity values to a built-in set of literal
+values that should never be tagged, such as `credit card`, `Visa`, and `email`.
+Actual addresses such as `alice@example.com` do not match these defaults.
+The default configuration adds no user values (`[]`); supplying values never replaces the built-ins.
+Empty or whitespace-only entries are rejected. Exact duplicates are removed, preserving the order
+of the remaining entries and their original casing and whitespace.
+
+Matches apply across all labels to the stored entity value, without trimming whitespace or matching
+substrings. For example, `credit_card_123` remains eligible for protection. Filtering happens after
+validation, augmentation, and overlap resolution, when final explicit entities are materialized,
+before replacement or rewrite processing. The public `{text_column}_with_spans` output is rendered
+from `final_entities`, so ignored values are not tagged. Intermediate detection traces retain ignored
+entities and pre-filter tags (`_detected_tagged_text`) for debugging. Each value-based exclusion emits an INFO log containing the entity value
+and label (including user-supplied ignored values). Latent entities and independent evaluation
+judges are unchanged, so judges may still report an ignored value as missed. Ignoring a detection
+leaves source text intact at this stage; it does not guarantee that rewriting preserves the text
+unchanged.
+
+Ignored values are filtered after overlap resolution. Removing an ignored entity does not restore
+any overlapping candidates that were discarded earlier. Longer spans take precedence during overlap
+resolution, so ignoring `Visa` does not remove a longer detected span such as
+`Visa card ending in 1234`.
+
+The same ignored-value filtering runs in `Anonymizer.run()`, `Anonymizer.preview()`, and workflows
+exported with `export_detection_config()` or `export_detection_builder_for_seed()`. Exported
+builders serialize the effective list, including built-in values and user additions, so workers use
+the saved values even if their packaged defaults differ. Outputs include pre-filter
+`_detected_entities` for debugging and filtered `final_entities` for downstream processing.
+
+Workers must use a compatible NeMo Anonymizer version that supports the serialized detection
+operations. Using the same version for export and execution is recommended.
+
+Older injected detection workflows that lack the `ignored_entity_values` parameter are adapted:
+`run()` and `preview()` filter their results before replacement or rewriting, and the export methods
+append the serialized finalization transform to their builders. Built-in values and user additions
+are applied in both cases.
+Malformed legacy entity payloads are reported as failed records rather than treated as empty
+detections.

@@ -22,6 +22,7 @@ from data_designer.interface.data_designer import DataDesigner
 from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
+    Detect,
     EvaluateConfig,
     Rewrite,
     TextRecordsInput,
@@ -33,6 +34,7 @@ from anonymizer.engine.constants import (
     COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
     COL_ATTRIBUTE_FIDELITY_VALID,
     COL_DETECTED_ENTITIES,
+    COL_DETECTED_TAGGED_TEXT,
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_VALID,
     COL_ENTITIES_BY_VALUE,
@@ -53,9 +55,16 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
     DEFAULT_ENTITY_LABELS,
+    RECORD_ID_COLUMN,
 )
-from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+from anonymizer.engine.detection.detection_workflow import (
+    EntityDetectionResult,
+    EntityDetectionWorkflow,
+    _build_entities_by_value,
+)
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
+from anonymizer.engine.detection.finalization import materialize_final_entity_output
+from anonymizer.engine.detection.ignored_entity_values import DEFAULT_IGNORED_ENTITY_VALUES
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
@@ -74,7 +83,8 @@ from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
-from anonymizer.engine.schemas import EntitiesByValueSchema
+from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
+from anonymizer.engine.workflow_columns.detection.config import DetectionTransformConfig, DetectionTransformOperation
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 from anonymizer.logging import LOG_INDENT, configure_logging, reapply_log_levels
@@ -162,7 +172,7 @@ class _DetectionExampleKwargs(TypedDict, total=False):
     entity_label_examples: dict[str, list[str]]
 
 
-def _accepts_entity_label_examples(method: Callable[..., object]) -> bool:
+def _accepts_keyword(method: Callable[..., object], keyword: str) -> bool:
     """Check keyword support; preserve forwarding when a callable cannot be inspected."""
     try:
         if sys.version_info >= (3, 14):
@@ -173,11 +183,82 @@ def _accepts_entity_label_examples(method: Callable[..., object]) -> bool:
         parameters = signature.parameters
     except (TypeError, ValueError):
         return True
-    parameter = parameters.get("entity_label_examples")
+    parameter = parameters.get(keyword)
     return any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()) or (
         parameter is not None
         and parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
     )
+
+
+def _accepts_entity_label_examples(method: Callable[..., object]) -> bool:
+    return _accepts_keyword(method, "entity_label_examples")
+
+
+class _IgnoredValueKwargs(TypedDict, total=False):
+    ignored_entity_values: list[str]
+
+
+def _ignored_value_kwargs(method: Callable[..., object], values: list[str]) -> _IgnoredValueKwargs:
+    if _accepts_keyword(method, "ignored_entity_values"):
+        return {"ignored_entity_values": values}
+    return {}
+
+
+def _build_legacy_finalization_config(detect: Detect) -> DetectionTransformConfig:
+    return DetectionTransformConfig(
+        name=COL_FINAL_ENTITIES,
+        operation=DetectionTransformOperation.MATERIALIZE_FINAL_ENTITIES,
+        allowed_entity_labels=detect.entity_labels,
+        excluded_entity_labels=list(detect.excluded_entity_labels or []),
+        ignored_entity_values=sorted(DEFAULT_IGNORED_ENTITY_VALUES.union(detect.ignored_entity_values)),
+    )
+
+
+def _finalize_legacy_detection_result(result: EntityDetectionResult, detect: Detect) -> EntityDetectionResult:
+    frame = result.dataframe.copy()
+    if COL_DETECTED_ENTITIES not in frame.columns:
+        if COL_FINAL_ENTITIES in frame.columns:
+            frame[COL_DETECTED_ENTITIES] = frame[COL_FINAL_ENTITIES]
+        elif frame.empty:
+            frame[COL_DETECTED_ENTITIES] = []
+        else:
+            raise InvalidConfigError(
+                "The configured detection_workflow must return _detected_entities or final_entities."
+            )
+    if COL_TAGGED_TEXT in frame.columns:
+        frame[COL_DETECTED_TAGGED_TEXT] = frame[COL_TAGGED_TEXT]
+    source_column = COL_FINAL_ENTITIES if COL_FINAL_ENTITIES in frame.columns else COL_DETECTED_ENTITIES
+    config = _build_legacy_finalization_config(detect)
+    rows = []
+    positions = []
+    failed_records = list(result.failed_records)
+    for position, row in enumerate(frame.to_dict(orient="records")):
+        try:
+            EntitiesSchema.from_raw(row[source_column], strict=True)
+        except ValueError as exc:
+            record_id = row.get(RECORD_ID_COLUMN, frame.index[position])
+            failed_records.append(
+                FailedRecord(
+                    record_id=str(record_id),
+                    step="entity-finalization",
+                    reason=f"malformed entities: {exc}",
+                )
+            )
+            continue
+        rows.append(
+            materialize_final_entity_output(
+                {**row, COL_DETECTED_ENTITIES: row[source_column]},
+                allowed_labels=set(config.allowed_entity_labels) if config.allowed_entity_labels is not None else None,
+                excluded_entity_labels=set(config.excluded_entity_labels),
+                ignored_entity_values=frozenset(config.ignored_entity_values),
+            )
+        )
+        positions.append(position)
+    frame = frame.iloc[positions].copy()
+    for column in (COL_FINAL_ENTITIES, COL_TAGGED_TEXT):
+        frame[column] = [row[column] for row in rows]
+    frame[COL_ENTITIES_BY_VALUE] = frame[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
+    return EntityDetectionResult(dataframe=frame, failed_records=failed_records)
 
 
 def _detection_example_kwargs(method: Callable[..., object], examples: dict[str, list[str]]) -> _DetectionExampleKwargs:
@@ -338,7 +419,11 @@ class Anonymizer:
         writes the seed dataset to ``seed_path``, and returns the
         ``DataDesignerConfigBuilder`` for the GLiNER + LLM-validate/augment workflow.
         The external runtime supplies the model providers (e.g. served vLLM endpoints);
-        its per-record output carries the finalized entity columns to score.
+        its per-record output includes pre-filter ``_detected_entities`` and filtered
+        ``final_entities``. The serialized config includes built-in and user-configured
+        ignored values, using exact, case-sensitive matching after overlap resolution.
+        Workers must use a compatible NeMo Anonymizer version that supports the serialized
+        detection operations. Using the same version for export and execution is recommended.
 
         Args:
             config: Same workflow config as :meth:`run` (entity labels, thresholds).
@@ -347,8 +432,11 @@ class Anonymizer:
         """
         self._validate_preflight_config(config)
         context = read_input(data)
-        return self._detection_workflow.build_detection_config(
+        builder = self._detection_workflow.build_detection_config(
             context.dataframe,
+            **_ignored_value_kwargs(
+                self._detection_workflow.build_detection_config, config.detect.ignored_entity_values
+            ),
             seed_path=seed_path,
             model_configs=self._model_configs,
             selected_models=self._selected_models.detection,
@@ -362,6 +450,9 @@ class Anonymizer:
             ),
             data_summary=data.data_summary,
         )
+        if not _accepts_keyword(self._detection_workflow.build_detection_config, "ignored_entity_values"):
+            builder.add_column(**_build_legacy_finalization_config(config.detect).model_dump())
+        return builder
 
     def export_detection_builder_for_seed(
         self,
@@ -382,9 +473,16 @@ class Anonymizer:
         ``nemo-anonymizer`` installed so Data Designer can discover the detection plugins,
         and ``seed_path`` must resolve to an existing file when the worker reconstructs
         the config. Runtime model providers remain external to the serialized config.
+        The serialized config includes the effective ignored-value list and produces
+        both pre-filter ``_detected_entities`` and filtered ``final_entities``.
+        Workers must use a compatible NeMo Anonymizer version that supports the serialized
+        detection operations. Using the same version for export and execution is recommended.
         """
         self._validate_preflight_config(config)
-        return self._detection_workflow.build_detection_builder_for_seed(
+        builder = self._detection_workflow.build_detection_builder_for_seed(
+            **_ignored_value_kwargs(
+                self._detection_workflow.build_detection_builder_for_seed, config.detect.ignored_entity_values
+            ),
             seed_path=seed_path,
             model_configs=self._model_configs,
             selected_models=self._selected_models.detection,
@@ -400,6 +498,9 @@ class Anonymizer:
             job_index=job_index,
             num_jobs=num_jobs,
         )
+        if not _accepts_keyword(self._detection_workflow.build_detection_builder_for_seed, "ignored_entity_values"):
+            builder.add_column(**_build_legacy_finalization_config(config.detect).model_dump())
+        return builder
 
     def preview(
         self,
@@ -802,6 +903,7 @@ class Anonymizer:
             input_df,
             model_configs=self._model_configs,
             selected_models=self._selected_models.detection,
+            **_ignored_value_kwargs(self._detection_workflow.run, config.detect.ignored_entity_values),
             gliner_detection_threshold=config.detect.gliner_threshold,
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
@@ -814,6 +916,8 @@ class Anonymizer:
             compute_grouped_entities=config.replace is not None or config.rewrite is not None,
             preview_num_records=preview_num_records,
         )
+        if not _accepts_keyword(self._detection_workflow.run, "ignored_entity_values"):
+            detection_result = _finalize_legacy_detection_result(detection_result, config.detect)
         detection_elapsed = time.perf_counter() - t0
         entity_count = _count_entities(detection_result.dataframe)
         detection_failed = len(detection_result.failed_records)

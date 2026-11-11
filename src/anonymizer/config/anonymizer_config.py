@@ -127,6 +127,17 @@ class Detect(BaseModel):
             "effective detection set, Detect raises a ValueError at config time."
         ),
     )
+    ignored_entity_values: list[str] = Field(
+        default_factory=list,
+        repr=False,
+        description=(
+            "Additional entity values to exclude from final results, across all labels. "
+            "Matches are exact and case sensitive, without whitespace normalization. "
+            "Always combined with built-in generic payment types, brands, and email references. "
+            "Entries must contain a non-whitespace character; exact duplicates are removed. "
+            "Ignored values remain eligible to change during rewriting."
+        ),
+    )
     gliner_threshold: float = Field(
         default=0.3, ge=0.0, le=1.0, description="GLiNER detection confidence threshold (0.0-1.0)."
     )
@@ -148,6 +159,14 @@ class Detect(BaseModel):
             "validator sees per chunk; it is NOT the LLM's context window limit."
         ),
     )
+
+    @field_validator("ignored_entity_values")
+    @classmethod
+    def validate_ignored_entity_values(cls, values: list[str]) -> list[str]:
+        for index, value in enumerate(values):
+            if not value.strip():
+                raise ValueError(f"ignored_entity_values[{index}] must not be empty or whitespace-only, got {value!r}.")
+        return list(dict.fromkeys(values))
 
     @field_validator("entity_labels")
     @classmethod

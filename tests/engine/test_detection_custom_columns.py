@@ -21,6 +21,7 @@ from anonymizer.engine.constants import (
     COL_ADMITTED_CANDIDATES,
     COL_AUGMENTED_CANDIDATES,
     COL_DETECTED_ENTITIES,
+    COL_DETECTED_TAGGED_TEXT,
     COL_INITIAL_TAGGED_TEXT,
     COL_MERGED_ENTITIES,
     COL_RAW_DETECTED,
@@ -30,7 +31,6 @@ from anonymizer.engine.constants import (
     COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
-    COL_TAGGED_TEXT,
     COL_TEXT,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
@@ -297,7 +297,7 @@ def test_finalize_preserves_admission_exclusion_after_reclassification() -> None
     result = finalize_entities(row)
 
     assert result[COL_DETECTED_ENTITIES]["entities"] == []
-    assert result[COL_TAGGED_TEXT] == "San Diego"
+    assert result[COL_DETECTED_TAGGED_TEXT] == "San Diego"
 
 
 def test_finalize_preserves_admission_label_scope_after_reclassification() -> None:
@@ -316,7 +316,7 @@ def test_finalize_preserves_admission_label_scope_after_reclassification() -> No
     result = finalize_entities(row)
 
     assert result[COL_DETECTED_ENTITIES]["entities"] == []
-    assert result[COL_TAGGED_TEXT] == "San Diego"
+    assert result[COL_DETECTED_TAGGED_TEXT] == "San Diego"
 
 
 def test_validation_rejection_is_not_replayed_against_augmenter_observation() -> None:
