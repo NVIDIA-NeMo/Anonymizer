@@ -3,7 +3,7 @@
 
 # Replace
 
-Replace mode replaces each [detected entity](detection.md) with an alternative token. Anonymizer provides four strategies. 
+Replace mode replaces each [detected entity](detection.md) with an alternative token. Anonymizer provides four strategies.
 
 ---
 
@@ -21,6 +21,22 @@ Replace mode replaces each [detected entity](detection.md) with an alternative t
 ## Substitute
 
 Replaces entities with LLM-generated synthetic values that are contextually plausible. This is the only replacement strategy that requires an LLM call.
+
+After schema validation and filtering, Anonymizer checks that every unique
+requested `(entity value, label)` pair has a mapping. If mappings are missing,
+it retries only the missing pairs once, retaining the accepted substitutions.
+A record whose map is complete is returned; a record still missing mappings
+after the retry is excluded from successful output and reported in
+`failed_records`. Other complete records continue normally. Repeated occurrences
+of the same pair need only one mapping, and records without entities need no
+replacement-generator call.
+
+This completeness retry applies to schema-valid responses. DataDesigner's
+schema-validation retries still apply to each call. If the completeness retry
+fails validation or its workflow fails, the affected records are reported as
+failed while complete records are retained. Completeness checks exact pairs;
+it does not guarantee the semantic quality of a generated substitute or
+validate span offsets.
 
 ```python
 from anonymizer import AnonymizerConfig, Substitute
