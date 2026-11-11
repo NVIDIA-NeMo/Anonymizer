@@ -31,6 +31,15 @@ after the retry is excluded from successful output and reported in
 of the same pair need only one mapping, and records without entities need no
 replacement-generator call.
 
+Before discarding a mapping, Substitute can reconcile a copied original that
+differs only in no-break spaces (`U+00A0`), thin spaces (`U+2009`), narrow no-break
+spaces (`U+202F`), or ASCII spaces. The label must match exactly and the comparison
+must identify exactly one pair in the original requested inventory. Exact
+mappings take precedence. The mapping's original is restored from that inventory;
+the source text, span offsets, and synthetic value stay unchanged. This comparison
+does not strip or collapse whitespace or change other characters. Ambiguous or
+unmatched entries remain missing and follow the retry/failure flow above.
+
 This completeness retry applies to schema-valid responses. DataDesigner's
 schema-validation retries still apply to each call. If the completeness retry
 fails validation or its workflow fails, the affected records are reported as

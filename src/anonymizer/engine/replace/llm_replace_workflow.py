@@ -41,6 +41,10 @@ REPLACEMENT_MAP_SOURCE_LLM = "llm"
 # dtypes that would break trace_dataframe.to_parquet round-trip.
 _INTERNAL_COLUMNS = (COL_ENTITY_EXAMPLES, COL_ENTITIES_FOR_REPLACE, COL_ENTITIES_FOR_REPLACE_JSON)
 
+# Compare known space variants without folding other characters, changing
+# whitespace counts, or admitting tabs and line breaks.
+_UNICODE_SPACE_TRANSLATION = str.maketrans({"\u00a0": " ", "\u2009": " ", "\u202f": " "})
+
 
 @dataclass(frozen=True)
 class LlmReplaceResult:
@@ -129,6 +133,7 @@ class LlmReplaceWorkflow:
                     raw_map=row.get(COL_REPLACEMENT_MAP),
                     parsed_entities=expected[position],
                     record_id=str(source[RECORD_ID_COLUMN].iloc[position]),
+                    reconcile_unicode_whitespace=True,
                 )
                 additions = [
                     entry
@@ -307,8 +312,14 @@ def _filter_replacement_map_to_input_entities(
     raw_map: object,
     parsed_entities: EntitiesByValueSchema,
     record_id: str = "",
+    reconcile_unicode_whitespace: bool = False,
 ) -> dict[str, list[dict[str, str]]]:
-    """Keep only replacement entries that correspond to actual requested entities."""
+    """Keep requested entries, optionally reconciling unambiguous Unicode spaces.
+
+    Exact entries take precedence. Reconciliation compares the original under
+    the same exact label against the full requested inventory, then restores
+    the trusted original. Ambiguous or otherwise changed originals are dropped.
+    """
     if isinstance(raw_map, BaseModel):
         raw_map = raw_map.model_dump(mode="python")
     if not isinstance(raw_map, dict):
@@ -328,13 +339,31 @@ def _filter_replacement_map_to_input_entities(
         if entity.value and label
     }
     protected_original_values = {value for value, _ in allowed_pairs}
+    exact_pairs = {(entry.original, entry.label) for entry in parsed_map.replacements} & allowed_pairs
+    equivalent_pairs: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    if reconcile_unicode_whitespace:
+        for value, label in allowed_pairs:
+            key = (value.translate(_UNICODE_SPACE_TRANSLATION), label)
+            equivalent_pairs.setdefault(key, set()).add((value, label))
     filtered: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     synthetic_collision_labels: Counter[str] = Counter()
+    reconciled_labels: Counter[str] = Counter()
     for replacement in parsed_map.replacements:
         key = (replacement.original, replacement.label)
-        if key not in allowed_pairs or key in seen:
+        if key not in allowed_pairs:
+            normalized_key = (replacement.original.translate(_UNICODE_SPACE_TRANSLATION), replacement.label)
+            candidates = equivalent_pairs.get(normalized_key, set())
+            if len(candidates) != 1:
+                continue
+            key = next(iter(candidates))
+            if key in exact_pairs:
+                continue
+        if key in seen:
             continue
+        if replacement.original != key[0]:
+            replacement = replacement.model_copy(update={"original": key[0]})
+            reconciled_labels[replacement.label] += 1
         if replacement.synthetic in protected_original_values:
             synthetic_collision_labels[replacement.label] += 1
             seen.add(key)
@@ -353,6 +382,13 @@ def _filter_replacement_map_to_input_entities(
         seen.add(key)
         filtered.append(replacement.model_dump())
 
+    if reconciled_labels:
+        logger.debug(
+            "Replacement map reconciled Unicode whitespace for record %s; reconciled=%d (reconciled_by_label=%s)",
+            record_id or "<unknown>",
+            sum(reconciled_labels.values()),
+            dict(sorted(reconciled_labels.items())),
+        )
     if synthetic_collision_labels:
         logger.warning(
             "Replacement map repaired synthetic-original collision entries for record %s; repaired=%d "
