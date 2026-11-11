@@ -16,8 +16,9 @@ from anonymizer.engine.graph_core.authoring import (
     Requests,
     Workflow,
 )
-from anonymizer.engine.graph_core.execution import prepare, protect
+from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
+from anonymizer.interface.errors import AnonymizerWorkflowError
 
 STAGE_DONE = register_kind("stage-done", lambda v: v is True)
 
@@ -29,11 +30,17 @@ def call_on_empty_input(graph: ProtectionGraph, *operations: Operation) -> None:
             operation.fn(())
 
 
+def raise_if_cancelled(result: ProtectionResult) -> None:
+    """Raise ``AnonymizerWorkflowError`` when a cancellation stopped any target before its steps finished."""
+    if any(result.outcome(target).terminal == "cancelled" for target in result.targets):
+        raise AnonymizerWorkflowError("The workflow was cancelled before it finished.")
+
+
 def run_stages(name: str, stages: Sequence[tuple[str, Callable[[], None]]]) -> None:
     """Run ``stages`` in order as one kernel invocation, each an opaque operation over a single frame target.
 
     The first error a stage raised is raised, as when the stages were called directly. If an enclosing frame is
-    cancelled, the stages not yet started are skipped and nothing is raised.
+    cancelled, the stages not yet started are skipped and ``AnonymizerWorkflowError`` is raised.
     """
 
     def operation(stage_name: str, stage: Callable[[], None]) -> Operation:
@@ -47,6 +54,8 @@ def run_stages(name: str, stages: Sequence[tuple[str, Callable[[], None]]]) -> N
     graph = ProtectionGraph(scope, (scope.datum(""),))
     workflow = Workflow(name, tuple(operation(*stage) for stage in stages))
     limits = Limits(max_operations=len(stages), max_targets=1, max_mentions=0, max_context_items=0)
-    for entry in protect(prepare(graph, workflow, limits=limits)).state.entries:
+    result = protect(prepare(graph, workflow, limits=limits))
+    for entry in result.state.entries:
         if entry.error is not None:
             raise entry.error
+    raise_if_cancelled(result)

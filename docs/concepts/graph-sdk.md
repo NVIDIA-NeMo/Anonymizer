@@ -38,7 +38,7 @@ A phase-scoped operation, built with `Operation.phase_scoped` (scope `phase_scop
 
 Only a verifier of the final candidate text answers a required check. A verifier of earlier text is a diagnostic: its assessment is readable with `value(..., producer=...)` but answers no required check. To stop early, raise from an operation. A workflow that requires a check declared only by a verifier of earlier text, or by no verifier, is rejected at `prepare` with `GraphRejection("required_check_not_final")`, whose `detail` names the unanswered checks.
 
-`protect(prepared, cancel=...)` runs the prepared workflow synchronously on the calling thread. A callback that raises closes its target as failed and does not raise out of `protect`. A `CancelToken` stops further dispatches and retrievals.
+`protect(prepared, cancel=...)` runs the prepared workflow synchronously on the calling thread. A callback that raises closes its target as failed and does not raise out of `protect`. A `CancelToken` stops further dispatches and retrievals. An `Anonymizer.run()`, `preview()` or `evaluate()` called from a callback, whose steps the cancellation stops, raises `AnonymizerWorkflowError` instead of returning partial output.
 
 `protect` accepts only a `PreparedProtection` returned by `prepare` and not altered since; otherwise it raises `GraphRejection("not_prepared")`. It rechecks the limits and admitted capabilities before any callback runs. Every `Assessment` a verifier returns must name the target it was produced for; one without a target, or naming another target, makes the whole invocation inconsistent, so no target qualifies, while the assessments stay readable on the result.
 

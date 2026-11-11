@@ -51,12 +51,14 @@ from anonymizer.engine.detection.detection_workflow import (
 )
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
+from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import load_default_model_providers, validate_model_alias_references
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer, _accepts_entity_label_examples, _resolve_model_providers
-from anonymizer.interface.errors import InvalidConfigError, InvalidInputError
+from anonymizer.interface.errors import AnonymizerWorkflowError, InvalidConfigError, InvalidInputError
 from tests.conftest import stub_run_with_detection
 
 
@@ -1703,3 +1705,61 @@ def test_run_calls_the_detector_on_empty_input(tmp_path: Path, mode: str) -> Non
 
     assert result.dataframe.empty
     assert detector.calls == [0]
+
+
+def _cancelled_token() -> CancelToken:
+    token = CancelToken()
+    token.cancel()
+    return token
+
+
+_NESTED_MODES = {**_MODES, "rewrite-combined": AnonymizerConfig(rewrite=Rewrite(use_combined_graph=True))}
+
+
+@pytest.mark.parametrize("mode", list(_NESTED_MODES))
+def test_nested_run_in_cancelled_frame_raises_without_detecting(tmp_path: Path, mode: str) -> None:
+    anonymizer, detector, data = _two_row_anonymizer(tmp_path)
+
+    with pytest.raises(AnonymizerWorkflowError, match="cancelled"):
+        run_in_frame(anonymizer.run, config=_NESTED_MODES[mode], data=data, token=_cancelled_token())
+
+    assert detector.calls == []
+
+
+def test_nested_evaluate_in_cancelled_frame_raises_without_judging(tmp_path: Path) -> None:
+    anonymizer, _, data = _two_row_anonymizer(tmp_path)
+    run_result = anonymizer.run(config=_MODES["replace"], data=data)
+
+    with patch.object(_PartialReplaceRunner, "evaluate") as judge:
+        with pytest.raises(AnonymizerWorkflowError, match="cancelled"):
+            run_in_frame(anonymizer.evaluate, run_result, token=_cancelled_token())
+
+    judge.assert_not_called()
+
+
+@pytest.mark.parametrize("method", [Redact(), Substitute()], ids=["local", "substitute"])
+def test_replace_route_in_cancelled_frame_raises(method: Redact | Substitute) -> None:
+    entities = [
+        {"entities": [{"id": "a", "value": n, "label": "first_name", "start_position": 0, "end_position": len(n)}]}
+        for n in ("Alice", "Bob")
+    ]
+    frame = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice Smith", "Bob Jones"],
+            COL_FINAL_ENTITIES: entities,
+            COL_ENTITIES_BY_VALUE: [_build_entities_by_value(e) for e in entities],
+        }
+    )
+    llm_workflow = Mock(spec=LlmReplaceWorkflow)
+
+    with pytest.raises(AnonymizerWorkflowError, match="cancelled"):
+        run_in_frame(
+            ReplacementWorkflow(llm_workflow=llm_workflow).run,
+            frame,
+            replace_method=method,
+            model_configs=[],
+            selected_models=ReplaceModelSelection(replacement_generator="x"),
+            token=_cancelled_token(),
+        )
+
+    llm_workflow.generate_map_only.assert_not_called()

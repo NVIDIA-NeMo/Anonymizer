@@ -53,7 +53,7 @@ from anonymizer.engine.graph_core.authoring import (
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult, TargetOutcome, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
-from anonymizer.engine.graph_core.stages import call_on_empty_input, run_stages
+from anonymizer.engine.graph_core.stages import call_on_empty_input, raise_if_cancelled, run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import per_target
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
@@ -331,7 +331,8 @@ def _protect_rewrite(
     evaluation: EvaluationCriteria,
     *leading: Operation,
 ) -> ProtectionResult:
-    """Run ``leading``, the ``rewrite`` operation and the final checks over ``graph``; raise a non-verifier error."""
+    """Run ``leading``, the ``rewrite`` operation and the final checks over ``graph``; raise a non-verifier error,
+    then a cancellation."""
     checks = _final_checks(evaluation)
     operations = (
         *leading,
@@ -356,6 +357,7 @@ def _protect_rewrite(
             and not isinstance(entry.error, RewriteUnavailable)
         ):
             raise entry.error
+    raise_if_cancelled(result)
     return result
 
 

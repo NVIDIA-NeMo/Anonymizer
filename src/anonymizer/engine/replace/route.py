@@ -53,7 +53,7 @@ from anonymizer.engine.graph_core.authoring import (
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
-from anonymizer.engine.graph_core.stages import call_on_empty_input
+from anonymizer.engine.graph_core.stages import call_on_empty_input, raise_if_cancelled
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.backend import per_target
 from anonymizer.engine.replace.llm_replace_workflow import (
@@ -332,12 +332,14 @@ def _protect_rows(
 
 
 def _run(graph: ProtectionGraph, workflow: Workflow, limits: Limits) -> ProtectionResult:
-    """Execute one invocation; the first error a non-verifier step raised is raised, as 0.4.0 raised it."""
+    """Execute one invocation; the first error a non-verifier step raised is raised, as 0.4.0 raised it, then a
+    cancellation."""
     result = protect(prepare(graph, workflow, limits=limits))
     steps = [step for _, step in workflow.flatten()]
     for entry in result.state.entries:
         if entry.error is not None and not steps[entry.node].is_verifier:
             raise entry.error
+    raise_if_cancelled(result)
     return result
 
 
