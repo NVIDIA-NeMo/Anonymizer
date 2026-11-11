@@ -27,7 +27,7 @@ records survive. This work does not introduce permissive transport schemas or
 recover invalid entries from a schema-rejected response.
 
 Reject whitespace-only synthetic values in the shared replacement schema using
-`pattern="\\S"` alongside `min_length=1`. This requires at least one non-whitespace
+`pattern=r"\S"` alongside `min_length=1`. This requires at least one non-whitespace
 character in both Pydantic validation and the JSON Schema supplied to DataDesigner.
 Keep valid one-character values and preserve surrounding whitespace on valid
 strings. The shared rule also applies to rewrite replacement maps; their existing
@@ -64,13 +64,16 @@ limits, duplicate IDs and output reordering. Verify preview and batch paths
 through the real adapter with a local scripted provider. Failure summaries and
 new logs contain counts and labels rather than entity values. Run relevant unit
 tests and repository checks. No public API or default configuration changes are
-planned; the bundled public skill template is unaffected.
+introduced. The bundled skill's guidance is updated; its template imports and API
+calls remain unchanged.
 
 ## Rollout
 
-Create three local commits on `codex/bugfix/388-origin-investigation`, authored
-and signed off by memadi: missing-map completeness and one retry, narrow Unicode
-whitespace reconciliation, and rejection of whitespace-only synthetic values.
-Do not push. Completeness and reconciliation apply only to Substitute; the
-nonblank schema rule also applies to rewrite replacement maps. Tests and
-documentation make each behavior explicit.
+The three implementation commits, authored and signed off by memadi, are on
+`memadi/bugfix/388-substitution-coverage` and published in
+[PR #396](https://github.com/NVIDIA-NeMo/Anonymizer/pull/396). They cover missing-map
+completeness and one retry, narrow Unicode-whitespace reconciliation, and rejection
+of whitespace-only synthetic values. Completeness and reconciliation apply only
+to Substitute; the nonblank schema rule also applies to rewrite replacement maps.
+Tests and documentation distinguish the existing DataDesigner whole-response
+schema retries from the new single missing-pair retry.

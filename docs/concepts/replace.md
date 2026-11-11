@@ -47,12 +47,22 @@ the source text, span offsets, and synthetic value stay unchanged. This comparis
 does not strip or collapse whitespace or change other characters. Ambiguous or
 unmatched entries remain missing and follow the retry/failure flow above.
 
-This completeness retry applies to schema-valid responses. DataDesigner's
-schema-validation retries still apply to each call. If the completeness retry
-fails validation or its workflow fails, the affected records are reported as
-failed while complete records are retained. Completeness checks exact pairs;
-it does not guarantee the semantic quality of a generated substitute or
-validate span offsets.
+This completeness retry applies to schema-valid responses. DataDesigner already
+retries schema-invalid responses, validating the record's entire mapping response
+on each attempt. Its default is up to five conversation restarts after the initial
+attempt, controlled by `max_conversation_restarts` in the `RunConfig` passed as
+`Anonymizer(data_designer_run_config=...)`. These schema retries also apply to the
+missing-pair generation call. The one completeness retry therefore does not mean
+a maximum of two LLM requests. Valid entries from a schema-rejected response are
+not retained for a targeted per-entry retry.
+
+If the completeness retry fails validation after DataDesigner's recovery attempts,
+or its workflow fails, the affected records are reported as failed while complete
+records are retained. Initial generation retains the existing failure handling:
+dropped records appear in `failed_records`, but a failure of the entire initial
+workflow can raise `AnonymizerWorkflowError`. Completeness checks exact pairs;
+it does not guarantee the semantic quality of a generated substitute or validate
+span offsets.
 
 ```python
 from anonymizer import AnonymizerConfig, Substitute

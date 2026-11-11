@@ -140,11 +140,14 @@ Both modes start from the same [detection](detection.md) pipeline. The differenc
 | Is the goal "scrub the entities and keep everything else"? | ✅ | — |
 | Is the goal "produce a privacy-safe version of this text that downstream models can train on"? | — | ✅ |
 | Are there inferable / latent identifiers that aren't explicitly stated (e.g. "during her third round of chemo" → cancer treatment)? | ❌ leaves them | ✅ removes them |
-| Additional LLM calls (beyond shared detection) | ~1 (Substitute) or 0 (Redact/Annotate/Hash) | Many (domain → disposition → QA → rewrite → evaluate → repair → judge) |
+| Additional LLM calls (beyond shared detection) | Typically 1 per row with entities, plus retries (Substitute); 0 for Redact/Annotate/Hash | Many (domain → disposition → QA → rewrite → evaluate → repair → judge) |
 | Output text length | ≈ same as input | Often shorter / restructured |
 | Best for | Structured records, log scrubbing, known-list redaction | Free-text data with implicit identifiers (clinical notes, biographies, depositions, support transcripts) |
 
 **Picking between them.** If your data has inferable identifiers that survive entity-only scrubbing (clinical notes, biographies, depositions), Rewrite is the right fit. For structured records, logs, or single-cell PII, Replace is faster and preserves shape. If you're unsure, walk through a few sample rows before deciding.
+
+Substitute's existing whole-response schema retries and its single missing-pair
+retry can add calls. See [Substitute validation and retries](replace.md#substitute).
 
 ---
 
@@ -175,7 +178,7 @@ Keep instructions short (one or two sentences). Long instructions compete with t
 
 !!! note "Substitute is per-row, not per-dataset"
 
-    Within a single row, repeated mentions of the same value get one consistent replacement (entities are grouped by value before the LLM call). **Across rows the LLM has no shared memory** — each row is an independent call, so "Alice" in row 1 and "Alice" in row 47 will likely get different replacements. If you need stable cross-row mappings (e.g. to re-join records by an identifier), use `Hash` instead, or post-process `result.trace_dataframe["_replacement_map"]`.
+    Within a single row, repeated mentions of the same value get one consistent replacement (entities are grouped by value before the LLM call). **Across rows the LLM has no shared memory** — each row has an independent request context, so "Alice" in row 1 and "Alice" in row 47 will likely get different replacements. If you need stable cross-row mappings (e.g. to re-join records by an identifier), use `Hash` instead, or post-process `result.trace_dataframe["_replacement_map"]`.
 
 ---
 
