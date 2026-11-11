@@ -53,6 +53,7 @@ from anonymizer.engine.graph_core.authoring import (
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
+from anonymizer.engine.graph_core.stages import call_on_empty_input
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.backend import per_target
 from anonymizer.engine.replace.llm_replace_workflow import (
@@ -213,8 +214,7 @@ def run_replace_pipeline(
     )
     replace_elapsed = time.perf_counter() - started - sum(elapsed)  # detection records its own stage
     failures.extend(malformed)
-    if not detected:  # no targets: the step never ran, but the detector still sees the (empty) input
-        detect_op.fn(())
+    call_on_empty_input(graph, detect_op)
     if state.unresolved:
         rerouted = reroute(detected[0].dataframe)
         return ReplacementResult(rerouted.dataframe, [*failures, *rerouted.failed_records], detected[0], elapsed[0])

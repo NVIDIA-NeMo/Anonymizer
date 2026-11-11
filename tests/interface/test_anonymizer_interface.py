@@ -1692,3 +1692,14 @@ def test_evaluate_keeps_partial_result_from_custom_runner(tmp_path: Path, mode: 
 
     assert len(evaluated.dataframe) == 1
     assert [(r.step, r.reason) for r in evaluated.failed_records] == [("judge", "dropped")]
+
+
+@pytest.mark.parametrize("mode", list(_MODES))
+def test_run_calls_the_detector_on_empty_input(tmp_path: Path, mode: str) -> None:
+    anonymizer, detector, data = _two_row_anonymizer(tmp_path)
+    pd.DataFrame({"text": []}).to_csv(tmp_path / "input.csv", index=False)
+
+    result = anonymizer.run(config=_MODES[mode], data=data)
+
+    assert result.dataframe.empty
+    assert detector.calls == [0]

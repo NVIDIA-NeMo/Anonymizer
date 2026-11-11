@@ -22,6 +22,13 @@ from anonymizer.engine.graph_core.kernel import register_kind
 STAGE_DONE = register_kind("stage-done", lambda v: v is True)
 
 
+def call_on_empty_input(graph: ProtectionGraph, *operations: Operation) -> None:
+    """With no targets the operations never ran; call each on the empty input, so its callee still sees it."""
+    if not graph.targets:
+        for operation in operations:
+            operation.fn(())
+
+
 def run_stages(name: str, stages: Sequence[tuple[str, Callable[[], None]]]) -> None:
     """Run ``stages`` in order as one kernel invocation, each an opaque operation over a single frame target.
 

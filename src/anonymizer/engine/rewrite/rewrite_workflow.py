@@ -53,7 +53,7 @@ from anonymizer.engine.graph_core.authoring import (
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult, TargetOutcome, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
-from anonymizer.engine.graph_core.stages import run_stages
+from anonymizer.engine.graph_core.stages import call_on_empty_input, run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import per_target
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
@@ -539,8 +539,7 @@ class RewriteWorkflow:
             return [entries.get(datum) for datum in target]
 
         result = _protect_rewrite(graph, rewrite, evaluation, detect_op)
-        if not state.detected:  # no targets: the step never ran, but the detector still sees the (empty) input
-            detect_op.fn(())
+        call_on_empty_input(graph, detect_op)
         detection, detection_elapsed = state.detected[0], state.elapsed[0]
         if state.unresolved:
             rerouted = self.run(detection.dataframe, **options)

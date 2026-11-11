@@ -76,6 +76,7 @@ from anonymizer.engine.graph_core.authoring import (
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
+from anonymizer.engine.graph_core.stages import call_on_empty_input
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import per_target
@@ -213,9 +214,7 @@ def _evaluate_on_graph(
     workflow = Workflow("evaluate", operations)
     limits = Limits(max_operations=len(operations), max_targets=len(graph.targets), max_mentions=0, max_context_items=0)
     result = protect(prepare(graph, workflow, limits=limits))
-    if not graph.targets:  # no targets: the bodies never ran, but the judges still see the (empty) frame
-        for operation in bodies:
-            operation.fn(target=())
+    call_on_empty_input(graph, *bodies)
     for entry in result.state.entries:
         if entry.error is not None and not operations[entry.node].is_verifier:
             raise entry.error
