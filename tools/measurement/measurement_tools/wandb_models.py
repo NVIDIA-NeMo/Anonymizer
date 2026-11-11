@@ -793,6 +793,7 @@ class StageTableRow(_MetricTableRow):
         "EntityDetectionWorkflow.run",
         "ReplacementWorkflow.run",
         "RewriteWorkflow.run",
+        "LlmReplaceWorkflow.fold",
         "graph_prepare",
         "graph_protect",
         "graph_reconcile",
@@ -800,12 +801,16 @@ class StageTableRow(_MetricTableRow):
     status: Literal["completed", "error"]
     operation_count: NonNegativeInt | None = None
     target_count: NonNegativeInt | None = None
-    # Table cells hold scalars only, so the per-status mapping is carried as compact sorted JSON.
+    # Table cells hold scalars only, so the count mappings are carried as compact sorted JSON.
     terminal_counts: StrictStr | None = None
+    consistency: Literal["record", "run"] | None = None
+    entry_count: NonNegativeInt | None = None
+    records_with_placeholder: NonNegativeInt | None = None
+    fallback_counts: StrictStr | None = None
 
-    @field_validator("terminal_counts", mode="before")
+    @field_validator("terminal_counts", "fallback_counts", mode="before")
     @classmethod
-    def encode_terminal_counts(cls, value: Any) -> Any:
+    def encode_count_mappings(cls, value: Any) -> Any:
         if isinstance(value, Mapping):
             return json.dumps(dict(value), sort_keys=True, separators=(",", ":"))
         return value
@@ -1181,6 +1186,10 @@ OUTBOUND_FIELD_POLICIES: dict[type[BaseModel], dict[str, FieldPolicy]] = {
         "operation_count",
         "target_count",
         "terminal_counts",
+        "consistency",
+        "entry_count",
+        "records_with_placeholder",
+        "fallback_counts",
         exposure=Exposure.table_opt_in,
     ),
     RecordTableRow: _aggregate_policies(

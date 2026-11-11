@@ -82,6 +82,7 @@ class StageMeasurement(_MeasurementEnvelope):
         "EntityDetectionWorkflow.run",
         "ReplacementWorkflow.run",
         "RewriteWorkflow.run",
+        "LlmReplaceWorkflow.fold",
         "graph_prepare",
         "graph_protect",
         "graph_reconcile",
@@ -102,6 +103,12 @@ class StageMeasurement(_MeasurementEnvelope):
     operation_count: NonNegativeInt | None = None
     target_count: NonNegativeInt | None = None
     terminal_counts: dict[Literal["success", "failed", "cancelled", "blocked"], NonNegativeInt] | None = None
+    consistency: Literal["record", "run"] | None = None
+    entry_count: NonNegativeInt | None = None
+    records_with_placeholder: NonNegativeInt | None = None
+    fallback_counts: (
+        dict[StrictStr, dict[Literal["own", "placeholder_taken", "placeholder_protected"], NonNegativeInt]] | None
+    ) = None
 
 
 class _WorkflowMeasurement(_MeasurementEnvelope):
