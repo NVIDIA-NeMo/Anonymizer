@@ -22,6 +22,13 @@ Replace mode replaces each [detected entity](detection.md) with an alternative t
 
 Replaces entities with LLM-generated synthetic values that are contextually plausible. This is the only replacement strategy that requires an LLM call.
 
+Synthetic values must contain at least one non-whitespace character. Schema
+validation rejects empty strings and values made entirely of spaces, tabs,
+newlines, or Unicode whitespace. Valid one-character substitutes, such as an
+initial or a single-digit age, remain allowed. Valid values are preserved as
+generated, including any surrounding whitespace. This shared schema rule also
+applies to the replacement maps generated for rewrite mode.
+
 After schema validation and filtering, Anonymizer checks that every unique
 requested `(entity value, label)` pair has a mapping. If mappings are missing,
 it retries only the missing pairs once, retaining the accepted substitutions.
