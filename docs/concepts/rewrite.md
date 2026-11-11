@@ -9,9 +9,13 @@ Instead of replacing individual entities, rewrite mode transforms the entire tex
 
 ## How it works
 
-[Detection](detection.md) runs first (same as [Replace mode](replace.md), plus latent entity detection for context-inferable information). This includes identifying signals that may not be explicitly tagged but can be deduced from combinations of details (e.g., location inferred from contextual cues). The text is then classified by domain, and each entity or attribute is assigned a sensitivity disposition based on contextual risk, recognizing that quasi-identifiers can emerge from any aspect of the text. 
+[Detection](detection.md) runs first (same as [Replace mode](replace.md), plus latent entity detection for context-inferable information). This includes identifying signals that may not be explicitly tagged but can be deduced from combinations of details (e.g., location inferred from contextual cues). The text is then classified by domain, and each entity or attribute is assigned a sensitivity disposition based on contextual risk, recognizing that quasi-identifiers can emerge from any aspect of the text.
 
 The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. Any records that failed to meet standards are tagged for human review.
+
+!!! note "Replacement-map validation"
+
+    Rewrite's generated replacement maps share the [Substitute schema rules](replace.md#substitute): synthetic values must contain at least one non-whitespace character, while valid one-character values remain allowed. DataDesigner's existing whole-response schema retries apply to map generation. The single missing-pair retry and Unicode-space reconciliation described for Substitute do not apply to Rewrite; its handling of omitted mappings remains unchanged.
 
 ---
 
@@ -168,7 +172,7 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()
 - Lower `risk_tolerance` (e.g. `minimal`) to trigger more aggressive repair.
 - Enable `strict_entity_protection=True` to ensure no detected entity is left unchanged in the output regardless of risk.
 
-**Last resort:** Manually edit or exclude records that resist automated repair — some text is inherently difficult to rewrite without losing utility or leaking identifiers, and requires your judgement as the expert. 
+**Last resort:** Manually edit or exclude records that resist automated repair — some text is inherently difficult to rewrite without losing utility or leaking identifiers, and requires your judgement as the expert.
 
 ---
 

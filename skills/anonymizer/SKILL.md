@@ -31,10 +31,11 @@ regulatory and business context.
 # Rules
 
 - **Always preview before running the full pipeline.** Preview is cheap; a full run can be expensive and slow.
-- **If `result.failed_records` is non-empty after preview, fix that *before* tweaking strategy.** Dropped rows are a model/provider/infra problem (rate limits, auth, etc.), not a config problem. Strategy knobs won't help. See `docs/troubleshooting.md` "Did the run actually complete cleanly?" or the [published troubleshooting guide](https://nvidia-nemo.github.io/Anonymizer/dev/troubleshooting/).
+- **If `result.failed_records` is non-empty after preview, inspect each failure's `step` and `reason` before quality tuning.** Failed rows can indicate model/provider/infra issues (rate limits, auth, etc.) or invalid or incomplete substitution maps. Treat them as failed records, not successful anonymization. See `docs/troubleshooting.md` "Did the run actually complete cleanly?" or the [published troubleshooting guide](https://nvidia-nemo.github.io/Anonymizer/dev/troubleshooting/).
 - **Ask the user which mode.** Briefly describe both: Replace detects entities and replaces each in place (faster, cheaper, keeps shape); Rewrite transforms the full text to also remove inferable identifiers (more expensive, may restructure). Use the data shape as a hint — free-text with implicit identifiers (clinical notes, biographies, depositions) leans Rewrite; structured records / log lines lean Replace — but the user picks.
 - **For cross-record consistency** (same value → same replacement everywhere), use `Hash`, not `Substitute`. `Substitute` is consistent within a row only.
 - **In Replace mode, default to `Substitute`** if the user hasn't specified a strategy. It's the most general-purpose choice and matches the bulk of production usage.
+- **`Substitute` checks mapping completeness before returning a record.** After schema validation and filtering, every unique requested `(entity value, label)` pair needs a mapping. Missing pairs are retried once while accepted mappings are retained; a record still incomplete or whose completeness retry fails is reported in `failed_records`. Unambiguous supported Unicode-space differences can be reconciled under the same exact label. DataDesigner's whole-response schema retries are separate from this single missing-pair retry. The shared replacement schema rejects whitespace-only synthetic values in both modes, but Rewrite does not use Substitute's completeness retry or Unicode-space reconciliation.
 - **`Annotate` is for inspection, not production.** Its output keeps the original entity text and is not privacy-safe. Use it during iteration to confirm detection is working, then switch.
 - **Evaluation is opt-in and runs as a separate step** (Replace and Rewrite modes). After `preview()` / `run()`, call `anonymizer.evaluate(result)` to score the output with LLM-as-judge. **Entity coverage always runs** in both modes — it reports detection recall over the judge's unique candidate values (`entity_coverage` + `missed_entities`). On top of that: Replace `Substitute` adds three quality judges (type fidelity, relational consistency, attribute fidelity); Rewrite adds the holistic privacy/quality/style judge. Detection validity is **opt-in** via `EvaluateConfig(compute_detection_validity=True)` (off by default). Evaluation is diagnostic — it scores quality, it does not change the anonymized output.
 - **Always set `data_summary` on the input**, even briefly. It is the single cheapest quality lever and it improves both detection and rewrite.
@@ -190,7 +191,7 @@ def main() -> None:
         result.trace_dataframe.to_pickle("preview_trace.pkl")
         print("Saved: preview.parquet (pd.read_parquet), preview_trace.pkl (pd.read_pickle)")
 
-    # Failure-first protocol: dropped rows are infra issues, not strategy issues.
+    # Inspect failure reasons: infrastructure and substitution validation can both fail rows.
     if result.failed_records:
         print(f"\n⚠️  {len(result.failed_records)} record(s) failed:")
         for fr in result.failed_records[:3]:
