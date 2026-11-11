@@ -218,7 +218,7 @@ def _make_entity(**kwargs) -> dict:
     defaults = {
         "id": 1,
         "source": "tagged",
-        "category": "direct_identifier",
+        "category": "quasi_identifier" if kwargs.get("sensitivity", "high") != "high" else "direct_identifier",
         "sensitivity": "high",
         "entity_label": "first_name",
         "entity_value": "Alice",
@@ -276,13 +276,22 @@ def test_entity_disposition_low_sensitivity_with_protection_stays_low(method: st
 
 @pytest.mark.parametrize(("sensitivity", "method"), [("high", "replace"), ("medium", "generalize")])
 @pytest.mark.parametrize("category", ["direct_identifier", "quasi_identifier", "latent_identifier"])
-def test_entity_disposition_normalizes_retention_by_sensitivity(sensitivity: str, method: str, category: str) -> None:
+def test_entity_disposition_normalizes_retention_by_sensitivity(
+    sensitivity: str, method: str, category: str, caplog: pytest.LogCaptureFixture
+) -> None:
     entity = EntityDispositionSchema.model_validate(
         _make_entity(sensitivity=sensitivity, category=category, protection_method_suggestion="leave_as_is")
     )
-    assert entity.sensitivity == sensitivity
-    assert entity.protection_method_suggestion == method
+    assert entity.sensitivity == ("high" if category == "direct_identifier" else sensitivity)
+    assert entity.protection_method_suggestion == ("replace" if category == "direct_identifier" else method)
     assert entity.low_sensitivity_reason is None
+    warnings = {record.getMessage() for record in caplog.records if record.levelname == "WARNING"}
+    assert len(warnings) == 1
+    message = warnings.pop()
+    assert f"{sensitivity}/leave_as_is" in message
+    assert f"{entity.sensitivity}/{entity.protection_method_suggestion}" in message
+    assert "entity 1" in message
+    assert entity.entity_value not in message
 
 
 def test_entity_disposition_accepts_low_leave_as_is() -> None:
@@ -611,7 +620,8 @@ def test_strict_entity_normalizes_medium_leave_as_is() -> None:
     entity = StrictEntityDispositionSchema.model_validate(
         _make_strict_entity(protection_method_suggestion="leave_as_is", sensitivity="medium")
     )
-    assert entity.protection_method_suggestion == "generalize"
+    assert entity.protection_method_suggestion == "replace"
+    assert entity.sensitivity == "high"
 
 
 def test_strict_entity_preserves_protected_low_sensitivity() -> None:

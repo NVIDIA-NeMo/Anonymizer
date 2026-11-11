@@ -11,14 +11,14 @@ API or configuration changes are required.
 
 ## Policy and tradeoffs
 
-Normalize `leave_as_is` according to sensitivity alone, before field and
-consistency validation: `high` becomes `replace`, and `medium` becomes
-`generalize`. Clear low-sensitivity reasons on both paths. Apply the same rule
-in regular and strict schemas, without consulting direct/quasi classification.
-Preserve sensitivity levels during this correction. In normal mode, normalize
+Preserve raw `leave_as_is` decisions until authoritative identity and category
+are reconstructed. Direct identifiers become `high` / `replace` regardless of
+the model's initial sensitivity. For other categories, `high` becomes `replace`
+and `medium` becomes `generalize`, preserving sensitivity. Clear low-sensitivity
+reasons for medium/high decisions. In normal mode, normalize
 low decisions to `leave_as_is`. In strict mode, allow low/medium/high sensitivity
-but require protective methods; reject low `leave_as_is` rather than silently
-retaining it. Carry the strict flag through the coverage column's generator
+but require protective methods; correct low `leave_as_is` to `generalize` rather
+than retaining it. Carry the strict flag through the coverage column's generator
 parameters, so serialized workflows preserve the selected policy. Do not promote
 low to medium solely because it receives protection.
 

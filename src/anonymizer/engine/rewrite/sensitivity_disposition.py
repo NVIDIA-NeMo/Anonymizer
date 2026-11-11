@@ -39,6 +39,7 @@ from anonymizer.engine.schemas.rewrite import (
     ProtectionMethod,
     RawSensitivityDispositionSchema,
     StrictRawSensitivityDispositionSchema,
+    StrictSensitivityDispositionSchema,
 )
 
 logger = logging.getLogger("anonymizer.rewrite.sensitivity_disposition")
@@ -438,7 +439,8 @@ def _verify_disposition_coverage(
                 "entity_value": supplied["value"],
             }
         )
-    disposition = SensitivityDispositionSchema.model_validate({"sensitivity_disposition": entries})
+    reconstructed_schema = StrictSensitivityDispositionSchema if strict else SensitivityDispositionSchema
+    disposition = reconstructed_schema.model_validate({"sensitivity_disposition": entries})
     verify_disposition_coverage(
         disposition,
         row.get(COL_DISPOSITION_EXPLICIT_ENTITIES),

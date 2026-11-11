@@ -470,11 +470,11 @@ def test_compact_response_accepts_missing_low_reason() -> None:
 
 
 @pytest.mark.parametrize(("sensitivity", "method"), [("low", "leave_as_is")])
-def test_strict_compact_response_disallows_unprotected_decisions(sensitivity: str, method: str) -> None:
-    with pytest.raises(ValueError):
-        StrictRawSensitivityDispositionSchema.model_validate(
-            {"sensitivity_disposition": [{"id": 1, "sensitivity": sensitivity, "protection_method_suggestion": method}]}
-        )
+def test_strict_compact_response_preserves_retention_for_category_resolution(sensitivity: str, method: str) -> None:
+    raw = StrictRawSensitivityDispositionSchema.model_validate(
+        {"sensitivity_disposition": [{"id": 1, "sensitivity": sensitivity, "protection_method_suggestion": method}]}
+    )
+    assert raw.sensitivity_disposition[0].protection_method_suggestion == "leave_as_is"
 
 
 @pytest.mark.parametrize(
@@ -704,30 +704,42 @@ def test_summary_precedes_input_and_preserves_protection_policy(strict: bool) ->
     assert ("Every supplied entity requires protection" in prompt) == strict
 
 
-@pytest.mark.parametrize(("sensitivity", "method"), [("high", "replace"), ("medium", "generalize")])
-def test_compact_retention_normalizes_independently_of_category(sensitivity: str, method: str) -> None:
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("reason", [None, "", "Common contextual detail."])
+@pytest.mark.parametrize(
+    ("sensitivity", "method"), [("high", "replace"), ("medium", "generalize"), ("low", "leave_as_is")]
+)
+def test_compact_retention_prioritizes_direct_identifier_policy(
+    sensitivity: str, method: str, strict: bool, reason: str | None
+) -> None:
     explicit, latent = build_numbered_entities(_TWO_ENTITIES, None)
     row = {
         COL_RAW_SENSITIVITY_DISPOSITION: {
             "sensitivity_disposition": [
-                {"id": 1, "sensitivity": sensitivity, "protection_method_suggestion": "leave_as_is"},
-                {"id": 2, "sensitivity": sensitivity, "protection_method_suggestion": "leave_as_is"},
+                {
+                    "id": index,
+                    "sensitivity": sensitivity,
+                    "protection_method_suggestion": "leave_as_is",
+                    "low_sensitivity_reason": reason,
+                }
+                for index in (1, 2)
             ]
         },
         COL_DISPOSITION_EXPLICIT_ENTITIES: explicit,
         COL_DISPOSITION_LATENT_ENTITIES: latent,
         COL_ENTITY_CLASSIFICATION: _CLASSIFICATIONS,
     }
-    result = _verify_disposition_coverage(row)
+    result = _verify_disposition_coverage(row, DispositionCoverageParams(strict_entity_protection=strict))
     direct, quasi = result[COL_SENSITIVITY_DISPOSITION]["sensitivity_disposition"]
-    assert (direct["sensitivity"], direct["protection_method_suggestion"]) == ("high", method)
-    assert (quasi["sensitivity"], quasi["protection_method_suggestion"]) == (sensitivity, method)
+    assert (direct["sensitivity"], direct["protection_method_suggestion"]) == ("high", "replace")
+    expected_method = "generalize" if strict and sensitivity == "low" else method
+    assert (quasi["sensitivity"], quasi["protection_method_suggestion"]) == (sensitivity, expected_method)
     assert result[COL_DISPOSITION_COVERAGE] is True
 
 
 @pytest.mark.parametrize("schema", [RawSensitivityDispositionSchema, StrictRawSensitivityDispositionSchema])
 @pytest.mark.parametrize(("sensitivity", "method"), [("high", "replace"), ("medium", "generalize")])
-def test_compact_retention_normalizes_in_both_modes(
+def test_compact_retention_is_preserved_until_category_is_known(
     schema: type[RawSensitivityDispositionSchema], sensitivity: str, method: str
 ) -> None:
     disposition = schema.model_validate(
@@ -739,7 +751,7 @@ def test_compact_retention_normalizes_in_both_modes(
     )
     entry = disposition.sensitivity_disposition[0]
     assert entry.sensitivity == sensitivity
-    assert entry.protection_method_suggestion == method
+    assert entry.protection_method_suggestion == "leave_as_is"
 
 
 def test_strict_raw_schema_allows_low_but_excludes_retention() -> None:

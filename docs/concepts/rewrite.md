@@ -19,6 +19,11 @@ The text is then rewritten to reduce identifiability, applying targeted transfor
 
 **Sensitivity** measures an entity’s privacy risk in the context of the document, considering the information retained alongside it. In normal mode, entities rated `low` use `leave_as_is`, while entities rated `medium` or `high` receive protection. With `strict_entity_protection=True`, every entity receives protection, including entities rated `low`; protection alone does not raise their sensitivity. Sensitivity also feeds downstream leakage scoring.
 
+If the model incorrectly selects `leave_as_is`, the decision is corrected after the entity's
+category is known. Direct identifiers become `high` / `replace`, regardless of the model's
+initial sensitivity. Other high entities use `replace`, medium entities use `generalize`,
+and low entities are retained in normal mode or generalized in strict mode.
+
 The prompt requests a `low_sensitivity_reason` for every low rating, whether the entity is protected or retained. A missing or blank reason does not fail the record or change its sensitivity or protection method. The reason explains the original information’s limited linkage or recognition risk; a planned edit does not justify a low rating.
 
 | Level | Meaning | Examples | Leakage weight |

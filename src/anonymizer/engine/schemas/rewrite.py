@@ -41,10 +41,13 @@ Supporting enums: Domain, EntitySource, EntityCategory, SensitivityLevel,
 
 from __future__ import annotations
 
+import logging
 from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+
+logger = logging.getLogger("anonymizer.rewrite.sensitivity_disposition")
 
 # ---------------------------------------------------------------------------
 # Domain
@@ -163,26 +166,8 @@ class RawEntityDispositionSchema(BaseModel):
     def needs_protection(self) -> bool:
         return self.protection_method_suggestion != ProtectionMethod.leave_as_is
 
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_protection_policy(cls, data: object) -> object:
-        """Resolve inconsistent retention from sensitivity, independent of entity category."""
-        if not isinstance(data, dict) or data.get("protection_method_suggestion") != ProtectionMethod.leave_as_is:
-            return data
-        methods = {SensitivityLevel.high: "replace", SensitivityLevel.medium: "generalize"}
-        method = methods.get(data.get("sensitivity"))
-        if method is None:
-            return data
-        return {**data, "protection_method_suggestion": method, "low_sensitivity_reason": None}
-
     @model_validator(mode="after")
     def _validate_protection_consistency(self) -> RawEntityDispositionSchema:
-        retained = not self.needs_protection
-        if self.sensitivity != SensitivityLevel.low and retained:
-            # Retained protected levels must have been normalized before field validation.
-            raise ValueError(
-                f"Entity {self.id}: sensitivity={self.sensitivity!r} cannot have protection_method_suggestion='leave_as_is'"
-            )
         if self.sensitivity != SensitivityLevel.low:
             self.low_sensitivity_reason = None
         return self
@@ -201,6 +186,32 @@ class EntityDispositionSchema(RawEntityDispositionSchema):
     category: EntityCategory
     entity_label: str = Field(min_length=1)
     entity_value: str = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_protection_policy(cls, data: object) -> object:
+        """Resolve retention only after authoritative category reconstruction."""
+        if not isinstance(data, dict) or data.get("protection_method_suggestion") != ProtectionMethod.leave_as_is:
+            return data
+        if data.get("category") == "direct_identifier":
+            logger.warning(
+                "Normalizing disposition entity %s: sensitivity/method %s/leave_as_is -> high/replace.",
+                data.get("id"),
+                data.get("sensitivity"),
+            )
+            return {**data, "sensitivity": "high", "protection_method_suggestion": "replace"}
+        methods = {SensitivityLevel.high: "replace", SensitivityLevel.medium: "generalize"}
+        method = methods.get(data.get("sensitivity"))
+        if method is None:
+            return data
+        logger.warning(
+            "Normalizing disposition entity %s: sensitivity/method %s/leave_as_is -> %s/%s.",
+            data.get("id"),
+            data.get("sensitivity"),
+            data.get("sensitivity"),
+            method,
+        )
+        return {**data, "protection_method_suggestion": method}
 
 
 class SensitivityDispositionSchema(BaseModel):
@@ -276,6 +287,22 @@ class StrictEntityDispositionSchema(EntityDispositionSchema):
     sensitivity: StrictSensitivityLevel
     protection_method_suggestion: StrictProtectionMethod
 
+    @model_validator(mode="before")
+    @classmethod
+    def _protect_low_retention(cls, data: object) -> object:
+        if (
+            isinstance(data, dict)
+            and data.get("category") != "direct_identifier"
+            and data.get("sensitivity") == "low"
+            and data.get("protection_method_suggestion") == "leave_as_is"
+        ):
+            logger.warning(
+                "Normalizing disposition entity %s: sensitivity/method low/leave_as_is -> low/generalize (strict mode).",
+                data.get("id"),
+            )
+            return {**data, "protection_method_suggestion": "generalize"}
+        return data
+
 
 class StrictSensitivityDispositionSchema(SensitivityDispositionSchema):
     """Strict variant container: every entity must be protected."""
@@ -302,6 +329,13 @@ class StrictRawEntityDispositionSchema(RawEntityDispositionSchema):
 
     sensitivity: StrictSensitivityLevel
     protection_method_suggestion: StrictProtectionMethod
+
+    @field_validator("protection_method_suggestion", mode="plain", json_schema_input_type=StrictProtectionMethod)
+    @classmethod
+    def _preserve_raw_method(cls, value: object) -> str:
+        # Keep recoverable retention slips intact until the category is known,
+        # while the generated strict output schema continues to request protection.
+        return ProtectionMethod(value).value
 
 
 class StrictRawSensitivityDispositionSchema(RawSensitivityDispositionSchema):
