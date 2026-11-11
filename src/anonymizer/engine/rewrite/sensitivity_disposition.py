@@ -185,9 +185,7 @@ Do not add, omit, combine, split, or discover entities.
 </scope>
 
 <sensitivity_policy>
-Assess whether retaining the information materially helps an adversary link
-the document to, or recognize, the subject. Consider the complete document,
-combinations of details, public information, and plausible prior familiarity.
+Assess whether retaining the information could identify or enable linkage to a person, organization, record, system, or other protected asset, or expose confidential information such as credentials, access details, or proprietary information. Apply the privacy goal and consider the complete document and combinations of details.
 
 Direct identifiers:
 Assign high. They must always be protected.
