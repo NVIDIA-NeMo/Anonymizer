@@ -20,6 +20,7 @@ from anonymizer import RunConfig
 from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
+    Detect,
     EvaluateConfig,
     Rewrite,
     TextRecord,
@@ -279,6 +280,7 @@ class _Replay040DetectionWorkflow:
         model_configs: list[ModelConfig],
         selected_models: object,
         gliner_detection_threshold: float,
+        ignored_entity_values: list[str] | None = None,
         validation_max_entities_per_call: int = 20,
         validation_excerpt_window_chars: int = 200,
         validation_single_chunk_full_text: bool = True,
@@ -291,6 +293,7 @@ class _Replay040DetectionWorkflow:
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
         self.calls.append("run")
+        self.ignored_entity_values = ignored_entity_values
         return self._result
 
     def build_detection_config(
@@ -335,7 +338,12 @@ class _Replay040DetectionWorkflow:
 @pytest.mark.parametrize("mode", ["run", "preview"])
 @pytest.mark.parametrize("rewrite", [False, True], ids=["replace", "rewrite"])
 def test_legacy_detection_workflow_without_examples(stub_input: AnonymizerInput, mode: str, rewrite: bool) -> None:
-    config = AnonymizerConfig(rewrite=Rewrite()) if rewrite else AnonymizerConfig(replace=Redact())
+    detect = Detect(ignored_entity_values=["Example Corp"])
+    config = (
+        AnonymizerConfig(detect=detect, rewrite=Rewrite())
+        if rewrite
+        else AnonymizerConfig(detect=detect, replace=Redact())
+    )
     frame = pd.DataFrame({COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [{"entities": []}], COL_ENTITIES_BY_VALUE: [{}]})
     detector = _Replay040DetectionWorkflow(EntityDetectionResult(dataframe=frame, failed_records=[]))
     anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, detector))
@@ -345,6 +353,7 @@ def test_legacy_detection_workflow_without_examples(stub_input: AnonymizerInput,
     assert result.dataframe["text"].tolist() == ["Alice"]
     assert result.failed_records == []
     assert detector.calls == ["run"]
+    assert detector.ignored_entity_values == ["Example Corp"]
 
 
 def test_legacy_detection_exports_without_examples(stub_input: AnonymizerInput, tmp_path: Path) -> None:
