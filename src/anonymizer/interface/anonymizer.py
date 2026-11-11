@@ -76,10 +76,9 @@ from anonymizer.engine.graph_core.authoring import (
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
-from anonymizer.engine.graph_core.stages import call_on_empty_input, raise_if_cancelled
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.backend import per_target
+from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
 from anonymizer.engine.ndd.model_loader import (
     parse_model_configs,
     parse_model_providers,

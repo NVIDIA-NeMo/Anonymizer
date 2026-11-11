@@ -53,9 +53,9 @@ from anonymizer.engine.graph_core.authoring import (
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult, TargetOutcome, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
-from anonymizer.engine.graph_core.stages import call_on_empty_input, raise_if_cancelled, run_stages
+from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.backend import per_target
+from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
@@ -877,7 +877,7 @@ class RewriteWorkflow:
         stages: list[tuple[str, Callable[[], None]]] = [("final-judge", final_judge)]
         if compute_detection_validity:
             stages.insert(0, ("detection-judge", detection_judge))
-        run_stages("rewrite-evaluate", stages)
+        raise_if_cancelled(run_stages("rewrite-evaluate", stages))
 
         combined = merge_and_reorder(rows.frame, passthrough_rows)
         return RewriteResult(dataframe=combined, failed_records=rows.failed)

@@ -51,6 +51,7 @@ from anonymizer.engine.detection.postprocess import (
 )
 from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.ndd.backend import raise_if_cancelled
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import resolve_source_positions
@@ -527,13 +528,15 @@ class EntityDetectionWorkflow:
                         final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
                 rows.frame = final_df
 
-            run_stages(
-                "detection",
-                [
-                    ("detect", detect),
-                    *([("tag-latent", tag_latent)] if tag_latent_entities else []),
-                    ("finalize", finalize),
-                ],
+            raise_if_cancelled(
+                run_stages(
+                    "detection",
+                    [
+                        ("detect", detect),
+                        *([("tag-latent", tag_latent)] if tag_latent_entities else []),
+                        ("finalize", finalize),
+                    ],
+                )
             )
             result = EntityDetectionResult(
                 dataframe=rows.frame,

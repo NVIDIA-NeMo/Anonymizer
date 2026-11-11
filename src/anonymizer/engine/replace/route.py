@@ -53,9 +53,8 @@ from anonymizer.engine.graph_core.authoring import (
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
-from anonymizer.engine.graph_core.stages import call_on_empty_input, raise_if_cancelled
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.engine.ndd.backend import per_target
+from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
     LlmReplaceWorkflow,

@@ -13,8 +13,11 @@ import pandas as pd
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig
 
+from anonymizer.engine.graph_core.authoring import Operation, ProtectionGraph
+from anonymizer.engine.graph_core.execution import ProtectionResult
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.row_partitioning import resolve_source_positions
+from anonymizer.interface.errors import AnonymizerWorkflowError
 
 T = TypeVar("T")
 
@@ -62,3 +65,16 @@ def per_target(items: Sequence[T], positions: Sequence[int], size: int) -> list[
     for position, item in zip(positions, items):
         aligned[position] = item
     return aligned
+
+
+def call_on_empty_input(graph: ProtectionGraph, *operations: Operation) -> None:
+    """With no targets the operations never ran; call each on the empty input, so its callee still sees it."""
+    if not graph.targets:
+        for operation in operations:
+            operation.fn(())
+
+
+def raise_if_cancelled(result: ProtectionResult) -> None:
+    """Raise ``AnonymizerWorkflowError`` when a cancellation stopped any target before its steps finished."""
+    if any(result.outcome(target).terminal == "cancelled" for target in result.targets):
+        raise AnonymizerWorkflowError("The workflow was cancelled before it finished.")
