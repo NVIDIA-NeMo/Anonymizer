@@ -44,6 +44,7 @@ from anonymizer.engine.detection.detection_workflow import (
     _materialize_final_entities,
 )
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
+from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import (
     load_default_model_selection,
@@ -57,6 +58,7 @@ from anonymizer.engine.workflow_columns.detection.config import (
     DetectionTransformConfig,
     DetectionTransformOperation,
 )
+from anonymizer.interface.errors import AnonymizerWorkflowError
 
 
 def _positional(dataframe: pd.DataFrame, failed_records: list) -> WorkflowRunResult:
@@ -342,6 +344,50 @@ def test_run_with_latent_detection_merges_failures_in_order(
         ),
     )
     assert [item.record_id for item in result.failed_records] == ["d1", "l1"]
+
+
+@pytest.mark.parametrize("cancel_at", ["before-first-stage", "between-stages"])
+def test_run_in_cancelled_frame_raises_and_skips_later_stages(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+    cancel_at: str,
+) -> None:
+    token = CancelToken()
+    adapter = Mock()
+
+    def detect(*args, **kwargs) -> WorkflowRunResult:
+        token.cancel()
+        return _positional(
+            dataframe=pd.DataFrame(
+                {
+                    COL_TEXT: ["Alice works in Seattle"],
+                    COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+                }
+            ),
+            failed_records=[],
+        )
+
+    adapter.run_workflow.side_effect = detect
+    if cancel_at == "before-first-stage":
+        token.cancel()
+
+    with pytest.raises(AnonymizerWorkflowError):
+        run_in_frame(
+            EntityDetectionWorkflow(adapter=adapter).run,
+            pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]}),
+            model_configs=stub_detector_model_configs,
+            selected_models=stub_detection_model_selection,
+            gliner_detection_threshold=0.5,
+            tag_latent_entities=True,
+            privacy_goal=PrivacyGoal(
+                protect="Protect direct and latent identifiers from disclosure.",
+                preserve="General utility and semantic meaning of the original text.",
+            ),
+            token=token,
+        )
+
+    # Before the first stage nothing runs; between stages only detection ran, not latent tagging.
+    assert adapter.run_workflow.call_count == (0 if cancel_at == "before-first-stage" else 1)
 
 
 def test_run_requires_privacy_goal_for_latent_path(

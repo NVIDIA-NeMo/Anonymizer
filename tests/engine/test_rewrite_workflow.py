@@ -43,6 +43,7 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
+from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.engine.rewrite.repair import RepairWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import (
@@ -435,6 +436,45 @@ def test_judge_failure_does_not_propagate(
 
     assert len(result.dataframe) == 1
     assert result.dataframe[COL_JUDGE_EVALUATION].iloc[0] is None
+
+
+@pytest.mark.parametrize("cancel_at", ["before-first-stage", "between-stages"])
+def test_evaluate_in_cancelled_frame_raises_and_skips_later_stages(
+    stub_model_configs: list[ModelConfig],
+    stub_evaluate_model_selection,
+    stub_eval_df: pd.DataFrame,
+    cancel_at: str,
+) -> None:
+    token = CancelToken()
+    adapter = Mock()
+    wf = RewriteWorkflow(adapter=adapter)
+    wf._detection_judge_wf = Mock()
+
+    def detection_judge(*args, **kwargs) -> Mock:
+        token.cancel()
+        det_df = stub_eval_df.copy()
+        det_df[COL_DETECTION_VALID] = True
+        det_df[COL_DETECTION_INVALID_ENTITIES] = [[]]
+        return Mock(dataframe=det_df, failed_records=[], source_positions=None)
+
+    wf._detection_judge_wf.evaluate.side_effect = detection_judge
+    if cancel_at == "before-first-stage":
+        token.cancel()
+
+    with pytest.raises(AnonymizerWorkflowError):
+        run_in_frame(
+            wf.evaluate,
+            stub_eval_df,
+            model_configs=stub_model_configs,
+            selected_models=stub_evaluate_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            compute_detection_validity=True,
+            token=token,
+        )
+
+    # Before the first stage neither judge runs; between stages only the detection judge ran.
+    assert wf._detection_judge_wf.evaluate.call_count == (0 if cancel_at == "before-first-stage" else 1)
+    adapter.run_workflow.assert_not_called()
 
 
 def test_judge_partial_row_loss_preserves_all_rows(
