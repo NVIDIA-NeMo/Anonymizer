@@ -502,3 +502,18 @@ def test_ignored_entity_values_preserve_exact_values_and_roundtrip() -> None:
 def test_ignored_entity_values_reject_invalid_types(values: object) -> None:
     with pytest.raises(ValidationError):
         Detect.model_validate({"ignored_entity_values": values})
+
+
+@pytest.mark.parametrize("value", ["", " ", "\t\n", "\u00a0"])
+def test_ignored_entity_values_reject_blank_entries(value: str) -> None:
+    with pytest.raises(ValidationError, match=r"ignored_entity_values\[1\] must not be empty or whitespace-only"):
+        Detect(ignored_entity_values=["Example Corp", value])
+
+
+def test_ignored_entity_values_deduplicate_without_normalizing() -> None:
+    values = ["Example Corp", " Example Corp ", "EXAMPLE CORP", "Example Corp", " Sample User ", " Sample User "]
+    detect = Detect(ignored_entity_values=values)
+    expected = ["Example Corp", " Example Corp ", "EXAMPLE CORP", " Sample User "]
+    assert detect.ignored_entity_values == expected
+    assert Detect.model_validate_json(detect.model_dump_json()).ignored_entity_values == expected
+    assert values.count("Example Corp") == 2

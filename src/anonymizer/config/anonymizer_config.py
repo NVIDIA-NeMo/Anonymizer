@@ -134,6 +134,7 @@ class Detect(BaseModel):
             "Additional entity values to exclude from final results, across all labels. "
             "Matches are exact and case sensitive, without whitespace normalization. "
             "Always combined with built-in generic payment types, brands, and email references. "
+            "Entries must contain a non-whitespace character; exact duplicates are removed. "
             "Ignored values remain eligible to change during rewriting."
         ),
     )
@@ -158,6 +159,14 @@ class Detect(BaseModel):
             "validator sees per chunk; it is NOT the LLM's context window limit."
         ),
     )
+
+    @field_validator("ignored_entity_values")
+    @classmethod
+    def validate_ignored_entity_values(cls, values: list[str]) -> list[str]:
+        for index, value in enumerate(values):
+            if not value.strip():
+                raise ValueError(f"ignored_entity_values[{index}] must not be empty or whitespace-only, got {value!r}.")
+        return list(dict.fromkeys(values))
 
     @field_validator("entity_labels")
     @classmethod

@@ -338,7 +338,9 @@ class Anonymizer:
         writes the seed dataset to ``seed_path``, and returns the
         ``DataDesignerConfigBuilder`` for the GLiNER + LLM-validate/augment workflow.
         The external runtime supplies the model providers (e.g. served vLLM endpoints);
-        its per-record output carries the finalized entity columns to score.
+        its per-record output includes pre-filter ``_detected_entities`` and filtered
+        ``final_entities``. The serialized config includes built-in and user-configured
+        ignored values, using exact, case-sensitive matching after overlap resolution.
 
         Args:
             config: Same workflow config as :meth:`run` (entity labels, thresholds).
@@ -349,6 +351,7 @@ class Anonymizer:
         context = read_input(data)
         return self._detection_workflow.build_detection_config(
             context.dataframe,
+            ignored_entity_values=config.detect.ignored_entity_values,
             seed_path=seed_path,
             model_configs=self._model_configs,
             selected_models=self._selected_models.detection,
@@ -382,9 +385,12 @@ class Anonymizer:
         ``nemo-anonymizer`` installed so Data Designer can discover the detection plugins,
         and ``seed_path`` must resolve to an existing file when the worker reconstructs
         the config. Runtime model providers remain external to the serialized config.
+        The serialized config includes the effective ignored-value list and produces
+        both pre-filter ``_detected_entities`` and filtered ``final_entities``.
         """
         self._validate_preflight_config(config)
         return self._detection_workflow.build_detection_builder_for_seed(
+            ignored_entity_values=config.detect.ignored_entity_values,
             seed_path=seed_path,
             model_configs=self._model_configs,
             selected_models=self._selected_models.detection,

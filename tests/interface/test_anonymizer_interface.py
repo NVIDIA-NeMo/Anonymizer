@@ -304,6 +304,7 @@ class _Replay040DetectionWorkflow:
         model_configs: list[ModelConfig],
         selected_models: object,
         gliner_detection_threshold: float,
+        ignored_entity_values: list[str] | None = None,
         validation_max_entities_per_call: int = 100,
         validation_excerpt_window_chars: int = 500,
         validation_single_chunk_full_text: bool = True,
@@ -312,6 +313,7 @@ class _Replay040DetectionWorkflow:
         data_summary: str | None = None,
     ) -> Mock:
         self.calls.append("config")
+        self.config_ignored_entity_values = ignored_entity_values
         return self.config_sentinel
 
     def build_detection_builder_for_seed(
@@ -321,6 +323,7 @@ class _Replay040DetectionWorkflow:
         model_configs: list[ModelConfig],
         selected_models: object,
         gliner_detection_threshold: float,
+        ignored_entity_values: list[str] | None = None,
         validation_max_entities_per_call: int = 100,
         validation_excerpt_window_chars: int = 500,
         validation_single_chunk_full_text: bool = True,
@@ -331,6 +334,7 @@ class _Replay040DetectionWorkflow:
         num_jobs: int = 1,
     ) -> Mock:
         self.calls.append("builder")
+        self.builder_ignored_entity_values = ignored_entity_values
         return self.builder_sentinel
 
 
@@ -357,7 +361,7 @@ def test_legacy_detection_workflow_without_examples(stub_input: AnonymizerInput,
 
 
 def test_legacy_detection_exports_without_examples(stub_input: AnonymizerInput, tmp_path: Path) -> None:
-    config = AnonymizerConfig(replace=Redact())
+    config = AnonymizerConfig(detect=Detect(ignored_entity_values=["Example Corp"]), replace=Redact())
     detector = _Replay040DetectionWorkflow(
         EntityDetectionResult(
             dataframe=pd.DataFrame(
@@ -376,6 +380,8 @@ def test_legacy_detection_exports_without_examples(stub_input: AnonymizerInput, 
         detector.builder_sentinel
     )
     assert detector.calls == ["config", "builder"]
+    assert detector.config_ignored_entity_values == ["Example Corp"]
+    assert detector.builder_ignored_entity_values == ["Example Corp"]
 
 
 @pytest.mark.parametrize("mode", ["run", "preview", "export_detection_config", "export_detection_builder_for_seed"])
