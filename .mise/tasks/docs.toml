@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+["docs:serve"]
+description = "Serve the MkDocs site locally at http://127.0.0.1:8000 and watch source files."
+run = "uv run --locked --group docs mkdocs serve"
+
+["docs:build"]
+description = "Build the documentation site in strict mode. Writes the ignored site/ directory."
+run = "uv run --locked --group docs mkdocs build --strict"
+
+["docs:deploy"]
+description = "Deploy versioned documentation with mike. Updates the remote gh-pages branch."
+usage = '''
+arg "<version>" help="Documentation version to deploy"
+'''
+run = 'uv run --locked --group docs mike deploy --push --update-aliases "${usage_version?}" latest'

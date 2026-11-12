@@ -39,7 +39,7 @@ class DetectionTransformOperation(str, Enum):
 
 
 class DetectionTransformConfig(SingleColumnConfig):
-    column_type: Literal["anonymizer-detection-transform"] = "anonymizer-detection-transform"
+    column_type: Literal["anonymizer-detection-transform"] = "anonymizer-detection-transform"  # ty: ignore[invalid-mutable-override]
     operation: DetectionTransformOperation
     excluded_entity_labels: list[str] = Field(default_factory=list)
     allowed_entity_labels: list[str] | None = None
@@ -97,7 +97,7 @@ class DetectionTransformConfig(SingleColumnConfig):
 
 
 class ChunkedValidationConfig(SingleColumnConfig):
-    column_type: Literal["anonymizer-chunked-validation"] = "anonymizer-chunked-validation"
+    column_type: Literal["anonymizer-chunked-validation"] = "anonymizer-chunked-validation"  # ty: ignore[invalid-mutable-override]
     pool: list[str] = Field(min_length=1)
     max_entities_per_call: int = Field(gt=0)
     excerpt_window_chars: int = Field(gt=0)

@@ -196,7 +196,7 @@ class Detect(BaseModel):
         return normalized
 
     @model_validator(mode="after")
-    def validate_entity_label_overlap(self) -> "Detect":
+    def validate_entity_label_overlap(self) -> Detect:
         excluded_set = set(self.excluded_entity_labels or [])
         example_labels = set(self.entity_label_examples)
         excluded_examples = sorted(example_labels & excluded_set)
