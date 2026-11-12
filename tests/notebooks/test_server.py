@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import importlib
 import json
 import os
 import socket
@@ -113,3 +115,51 @@ def test_chat_completion_returns_anonymizer_entity_contract(
 
 def test_default_inference_batch_size_is_32() -> None:
     assert server.DEFAULT_INFERENCE_BATCH_SIZE == 32
+
+
+def test_launch_ownership_constants_match_the_managed_tool_contract() -> None:
+    assert server.LAUNCH_TOKEN_ENVIRONMENT_VARIABLE == "ANONYMIZER_INFERENCE_LAUNCH_TOKEN"
+    assert server.LAUNCH_OWNERSHIP_HEADER == "X-Anonymizer-Launch-Token"
+    assert server.LAUNCH_OWNERSHIP_PATH == "/_anonymizer/launch-ownership"
+    assert server.LAUNCH_OWNERSHIP_PROOF_FIELD == "launch_token_sha256"
+    tool = None
+    for name in ("inference_service_compiler.launch_ownership", "inference_service_compiler.lifecycle"):
+        try:
+            tool = importlib.import_module(name)
+        except ModuleNotFoundError:
+            continue
+        if hasattr(tool, "LAUNCH_OWNERSHIP_PATH"):
+            break
+    assert tool is not None, "managed-tool launch-ownership module not found"
+    for constant in (
+        "LAUNCH_TOKEN_ENVIRONMENT_VARIABLE",
+        "LAUNCH_OWNERSHIP_HEADER",
+        "LAUNCH_OWNERSHIP_PATH",
+        "LAUNCH_OWNERSHIP_PROOF_FIELD",
+    ):
+        assert getattr(server, constant) == getattr(tool, constant), constant
+
+
+def test_launch_ownership_proves_the_inherited_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(server.TOKEN_ENV, "api-secret")
+    monkeypatch.setenv(server.LAUNCH_TOKEN_ENVIRONMENT_VARIABLE, "launch-secret")
+    client = TestClient(server.app, raise_server_exceptions=False)
+    path = server.LAUNCH_OWNERSHIP_PATH
+    header = server.LAUNCH_OWNERSHIP_HEADER
+
+    right = client.get(path, headers={header: "launch-secret"})
+    wrong = client.get(path, headers={header: "other"})
+    missing = client.get(path)
+
+    assert right.status_code == 200
+    assert right.json() == {"launch_token_sha256": hashlib.sha256(b"launch-secret").hexdigest()}
+    assert (wrong.status_code, wrong.json()) == (404, {"detail": "not found"})
+    assert (missing.status_code, missing.json()) == (404, {"detail": "not found"})
+    assert client.get("/v1/models", headers={header: "launch-secret"}).status_code == 401
+
+
+def test_launch_ownership_is_not_found_without_a_launch_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(server.LAUNCH_TOKEN_ENVIRONMENT_VARIABLE, raising=False)
+    client = TestClient(server.app, raise_server_exceptions=False)
+    response = client.get(server.LAUNCH_OWNERSHIP_PATH, headers={server.LAUNCH_OWNERSHIP_HEADER: ""})
+    assert (response.status_code, response.json()) == (404, {"detail": "not found"})

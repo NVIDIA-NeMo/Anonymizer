@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import os
+import secrets
 import socket
 import time
 import uuid
@@ -20,6 +22,7 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 try:
     from .backend import (  # noqa: TID252 - direct-script fallback keeps server dependencies isolated
@@ -53,6 +56,11 @@ DEFAULT_PORT = 8001
 DEFAULT_FLAT_NER = False
 TOKEN_ENV = "ANONYMIZER_LOCAL_GLINER2_TOKEN"
 DEVICE_ENV = "ANONYMIZER_LOCAL_GLINER2_DEVICE"
+# Launch-ownership contract shared with tools/inference_service_compiler; keep these strings in sync.
+LAUNCH_TOKEN_ENVIRONMENT_VARIABLE = "ANONYMIZER_INFERENCE_LAUNCH_TOKEN"
+LAUNCH_OWNERSHIP_HEADER = "X-Anonymizer-Launch-Token"
+LAUNCH_OWNERSHIP_PATH = "/_anonymizer/launch-ownership"
+LAUNCH_OWNERSHIP_PROOF_FIELD = "launch_token_sha256"
 
 logger = logging.getLogger("anonymizer-local-gliner2")
 
@@ -191,6 +199,17 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.get(LAUNCH_OWNERSHIP_PATH, include_in_schema=False)
+def launch_ownership(request: Request) -> JSONResponse:
+    """Prove that this server inherited the launching controller's token."""
+    expected = os.getenv(LAUNCH_TOKEN_ENVIRONMENT_VARIABLE)
+    supplied = request.headers.get(LAUNCH_OWNERSHIP_HEADER)
+    if not expected or supplied is None or not secrets.compare_digest(supplied.encode(), expected.encode()):
+        return JSONResponse(status_code=404, content={"detail": "not found"})
+    proof = hashlib.sha256(expected.encode()).hexdigest()
+    return JSONResponse(content={LAUNCH_OWNERSHIP_PROOF_FIELD: proof})
 
 
 @app.get("/v1/models")
