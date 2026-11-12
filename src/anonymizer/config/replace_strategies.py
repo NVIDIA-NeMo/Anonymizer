@@ -51,9 +51,13 @@ class Substitute(ReplaceMethodBase):
     consistency: Literal["record", "run"] = Field(
         default="record",
         description=(
-            "Share each value's substitute within its record, or across the whole run. A mention can still get a"
-            " different substitute where the shared one would clash with another value, or another value's"
-            " substitute, in the same record."
+            "'record' gives each value (with its case and whitespace variants) one substitute within its record;"
+            " two different values of a record can get the same substitute. 'run' gives each value one substitute"
+            " across the whole run, and two different values never share one. A substitute equal to a real value"
+            " of the record is replaced by [SUBSTITUTE_<LABEL>_<n>]; in 'run', so is a substitute another value"
+            " already uses. A mention can still get a different substitute where the shared one would clash with"
+            " another value, or another value's substitute, in the same record; in 'record' this happens only to"
+            " case or whitespace variants."
         ),
     )
 

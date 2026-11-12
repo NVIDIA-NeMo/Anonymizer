@@ -774,3 +774,21 @@ def test_filter_step_folds_substitutes_against_row_originals(replacements: list[
     replacements = _filter_replacement_map(row)[COL_REPLACEMENT_MAP]["replacements"]
 
     assert {r["synthetic"].casefold() for r in replacements}.isdisjoint({"alice", "maya"})
+
+
+def test_filter_step_lets_two_values_of_a_row_share_a_substitute() -> None:
+    row = {
+        COL_REPLACEMENT_MAP_RAW: {
+            "replacements": [
+                {"original": "Paris", "label": "city", "synthetic": "Lyon"},
+                {"original": "Berlin", "label": "city", "synthetic": "Lyon"},
+            ]
+        },
+        COL_ENTITIES_BY_VALUE: {
+            "entities_by_value": [{"value": "Paris", "labels": ["city"]}, {"value": "Berlin", "labels": ["city"]}]
+        },
+    }
+
+    replacements = _filter_replacement_map(row)[COL_REPLACEMENT_MAP]["replacements"]
+
+    assert [r["synthetic"] for r in replacements] == ["Lyon", "Lyon"]

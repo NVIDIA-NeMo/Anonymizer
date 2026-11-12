@@ -170,19 +170,24 @@ def _fold_replacement_maps(
 ) -> list[dict]:
     """Give entries with the same (label, case- and whitespace-folded value) one substitute, re-cased to each original.
 
-    ``"record"`` shares within each record; ``"run"`` also gives each key the first record's substitute. An emitted
-    substitute collides when its folded form equals a value in its record (its map's originals and ``requested``) or a
-    substitute another key already emitted there; a shared substitute also collides with another key's own proposal.
-    A colliding entry falls back to its own substitute, then to a placeholder. The first entry of a key fixes the
-    record's shared substitute; a later colliding variant falls back for itself only, so a third variant still tries
-    the shared one. In ``"run"`` mode a substitute emitted for one key anywhere in the run collides for every other
-    key, and placeholders are numbered across the run. A key holding a run-wide mapping ignores other keys'
-    proposals, so its run-wide substitute wins over them. When that substitute collides in a record and the key falls
-    back, its fallback is checked like any other key's: a key earlier in the record that already emitted the same
-    value keeps it, and the holder moves on to a placeholder.
+    ``"record"`` shares within each record; ``"run"`` also gives each key the first record's substitute. A shared
+    substitute collides when its folded form equals a value in its record (its map's originals and ``requested``), a
+    substitute another key already emitted there, or another key's own proposal; a colliding entry falls back to its own
+    substitute. In ``"record"`` mode that fallback is kept unless it equals a value in its record, so two keys of a
+    record can share a substitute; otherwise it becomes a placeholder. The first entry of a key fixes the record's
+    shared substitute; a later colliding variant falls back for itself only, so a third variant still tries the shared
+    one.
 
-    When given, ``tally`` counts each fallback as ``(label, step)`` with step ``own``, ``placeholder_taken`` or
-    ``placeholder_protected`` (its own proposal folds to a value in its record), plus ``("records_with_placeholder",)``.
+    In ``"run"`` mode the fallback also collides with a substitute another key emitted in the record, and a substitute
+    emitted for one key anywhere in the run collides for every other key, so two keys never share one; placeholders are
+    numbered across the run. A key holding a run-wide mapping ignores other keys' proposals, so its run-wide substitute
+    wins over them. When that substitute collides in a record and the key falls back, its fallback is checked like any
+    other key's: a key earlier in the record that already emitted the same value keeps it, and the holder moves on to a
+    placeholder.
+
+    When given, ``tally`` counts each fallback as ``(label, step)`` with step ``own``, ``placeholder_taken``
+    (``"run"`` only) or ``placeholder_protected`` (its own proposal folds to a value in its record), plus
+    ``("records_with_placeholder",)``.
     """
     run_wide: dict[tuple[str, str], tuple[str, str]] = {}
     taken: dict[str, set[tuple[str, str]]] = {}
@@ -214,8 +219,9 @@ def _fold_replacement_maps(
                 step = "own" if entry["synthetic"] != synthetic else None
                 source = own
                 synthetic = entry["synthetic"]
-                if collides(_fold(synthetic), key, shared=False):
-                    in_record = _fold(synthetic) in originals
+                value = _fold(synthetic)
+                if value in originals if consistency == "record" else collides(value, key, shared=False):
+                    in_record = value in originals
                     step = "placeholder_protected" if in_record else "placeholder_taken"
                     placeholders[entry["label"]] += 1
                     used += 1
