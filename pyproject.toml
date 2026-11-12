@@ -8,7 +8,7 @@ license = "Apache-2.0"
 
 dependencies = [
     "certifi>=2026.10.19", # Updated CA bundle for the eMudhra compromise
-    "data-designer>=0.10.0,<0.11",
+    "data-designer>=1.0.0rc4,<1.1",
     "pydantic>=2.9,<3",
     "pydantic-settings>=2.12,<3",
     "cyclopts>=3",
