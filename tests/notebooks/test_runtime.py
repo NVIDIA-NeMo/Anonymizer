@@ -377,3 +377,31 @@ def test_replacement_during_first_acquisition_is_owned_and_stopped(monkeypatch: 
             assert _runtime.os.environ[_runtime.LOCAL_TOKEN_ENV] == "original"
     finally:
         _runtime.stop_local_runtime()
+
+
+@pytest.mark.parametrize(
+    ("argv", "prepared", "served"),
+    [(["serve", "--prepare"], True, False), (["serve", "--host", "127.0.0.1", "--port", "9001"], False, True)],
+)
+def test_serve_entry_prepares_only_or_execs_the_server(
+    monkeypatch: pytest.MonkeyPatch, argv: list[str], prepared: bool, served: bool
+) -> None:
+    from anonymizer.engine.local_inference import serve
+
+    monkeypatch.setattr(serve.sys, "argv", argv)
+    with (
+        patch.object(serve, "prepare_development_server") as prepare,
+        patch.object(serve, "run_development_server") as run,
+    ):
+        serve.main()
+    assert prepare.called is prepared
+    assert run.called is served
+
+
+def test_installer_uses_uv_when_the_environment_has_no_pip(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_runtime.importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr(_runtime.shutil, "which", lambda name: "/bin/uv" if name == "uv" else None)
+    assert _runtime._installer_command() == ["/bin/uv", "pip", "install", "--python", _runtime.sys.executable]
+    monkeypatch.setattr(_runtime.shutil, "which", lambda name: None)
+    with pytest.raises(RuntimeError, match="pip in this environment or uv on PATH"):
+        _runtime._installer_command()

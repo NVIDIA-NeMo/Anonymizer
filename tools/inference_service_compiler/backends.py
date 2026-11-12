@@ -17,7 +17,8 @@ from inference_service_compiler.models import Gliner2Backend, ServiceSpec, VllmB
 VLLM_PYTHON = "tools/inference-service-runtime/.venv/bin/python"
 VLLM_ENTRY = "tools/inference_service_compiler/vllm_server.py"
 GLINER2_PYTHON = ".venv/bin/python"
-GLINER2_MODULE = "anonymizer.engine.local_inference.gliner2.server"
+GLINER2_MODULE = "anonymizer.engine.local_inference.serve"
+"""Builds or reuses the isolated GLiNER2 environment, then execs the server in place (same PID)."""
 GLINER2_TOKEN_ENV = "ANONYMIZER_LOCAL_GLINER2_TOKEN"
 GLINER2_DEVICE_ENV = "ANONYMIZER_LOCAL_GLINER2_DEVICE"
 
@@ -69,7 +70,7 @@ def _gliner2_traits(spec: ServiceSpec, backend: Gliner2Backend) -> BackendTraits
     python = spec.python_executable or GLINER2_PYTHON
     return BackendTraits(
         argv=(python, "-m", GLINER2_MODULE, "--host", spec.host, "--port", str(spec.port)),
-        validate_argv=(python, "-c", f"import {GLINER2_MODULE}"),
+        validate_argv=(python, "-m", GLINER2_MODULE, "--prepare"),
         served_model_name=backend.model_name,
         api_key_child_env=GLINER2_TOKEN_ENV,
         probe=lambda client, base_url: _probe_detection(client, base_url, backend.model_name),

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import atexit
 import hashlib
+import importlib.util
 import logging
 import os
 import platform
@@ -262,19 +263,7 @@ def _ensure_server_environment() -> Path:
     try:
         print("Preparing the isolated native GLiNER2 runtime (first start only)...")
         temporary_packages = temporary / "site-packages"
-        subprocess.check_call(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "--no-warn-conflicts",
-                "--target",
-                str(temporary_packages),
-                *_SERVER_REQUIREMENTS,
-            ]
-        )
+        subprocess.check_call([*_installer_command(), "--target", str(temporary_packages), *_SERVER_REQUIREMENTS])
         (temporary / ".ready").write_text(identity)
         if environment.exists():
             shutil.rmtree(temporary)
@@ -284,6 +273,21 @@ def _ensure_server_environment() -> Path:
         shutil.rmtree(temporary, ignore_errors=True)
         raise
     return environment / "site-packages"
+
+
+def _installer_command() -> list[str]:
+    """Return a ``pip install`` prefix for this interpreter; uv-created environments ship without pip."""
+    if importlib.util.find_spec("pip") is not None:
+        return [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--no-warn-conflicts"]
+    uv = shutil.which("uv")
+    if uv is None:
+        raise RuntimeError("Preparing native GLiNER2 needs pip in this environment or uv on PATH.")
+    return [uv, "pip", "install", "--python", sys.executable]
+
+
+def prepare_development_server() -> Path:
+    """Build or reuse the isolated environment without starting the server; return its import path."""
+    return _ensure_server_environment()
 
 
 def run_development_server() -> None:

@@ -34,9 +34,12 @@ Eight profiles ship in `tools/inference_service_profiles/`:
 | `nemotron-3.5-lightning-nvfp4.toml` | `nemotron-3.5-lightning-nvfp4-local` | Official NVFP4 checkpoint with a conservative single-H100 configuration |
 
 Each generation profile pins its Hugging Face revision and runs stock vLLM.
-The detector profile runs `anonymizer.engine.local_inference.gliner2.server`
-from the main project environment (`.venv/bin/python`); the server pins the
-GLiNER2 checkpoint and revision itself.
+The detector profile starts from the main project environment
+(`.venv/bin/python -m anonymizer.engine.local_inference.serve`), which runs
+Anonymizer's native GLiNER2 server from a cached, dependency-isolated
+environment; the server pins the GLiNER2 checkpoint and revision itself.
+`validate` builds or reuses that environment (a one-time `pip` install), so run
+it before the first `launch`.
 
 The generation profiles select vLLM reasoning parsers through
 `[backend.options].reasoning-parser`: `openai_gptoss` for GPT-OSS, `nemotron_v3` for

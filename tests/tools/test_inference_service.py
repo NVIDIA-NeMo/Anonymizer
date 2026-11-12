@@ -100,12 +100,12 @@ def test_vllm_plan_hands_the_child_its_typed_launch_spec() -> None:
     assert plan.served_model_name == "local-generator"
 
 
-def test_gliner2_plan_runs_the_native_server_from_the_project_environment() -> None:
+def test_gliner2_plan_runs_the_native_server_through_its_isolated_environment() -> None:
     plan = compiler.compile_spec(detection(host="127.0.0.2", port=9001))
     assert plan.argv == (
         ".venv/bin/python",
         "-m",
-        "anonymizer.engine.local_inference.gliner2.server",
+        "anonymizer.engine.local_inference.serve",
         "--host",
         "127.0.0.2",
         "--port",
@@ -266,8 +266,13 @@ def test_gliner2_launch_delivers_token_and_device_to_the_native_server(tmp_path:
     assert "VLLM_API_KEY" not in environment
 
 
-def test_gliner2_validation_imports_the_native_server_in_its_interpreter(tmp_path: Path) -> None:
-    runtime.validate_plan(compiler.compile_spec(detection(python_executable=sys.executable)))
+def test_gliner2_validation_prepares_the_isolated_environment_in_its_interpreter(tmp_path: Path) -> None:
+    assert backends.traits(detection()).validate_argv == (
+        ".venv/bin/python",
+        "-m",
+        "anonymizer.engine.local_inference.serve",
+        "--prepare",
+    )
     bare = tmp_path / "bare"
     venv.EnvBuilder(with_pip=False, symlinks=True).create(bare)
     with pytest.raises(runtime.RuntimeEffectError, match="validation failed"):
