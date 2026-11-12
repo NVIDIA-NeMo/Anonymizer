@@ -42,9 +42,9 @@ GLiNER2 service, or an internal inference deployment. Plain `Anonymizer()` uses 
 detector and [OpenRouter](https://openrouter.ai) LLM settings; override when your models point
 at different provider names or URLs.
 
-For managed GLiNER through vLLM Factory and vLLM generation endpoints, see
+For managed local GLiNER2 and vLLM generation endpoints, see
 [Deploy local models](inference-services.md). That guide covers host and GPU
-container deployment, immutable plans, capability receipts, cleanup, and
+container deployment, immutable plans, launch receipts, cleanup, and
 provider configuration.
 
 Set your API keys first:

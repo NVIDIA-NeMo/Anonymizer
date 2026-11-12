@@ -33,8 +33,8 @@ the normal OpenAI-compatible request. Anonymizer always sends `labels`, `thresho
 }
 ```
 
-The native server and vLLM Factory adapter implement this HTTP contract, including `overlap` and
-`flat_ner`. The contract does not promise identical predictions across runtimes. Model versions,
+The native server implements this HTTP contract, including `overlap` and `flat_ner`. The contract
+does not promise identical predictions across runtimes. Model versions,
 inference engines, and overlap resolution can produce different entity lists.
 
 !!! note "Chunk defaults and units"
@@ -68,11 +68,11 @@ The response must use the chat-completion shape. `message.content` is a JSON str
 }
 ```
 
-For Linux/NVIDIA GPU production deployments, use the managed vLLM Factory path described in
-[Run local inference services](inference-services.md). Other production deployments should provide
-the chat-completion contract through a separately managed, authenticated service and configure its
-provider endpoint in `providers.yaml`. The native PyTorch server bundled with Anonymizer is intended
-only for notebooks and development.
+On Linux/NVIDIA GPU hosts, the managed tool described in
+[Run local inference services](inference-services.md) launches this native server with launch
+receipts, ownership checks, and bounded cleanup. Other production deployments should provide the
+chat-completion contract through a separately managed, authenticated service and configure its
+provider endpoint in `providers.yaml`.
 
 ## Native Runtime
 
