@@ -143,7 +143,8 @@ nvidia-smi
 ```
 
 The serving project's lockfile pins vLLM 0.33.0 and the CUDA compiler wheels
-used by the Nemotron FlashInfer profile. Its environment does
+that FlashInfer uses to JIT-compile kernels (sampling for GPT-OSS, Mamba for
+Nemotron). Its environment does
 not install Anonymizer or DataDesigner. Install Anonymizer separately for client
 code; the native notebook runtime continues to use the notebook extra.
 

@@ -9,6 +9,8 @@ import tomllib
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from inference_service_compiler import vllm_runtime
 
 TOOLS_ROOT = Path(__file__).resolve().parents[2] / "tools"
@@ -53,7 +55,7 @@ def test_child_configures_packaged_cuda_for_flashinfer(tmp_path: Path) -> None:
         mock.patch.object(vllm_runtime.Path, "home", return_value=tmp_path),
         mock.patch.dict(os.environ, {}, clear=True),
     ):
-        vllm_runtime.configure_flashinfer_toolchain()
+        vllm_runtime.configure_flashinfer_toolchain(required=False)
 
         root_digest = vllm_runtime.hashlib.sha256(os.fsencode(cuda_root.resolve())).hexdigest()[:16]
         link_directory = tmp_path / ".cache" / "nemo-anonymizer" / "cuda-link" / root_digest
@@ -61,3 +63,14 @@ def test_child_configures_packaged_cuda_for_flashinfer(tmp_path: Path) -> None:
         assert os.environ["LIBRARY_PATH"] == str(link_directory)
         assert os.environ["LD_LIBRARY_PATH"] == str(cuda_root / "lib")
         assert (link_directory / "libcudart.so").resolve() == runtime
+
+
+def test_flashinfer_toolchain_is_optional_unless_the_profile_requires_it() -> None:
+    with (
+        mock.patch.object(vllm_runtime, "_packaged_cuda_root", return_value=None),
+        mock.patch.dict(os.environ, {}, clear=True),
+    ):
+        vllm_runtime.configure_flashinfer_toolchain(required=False)
+        assert "CUDA_HOME" not in os.environ
+        with pytest.raises(RuntimeError, match="requires a CUDA compiler"):
+            vllm_runtime.configure_flashinfer_toolchain(required=True)

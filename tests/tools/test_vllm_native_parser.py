@@ -118,5 +118,5 @@ def test_validate_mode_parses_and_validates_without_serving() -> None:
         flashinfer.assert_not_called()
 
         vllm_runtime.run_server(list(plan.argv[2:]))
-        flashinfer.assert_called_once_with()
+        flashinfer.assert_called_once_with(required=True)
         serve.assert_called_once_with(parser.parse_args.return_value)

@@ -72,8 +72,10 @@ def run_server(argv: Sequence[str]) -> None:
     vllm_compat.validate_serve_arguments(arguments)
     if validate_only:
         return
-    if str(_vllm_backend(spec).options.get("mamba-backend", "")).lower() == "flashinfer":
-        configure_flashinfer_toolchain()
+    # vLLM 0.33 JIT-compiles FlashInfer kernels (sampling, for example) for many models, not only Mamba.
+    configure_flashinfer_toolchain(
+        required=str(_vllm_backend(spec).options.get("mamba-backend", "")).lower() == "flashinfer"
+    )
     vllm_compat.run_api_server(arguments)
 
 
@@ -135,8 +137,11 @@ def _cudart_link_directory(cuda_root: Path) -> Path:
     return link_directory
 
 
-def configure_flashinfer_toolchain() -> None:
-    """Configure FlashInfer JIT from the CUDA wheels pinned with vLLM."""
+def configure_flashinfer_toolchain(*, required: bool) -> None:
+    """Configure FlashInfer JIT from the CUDA wheels pinned with vLLM.
+
+    Without ``CUDA_HOME`` or the wheels, raise only when the profile ``required`` FlashInfer.
+    """
     configured = os.environ.get("CUDA_HOME")
     if configured:
         compiler = Path(configured) / "bin" / "nvcc"
@@ -145,9 +150,9 @@ def configure_flashinfer_toolchain() -> None:
         return
     cuda_root = _packaged_cuda_root()
     if cuda_root is None:
-        raise RuntimeError(
-            "FlashInfer Mamba requires a CUDA compiler; sync tools/inference-service-runtime or set CUDA_HOME"
-        )
+        if not required:
+            return
+        raise RuntimeError("FlashInfer requires a CUDA compiler; sync tools/inference-service-runtime or set CUDA_HOME")
     os.environ["CUDA_HOME"] = str(cuda_root)
     _prepend_environment_path("LIBRARY_PATH", _cudart_link_directory(cuda_root))
     _prepend_environment_path("LD_LIBRARY_PATH", cuda_root / "lib")
