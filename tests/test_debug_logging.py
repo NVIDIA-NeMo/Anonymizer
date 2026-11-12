@@ -70,7 +70,7 @@ def debug_messages(
     config = AnonymizerConfig(replace=Redact())
     with caplog.at_level(logging.DEBUG, logger="anonymizer"):
         _stub_anonymizer.run(config=config, data=AnonymizerInput(source=str(csv_path)))
-    return [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+    return [r.message for r in caplog.records if r.levelno >= logging.DEBUG]
 
 
 @pytest.mark.parametrize(

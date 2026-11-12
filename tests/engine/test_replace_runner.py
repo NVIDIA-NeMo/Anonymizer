@@ -34,7 +34,7 @@ from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import Attrib
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, WorkflowRunResult
-from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult, LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.replace.strategies import apply_replacement_map
 from anonymizer.engine.schemas import EntitiesSchema
@@ -126,6 +126,74 @@ def test_substitute_runner_applies_generated_map(
         "skipped_span_count": 0,
         "skipped_span_label_counts": {},
     }
+
+
+@pytest.mark.parametrize("replace_method", [Redact(), Substitute()], ids=["redact", "substitute"])
+@pytest.mark.parametrize(
+    "malformed",
+    ["{not json", {"entities": [{"value": "Bob", "start_position": "x"}]}, 42],
+    ids=["json", "schema", "shape"],
+)
+def test_malformed_entities_row_fails_while_others_are_replaced(
+    replace_method: Redact | Substitute,
+    malformed: object,
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+    stub_entities: list[dict],
+) -> None:
+    def _generate_map_only(dataframe: pd.DataFrame, **_: object) -> LlmReplaceResult:
+        replacements = [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]
+        return LlmReplaceResult(
+            dataframe=dataframe.assign(**{COL_REPLACEMENT_MAP: [{"replacements": replacements}] * len(dataframe)}),
+            failed_records=[],
+        )
+
+    llm_workflow = Mock()
+    llm_workflow.generate_map_only.side_effect = _generate_map_only
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme", "Bob works at Acme"],
+            COL_FINAL_ENTITIES: [{"entities": stub_entities[:1]}, malformed],
+            RECORD_ID_COLUMN: ["r0", "r1"],
+        }
+    )
+    result = ReplacementWorkflow(llm_workflow=llm_workflow).run(
+        dataframe,
+        replace_method=replace_method,
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+    assert [(f.record_id, f.step) for f in result.failed_records] == [("r1", "replace")]
+    assert "Bob" not in result.failed_records[0].reason
+    assert result.dataframe[RECORD_ID_COLUMN].tolist() == ["r0"]
+    assert "Alice" not in result.dataframe[COL_REPLACED_TEXT].iloc[0]
+
+
+@pytest.mark.parametrize("replace_method", [Redact(), Substitute()], ids=["redact", "substitute"])
+def test_all_malformed_rows_fail_without_calling_the_model(
+    replace_method: Redact | Substitute,
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    adapter = Mock()
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["Bob works at Acme", "Eve works at Beta"],
+            COL_FINAL_ENTITIES: ["{not json", 42],
+            COL_ENTITIES_BY_VALUE: [{"entities_by_value": []}] * 2,
+            RECORD_ID_COLUMN: ["r0", "r1"],
+        }
+    )
+    result = ReplacementWorkflow(llm_workflow=LlmReplaceWorkflow(adapter=adapter)).run(
+        dataframe,
+        replace_method=replace_method,
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+    assert [(f.record_id, f.step) for f in result.failed_records] == [("r0", "replace"), ("r1", "replace")]
+    assert result.dataframe.empty
+    assert COL_REPLACED_TEXT in result.dataframe.columns
+    adapter.run_workflow.assert_not_called()
 
 
 def test_apply_replacement_map_reports_invalid_and_overlapping_spans() -> None:

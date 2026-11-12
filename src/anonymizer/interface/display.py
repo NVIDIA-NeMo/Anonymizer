@@ -25,7 +25,9 @@ from anonymizer.engine.constants import (
     COL_ENTITY_COVERAGE_N_CANDIDATES,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
+    COL_LEAKAGE_MASS,
     COL_MISSED_ENTITIES,
+    COL_NEEDS_HUMAN_REVIEW,
     COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
     COL_RELATIONAL_CONSISTENCY_JUDGE,
     COL_RELATIONAL_CONSISTENCY_VALID,
@@ -33,6 +35,8 @@ from anonymizer.engine.constants import (
     COL_SENSITIVITY_DISPOSITION,
     COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
     COL_TYPE_FIDELITY_VALID,
+    COL_UTILITY_SCORE,
+    COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.schemas import (
     EntitiesByValueSchema,
@@ -438,10 +442,10 @@ def _render_scores_section(row: pd.Series, *, is_rewrite: bool = False) -> str:
     # --- Row 1: objective metrics + needs-review badge ---
     metric_parts: list[str] = []
 
-    utility = row.get("utility_score")
-    leakage = row.get("leakage_mass")
-    weighted_leakage_rate = row.get("weighted_leakage_rate")
-    needs_review = row.get("needs_human_review")
+    utility = row.get(COL_UTILITY_SCORE)
+    leakage = row.get(COL_LEAKAGE_MASS)
+    weighted_leakage_rate = row.get(COL_WEIGHTED_LEAKAGE_RATE)
+    needs_review = row.get(COL_NEEDS_HUMAN_REVIEW)
 
     if utility is not None:
         metric_parts.append(f"<span style='margin-right:16px'><strong>Utility:</strong> {utility:.2f}</span>")

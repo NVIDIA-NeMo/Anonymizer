@@ -10,10 +10,7 @@ validator pool. The per-chunk decisions are merged into a
 ``ValidationDecisionsSchema``-shaped payload consumed by
 ``enrich_validation_decisions`.
 
-Public entry point: :func:`make_chunked_validation_generator`, which
-produces a ``@custom_column_generator``-decorated function bound to a
-concrete pool. Plugin columns call :func:`chunked_validate_row_async`
-directly. The helpers below are exposed for unit testing.
+Plugin columns call :func:`chunked_validate_row_async` directly.
 
 Failure contract. Each chunk attempts its round-robin primary first and
 fails over sequentially to the rest of the pool; a chunk only fails when
@@ -23,8 +20,7 @@ the generator, DataDesigner drops the row, and
 Raw text never silently leaks through as unscrubbed output.
 
 Concurrency. Async plugin execution dispatches chunks with ``asyncio.gather``
-and ``facade.agenerate()``. The plugin's synchronous execution path uses a
-``ThreadPoolExecutor`` and ``facade.generate()``. Per-alias concurrency is
+and ``facade.agenerate()``. Per-alias concurrency is
 enforced downstream by DataDesigner's request-admission layer, so the optional
 row-level cap only bounds local fan-out pressure.
 """
@@ -35,10 +31,8 @@ import asyncio
 import functools
 import logging
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from data_designer.config import custom_column_generator
 from data_designer.engine.models.recipes.response_recipes import PydanticResponseRecipe
 from jinja2 import BaseLoader, Environment, StrictUndefined
 from pydantic import BaseModel, Field
@@ -87,21 +81,22 @@ def _compile_template(template: str) -> Any:
 
 
 class ChunkedValidationParams(BaseModel):
-    """Parameters supplied to :func:`chunked_validate_row` via DD's ``generator_params``.
+    """Parameters for :func:`chunked_validate_row_async`.
 
     Attributes:
         pool: Ordered list of validator model aliases. Chunk ``i`` is dispatched
             to ``pool[i % len(pool)]`` as its primary; on any terminal exception
             from that alias the chunk fails over through the rest of the pool
             (starting from the next position, wrapping around). Must be
-            non-empty and every alias must also be present in the decorator's
-            ``model_aliases`` so DataDesigner materialises the facade.
+            non-empty and every alias must be present in the model registry.
         max_entities_per_call: Upper bound on candidates per chunk.
         excerpt_window_chars: Chars of surrounding raw text included in each
             chunk's excerpt on either side of the chunk span.
         max_parallel_chunks: Optional row-local cap on concurrently dispatched
             chunks. Plugin generators derive a default cap from validator model
             capacity.
+        max_conversation_restarts: Full conversation restarts allowed per alias.
+        max_correction_steps: Correction rounds allowed per conversation.
         single_chunk_full_text: If True, a row with one validation chunk sees
             the full tagged document. If False, even a single chunk uses the
             excerpt window. The default preserves production parity with the
@@ -125,6 +120,8 @@ class ChunkedValidationParams(BaseModel):
     max_entities_per_call: int = Field(gt=0)
     excerpt_window_chars: int = Field(gt=0)
     max_parallel_chunks: int | None = Field(default=None, gt=0)
+    max_conversation_restarts: int = Field(default=0, ge=0)
+    max_correction_steps: int = Field(default=0, ge=0)
     single_chunk_full_text: bool = True
     prompt_template: str = Field(repr=False)
     system_prompt: str | None = Field(default=None, repr=False)
@@ -299,102 +296,16 @@ def merge_chunk_decisions(
 # ---------------------------------------------------------------------------
 
 
-def _dispatch_chunk(
-    *,
-    facades: list[tuple[str, Any]],
-    prompt: str,
-    system_prompt: str | None,
-    chunk_index: int,
-) -> RawValidationDecisionsSchema:
-    """Dispatch a single chunk with cross-alias failover across the pool.
-
-    ``facades`` is an ordered list of ``(alias, facade)`` pairs. The first
-    entry is the chunk's round-robin-assigned primary; subsequent entries
-    are the rest of the pool, tried in order on any terminal exception from
-    the primary. Each facade carries its own transport-level retry policy
-    (``RetryConfig.max_retries`` + exponential backoff on 5xx and connection
-    errors) and its own AIMD throttling on 429, so by the time an exception
-    escapes the facade call we consider that alias exhausted for this chunk.
-
-    We use ``PydanticResponseRecipe`` so the facade appends JSON task
-    instructions and parses the response into ``RawValidationDecisionsSchema``.
-
-    Single-alias pools run the loop exactly once and re-raise the original
-    exception (no alternate alias to try). Multi-alias pools get
-    ``len(pool)`` total attempts. If every pool member raises, the *last*
-    exception propagates so DataDesigner records the row as a
-    ``FailedRecord`` via ``NddAdapter._detect_missing_records``.
-
-    Each failover attempt is logged at WARNING so operators can correlate
-    degraded pool members with run-level failure-rate spikes.
-    """
-    recipe = PydanticResponseRecipe(data_type=RawValidationDecisionsSchema)
-    final_prompt = recipe.apply_recipe_to_user_prompt(prompt)
-    final_system = recipe.apply_recipe_to_system_prompt(system_prompt)
-
-    last_exc: BaseException | None = None
-    for attempt_index, (alias, facade) in enumerate(facades):
-        try:
-            output, _messages = facade.generate(
-                prompt=final_prompt,
-                parser=recipe.parse,
-                system_prompt=final_system,
-                purpose=f"entity-validation-chunk-{chunk_index}-attempt-{attempt_index}",
-            )
-            if attempt_index > 0:
-                logger.info(
-                    "validator chunk %d: recovered on failover alias=%s (attempt %d of %d)",
-                    chunk_index,
-                    alias,
-                    attempt_index + 1,
-                    len(facades),
-                )
-            return output
-        except Exception as exc:  # noqa: BLE001 — we classify by failover position, not type
-            last_exc = exc
-            remaining = len(facades) - attempt_index - 1
-            if remaining > 0:
-                logger.warning(
-                    "validator chunk %d: alias=%s raised %s (%s); failing over to next pool member (%d remaining)",
-                    chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
-                    remaining,
-                )
-            else:
-                logger.error(
-                    "validator chunk %d: alias=%s raised %s (%s); pool exhausted — row will be dropped",
-                    chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
-                )
-
-    # ``facades`` is non-empty by caller contract: ``chunked_validate_row``
-    # builds it from the configured pool, and the config validator requires
-    # a non-empty pool. After the loop, ``last_exc`` is therefore set and
-    # we re-raise it. The ``None`` branch exists only to give a loud,
-    # named error if that precondition is ever violated (rather than
-    # ``raise None``, which would surface as ``TypeError: exceptions must
-    # derive from BaseException``) and to keep the guard live under
-    # ``python -O``, which strips ``assert``.
-    if last_exc is None:
-        raise RuntimeError(
-            "_dispatch_chunk was called with an empty facades list; "
-            "this violates the caller contract (a non-empty validator pool)."
-        )
-    raise last_exc
-
-
 async def _dispatch_chunk_async(
     *,
     facades: list[tuple[str, Any]],
     prompt: str,
     system_prompt: str | None,
     chunk_index: int,
+    max_conversation_restarts: int,
+    max_correction_steps: int,
 ) -> RawValidationDecisionsSchema:
-    """Async equivalent of :func:`_dispatch_chunk`, preserving failover order."""
+    """Dispatch a chunk with sequential failover through the validator pool."""
     recipe = PydanticResponseRecipe(data_type=RawValidationDecisionsSchema)
     final_prompt = recipe.apply_recipe_to_user_prompt(prompt)
     final_system = recipe.apply_recipe_to_system_prompt(system_prompt)
@@ -407,6 +318,8 @@ async def _dispatch_chunk_async(
                 parser=recipe.parse,
                 system_prompt=final_system,
                 purpose=f"entity-validation-chunk-{chunk_index}-attempt-{attempt_index}",
+                max_conversation_restarts=max_conversation_restarts,
+                max_correction_steps=max_correction_steps,
             )
             if attempt_index > 0:
                 logger.info(
@@ -455,8 +368,7 @@ def _build_dispatch_kwargs_per_chunk(
     if missing_aliases:
         raise KeyError(
             f"Validator pool aliases {missing_aliases} not present in models dict. "
-            f"Ensure make_chunked_validation_generator was invoked with the same pool "
-            f"passed in ChunkedValidationParams.pool."
+            "Ensure models contains every alias in ChunkedValidationParams.pool."
         )
 
     text = str(row.get(COL_TEXT, ""))
@@ -539,7 +451,7 @@ def _build_dispatch_kwargs_per_chunk(
         # guarantees ``pool`` is non-empty; ``chunk_index`` comes from
         # ``enumerate`` so it's non-negative by construction. The rotated
         # order (primary first, then the rest of the pool) is what
-        # ``_dispatch_chunk`` walks on cross-alias failover.
+        # ``_dispatch_chunk_async`` walks on cross-alias failover.
         start = chunk_index % len(params.pool)
         rotated_aliases = [params.pool[(start + offset) % len(params.pool)] for offset in range(len(params.pool))]
         chunk_facades = [(alias, models[alias]) for alias in rotated_aliases]
@@ -549,6 +461,8 @@ def _build_dispatch_kwargs_per_chunk(
                 "prompt": prompt,
                 "system_prompt": params.system_prompt,
                 "chunk_index": chunk_index,
+                "max_conversation_restarts": params.max_conversation_restarts,
+                "max_correction_steps": params.max_correction_steps,
             }
         )
 
@@ -571,33 +485,6 @@ async def _bounded_dispatch_chunk_async(
         return await _dispatch_chunk_async(**kwargs)
 
 
-def chunked_validate_row(
-    row: dict[str, Any],
-    params: ChunkedValidationParams,
-    models: dict[str, Any],
-) -> dict[str, Any]:
-    """Run chunked validation for a single row and write ``COL_VALIDATION_DECISIONS``.
-
-    The plugin's synchronous generator uses this path. Its asynchronous generator
-    calls :func:`chunked_validate_row_async`.
-    """
-    candidates, dispatch_kwargs_per_chunk = _build_dispatch_kwargs_per_chunk(row, params, models)
-
-    # Dispatch all chunks concurrently via a ThreadPoolExecutor. Per-alias
-    # concurrency is still capped downstream by each facade's
-    # request-admission layer. ``f.result()`` re-raises the first chunk
-    # exception; a single terminal chunk failure fails the row.
-    if not dispatch_kwargs_per_chunk:
-        chunk_results: list[RawValidationDecisionsSchema] = []
-    else:
-        with ThreadPoolExecutor(max_workers=_chunk_worker_count(params, len(dispatch_kwargs_per_chunk))) as executor:
-            futures = [executor.submit(_dispatch_chunk, **kwargs) for kwargs in dispatch_kwargs_per_chunk]
-            chunk_results = [f.result() for f in futures]
-
-    row[COL_VALIDATION_DECISIONS] = merge_chunk_decisions(chunk_results, candidates)
-    return row
-
-
 async def chunked_validate_row_async(
     row: dict[str, Any],
     params: ChunkedValidationParams,
@@ -615,40 +502,3 @@ async def chunked_validate_row_async(
 
     row[COL_VALIDATION_DECISIONS] = merge_chunk_decisions(chunk_results, candidates)
     return row
-
-
-# ---------------------------------------------------------------------------
-# DataDesigner wiring factory.
-# ---------------------------------------------------------------------------
-
-
-def make_chunked_validation_generator(pool: list[str]) -> Any:
-    """Build a ``@custom_column_generator``-decorated function bound to ``pool``.
-
-    ``model_aliases`` must be declared statically on the decorator so
-    DataDesigner knows which facades to materialise for the generator. Since
-    the pool is config-driven (per-run), we generate the function dynamically.
-    The required_columns are exhaustive for DataDesigner's DAG ordering: the
-    generator reads the raw text, seed entities (for positions), the candidate
-    list (what to decide), and the tag notation (for excerpt tagging).
-    """
-    if not pool:
-        raise ValueError("Cannot build chunked validation generator: pool is empty.")
-
-    @custom_column_generator(
-        required_columns=[
-            COL_TEXT,
-            COL_SEED_ENTITIES,
-            COL_SEED_VALIDATION_CANDIDATES,
-            COL_TAG_NOTATION,
-        ],
-        model_aliases=list(pool),
-    )
-    def chunked_validate(
-        row: dict[str, Any],
-        generator_params: ChunkedValidationParams,
-        models: dict[str, Any],
-    ) -> dict[str, Any]:
-        return chunked_validate_row(row, generator_params, models)
-
-    return chunked_validate

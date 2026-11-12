@@ -213,10 +213,10 @@ def _make_repair_column(repairer_alias: str) -> Any:
         ],
         model_aliases=[repairer_alias],
     )
-    def _repair_column(row: dict[str, Any], generator_params: RepairParams, models: dict) -> dict[str, Any]:
+    async def _repair_column(row: dict[str, Any], generator_params: RepairParams, models: dict) -> dict[str, Any]:
         recipe = PydanticResponseRecipe(data_type=RewriteOutputSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_repair_prompt(row, generator_params))
-        result, _ = models[repairer_alias].generate(prompt=prompt, parser=recipe.parse, max_correction_steps=3)
+        result, _ = await models[repairer_alias].agenerate(prompt=prompt, parser=recipe.parse, max_correction_steps=3)
         row[COL_REWRITTEN_TEXT_NEXT] = result.rewritten_text
         return row
 

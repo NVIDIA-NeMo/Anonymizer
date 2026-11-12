@@ -3,14 +3,17 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import re
+import sys
 import time
 import uuid
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, TypeGuard, cast
+from typing import TYPE_CHECKING, Protocol, TypedDict, TypeGuard, cast
 
 from data_designer.config.models import ModelProvider
 from data_designer.config.run_config import RunConfig
@@ -97,16 +100,25 @@ if TYPE_CHECKING:
     import pandas as pd
     from data_designer.config.config_builder import DataDesignerConfigBuilder
 
+if sys.version_info >= (3, 14):
+    import annotationlib
+
 logger = logging.getLogger("anonymizer")
 
 
 def _has_entities_for_evaluation(raw: object) -> bool:
     """Return whether a row should receive entity-dependent evaluation scores."""
-    try:
-        return bool(EntitiesByValueSchema.from_raw(raw).entities_by_value)
-    except Exception:
-        # Malformed entity metadata should not hide a missing score.
-        return True
+    return bool(EntitiesByValueSchema.from_raw(raw).entities_by_value)
+
+
+def _flag_missed_entities(df: pd.DataFrame) -> pd.DataFrame:
+    """Set needs_human_review on rows whose coverage judge reported missed entities."""
+    if COL_NEEDS_HUMAN_REVIEW not in df.columns or COL_MISSED_ENTITIES not in df.columns:
+        return df
+    # .str.len() sizes list and array cells and gives NaN for None or NaN; astype(object) keeps .str
+    # usable when every cell is NaN.
+    missed = df[COL_MISSED_ENTITIES].astype(object).str.len().gt(0)
+    return df.assign(**{COL_NEEDS_HUMAN_REVIEW: df[COL_NEEDS_HUMAN_REVIEW].mask(missed, True)})
 
 
 def _log_unavailable_scores(
@@ -146,6 +158,40 @@ def _initialize_logging() -> None:
     configure_logging()
 
 
+class _DetectionExampleKwargs(TypedDict, total=False):
+    entity_label_examples: dict[str, list[str]]
+
+
+def _accepts_entity_label_examples(method: Callable[..., object]) -> bool:
+    """Check keyword support; preserve forwarding when a callable cannot be inspected."""
+    try:
+        if sys.version_info >= (3, 14):
+            # Leave unresolvable lazy annotations (e.g. TYPE_CHECKING-only types) as forward references.
+            signature = inspect.signature(method, annotation_format=annotationlib.Format.FORWARDREF)
+        else:
+            signature = inspect.signature(method)
+        parameters = signature.parameters
+    except (TypeError, ValueError):
+        return True
+    parameter = parameters.get("entity_label_examples")
+    return any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()) or (
+        parameter is not None
+        and parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    )
+
+
+def _detection_example_kwargs(method: Callable[..., object], examples: dict[str, list[str]]) -> _DetectionExampleKwargs:
+    """Adapt pre-#275 detectors without dropping explicitly configured examples."""
+    if _accepts_entity_label_examples(method):
+        return {"entity_label_examples": examples}
+    if examples:
+        raise InvalidConfigError(
+            "The configured detection_workflow does not accept entity_label_examples. "
+            "Update the workflow to accept this keyword or remove detect.entity_label_examples."
+        )
+    return {}
+
+
 class Anonymizer:
     """Public facade for anonymization workflows."""
 
@@ -178,7 +224,10 @@ class Anonymizer:
                 applied to the Anonymizer-managed or caller-supplied DataDesigner
                 instance. Use this for DataDesigner execution knobs such as
                 ``buffer_size`` and ``max_in_flight_tasks``.
-            detection_workflow: Custom detection workflow (advanced/testing).
+            detection_workflow: Custom detection workflow (advanced/testing). Methods
+                without an ``entity_label_examples`` keyword remain supported when no
+                examples are configured; configuring examples raises ``InvalidConfigError``
+                if the method does not accept them.
             replace_runner: Custom replacement workflow (advanced/testing).
             rewrite_runner: Custom rewrite workflow (advanced/testing).
             combined_rewrite_runner: Custom combined rewrite workflow (advanced/testing).
@@ -241,8 +290,8 @@ class Anonymizer:
     ) -> AnonymizerResult:
         """Run the full anonymization pipeline (detection + replacement).
 
-        No LLM evaluation judges run here — call :meth:`evaluate` on the
-        result's ``trace_dataframe`` when you want the Judge Agreement scores.
+        No LLM evaluation judges run here — pass the result to
+        :meth:`evaluate` when you want the Judge Agreement scores.
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
@@ -308,7 +357,9 @@ class Anonymizer:
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
-            entity_label_examples=config.detect.entity_label_examples,
+            **_detection_example_kwargs(
+                self._detection_workflow.build_detection_config, config.detect.entity_label_examples
+            ),
             data_summary=data.data_summary,
         )
 
@@ -342,7 +393,9 @@ class Anonymizer:
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
-            entity_label_examples=config.detect.entity_label_examples,
+            **_detection_example_kwargs(
+                self._detection_workflow.build_detection_builder_for_seed, config.detect.entity_label_examples
+            ),
             data_summary=data_summary,
             job_index=job_index,
             num_jobs=num_jobs,
@@ -357,8 +410,8 @@ class Anonymizer:
     ) -> PreviewResult:
         """Run the pipeline on a subset of records for quick inspection.
 
-        No LLM evaluation judges run here — call :meth:`evaluate` on the
-        result's ``trace_dataframe`` when you want the Judge Agreement scores.
+        No LLM evaluation judges run here — pass the result to
+        :meth:`evaluate` when you want the Judge Agreement scores.
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
@@ -550,6 +603,7 @@ class Anonymizer:
                 time.perf_counter() - stage_start,
             )
             all_failed.extend(coverage_failed)
+            judged_df = _flag_missed_entities(judged_df)
             renamed_trace = _rename_output_columns(judged_df, resolved_text_column=text_column)
             result = AnonymizerResult(
                 dataframe=_build_user_dataframe(
@@ -753,7 +807,7 @@ class Anonymizer:
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
-            entity_label_examples=config.detect.entity_label_examples,
+            **_detection_example_kwargs(self._detection_workflow.run, config.detect.entity_label_examples),
             privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
             data_summary=data.data_summary,
             tag_latent_entities=config.rewrite is not None,
@@ -829,6 +883,9 @@ class Anonymizer:
         all_failures = [*detection_result.failed_records, *post_detection_failures]
         if all_failures:
             logger.warning("%d record(s) failed during pipeline processing.", len(all_failures))
+            # Counts only: record ids can be caller-supplied identifiers, so they stay at DEBUG.
+            for (step, reason), count in Counter((f.step, " ".join(f.reason.split())) for f in all_failures).items():
+                logger.warning("  %d × %s: %s", count, step, reason)
             for f in all_failures:
                 logger.debug("  %s (%s: %s)", f.record_id, f.step, f.reason)
         text_col = context.resolved_text_column
@@ -1149,7 +1206,13 @@ def _build_user_dataframe(
 
     if id_column is not None:
         allowed.add(id_column)
-    return t[[col for col in t.columns if col in allowed]].copy()
+    user_df = t[[col for col in t.columns if col in allowed]].copy()
+    for col in (COL_FINAL_ENTITIES, COL_JUDGE_EVALUATION):
+        if col in user_df.columns and user_df[col].dtype != object:
+            # run() can load final_entities, and Rewrite evaluate() judge_evaluation, as an Arrow struct, which
+            # pandas cannot read back from parquet; plain Python objects match preview() and round-trip.
+            user_df[col] = user_df[col].tolist()
+    return user_df
 
 
 # ----------------------------------------------------------------- telemetry helpers
@@ -1225,7 +1288,7 @@ def _step_to_field(step: str) -> str:
             return "latent_detection"
         case "replace-map-generation":
             return "replace_map_generation"
-        case "rewrite-pipeline":
+        case "rewrite-pipeline" | "rewrite-combined":
             return "rewrite_pipeline"
         case "rewrite-final-judge":
             return "rewrite_final_judge"

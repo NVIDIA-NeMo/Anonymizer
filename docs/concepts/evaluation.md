@@ -249,7 +249,7 @@ evaluated = anonymizer.evaluate(loaded)
 
 ### Entity Coverage
 
-Same judge as in replace mode — see [Entity Coverage](#entity-coverage) above. It **always runs** and emits `entity_coverage` and `missed_entities`.
+Same judge as in replace mode — see [Entity Coverage](#entity-coverage) above. It **always runs** and emits `entity_coverage` and `missed_entities`. In Rewrite mode, `evaluate()` also sets `needs_human_review=True` on any row whose `missed_entities` is non-empty.
 
 ---
 

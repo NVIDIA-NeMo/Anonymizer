@@ -101,7 +101,7 @@ Pools also act as **failover**. If a chunk's assigned alias can't complete the c
 
 If validation can't get a complete answer for a row — every alias in the pool has failed on at least one of that row's chunks — the row is **dropped from the output** rather than passed through with some entities unvalidated. This is deliberate: the alternative would be writing the original text back out with those entities still un-scrubbed, which is an undesired outcome.
 
-Dropped rows show up on `result.failed_records` with `step="detection"`, so you can tell which inputs didn't make it through by comparing input IDs against output IDs and reprocess those on a follow-up pass.
+Dropped rows show up on `result.failed_records` with `step="entity-detection"`, so you can tell which inputs didn't make it through by comparing input IDs against output IDs and reprocess those on a follow-up pass.
 
 See [Validator pools](models.md#validator-pools) for the YAML syntax and caveats.
 
@@ -195,6 +195,12 @@ Configured examples affect detection only; they do not guide substitution or eva
 The validator receives the full resolved examples: built-in plus configured examples for default labels, and configured examples for non-default labels. The augmenter receives all active label names but only configured examples, which show it the intended value shape beyond the label name alone. Built-in examples are omitted from the augmenter to limit prompt growth. Keep configured lists short because the validator's full example set is repeated for each validation chunk.
 
 `entity_label_examples` is currently configured through the Python `Detect` API; the CLI does not provide a mapping syntax for this field.
+
+When injecting a custom `detection_workflow` into `Anonymizer`, older methods without
+an `entity_label_examples` keyword continue to work when no examples are configured.
+If examples are configured, `run()`, `preview()`, and the detection export methods raise
+`InvalidConfigError` when the corresponding detector method cannot accept them. Update
+the custom method to accept the keyword or remove `Detect.entity_label_examples`.
 
 ### Excluding entity labels
 
