@@ -250,13 +250,13 @@ Release publishing is handled by `.github/workflows/release.yml`.
 
 ## Local inference service environment
 
-The vLLM serving tool has an independent Python 3.12 uv project at
+The vLLM serving runtime has an independent Python 3.12 uv project at
 `tools/inference-service-runtime`. Its lockfile resolves separately from
 Anonymizer and DataDesigner. From the repository root:
 
 ```bash
 uv sync --project tools/inference-service-runtime --locked --group test
-uv run --project tools/inference-service-runtime --locked --group test pytest --confcutdir tests/tools tests/tools/test_inference_service.py tests/tools/test_vllm_factory*.py
+uv run --project tools/inference-service-runtime --locked --group test pytest --confcutdir tests/tools tests/tools/test_inference_service.py tests/tools/test_vllm_*.py
 ```
 
 `--confcutdir` keeps the serving tests independent of Anonymizer's test fixtures.

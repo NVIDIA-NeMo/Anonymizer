@@ -189,12 +189,11 @@ make install-pre-commit   # Install pre-commit hooks
 ### Local inference services
 
 Use the source-tree local-model deployment tool to create checksummed plans and
-managed launch receipts for GLiNER or GLiNER2 through the pinned external vLLM
-Factory project, or for vLLM generation:
+managed launch receipts for the native GLiNER2 detector or for vLLM generation:
 
 ```bash
 uv sync --project tools/inference-service-runtime --locked
-uv run --project tools/inference-service-runtime --locked python tools/inference_service.py compile --profile tools/inference_service_profiles/nvidia-gliner.toml --output plan.json
+uv run --project tools/inference-service-runtime --locked python tools/inference_service.py compile --profile tools/inference_service_profiles/gliner2-native.toml --output plan.json
 uv run --project tools/inference-service-runtime --locked python tools/inference_service.py validate --plan plan.json
 uv run --project tools/inference-service-runtime --locked python tools/inference_service.py launch --plan plan.json --output launch.json
 uv run --project tools/inference-service-runtime --locked python tools/inference_service.py status --receipt launch.json
@@ -204,7 +203,7 @@ uv run --project tools/inference-service-runtime --locked python tools/inference
 The tool is not part of the wheel and does not attach to externally owned
 endpoints. The [local model deployment guide](docs/concepts/inference-services.md)
 covers typed TOML profiles, direct GPU-host setup, a container-based deployment,
-capability probes, cleanup, and Anonymizer provider configuration.
+readiness probes, cleanup, and Anonymizer provider configuration.
 
 ---
 
