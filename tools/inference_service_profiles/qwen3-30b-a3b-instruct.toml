@@ -1,25 +1,19 @@
-schema_version = "inference-service.local-spec/v2"
+schema_version = "inference-service.spec/v3"
+port = 8000
+startup_timeout_seconds = 1800
+shutdown_timeout_seconds = 60
 
-[task]
-kind = "generation"
+[backend]
+kind = "vllm"
+served_model_name = "qwen3-30b-a3b-instruct-local"
 
-[model]
+[backend.model]
 model_id = "Qwen/Qwen3-30B-A3B-Instruct-2507"
 revision = "0d7cf23991f47feeb3a57ecb4c9cee8ea4a17bfe"
 
-[vllm]
-served_model_name = "qwen3-30b-a3b-instruct-local"
-
-
-[vllm.config]
+[backend.options]
 gpu-memory-utilization = 0.90
 max-model-len = 8192
 max-num-seqs = 16
 enable-prefix-caching = true
 async-scheduling = true
-[local]
-host = "127.0.0.1"
-port = 8000
-
-startup_timeout_seconds = 1800
-shutdown_timeout_seconds = 60

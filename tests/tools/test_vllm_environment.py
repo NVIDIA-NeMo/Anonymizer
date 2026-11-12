@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the local vLLM Python construction boundary."""
+"""Serving-child environment for the vLLM runtime."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import tomllib
 from pathlib import Path
 from unittest import mock
 
-from inference_service_compiler import vllm_runtime as factory
+from inference_service_compiler import vllm_runtime
 
 TOOLS_ROOT = Path(__file__).resolve().parents[2] / "tools"
 REPO_ROOT = TOOLS_ROOT.parent
@@ -28,18 +28,18 @@ def test_serving_project_pins_vllm_without_anonymizer_dependencies() -> None:
     assert "local-models" not in root["dependency-groups"]
 
 
-def test_factory_exposes_interpreter_tools_on_path() -> None:
+def test_child_exposes_interpreter_tools_on_path() -> None:
     """vLLM subprocess helpers can find executables installed beside Python."""
     with (
-        mock.patch.object(factory.sys, "prefix", "/workspace/.venv"),
+        mock.patch.object(vllm_runtime.sys, "prefix", "/workspace/.venv"),
         mock.patch.dict(os.environ, {"PATH": "/usr/bin"}),
     ):
-        factory.expose_interpreter_tools()
+        vllm_runtime.expose_interpreter_tools()
 
         assert os.environ["PATH"] == f"/workspace/.venv/bin{os.pathsep}/usr/bin"
 
 
-def test_factory_configures_packaged_cuda_for_flashinfer(tmp_path: Path) -> None:
+def test_child_configures_packaged_cuda_for_flashinfer(tmp_path: Path) -> None:
     """The FlashInfer backend can JIT from the CUDA toolkit shipped as Python wheels."""
     cuda_root = tmp_path / "nvidia" / "cu13"
     (cuda_root / "bin").mkdir(parents=True)
@@ -49,13 +49,13 @@ def test_factory_configures_packaged_cuda_for_flashinfer(tmp_path: Path) -> None
     runtime.touch()
 
     with (
-        mock.patch.object(factory, "_packaged_cuda_root", return_value=cuda_root),
-        mock.patch.object(factory.Path, "home", return_value=tmp_path),
+        mock.patch.object(vllm_runtime, "_packaged_cuda_root", return_value=cuda_root),
+        mock.patch.object(vllm_runtime.Path, "home", return_value=tmp_path),
         mock.patch.dict(os.environ, {}, clear=True),
     ):
-        factory.configure_flashinfer_toolchain()
+        vllm_runtime.configure_flashinfer_toolchain()
 
-        root_digest = factory.hashlib.sha256(os.fsencode(cuda_root.resolve())).hexdigest()[:16]
+        root_digest = vllm_runtime.hashlib.sha256(os.fsencode(cuda_root.resolve())).hexdigest()[:16]
         link_directory = tmp_path / ".cache" / "nemo-anonymizer" / "cuda-link" / root_digest
         assert os.environ["CUDA_HOME"] == str(cuda_root)
         assert os.environ["LIBRARY_PATH"] == str(link_directory)

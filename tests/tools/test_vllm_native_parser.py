@@ -1,104 +1,122 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Serving child delegates parsing and startup to the upstream runtime."""
+"""The serving child turns a launch spec into vLLM argv and delegates parsing to vLLM."""
 
 from __future__ import annotations
 
-import json
-import os
-from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, NoReturn
+import argparse
 from unittest import mock
 
 import pytest
 
-from inference_service_compiler import vllm_runtime
+from inference_service_compiler import compiler, launch_ownership, models, vllm_runtime
 
 
-def test_parser_validation_and_server_invocation(monkeypatch: pytest.MonkeyPatch) -> None:
-    observed: dict[str, Any] = {}
-    args = SimpleNamespace(
-        model_tag=None, model="nvidia/gliner-pii", revision="pin", served_model_name=None, mamba_backend=None
+def spec(**backend: object) -> models.ServiceSpec:
+    return models.ServiceSpec.model_validate(
+        {"backend": {"kind": "vllm", "model": {"model_id": "org/model", "revision": "pin"}} | backend, "port": 8123}
     )
 
-    class Parser:
-        _option_string_actions: dict[str, object] = {
-            "--enable-prefix-caching": SimpleNamespace(default=None),
-            "--no-enable-prefix-caching": object(),
+
+def test_option_values_render_as_argv_tokens() -> None:
+    tokens = vllm_runtime.option_tokens(
+        {
+            "enable-prefix-caching": True,
+            "async-scheduling": False,
+            "gpu-memory-utilization": 0.9,
+            "max-model-len": 8192,
+            "reasoning-parser": "openai_gptoss",
+            "cuda-graph-sizes": [1, 2, 4],
+            "hf-overrides": {"rope_scaling": {"factor": 2}},
         }
-
-        def parse_args(self, argv: list[str]) -> SimpleNamespace:
-            observed["config"] = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
-            observed["plugins"] = os.environ["VLLM_PLUGINS"]
-            return args
-
-    parser = Parser()
-    cli = SimpleNamespace(
-        make_arg_parser=lambda _: parser, validate_parsed_serve_args=lambda value: observed.update(validated=value)
     )
-    uvloop = SimpleNamespace(run=lambda value: observed.update(run=value))
-    server = SimpleNamespace(run_server=lambda value: ("server", value))
-    utils = SimpleNamespace(cli_env_setup=lambda: observed.update(setup=True))
-    modules = {
-        "vllm.entrypoints.launchers.cli_args": cli,
-        "vllm.utils.argparse_utils": SimpleNamespace(FlexibleArgumentParser=lambda: object()),
-        "uvloop": uvloop,
-        "vllm.entrypoints.launchers.api_server.entry": server,
-        "vllm.entrypoints.serve.utils.api_utils": utils,
-    }
-    monkeypatch.setattr(vllm_runtime.sys, "version_info", (3, 12))
-    monkeypatch.setattr(vllm_runtime.importlib, "import_module", lambda name: modules[name])
-    prepare = mock.Mock(return_value="/prepared")
-    monkeypatch.setattr(vllm_runtime, "prepare_model", prepare)
-    argv = [
-        "--config-json",
-        json.dumps({"model": "nvidia/gliner-pii", "enable-prefix-caching": False}),
-        "--vllm-factory-plugin",
-        "deberta_gliner",
+    assert tokens == [
+        "--enable-prefix-caching",
+        "--no-async-scheduling",
+        "--gpu-memory-utilization=0.9",
+        "--max-model-len=8192",
+        "--reasoning-parser=openai_gptoss",
+        "--cuda-graph-sizes",
+        "1",
+        "2",
+        "4",
+        '--hf-overrides={"rope_scaling": {"factor": 2}}',
     ]
-    monkeypatch.delenv("VLLM_USE_FLASHINFER_SAMPLER", raising=False)
-    vllm_runtime.run_server([*argv, "--validate"])
-    assert "VLLM_USE_FLASHINFER_SAMPLER" not in os.environ
-    assert observed["validated"] is args
-    assert observed["config"]["enable-prefix-caching"] is False
-    assert observed["plugins"] == "deberta_gliner,deberta_gliner_io"
-    assert "run" not in observed
-    prepare.assert_not_called()
-    vllm_runtime.run_server(argv)
-    assert args.model == "/prepared"
-    assert args.served_model_name == ["nvidia/gliner-pii"]
-    assert args.revision is None
-    assert observed["run"] == ("server", args)
-    assert observed["setup"]
 
 
-def test_invalid_arguments_stop_before_preparation_and_server(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_serve_arguments_put_tool_owned_options_before_profile_options() -> None:
+    arguments = vllm_runtime.serve_arguments(
+        spec(served_model_name="alias", options={"max-model-len": 2048}, probe_extra_body={"reasoning_effort": "low"})
+    )
+    assert arguments == [
+        "--model=org/model",
+        "--host=127.0.0.1",
+        "--port=8123",
+        "--revision=pin",
+        "--tokenizer-revision=pin",
+        "--served-model-name",
+        "alias",
+        f"--middleware={launch_ownership.LAUNCH_OWNERSHIP_MIDDLEWARE}",
+        "--max-model-len=2048",
+    ]
 
-    class Parser:
-        def parse_args(self, argv: list[str]) -> NoReturn:
-            raise ValueError("invalid upstream option")
 
-    cli = SimpleNamespace(make_arg_parser=lambda _: Parser())
-    parser_module = SimpleNamespace(FlexibleArgumentParser=lambda: object())
-    modules = {"vllm.entrypoints.launchers.cli_args": cli, "vllm.utils.argparse_utils": parser_module}
-    prepare = mock.Mock()
-    monkeypatch.setattr(vllm_runtime.sys, "version_info", (3, 12))
-    monkeypatch.setattr(vllm_runtime.importlib, "import_module", lambda name: modules[name])
-    monkeypatch.setattr(vllm_runtime, "prepare_model", prepare)
-    with pytest.raises(ValueError, match="invalid upstream option"):
-        vllm_runtime.run_server(["--config-json", '{"model":"model", "invalid":true}'])
-    prepare.assert_not_called()
+def test_lora_adapter_is_served_under_its_name() -> None:
+    arguments = vllm_runtime.serve_arguments(spec(model={"model_id": "base", "adapter": {"path": "/a", "name": "p"}}))
+    assert arguments[arguments.index("--enable-lora") + 1 :][:2] == ["--lora-modules", "p=/a"]
 
 
-def test_false_option_must_be_known_and_representable(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tokens_parse_exactly_under_an_argparse_parser_without_abbreviations() -> None:
+    """The token forms are the ones argparse accepts for store, boolean-optional, append and nargs actions."""
+    parser = argparse.ArgumentParser(allow_abbrev=False)
+    for flag in ("--model", "--host", "--revision", "--tokenizer-revision", "--max-model-len"):
+        parser.add_argument(flag)
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--served-model-name", nargs="+")
+    parser.add_argument("--middleware", action="append", default=[])
+    parser.add_argument("--enable-prefix-caching", action=argparse.BooleanOptionalAction)
+    parsed = parser.parse_args(
+        vllm_runtime.serve_arguments(
+            spec(served_model_name="alias", options={"max-model-len": 2048, "enable-prefix-caching": False})
+        )
+    )
+    assert parsed.served_model_name == ["alias"]
+    assert parsed.middleware == [launch_ownership.LAUNCH_OWNERSHIP_MIDDLEWARE]
+    assert parsed.enable_prefix_caching is False
+    assert parsed.port == 8123
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--max-model", "1"])
 
-    parser = SimpleNamespace(_option_string_actions={"--known": SimpleNamespace(default=True)})
-    cli = SimpleNamespace(make_arg_parser=lambda _: parser)
-    parser_module = SimpleNamespace(FlexibleArgumentParser=lambda: object())
-    modules = {"vllm.entrypoints.launchers.cli_args": cli, "vllm.utils.argparse_utils": parser_module}
-    monkeypatch.setattr(vllm_runtime.sys, "version_info", (3, 12))
-    monkeypatch.setattr(vllm_runtime.importlib, "import_module", lambda name: modules[name])
-    for option, message in (("typo", "unknown vLLM option"), ("known", "cannot express false")):
-        with pytest.raises(ValueError, match=message):
-            vllm_runtime.run_server(["--config-json", json.dumps({option: False}), "--validate"])
+
+def test_child_reads_the_spec_from_the_compiled_plan() -> None:
+    plan = compiler.compile_spec(spec(options={"max-model-len": 2048}))
+    parsed, validate_only = vllm_runtime.parse_launch_spec([*plan.argv[2:], "--validate"])
+    assert parsed == plan.spec
+    assert validate_only is True
+
+
+def test_child_refuses_a_non_vllm_backend() -> None:
+    gliner = models.ServiceSpec.model_validate({"backend": {"kind": "gliner2"}, "port": 8001})
+    with pytest.raises(ValueError, match="cannot serve backend 'gliner2'"):
+        vllm_runtime.parse_launch_spec(["--launch-spec-json", gliner.model_dump_json()])
+
+
+def test_validate_mode_parses_and_validates_without_serving() -> None:
+    plan = compiler.compile_spec(spec(options={"mamba-backend": "flashinfer"}))
+    parser = mock.Mock()
+    with (
+        mock.patch.object(vllm_runtime.vllm_compat, "make_serve_parser", return_value=parser),
+        mock.patch.object(vllm_runtime.vllm_compat, "validate_serve_arguments") as validate,
+        mock.patch.object(vllm_runtime.vllm_compat, "run_api_server") as serve,
+        mock.patch.object(vllm_runtime, "configure_flashinfer_toolchain") as flashinfer,
+        mock.patch.object(vllm_runtime, "expose_interpreter_tools"),
+    ):
+        vllm_runtime.run_server([*plan.argv[2:], "--validate"])
+        parser.parse_args.assert_called_once_with(vllm_runtime.serve_arguments(plan.spec))
+        validate.assert_called_once_with(parser.parse_args.return_value)
+        serve.assert_not_called()
+        flashinfer.assert_not_called()
+
+        vllm_runtime.run_server(list(plan.argv[2:]))
+        flashinfer.assert_called_once_with()
+        serve.assert_called_once_with(parser.parse_args.return_value)

@@ -11,13 +11,14 @@ Run from the repository root:
 
 ```bash
 uv sync --project tools/inference-service-runtime --locked
-uv run --project tools/inference-service-runtime --locked python -m vllm_factory.compat.doctor
 ```
 
-The shipped profiles launch `tools/inference-service-runtime/.venv/bin/python`
-directly. See the [deployment guide](../../docs/concepts/inference-services.md)
+The shipped vLLM profiles launch `tools/inference-service-runtime/.venv/bin/python`
+directly; the GLiNER2 detector profile runs from the main project environment. See the [deployment guide](../../docs/concepts/inference-services.md)
 for supported hardware, model profiles, compilation, validation, launch, and cleanup.
-Compilation does not import vLLM; `validate --plan` uses the configured serving
-interpreter to check arguments before launch without starting a server.
+Compilation does not import vLLM; `validate --plan` runs vLLM's own argument
+parser in the configured serving interpreter without starting a server. Every
+vLLM import path the serving child uses lives in
+`tools/inference_service_compiler/vllm_compat.py`.
 See [development instructions](../../DEVELOPMENT.md#local-inference-service-environment)
 for tests.

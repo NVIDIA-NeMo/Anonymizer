@@ -4,23 +4,22 @@
 
 from __future__ import annotations
 
-import json
 import os
 import secrets
 import signal
 import subprocess
 import time
 from collections.abc import Mapping
-from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, Never, assert_never, cast
+from typing import Literal, Never, cast
 
 import httpx
 
-from inference_service_compiler.compiler import verify_plan
-from inference_service_compiler.lifecycle import (
+from inference_service_compiler.backends import traits
+from inference_service_compiler.compiler import InferenceServiceError, verify_plan
+from inference_service_compiler.launch_ownership import (
     LAUNCH_OWNERSHIP_HEADER,
     LAUNCH_OWNERSHIP_PATH,
     LAUNCH_OWNERSHIP_PROOF_FIELD,
@@ -28,10 +27,6 @@ from inference_service_compiler.lifecycle import (
     launch_token_proof,
 )
 from inference_service_compiler.models import (
-    Capability,
-    CapabilityProbeReceipt,
-    EntityDetection,
-    Generation,
     LaunchReceipt,
     LocalProcessHandle,
     RunPlan,
@@ -41,7 +36,7 @@ from inference_service_compiler.models import (
 )
 
 
-class RuntimeEffectError(RuntimeError):
+class RuntimeEffectError(InferenceServiceError, RuntimeError):
     """A launch or probe failed with a serializable partial-effects record."""
 
     def __init__(self, diagnostic: RuntimeDiagnostic) -> None:
@@ -61,8 +56,7 @@ def validate_plan(plan: RunPlan) -> None:
     """Validate a verified plan in its configured interpreter without starting the service."""
     verify_plan(plan)
     result = subprocess.run(
-        (*plan.command.render_argv(), "--validate"),
-        cwd=plan.command.working_directory,
+        traits(plan.spec).validate_argv,
         env=_child_environment(),
         check=False,
     )
@@ -77,65 +71,47 @@ def validate_plan(plan: RunPlan) -> None:
 def probe_endpoint(
     plan: RunPlan,
     *,
-    client: httpx.Client | None = None,
     secret_values: Mapping[str, str] | None = None,
-) -> CapabilityProbeReceipt:
-    """Probe one managed endpoint and record only capabilities observed at runtime."""
+    transport: httpx.BaseTransport | None = None,
+) -> None:
+    """Require the endpoint to list the served model and answer one backend task request."""
     verify_plan(plan)
     headers = _probe_headers(plan, secret_values or {})
     try:
-        with nullcontext(client) if client is not None else httpx.Client(timeout=10) as active_client:
-            models_response = active_client.get(f"{plan.endpoint.url}{plan.readiness.path}", headers=headers)
-            if models_response.status_code != plan.readiness.expected_status:
-                raise ValueError(
-                    f"readiness probe returned status {models_response.status_code}, "
-                    f"expected {plan.readiness.expected_status}"
-                )
+        with httpx.Client(headers=headers, timeout=10, transport=transport) as client:
+            models_response = client.get(f"{plan.base_url}/models")
+            if models_response.status_code != 200:
+                raise ValueError(f"readiness probe returned status {models_response.status_code}, expected 200")
             models = _parse_models(models_response.json())
-            observed = _probe_task(plan, active_client, headers)
-    except (httpx.HTTPError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise RuntimeEffectError(
-            RuntimeDiagnostic(code="probe-failed", message=f"capability probe failed: {exc}")
-        ) from exc
-    return CapabilityProbeReceipt(
-        plan_digest=plan.plan_digest,
-        endpoint=plan.endpoint,
-        observed_at=_now(),
-        models=models,
-        observed_capabilities=observed,
-        passed=plan.served_model_name in models and set(plan.required_capabilities).issubset(observed),
-    )
+            if plan.served_model_name not in models:
+                raise ValueError(f"endpoint serves {list(models)}, not {plan.served_model_name!r}")
+            traits(plan.spec).probe(client, plan.base_url)
+    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+        raise RuntimeEffectError(RuntimeDiagnostic(code="probe-failed", message=f"probe failed: {exc}")) from exc
 
 
 def launch_plan(
     plan: RunPlan,
     *,
-    secret_values: dict[str, str],
+    secret_values: Mapping[str, str],
     log_directory: Path,
 ) -> LaunchReceipt:
-    """Launch a checksummed plan and record its observed handle and readiness."""
+    """Launch a verified plan and record its observed handle once it is ready."""
     verify_plan(plan)
-    source = plan.spec.vllm.api_key_env
-    if source is not None and source not in secret_values:
-        raise RuntimeEffectError(
-            RuntimeDiagnostic(code="missing-secret", message=f"secret environment variable {source!r} is not resolved")
-        )
-    argv = plan.command.render_argv()
-    environment = _child_environment()
-    if source is not None:
-        environment["VLLM_API_KEY"] = secret_values[source]
+    backend = traits(plan.spec)
+    api_key = _resolve_api_key(plan, secret_values)
+    environment = _child_environment() | dict(backend.child_environment)
+    if api_key is not None:
+        environment[backend.api_key_child_env] = api_key
     launch_token = secrets.token_urlsafe(32)
     environment[LAUNCH_TOKEN_ENVIRONMENT_VARIABLE] = launch_token
     log_directory.mkdir(parents=True, exist_ok=True)
-    handle = _launch_process(plan, argv, environment, log_directory)
-    probe = _probe_or_cleanup(plan, handle, secret_values, launch_token)
-    return LaunchReceipt(
-        plan_digest=plan.plan_digest,
-        launched_at=_now(),
-        shutdown_timeout_seconds=plan.spec.local.shutdown_timeout_seconds,
-        handle=handle,
-        probe=probe,
-    )
+    handle = _launch_process(plan, environment, log_directory)
+    try:
+        wait_for_readiness(plan, secret_values=secret_values, handle=handle, launch_token=launch_token)
+    except BaseException as exc:
+        _raise_readiness_failure(exc, handle, plan.spec.shutdown_timeout_seconds)
+    return LaunchReceipt(plan=plan, launched_at=_now(), handle=handle)
 
 
 def _child_environment() -> dict[str, str]:
@@ -144,40 +120,6 @@ def _child_environment() -> dict[str, str]:
     for variable in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"):
         environment.pop(variable, None)
     return environment
-
-
-def _probe_or_cleanup(
-    plan: RunPlan,
-    handle: LocalProcessHandle,
-    secret_values: Mapping[str, str],
-    launch_token: str,
-) -> CapabilityProbeReceipt:
-    try:
-        probe = wait_for_readiness(
-            plan,
-            secret_values=secret_values,
-            handle=handle,
-            launch_token=launch_token,
-        )
-    except BaseException as exc:
-        _raise_readiness_failure(exc, handle, plan.spec.local.shutdown_timeout_seconds)
-    if not probe.passed:
-        cleanup_complete, cleanup_error = _attempt_failed_launch_cleanup(
-            handle,
-            plan.spec.local.shutdown_timeout_seconds,
-        )
-        message = "endpoint became ready but did not satisfy required capabilities"
-        if cleanup_error is not None:
-            message = f"{message}; cleanup failed: {cleanup_error}"
-        raise RuntimeEffectError(
-            RuntimeDiagnostic(
-                code="capability-mismatch",
-                message=message,
-                known_effects=(handle.external_id,),
-                cleanup_complete=cleanup_complete,
-            )
-        )
-    return probe
 
 
 def _attempt_failed_launch_cleanup(handle: LocalProcessHandle, timeout_seconds: float) -> tuple[bool, str | None]:
@@ -199,7 +141,7 @@ def _raise_readiness_failure(
             exc.diagnostic.model_copy(
                 update={
                     "message": f"{exc.diagnostic.message}{cleanup_suffix}",
-                    "known_effects": (handle.external_id,),
+                    "known_effects": (handle.label,),
                     "cleanup_complete": cleanup_complete,
                 }
             )
@@ -209,7 +151,7 @@ def _raise_readiness_failure(
             RuntimeDiagnostic(
                 code="unexpected-readiness-failure",
                 message=f"readiness failed unexpectedly: {exc}{cleanup_suffix}",
-                known_effects=(handle.external_id,),
+                known_effects=(handle.label,),
                 cleanup_complete=cleanup_complete,
             )
         ) from exc
@@ -222,7 +164,7 @@ def status_run(launch: LaunchReceipt) -> StatusReceipt:
     """Observe a recorded handle without changing process state."""
     state = "running" if is_process_group_active(launch.handle) else "stopped"
     return StatusReceipt(
-        plan_digest=launch.plan_digest,
+        plan_digest=launch.plan.plan_digest,
         observed_at=_now(),
         handle=launch.handle,
         state=state,
@@ -234,15 +176,15 @@ def stop_run(launch: LaunchReceipt) -> StopReceipt:
     handle = launch.handle
     if not is_process_group_active(handle):
         return StopReceipt(
-            plan_digest=launch.plan_digest,
+            plan_digest=launch.plan.plan_digest,
             stopped_at=_now(),
             handle=handle,
             outcome="already-stopped",
             cleanup_complete=True,
         )
-    stop = _stop_running_handle(handle, launch.shutdown_timeout_seconds)
+    stop = _stop_running_handle(handle, launch.plan.spec.shutdown_timeout_seconds)
     return StopReceipt(
-        plan_digest=launch.plan_digest,
+        plan_digest=launch.plan.plan_digest,
         stopped_at=_now(),
         handle=handle,
         outcome=stop.outcome,
@@ -302,7 +244,7 @@ def _process_identity_mismatch(handle: LocalProcessHandle, detail: str) -> Runti
     return RuntimeEffectError(
         RuntimeDiagnostic(
             code="process-identity-mismatch",
-            message=f"refusing to act on recorded process {handle.external_id}: {detail}",
+            message=f"refusing to act on recorded process {handle.label}: {detail}",
         )
     )
 
@@ -389,28 +331,23 @@ def wait_for_readiness(
     secret_values: Mapping[str, str] | None = None,
     handle: LocalProcessHandle | None = None,
     launch_token: str | None = None,
-) -> CapabilityProbeReceipt:
-    """Poll the declared readiness contract until it passes or times out."""
-    deadline = time.monotonic() + plan.readiness.timeout_seconds
+) -> None:
+    """Poll launch ownership and the backend probe until both pass or the startup timeout ends."""
+    deadline = time.monotonic() + plan.spec.startup_timeout_seconds
     last_error: RuntimeEffectError | None = None
     while time.monotonic() < deadline:
         if handle is not None and not is_handle_running(handle):
-            log_hint = f"; status {handle.stderr_path}"
             raise RuntimeEffectError(
                 RuntimeDiagnostic(
                     code="launch-exited",
-                    message=f"managed service exited before readiness{log_hint}",
+                    message=f"managed service exited before readiness; see {handle.stderr_path}",
                 )
             )
         try:
             if launch_token is not None:
                 _probe_launch_ownership(plan, launch_token, secret_values)
-            receipt = probe_endpoint(plan, secret_values=secret_values)
-            if receipt.passed:
-                return receipt
-            last_error = RuntimeEffectError(
-                RuntimeDiagnostic(code="capability-mismatch", message="required capabilities were not observed")
-            )
+            probe_endpoint(plan, secret_values=secret_values)
+            return
         except RuntimeEffectError as exc:
             last_error = exc
         time.sleep(min(0.5, max(0, deadline - time.monotonic())))
@@ -424,15 +361,11 @@ def _probe_launch_ownership(
     secret_values: Mapping[str, str] | None = None,
 ) -> None:
     """Require a proof that the responding server inherited this launch's token."""
-    url = f"{plan.endpoint.scheme}://{plan.endpoint.host}:{plan.endpoint.port}{LAUNCH_OWNERSHIP_PATH}"
+    host, port = plan.endpoint
     headers = _probe_headers(plan, secret_values or {})
     headers[LAUNCH_OWNERSHIP_HEADER] = launch_token
     try:
-        response = httpx.get(
-            url,
-            headers=headers,
-            timeout=10,
-        )
+        response = httpx.get(f"http://{host}:{port}{LAUNCH_OWNERSHIP_PATH}", headers=headers, timeout=10)
         if response.status_code != 200:
             raise ValueError(f"launch ownership probe returned status {response.status_code}")
         payload = response.json()
@@ -442,7 +375,7 @@ def _probe_launch_ownership(
         expected_proof = launch_token_proof(launch_token)
         if not isinstance(observed_proof, str) or not secrets.compare_digest(observed_proof, expected_proof):
             raise ValueError("launch ownership proof did not match")
-    except (httpx.HTTPError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (httpx.HTTPError, TypeError, ValueError) as exc:
         raise RuntimeEffectError(
             RuntimeDiagnostic(code="launch-ownership-not-observed", message=f"launch ownership probe failed: {exc}")
         ) from exc
@@ -475,54 +408,6 @@ def _parse_process_stat(payload: str) -> tuple[str, str] | None:
     return (fields[0], fields[19]) if len(fields) > 19 else None
 
 
-def _probe_task(plan: RunPlan, client: httpx.Client, headers: Mapping[str, str]) -> tuple[Capability, ...]:
-    match plan.spec.task:
-        case Generation():
-            response = client.post(
-                f"{plan.endpoint.url}/chat/completions",
-                json={
-                    "model": plan.served_model_name,
-                    "messages": [{"role": "user", "content": "Reply with the word ready."}],
-                    "max_tokens": 128,
-                    "reasoning_effort": "low",
-                    "chat_template_kwargs": {
-                        "enable_thinking": False,
-                    },
-                },
-                headers=headers,
-            )
-            response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
-            if not isinstance(content, str):
-                raise ValueError("chat completion content must be a string")
-            return ("chat-completions",)
-        case EntityDetection():
-            response = client.post(
-                f"{plan.endpoint.url}/chat/completions",
-                json={
-                    "model": plan.served_model_name,
-                    "messages": [{"role": "user", "content": "Ada Lovelace"}],
-                    "labels": ["person"],
-                    "threshold": 0.1,
-                },
-                headers=headers,
-            )
-            response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
-            payload = json.loads(content)
-            entities = payload["entities"]
-            if not isinstance(entities, list):
-                raise ValueError("detector entities must be a list")
-            observed: list[Capability] = ["dynamic-labels"]
-            if entities and all(isinstance(entity, dict) and {"start", "end"} <= entity.keys() for entity in entities):
-                observed.append("offsets")
-            if entities and all(isinstance(entity, dict) and "score" in entity for entity in entities):
-                observed.append("scores")
-            return tuple(observed)
-        case _:
-            assert_never(plan.spec.task)
-
-
 def _parse_models(payload: object) -> tuple[str, ...]:
     if not isinstance(payload, Mapping):
         raise ValueError("models response must contain a data list")
@@ -538,23 +423,24 @@ def _parse_models(payload: object) -> tuple[str, ...]:
     return tuple(models)
 
 
-def _probe_headers(plan: RunPlan, secret_values: Mapping[str, str]) -> dict[str, str]:
-    source = plan.readiness.bearer_token_environment_variable
+def _resolve_api_key(plan: RunPlan, secret_values: Mapping[str, str]) -> str | None:
+    source = plan.spec.api_key_env
     if source is None:
-        return {}
+        return None
     if source not in secret_values:
         raise RuntimeEffectError(
-            RuntimeDiagnostic(
-                code="missing-secret",
-                message=f"secret environment variable {source!r} is not resolved",
-            )
+            RuntimeDiagnostic(code="missing-secret", message=f"secret environment variable {source!r} is not resolved")
         )
-    return {"Authorization": f"Bearer {secret_values[source]}"}
+    return secret_values[source]
+
+
+def _probe_headers(plan: RunPlan, secret_values: Mapping[str, str]) -> dict[str, str]:
+    api_key = _resolve_api_key(plan, secret_values)
+    return {} if api_key is None else {"Authorization": f"Bearer {api_key}"}
 
 
 def _launch_process(
     plan: RunPlan,
-    argv: tuple[str, ...],
     environment: dict[str, str],
     log_directory: Path,
 ) -> LocalProcessHandle:
@@ -562,8 +448,7 @@ def _launch_process(
     stderr_path = log_directory / f"{plan.plan_digest}.stderr.log"
     with stdout_path.open("ab") as stdout_file, stderr_path.open("ab") as stderr_file:
         process = subprocess.Popen(
-            argv,
-            cwd=plan.command.working_directory,
+            plan.argv,
             env=environment,
             stdout=stdout_file,
             stderr=stderr_file,
@@ -581,9 +466,7 @@ def _launch_process(
             )
         )
     return LocalProcessHandle(
-        external_id=f"{process.pid}:{marker}",
         pid=process.pid,
-        process_group_id=process.pid,
         start_marker=marker,
         stdout_path=str(stdout_path),
         stderr_path=str(stderr_path),
@@ -604,5 +487,5 @@ def _terminate_unmarked_launch(process: subprocess.Popen[bytes]) -> None:
         return
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
+def _now() -> datetime:
+    return datetime.now(UTC)

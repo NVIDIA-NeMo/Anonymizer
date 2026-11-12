@@ -110,5 +110,12 @@ include = ["src/anonymizer/engine/local_inference/gliner2/backend.py"]
 # Notebook dependencies may be absent; inline ignores fail when they are installed.
 allowed-unresolved-imports = ["torch", "gliner2"]
 
+[[tool.ty.overrides]]
+include = ["tools/inference_service_compiler/vllm_compat.py"]
+
+[tool.ty.overrides.analysis]
+# vLLM is installed only in tools/inference-service-runtime, never in the main environment.
+allowed-unresolved-imports = ["vllm.**", "uvloop"]
+
 [tool.coverage.run]
 omit = []

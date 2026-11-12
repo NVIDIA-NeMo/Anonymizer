@@ -1,22 +1,16 @@
-schema_version = "inference-service.local-spec/v2"
+schema_version = "inference-service.spec/v3"
+port = 8000
+startup_timeout_seconds = 600
+shutdown_timeout_seconds = 30
 
-[task]
-kind = "generation"
+[backend]
+kind = "vllm"
+served_model_name = "anonymizer-local"
 
-[model]
+[backend.model]
 model_id = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 revision = "fe8a4ea1ffedaf415f4da2f062534de366a451e6"
 
-[vllm]
-served_model_name = "anonymizer-local"
-
-
-[vllm.config]
+[backend.options]
 gpu-memory-utilization = 0.85
 max-model-len = 2048
-[local]
-host = "127.0.0.1"
-port = 8000
-
-startup_timeout_seconds = 600
-shutdown_timeout_seconds = 30

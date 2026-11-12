@@ -4,67 +4,46 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+import re
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, field_validator
 
-SPEC_SCHEMA_VERSION = "inference-service.local-spec/v2"
-PLAN_SCHEMA_VERSION = "inference-service.run-plan/v2"
-CAPABILITY_PROBE_RECEIPT_SCHEMA_VERSION = "inference-service.capability-probe-receipt/v1"
-LAUNCH_RECEIPT_SCHEMA_VERSION = "inference-service.launch-receipt/v1"
-STATUS_RECEIPT_SCHEMA_VERSION = "inference-service.status-receipt/v1"
-STOP_RECEIPT_SCHEMA_VERSION = "inference-service.stop-receipt/v1"
+SPEC_SCHEMA_VERSION = "inference-service.spec/v3"
+PLAN_SCHEMA_VERSION = "inference-service.run-plan/v3"
+LAUNCH_RECEIPT_SCHEMA_VERSION = "inference-service.launch-receipt/v2"
+STATUS_RECEIPT_SCHEMA_VERSION = "inference-service.status-receipt/v2"
+STOP_RECEIPT_SCHEMA_VERSION = "inference-service.stop-receipt/v2"
 
-Capability = Literal["chat-completions", "dynamic-labels", "offsets", "scores"]
-FactoryPlugin = Literal["deberta_gliner", "deberta_gliner2"]
+GLINER2_MODEL_ID = "fastino/gliner2-privacy-filter-PII-multi"
 
+# Options the tool derives from the spec; a profile cannot set them.
+VLLM_OWNED_OPTIONS = frozenset(
+    {
+        "model",
+        "host",
+        "port",
+        "uds",
+        "revision",
+        "tokenizer-revision",
+        "served-model-name",
+        "api-key",
+        "hf-token",
+        "config",
+        "middleware",
+        "enable-lora",
+        "lora-modules",
+    }
+)
+_OPTION_KEY = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
-def parse_factory_plugin(value: str) -> FactoryPlugin:
-    """Parse the Factory plugin name at an untyped process boundary."""
-    match value:
-        case "deberta_gliner" | "deberta_gliner2":
-            return value
-        case _:
-            raise ValueError(f"unsupported vLLM Factory plugin {value!r}")
+OptionValue = bool | int | float | str | list[str | int | float] | dict[str, JsonValue]
 
 
 class FrozenModel(BaseModel):
     """Closed immutable base for compiler values and transport records."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class EntityDetection(FrozenModel):
-    """Entity detection requirements independent of a serving engine."""
-
-    kind: Literal["entity-detection"] = "entity-detection"
-    dynamic_labels: bool
-    offsets: bool
-    scores: bool
-
-    def required_capabilities(self) -> tuple[Capability, ...]:
-        """Return the endpoint capabilities required by this task."""
-        capabilities: list[Capability] = []
-        if self.dynamic_labels:
-            capabilities.append("dynamic-labels")
-        if self.offsets:
-            capabilities.append("offsets")
-        if self.scores:
-            capabilities.append("scores")
-        return tuple(capabilities)
-
-
-class Generation(FrozenModel):
-    """Text-generation requirements independent of a serving engine."""
-
-    kind: Literal["generation"] = "generation"
-
-    def required_capabilities(self) -> tuple[Capability, ...]:
-        """Return the endpoint capabilities required by this task."""
-        return ("chat-completions",)
-
-
-TaskSpec = Annotated[EntityDetection | Generation, Field(discriminator="kind")]
 
 
 class LoraAdapter(FrozenModel):
@@ -82,104 +61,91 @@ class HuggingFaceModel(FrozenModel):
     adapter: LoraAdapter | None = None
 
 
-class VllmFactoryIntegration(FrozenModel):
-    """A supported vLLM Factory structured-prediction plugin."""
+class VllmBackend(FrozenModel):
+    """vLLM's OpenAI-compatible server for a generation model."""
 
-    plugin: FactoryPlugin
-    prepared_model_root: str = Field(default="/tmp/anonymizer-vllm-factory", min_length=1)
-
-
-class Vllm(FrozenModel):
-    """vLLM's OpenAI-compatible server with bounded common options."""
-
-    python_executable: str = Field(default="tools/inference-service-runtime/.venv/bin/python", min_length=1)
-    served_model_name: str | None = Field(default=None, min_length=1)
-    api_key_env: str | None = Field(default=None, min_length=1)
-    config: dict[str, Any] = Field(default_factory=dict)
-    factory: VllmFactoryIntegration | None = None
-
-
-class LocalProcess(FrozenModel):
-    """The only supported inference-host deployment domain."""
-
-    host: str = Field(default="127.0.0.1", min_length=1)
-    port: int = Field(default=8000, ge=1, le=65535)
-
-    startup_timeout_seconds: float = Field(default=120, gt=0)
-    shutdown_timeout_seconds: float = Field(default=30, gt=0)
-
-
-class LocalInferenceServiceSpec(FrozenModel):
-    """Complete semantic input to pure inference-service compilation."""
-
-    schema_version: Literal["inference-service.local-spec/v2"] = SPEC_SCHEMA_VERSION
-    task: TaskSpec
+    kind: Literal["vllm"] = "vllm"
     model: HuggingFaceModel
-    vllm: Vllm
-    local: LocalProcess
+    served_model_name: str | None = Field(default=None, min_length=1)
+    options: dict[str, OptionValue] = Field(default_factory=dict)
+    """vLLM serve options by their long flag name without dashes, e.g. ``max-model-len``."""
+    probe_extra_body: dict[str, JsonValue] = Field(default_factory=dict)
+    """Extra chat-completion fields for the readiness probe, e.g. to disable reasoning."""
+
+    @field_validator("options")
+    @classmethod
+    def _validate_options(cls, options: dict[str, OptionValue]) -> dict[str, OptionValue]:
+        for key, value in options.items():
+            if not _OPTION_KEY.fullmatch(key):
+                raise ValueError(f"vLLM option {key!r} must be a lowercase kebab-case flag name")
+            if key.startswith("no-"):
+                raise ValueError(f"vLLM option {key!r}: set {key.removeprefix('no-')!r} to false instead")
+            if key in VLLM_OWNED_OPTIONS:
+                raise ValueError(f"vLLM option {key!r} is derived from the profile's model and endpoint fields")
+            if value == []:
+                raise ValueError(f"vLLM option {key!r} cannot be an empty list")
+        return options
 
     @property
-    def served_model_name(self) -> str:
-        """Return the model ID that the compiled endpoint must serve."""
+    def model_name(self) -> str:
+        """Return the model ID that the endpoint serves."""
         if self.model.adapter is not None:
             return self.model.adapter.name
-        if self.vllm.served_model_name is not None:
-            return self.vllm.served_model_name
-        return self.model.model_id
+        return self.served_model_name or self.model.model_id
 
 
-class LiteralArgument(FrozenModel):
-    """One non-secret argv value."""
+class Gliner2Backend(FrozenModel):
+    """Anonymizer's native GLiNER2 detector server, pinned to one checkpoint."""
 
-    kind: Literal["literal"] = "literal"
-    value: str
-
-
-class CommandSpec(FrozenModel):
-    """Complete non-secret argv for one managed service."""
-
-    argv: tuple[LiteralArgument, ...] = Field(min_length=1)
-    working_directory: str = "."
-
-    def render_argv(self) -> tuple[str, ...]:
-        """Render the complete non-secret process argument vector."""
-        return tuple(argument.value for argument in self.argv)
-
-
-class EndpointAddress(FrozenModel):
-    """Direct OpenAI-compatible endpoint produced by a run."""
-
-    scheme: Literal["http"] = "http"
-    host: str
-    port: int
-    base_path: Literal["/v1"] = "/v1"
+    kind: Literal["gliner2"] = "gliner2"
+    device: Literal["auto", "cuda", "mps", "cpu"] = "auto"
 
     @property
-    def url(self) -> str:
-        """Return the normalized endpoint URL."""
-        return f"{self.scheme}://{self.host}:{self.port}{self.base_path}"
+    def model_name(self) -> str:
+        """Return the model ID that the endpoint serves."""
+        return GLINER2_MODEL_ID
 
 
-class ReadinessCheck(FrozenModel):
-    """One bounded readiness or capability-probe request."""
+Backend = Annotated[VllmBackend | Gliner2Backend, Field(discriminator="kind")]
 
-    path: str
-    expected_status: int = 200
-    timeout_seconds: float = Field(gt=0)
-    bearer_token_environment_variable: str | None = Field(default=None, min_length=1)
+
+class ServiceSpec(FrozenModel):
+    """Complete semantic input to pure inference-service compilation."""
+
+    schema_version: Literal["inference-service.spec/v3"] = SPEC_SCHEMA_VERSION
+    backend: Backend
+    python_executable: str | None = Field(default=None, min_length=1)
+    """Serving interpreter; when omitted the backend's default environment is used."""
+    host: str = Field(default="127.0.0.1", min_length=1)
+    port: int = Field(ge=1024, le=65535)
+    api_key_env: str | None = Field(default=None, min_length=1)
+    """Controller environment variable holding the endpoint's bearer token."""
+    startup_timeout_seconds: float = Field(default=120, gt=0)
+    shutdown_timeout_seconds: float = Field(default=30, gt=0)
 
 
 class RunPlan(FrozenModel):
     """Portable, frozen, effect-free instructions for one service run."""
 
-    schema_version: Literal["inference-service.run-plan/v2"] = PLAN_SCHEMA_VERSION
+    schema_version: Literal["inference-service.run-plan/v3"] = PLAN_SCHEMA_VERSION
+    spec: ServiceSpec
+    argv: tuple[str, ...] = Field(min_length=1)
     plan_digest: str
-    spec: LocalInferenceServiceSpec
-    command: CommandSpec
-    endpoint: EndpointAddress
-    readiness: ReadinessCheck
-    served_model_name: str = Field(min_length=1)
-    required_capabilities: tuple[Capability, ...]
+
+    @property
+    def endpoint(self) -> tuple[str, int]:
+        """Return the host and port the service listens on."""
+        return self.spec.host, self.spec.port
+
+    @property
+    def base_url(self) -> str:
+        """Return the OpenAI-compatible base URL of the endpoint."""
+        return f"http://{self.spec.host}:{self.spec.port}/v1"
+
+    @property
+    def served_model_name(self) -> str:
+        """Return the model ID that the endpoint must serve."""
+        return self.spec.backend.model_name
 
 
 class ConnectionInfo(FrozenModel):
@@ -190,47 +156,43 @@ class ConnectionInfo(FrozenModel):
     api_key_env: str | None = None
 
 
-class CapabilityProbeReceipt(FrozenModel):
-    """Runtime evidence for the endpoint capabilities required by a plan."""
-
-    schema_version: Literal["inference-service.capability-probe-receipt/v1"] = CAPABILITY_PROBE_RECEIPT_SCHEMA_VERSION
-    plan_digest: str
-    endpoint: EndpointAddress
-    observed_at: str
-    models: tuple[str, ...]
-    observed_capabilities: tuple[Capability, ...]
-    passed: bool
-
-
 class LocalProcessHandle(FrozenModel):
-    """Observed local-process coordinates checked against PID reuse."""
+    """Observed local-process coordinates checked against PID reuse.
 
-    kind: Literal["local-process"] = "local-process"
-    external_id: str
+    The service is launched as a session leader, so its PID is also its process group ID.
+    """
+
     pid: int = Field(ge=1)
-    process_group_id: int = Field(ge=1)
     start_marker: str = Field(min_length=1)
     stdout_path: str
     stderr_path: str
 
+    @property
+    def process_group_id(self) -> int:
+        """Return the process group created by the launch."""
+        return self.pid
+
+    @property
+    def label(self) -> str:
+        """Return the process identity used in diagnostics."""
+        return f"{self.pid}:{self.start_marker}"
+
 
 class LaunchReceipt(FrozenModel):
-    """Durable record of a launch operation and its readiness observations."""
+    """Durable record of a launched plan and its observed process."""
 
-    schema_version: Literal["inference-service.launch-receipt/v1"] = LAUNCH_RECEIPT_SCHEMA_VERSION
-    plan_digest: str
-    launched_at: str
-    shutdown_timeout_seconds: float = Field(gt=0)
+    schema_version: Literal["inference-service.launch-receipt/v2"] = LAUNCH_RECEIPT_SCHEMA_VERSION
+    plan: RunPlan
+    launched_at: AwareDatetime
     handle: LocalProcessHandle
-    probe: CapabilityProbeReceipt
 
 
 class StatusReceipt(FrozenModel):
     """Recorded state observation for a managed handle."""
 
-    schema_version: Literal["inference-service.status-receipt/v1"] = STATUS_RECEIPT_SCHEMA_VERSION
+    schema_version: Literal["inference-service.status-receipt/v2"] = STATUS_RECEIPT_SCHEMA_VERSION
     plan_digest: str
-    observed_at: str
+    observed_at: AwareDatetime
     handle: LocalProcessHandle
     state: Literal["running", "stopped"]
 
@@ -238,18 +200,32 @@ class StatusReceipt(FrozenModel):
 class StopReceipt(FrozenModel):
     """Recorded cleanup outcome for a managed handle."""
 
-    schema_version: Literal["inference-service.stop-receipt/v1"] = STOP_RECEIPT_SCHEMA_VERSION
+    schema_version: Literal["inference-service.stop-receipt/v2"] = STOP_RECEIPT_SCHEMA_VERSION
     plan_digest: str
-    stopped_at: str
+    stopped_at: AwareDatetime
     handle: LocalProcessHandle
     outcome: Literal["terminated", "already-stopped", "forced"]
     cleanup_complete: bool
 
 
+RuntimeErrorCode = Literal[
+    "validation-failed",
+    "probe-failed",
+    "missing-secret",
+    "launch-exited",
+    "launch-ownership-not-observed",
+    "readiness-timeout",
+    "unexpected-readiness-failure",
+    "process-identity-mismatch",
+    "process-identity-unavailable",
+    "missing-process-start-marker",
+]
+
+
 class RuntimeDiagnostic(FrozenModel):
     """Serializable runtime failure including every known external effect."""
 
-    code: str
+    code: RuntimeErrorCode
     message: str
     known_effects: tuple[str, ...] = ()
     cleanup_complete: bool | None = None

@@ -48,12 +48,12 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config-json", required=True)
+    parser.add_argument("--launch-spec-json", required=True)
     parser.add_argument("--validate", action="store_true")
     args, _ = parser.parse_known_args()
     if args.validate:
         return
-    config = json.loads(args.config_json)
+    spec = json.loads(args.launch_spec_json)
     Path("observed.json").write_text(
         json.dumps(
             {
@@ -74,7 +74,7 @@ def main() -> None:
             }
         )
     )
-    HTTPServer((config["host"], config["port"]), Handler).serve_forever()
+    HTTPServer((spec["host"], spec["port"]), Handler).serve_forever()
 
 
 if __name__ == "__main__":

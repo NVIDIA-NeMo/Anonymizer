@@ -16,11 +16,10 @@ from typing import ParamSpec, TypeVar
 import cyclopts
 from pydantic import BaseModel, ValidationError
 
-from inference_service_compiler.compiler import CompilationError, PlanIntegrityError, compile_profile, load_plan
-from inference_service_compiler.models import ConnectionInfo, LaunchReceipt
+from inference_service_compiler.compiler import InferenceServiceError, compile_spec, load_plan
+from inference_service_compiler.models import ConnectionInfo, LaunchReceipt, RunPlan
 from inference_service_compiler.profiles import load_profile
 from inference_service_compiler.runtime import (
-    RuntimeEffectError,
     launch_plan,
     probe_endpoint,
     status_run,
@@ -41,18 +40,7 @@ def command_errors(function: Callable[P, R]) -> Callable[P, R]:
     def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
         try:
             return function(*args, **kwargs)
-        except (
-            CompilationError,
-            FileNotFoundError,
-            IsADirectoryError,
-            NotADirectoryError,
-            PermissionError,
-            PlanIntegrityError,
-            RuntimeEffectError,
-            TOMLDecodeError,
-            UnicodeDecodeError,
-            ValidationError,
-        ) as exc:
+        except (InferenceServiceError, OSError, TOMLDecodeError, UnicodeDecodeError, ValidationError) as exc:
             diagnostic = getattr(exc, "diagnostic", None)
             sys.stderr.write(f"error: {diagnostic.model_dump_json() if diagnostic is not None else exc}\n")
             raise SystemExit(125) from exc
@@ -67,16 +55,14 @@ def compile_plan(
     profile: Path,
     output: Path | None = None,
 ) -> None:
-    """Compile a v2 TOML profile without performing runtime effects."""
-    parsed = load_profile(profile)
-    plan = compile_profile(parsed)
-    write_json(plan, output)
+    """Compile a v3 TOML profile without performing runtime effects."""
+    write_json(compile_spec(load_profile(profile)), output)
 
 
 @app.command
 @command_errors
 def validate(*, plan: Path) -> None:
-    """Validate vLLM arguments in the configured serving environment without starting a server."""
+    """Validate the plan in its serving interpreter without starting a server."""
     parsed = load_plan(plan.read_text(encoding="utf-8"))
     validate_plan(parsed)
 
@@ -87,11 +73,7 @@ def connection(*, plan: Path, output: Path | None = None) -> None:
     """Emit non-secret client connection inputs from a compiled plan."""
     parsed = load_plan(plan.read_text(encoding="utf-8"))
     write_json(
-        ConnectionInfo(
-            url=parsed.endpoint.url,
-            model=parsed.served_model_name,
-            api_key_env=parsed.readiness.bearer_token_environment_variable,
-        ),
+        ConnectionInfo(url=parsed.base_url, model=parsed.served_model_name, api_key_env=parsed.spec.api_key_env),
         output,
     )
 
@@ -107,9 +89,7 @@ def launch(
     """Launch a compiled plan and record its observed handle and readiness."""
     _validate_output_destination(output)
     parsed = load_plan(plan.read_text(encoding="utf-8"))
-    source = parsed.spec.vllm.api_key_env
-    secret_values = {source: os.environ[source]} if source is not None and source in os.environ else {}
-    receipt = launch_plan(parsed, secret_values=secret_values, log_directory=log_directory)
+    receipt = launch_plan(parsed, secret_values=_secret_values(parsed), log_directory=log_directory)
     try:
         write_json(receipt, output)
     except BaseException as exc:
@@ -122,12 +102,10 @@ def launch(
 
 @app.command
 @command_errors
-def probe(*, plan: Path, output: Path | None = None) -> None:
-    """Probe the endpoint declared by a managed plan and write capability evidence."""
+def probe(*, plan: Path) -> None:
+    """Check that the plan's endpoint serves its model and answers a backend task request."""
     parsed = load_plan(plan.read_text(encoding="utf-8"))
-    source = parsed.readiness.bearer_token_environment_variable
-    secret_values = {source: os.environ[source]} if source is not None and source in os.environ else {}
-    write_json(probe_endpoint(parsed, secret_values=secret_values), output)
+    probe_endpoint(parsed, secret_values=_secret_values(parsed))
 
 
 @app.command(name="status")
@@ -144,6 +122,11 @@ def stop(*, receipt: Path, output: Path | None = None) -> None:
     """Stop and clean up the process group recorded by a launch receipt."""
     launch_receipt = LaunchReceipt.model_validate_json(receipt.read_text(encoding="utf-8"))
     write_json(stop_run(launch_receipt), output)
+
+
+def _secret_values(plan: RunPlan) -> dict[str, str]:
+    source = plan.spec.api_key_env
+    return {source: os.environ[source]} if source is not None and source in os.environ else {}
 
 
 def write_json(value: BaseModel, output: Path | None) -> None:

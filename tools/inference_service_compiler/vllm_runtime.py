@@ -1,30 +1,86 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Programmatic construction of stock vLLM and vLLM Factory servers."""
+"""Serving-child side of the vLLM backend: launch spec to vLLM's own parser and server."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib
 import importlib.util
 import json
 import os
 import sys
-import tempfile
-from argparse import Namespace
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from inference_service_compiler.lifecycle import LAUNCH_OWNERSHIP_MIDDLEWARE
-from inference_service_compiler.models import parse_factory_plugin
-from inference_service_compiler.vllm_factory_integration import (
-    io_processor_for,
-    prepare_model,
-)
+from inference_service_compiler import vllm_compat
+from inference_service_compiler.launch_ownership import LAUNCH_OWNERSHIP_MIDDLEWARE
+from inference_service_compiler.models import OptionValue, ServiceSpec, VllmBackend
 
-ANONYMIZER_CHAT_MIDDLEWARE = "inference_service_compiler.vllm_factory_adapter.anonymizer_chat_compatibility"
-MINIMUM_VLLM_PYTHON = (3, 12)
+
+def option_tokens(options: Mapping[str, OptionValue]) -> list[str]:
+    """Render profile options as vLLM argv tokens.
+
+    ``True`` becomes ``--key``, ``False`` becomes ``--no-key``, a list becomes ``--key a b``, and a
+    mapping becomes one JSON argument. vLLM's parser decides whether the option accepts that form.
+    """
+    tokens: list[str] = []
+    for key, value in options.items():
+        match value:
+            case bool():
+                tokens.append(f"--{key}" if value else f"--no-{key}")
+            case list():
+                tokens.extend((f"--{key}", *(str(item) for item in value)))
+            case dict():
+                tokens.append(f"--{key}={json.dumps(value, sort_keys=True)}")
+            case _:
+                tokens.append(f"--{key}={value}")
+    return tokens
+
+
+def serve_arguments(spec: ServiceSpec) -> list[str]:
+    """Return the complete vLLM argv for a vLLM spec, tool-owned options first."""
+    backend = _vllm_backend(spec)
+    model = backend.model
+    tokens = [f"--model={model.model_id}", f"--host={spec.host}", f"--port={spec.port}"]
+    if model.revision is not None:
+        tokens += [f"--revision={model.revision}", f"--tokenizer-revision={model.revision}"]
+    if backend.served_model_name is not None:
+        tokens += ["--served-model-name", backend.served_model_name]
+    if model.adapter is not None:
+        tokens += ["--enable-lora", "--lora-modules", f"{model.adapter.name}={model.adapter.path}"]
+    tokens.append(f"--middleware={LAUNCH_OWNERSHIP_MIDDLEWARE}")
+    return [*tokens, *option_tokens(backend.options)]
+
+
+def parse_launch_spec(argv: Sequence[str]) -> tuple[ServiceSpec, bool]:
+    """Parse the child's own arguments: the launch spec and whether to stop after validation."""
+    parser = argparse.ArgumentParser(allow_abbrev=False)
+    parser.add_argument("--launch-spec-json", required=True)
+    parser.add_argument("--validate", action="store_true")
+    options = parser.parse_args(argv)
+    spec = ServiceSpec.model_validate_json(options.launch_spec_json)
+    _vllm_backend(spec)
+    return spec, options.validate
+
+
+def run_server(argv: Sequence[str]) -> None:
+    """Validate the launch spec with vLLM's parser, then run the server unless ``--validate``."""
+    spec, validate_only = parse_launch_spec(argv)
+    expose_interpreter_tools()
+    arguments = vllm_compat.make_serve_parser().parse_args(serve_arguments(spec))
+    vllm_compat.validate_serve_arguments(arguments)
+    if validate_only:
+        return
+    if str(_vllm_backend(spec).options.get("mamba-backend", "")).lower() == "flashinfer":
+        configure_flashinfer_toolchain()
+    vllm_compat.run_api_server(arguments)
+
+
+def _vllm_backend(spec: ServiceSpec) -> VllmBackend:
+    if not isinstance(spec.backend, VllmBackend):
+        raise ValueError(f"the vLLM entry point cannot serve backend {spec.backend.kind!r}")
+    return spec.backend
 
 
 def expose_interpreter_tools() -> None:
@@ -42,7 +98,7 @@ def _prepend_environment_path(name: str, path: Path) -> None:
 
 
 def _packaged_cuda_root() -> Path | None:
-    """Find the CUDA toolkit installed beside the selected Python interpreter."""
+    """Find the CUDA 13 toolkit wheels (``nvidia-cuda-nvcc``) installed beside the interpreter."""
     package = importlib.util.find_spec("nvidia")
     if package is None or package.submodule_search_locations is None:
         return None
@@ -95,90 +151,3 @@ def configure_flashinfer_toolchain() -> None:
     os.environ["CUDA_HOME"] = str(cuda_root)
     _prepend_environment_path("LIBRARY_PATH", _cudart_link_directory(cuda_root))
     _prepend_environment_path("LD_LIBRARY_PATH", cuda_root / "lib")
-
-
-def load_and_validate_arguments(options: Namespace) -> Namespace:
-    """Initialize plugin discovery and delegate configuration parsing to vLLM."""
-    config = json.loads(options.config_json)
-    plugin = parse_factory_plugin(options.vllm_factory_plugin) if options.vllm_factory_plugin else None
-    if sys.version_info < MINIMUM_VLLM_PYTHON:
-        raise RuntimeError("vLLM 0.29.0 local serving requires Python 3.12 or later")
-    expose_interpreter_tools()
-    if plugin is not None:
-        os.environ["VLLM_PLUGINS"] = f"{plugin},{io_processor_for(plugin)}"
-        os.environ["ANONYMIZER_VLLM_FACTORY_PLUGIN"] = plugin
-    if any(key != "middleware" and "middleware".startswith(key.partition(".")[0]) for key in config):
-        raise ValueError("Use the full 'middleware' option name without a dotted suffix")
-    middleware = config.pop("middleware", [])
-    if isinstance(middleware, str):
-        middleware = [middleware]
-    if not isinstance(middleware, list) or not all(isinstance(item, str) for item in middleware):
-        raise ValueError("middleware must be a string or list of strings")
-    middleware = [*middleware, LAUNCH_OWNERSHIP_MIDDLEWARE]
-    if plugin is not None:
-        middleware.append(ANONYMIZER_CHAT_MIDDLEWARE)
-    cli_args = importlib.import_module("vllm.entrypoints.launchers.cli_args")
-    parser_class = importlib.import_module("vllm.utils.argparse_utils").FlexibleArgumentParser
-    parser = cli_args.make_arg_parser(parser_class())
-    # The upstream YAML loader drops empty lists and some false values.
-    empty_args = []
-    for key, value in config.items():
-        option = f"--{key.replace('_', '-')}"
-        if value is False:
-            action = parser._option_string_actions.get(option)
-            if action is None:
-                raise ValueError(f"unknown vLLM option {key!r}")
-            if f"--no-{key.replace('_', '-')}" not in parser._option_string_actions and action.default is not False:
-                raise ValueError(f"vLLM cannot express false for option {key!r}")
-        elif value == []:
-            action = parser._option_string_actions.get(option)
-            if action is None:
-                raise ValueError(f"unknown vLLM option {key!r}")
-            if (
-                not isinstance(action, argparse._StoreAction)
-                or action.type is not json.loads
-                or action.nargs is not None
-            ):
-                raise ValueError(f"vLLM cannot express an empty list for option {key!r}")
-            empty_args.extend((option, "[]"))
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", encoding="utf-8") as config_file:
-        json.dump(config, config_file)
-        config_file.flush()
-        middleware_args = [token for item in middleware for token in ("--middleware", item)]
-        arguments = parser.parse_args(["--config", config_file.name, *empty_args, *middleware_args])
-    if arguments.model_tag is not None:
-        arguments.model = arguments.model_tag
-    cli_args.validate_parsed_serve_args(arguments)
-    return arguments
-
-
-def run_server(argv: Sequence[str]) -> None:
-    """Validate with vLLM's parser, then optionally prepare and run the server."""
-    bootstrap = argparse.ArgumentParser()
-    bootstrap.add_argument("--config-json", required=True)
-    bootstrap.add_argument("--vllm-factory-plugin", choices=("deberta_gliner", "deberta_gliner2"))
-    bootstrap.add_argument("--prepared-model-root", default="/tmp/anonymizer-vllm-factory")
-    bootstrap.add_argument("--validate", action="store_true")
-    options = bootstrap.parse_args(argv)
-    arguments = load_and_validate_arguments(options)
-    if options.validate:
-        return
-    if getattr(arguments.mamba_backend, "value", arguments.mamba_backend) == "flashinfer":
-        configure_flashinfer_toolchain()
-    if options.vllm_factory_plugin is not None:
-        plugin = parse_factory_plugin(options.vllm_factory_plugin)
-        public_name = arguments.served_model_name or [arguments.model]
-        arguments.model = prepare_model(
-            model_id=arguments.model,
-            revision=arguments.revision,
-            plugin=plugin,
-            prepared_model_root=options.prepared_model_root,
-        )
-        arguments.revision = None
-        arguments.tokenizer_revision = None
-        arguments.served_model_name = public_name
-    uvloop = importlib.import_module("uvloop")
-    api_server = importlib.import_module("vllm.entrypoints.launchers.api_server.entry")
-    api_utils = importlib.import_module("vllm.entrypoints.serve.utils.api_utils")
-    api_utils.cli_env_setup()
-    uvloop.run(api_server.run_server(arguments))
