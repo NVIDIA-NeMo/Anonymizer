@@ -13,8 +13,8 @@ from typing import Any
 import pytest
 
 from anonymizer.engine.detection.postprocess import parse_raw_entities
+from anonymizer.engine.local_inference.gliner2 import backend
 from anonymizer.engine.local_inference.gliner2.backend import (
-    _prepare_transformers_v4_snapshot,
     _resolve_document_overlaps,
     detect_entities_for_texts,
     flatten_result,
@@ -54,38 +54,6 @@ def test_flatten_result_converts_label_keyed_entities() -> None:
         }
     )
     assert result == [{"text": "Alice", "label": "first_name", "start": 0, "end": 5, "score": 0.91}]
-
-
-def test_pinned_snapshot_adapts_v5_tokenizer_field_without_changing_source(tmp_path: Path) -> None:
-    source = tmp_path / "source"
-    source.mkdir()
-    original = {"extra_special_tokens": ["[P]", "[E]"], "tokenizer_class": "DebertaV2Tokenizer"}
-    (source / "tokenizer_config.json").write_text(json.dumps(original))
-    (source / "model.safetensors").write_bytes(b"weights")
-
-    prepared = _prepare_transformers_v4_snapshot(source, cache_root=tmp_path / "cache")
-    adapted = json.loads((prepared / "tokenizer_config.json").read_text())
-
-    assert adapted["additional_special_tokens"] == ["[P]", "[E]"]
-    assert "extra_special_tokens" not in adapted
-    assert json.loads((source / "tokenizer_config.json").read_text()) == original
-
-
-def test_pinned_snapshot_dereferences_hugging_face_cache_symlinks(tmp_path: Path) -> None:
-    blobs = tmp_path / "blobs"
-    blobs.mkdir()
-    (blobs / "tokenizer").write_text(json.dumps({"tokenizer_class": "DebertaV2Tokenizer"}))
-    (blobs / "weights").write_bytes(b"weights")
-    source = tmp_path / "snapshots" / "revision"
-    source.mkdir(parents=True)
-    (source / "tokenizer_config.json").symlink_to(Path("../../blobs/tokenizer"))
-    (source / "model.safetensors").symlink_to(Path("../../blobs/weights"))
-
-    prepared = _prepare_transformers_v4_snapshot(source, cache_root=tmp_path / "cache")
-
-    assert not (prepared / "tokenizer_config.json").is_symlink()
-    assert not (prepared / "model.safetensors").is_symlink()
-    assert (prepared / "model.safetensors").read_bytes() == b"weights"
 
 
 def test_overlap_policy_preserves_existing_flat_flag_contract() -> None:
@@ -378,3 +346,101 @@ def test_batch_word_windows_keep_document_offsets_separate() -> None:
         inference_batch_size=2,
     )
     assert [(row[0]["text"], row[0]["start"], row[0]["end"]) for row in result] == [("May", 4, 7), ("June", 5, 9)]
+
+
+@pytest.mark.parametrize(
+    ("requested", "device", "expected"),
+    [
+        ("auto", "cuda", "bfloat16"),
+        ("auto", "mps", "float32"),
+        ("auto", "cpu", "float32"),
+        ("FP32", "cuda", "float32"),
+        ("bf16", "cpu", "bfloat16"),
+    ],
+)
+def test_resolve_dtype_defaults_to_bf16_on_cuda_only(requested: str, device: str, expected: str) -> None:
+    assert backend.resolve_dtype(requested, device) == expected
+
+
+@pytest.mark.parametrize(
+    ("requested", "device", "expected"),
+    [
+        ("auto", "cuda", ("disentangled_flash", False)),
+        ("auto", "mps", ("standard", False)),
+        ("auto", "cpu", ("standard", False)),
+        ("standard", "cuda", ("standard", True)),
+        ("Disentangled_Flash", "cpu", ("disentangled_flash", True)),
+    ],
+)
+def test_resolve_attention_defaults_to_flash_on_cuda_only(
+    requested: str, device: str, expected: tuple[str, bool]
+) -> None:
+    assert backend.resolve_attention(requested, device) == expected
+
+
+@pytest.mark.parametrize(
+    "call", [lambda: backend.resolve_dtype("fp16", "cuda"), lambda: backend.resolve_attention("sdpa", "cuda")]
+)
+def test_unsupported_precision_or_attention_is_rejected(call: Any) -> None:
+    with pytest.raises(ValueError, match="Unsupported GLiNER2"):
+        call()
+
+
+class _LoadableModel:
+    def __init__(self, *, flash_error: Exception | None) -> None:
+        self.flash_error = flash_error
+        self.flash_enabled = False
+
+    def enable_disentangled_flash(self) -> None:
+        if self.flash_error is not None:
+            raise self.flash_error
+        self.flash_enabled = True
+
+    def batch_extract_entities(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return [{"entities": {}}]
+
+
+def _patch_loading(monkeypatch: pytest.MonkeyPatch, flash_error: Exception | None) -> list[str]:
+    import huggingface_hub
+
+    loads: list[str] = []
+
+    def load_weights(snapshot: Path, device: str, dtype: str) -> _LoadableModel:
+        loads.append(dtype)
+        return _LoadableModel(flash_error=flash_error)
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda **_: "/snapshot")
+    monkeypatch.setattr(backend, "_load_weights", load_weights)
+    return loads
+
+
+def test_cuda_default_loads_bf16_with_flash(monkeypatch: pytest.MonkeyPatch) -> None:
+    loads = _patch_loading(monkeypatch, flash_error=None)
+    loaded = backend.load_model("cuda")
+    assert (loaded.dtype, loaded.attention) == ("bfloat16", "disentangled_flash")
+    assert loaded.model.flash_enabled
+    assert loads == ["bfloat16"]
+
+
+def test_cuda_default_falls_back_to_standard_attention_with_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    loads = _patch_loading(monkeypatch, flash_error=RuntimeError("triton unavailable"))
+    loaded = backend.load_model("cuda")
+    assert (loaded.dtype, loaded.attention) == ("bfloat16", "standard")
+    assert loads == ["bfloat16", "bfloat16"]
+    assert "falling back to standard attention" in caplog.text
+
+
+def test_explicit_flash_that_cannot_load_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_loading(monkeypatch, flash_error=ImportError("no disentangled_flash"))
+    with pytest.raises(RuntimeError, match=backend.ATTENTION_ENV):
+        backend.load_model("cuda", attention="disentangled_flash")
+
+
+def test_cpu_default_is_float32_standard_attention(monkeypatch: pytest.MonkeyPatch) -> None:
+    loads = _patch_loading(monkeypatch, flash_error=None)
+    loaded = backend.load_model("cpu")
+    assert (loaded.dtype, loaded.attention) == ("float32", "standard")
+    assert not loaded.model.flash_enabled
+    assert loads == ["float32"]

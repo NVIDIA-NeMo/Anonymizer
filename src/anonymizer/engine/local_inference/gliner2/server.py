@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import os
+import secrets
 import socket
 import time
 import uuid
@@ -20,11 +22,15 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 try:
     from .backend import (  # noqa: TID252 - direct-script fallback keeps server dependencies isolated
+        ATTENTION_ENV,
         DEFAULT_CHUNK_LENGTH,
+        DEFAULT_INFERENCE_BATCH_SIZE,
         DEFAULT_OVERLAP,
+        DTYPE_ENV,
         MODEL_ID,
         MODEL_REVISION,
         detect_entities_for_texts,
@@ -33,8 +39,11 @@ try:
     )
 except ImportError:  # Direct execution inside the isolated server environment.
     from backend import (  # ty: ignore[unresolved-import] -- direct-script import path
+        ATTENTION_ENV,
         DEFAULT_CHUNK_LENGTH,
+        DEFAULT_INFERENCE_BATCH_SIZE,
         DEFAULT_OVERLAP,
+        DTYPE_ENV,
         MODEL_ID,
         MODEL_REVISION,
         detect_entities_for_texts,
@@ -45,14 +54,20 @@ except ImportError:  # Direct execution inside the isolated server environment.
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8001
 DEFAULT_FLAT_NER = False
-DEFAULT_INFERENCE_BATCH_SIZE = 8
 TOKEN_ENV = "ANONYMIZER_LOCAL_GLINER2_TOKEN"
 DEVICE_ENV = "ANONYMIZER_LOCAL_GLINER2_DEVICE"
+# Launch-ownership contract shared with tools/inference_service_compiler; keep these strings in sync.
+LAUNCH_TOKEN_ENVIRONMENT_VARIABLE = "ANONYMIZER_INFERENCE_LAUNCH_TOKEN"
+LAUNCH_OWNERSHIP_HEADER = "X-Anonymizer-Launch-Token"
+LAUNCH_OWNERSHIP_PATH = "/_anonymizer/launch-ownership"
+LAUNCH_OWNERSHIP_PROOF_FIELD = "launch_token_sha256"
 
 logger = logging.getLogger("anonymizer-local-gliner2")
 
 model: Any | None = None
 selected_device = "cpu"
+selected_dtype = "float32"
+selected_attention = "standard"
 
 
 @dataclass(frozen=True)
@@ -160,12 +175,23 @@ detector = BatchDetector()
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Load the model and own the batching worker for the server lifespan."""
-    global model, selected_device
+    global model, selected_device, selected_dtype, selected_attention
     selected_device = resolve_device(os.getenv(DEVICE_ENV, "auto"))
     logger.info("Loading %s at revision %s on %s", MODEL_ID, MODEL_REVISION, selected_device)
-    model = await asyncio.to_thread(load_model, selected_device)
+    loaded = await asyncio.to_thread(
+        load_model,
+        selected_device,
+        dtype=os.getenv(DTYPE_ENV, "auto"),
+        attention=os.getenv(ATTENTION_ENV, "auto"),
+    )
+    model, selected_dtype, selected_attention = loaded.model, loaded.dtype, loaded.attention
     detector.start()
-    logger.info("Local GLiNER2 is ready")
+    logger.info(
+        "Local GLiNER2 is ready: device=%s dtype=%s attention=%s",
+        selected_device,
+        selected_dtype,
+        selected_attention,
+    )
     try:
         yield
     finally:
@@ -173,6 +199,17 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.get(LAUNCH_OWNERSHIP_PATH, include_in_schema=False)
+def launch_ownership(request: Request) -> JSONResponse:
+    """Prove that this server inherited the launching controller's token."""
+    expected = os.getenv(LAUNCH_TOKEN_ENVIRONMENT_VARIABLE)
+    supplied = request.headers.get(LAUNCH_OWNERSHIP_HEADER)
+    if not expected or supplied is None or not secrets.compare_digest(supplied.encode(), expected.encode()):
+        return JSONResponse(status_code=404, content={"detail": "not found"})
+    proof = hashlib.sha256(expected.encode()).hexdigest()
+    return JSONResponse(content={LAUNCH_OWNERSHIP_PROOF_FIELD: proof})
 
 
 @app.get("/v1/models")
@@ -187,6 +224,8 @@ def list_models(request: Request) -> dict[str, Any]:
                 "object": "model",
                 "revision": MODEL_REVISION,
                 "device": selected_device,
+                "dtype": selected_dtype,
+                "attention": selected_attention,
             }
         ],
     }

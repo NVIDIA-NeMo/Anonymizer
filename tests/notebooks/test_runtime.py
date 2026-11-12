@@ -13,8 +13,8 @@ import pytest
 from anonymizer.engine.local_inference import runtime as _runtime
 
 
-def test_isolated_server_environment_requires_gliner2_local_extra() -> None:
-    assert "gliner2[local]==2.0.0" in _runtime._SERVER_REQUIREMENTS
+def test_isolated_server_environment_requires_gliner2_local_and_flash_extras() -> None:
+    assert "gliner2[local,disentangled-flash]==2.1.0" in _runtime._SERVER_REQUIREMENTS
 
 
 @pytest.mark.parametrize(
