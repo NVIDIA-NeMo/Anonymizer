@@ -399,6 +399,22 @@ _COLLISION = _maps([("company", "Acme", "Nova")], [("company", "Acme", "Zeta"), 
 _COLLISION_RUN = _maps(
     [("company", "Acme", "Nova")], [("company", "Acme", "Nova"), ("company", "Initech", "[SUBSTITUTE_COMPANY_1]")]
 )
+_NEWCOMER_FIRST = _maps([("company", "Acme", "Nova")], [("company", "Initech", "Nova"), ("company", "Acme", "Zeta")])
+_NEWCOMER_FIRST_RUN = _maps(
+    [("company", "Acme", "Nova")], [("company", "Initech", "[SUBSTITUTE_COMPANY_1]"), ("company", "Acme", "Nova")]
+)
+_HOLDER_AFTER = _maps(
+    [("first_name", "Alice", "Maya")],
+    [("first_name", "Bob", "Nora"), ("first_name", "Alice", "Nora"), ("first_name", "Maya", "Lena")],
+)
+_HOLDER_AFTER_FOLDED = _maps(
+    [("first_name", "Alice", "Maya")],
+    [
+        ("first_name", "Bob", "Nora"),
+        ("first_name", "Alice", "[SUBSTITUTE_FIRST_NAME_1]"),
+        ("first_name", "Maya", "Lena"),
+    ],
+)
 _CROSS_KEY = _maps([("first_name", "Alice", "Maya")], [("first_name", "Carl", "Maya")])
 _CROSS_KEY_RUN = _maps([("first_name", "Alice", "Maya")], [("first_name", "Carl", "[SUBSTITUTE_FIRST_NAME_1]")])
 _SINGLE = _maps([("company", "Acme", "Nova"), ("person", "Bob", "Tim")])
@@ -412,6 +428,20 @@ _VARIANT_FOLDED = _maps(
 )
 _SAME_OWN = _maps([("first_name", "Alice", "Maya"), ("first_name", "Bob", "Maya")])
 _SAME_OWN_FOLDED = _maps([("first_name", "Alice", "Maya"), ("first_name", "Bob", "[SUBSTITUTE_FIRST_NAME_1]")])
+_SHARED = _maps([("city", "Paris", "Lyon"), ("city", "Berlin", "Lyon")])
+_SHARED_RUN = _maps([("city", "Paris", "Lyon"), ("city", "Berlin", "[SUBSTITUTE_CITY_1]")])
+_SHARED_LABELS = _maps([("first_name", "Jordan", "Morgan"), ("last_name", "Smith", "Morgan")])
+_SHARED_LABELS_RUN = _maps([("first_name", "Jordan", "Morgan"), ("last_name", "Smith", "[SUBSTITUTE_LAST_NAME_1]")])
+_SHARED_THREE = _maps([("city", "Paris", "Lyon"), ("city", "Berlin", "Lyon"), ("city", "Rome", "Lyon")])
+_SHARED_THREE_RUN = _maps(
+    [("city", "Paris", "Lyon"), ("city", "Berlin", "[SUBSTITUTE_CITY_1]"), ("city", "Rome", "[SUBSTITUTE_CITY_2]")]
+)
+_SAME_VALUE_LABELS = _maps([("first_name", "Jordan", "Alex"), ("last_name", "Jordan", "Alex")])
+_SAME_VALUE_LABELS_RUN = _maps([("first_name", "Jordan", "Alex"), ("last_name", "Jordan", "[SUBSTITUTE_LAST_NAME_1]")])
+_REAL_VALUE = _maps([("city", "Paris", "London"), ("city", "London", "Berlin")])
+_REAL_VALUE_FOLDED = _maps([("city", "Paris", "[SUBSTITUTE_CITY_1]"), ("city", "London", "Berlin")])
+_SELF = _maps([("city", "Paris", "Paris")])
+_SELF_FOLDED = _maps([("city", "Paris", "[SUBSTITUTE_CITY_1]")])
 _UNMAPPED = _maps([("first_name", "Alice", "Maya")])
 _UNMAPPED_FOLDED = _maps([("first_name", "Alice", "[SUBSTITUTE_FIRST_NAME_1]")])
 _DOTLESS = _maps([("first_name", "Ayşe", "Yıldız"), ("first_name", "AYŞE", "Can"), ("first_name", "YILDIZ", "Deniz")])
@@ -437,7 +467,15 @@ _RUN_VARIANT = _maps(
             (_VARIANT, *[_VARIANT_FOLDED] * 2),
             (_RUN_VARIANT, _RUN_VARIANT, _RUN_VARIANT),
             (_DOTLESS, _DOTLESS, _DOTLESS),
-            (_SAME_OWN, *[_SAME_OWN_FOLDED] * 2),
+            (_SAME_OWN, _SAME_OWN, _SAME_OWN_FOLDED),
+            (_NEWCOMER_FIRST, _NEWCOMER_FIRST, _NEWCOMER_FIRST_RUN),
+            (_HOLDER_AFTER, _HOLDER_AFTER, _HOLDER_AFTER_FOLDED),
+            (_SHARED, _SHARED, _SHARED_RUN),
+            (_SHARED_LABELS, _SHARED_LABELS, _SHARED_LABELS_RUN),
+            (_SHARED_THREE, _SHARED_THREE, _SHARED_THREE_RUN),
+            (_SAME_VALUE_LABELS, _SAME_VALUE_LABELS, _SAME_VALUE_LABELS_RUN),
+            (_REAL_VALUE, *[_REAL_VALUE_FOLDED] * 2),
+            (_SELF, *[_SELF_FOLDED] * 2),
         ]
     ]
     + [(_UNMAPPED, *[_UNMAPPED_FOLDED] * 2, [{"Alice", "Maya"}])],
@@ -454,6 +492,14 @@ _RUN_VARIANT = _maps(
         "run-variant",
         "dotless-i",
         "same-own",
+        "newcomer-first",
+        "holder-fallback-after-proposer",
+        "shared-substitute",
+        "shared-across-labels",
+        "shared-by-three",
+        "same-value-two-labels",
+        "substitute-is-real-value",
+        "substitute-is-own-value",
         "unmapped-entity",
     ],
 )
@@ -495,7 +541,7 @@ def test_fold_never_emits_a_colliding_substitute(consistency: Literal["record", 
             value = _fold(e["synthetic"])
             assert value not in originals, (raw, out)
             by_value.setdefault(value, set()).add((e["label"], _fold(e["original"])))
-        assert all(len(keys) == 1 for keys in by_value.values()), (raw, out)
+        assert consistency == "record" or all(len(keys) == 1 for keys in by_value.values()), (raw, out)
         for value, keys in by_value.items():
             run_wide.setdefault(value, set()).update(keys)
     if consistency == "run":
@@ -506,6 +552,7 @@ _FALLBACKS = _maps(
     [("first_name", "Alice", "Maya"), ("first_name", "ALICE", "NORA"), ("first_name", "Bob", "Maya")],
     [("city", "Paris", "Lyon"), ("city", "LYON", "Nice")],
 )
+_FALLBACK_COUNTS_RECORD = {"city": {"placeholder_protected": 1}, "first_name": {"own": 1}}
 _FALLBACK_COUNTS = {"city": {"placeholder_protected": 1}, "first_name": {"own": 1, "placeholder_taken": 1}}
 # Records 1 and 2 propose one substitute for different names; record 3 repeats record 2's name. In run mode Bob
 # falls back to a run-wide placeholder once and record 3 reuses it without a new count.
@@ -515,7 +562,7 @@ _REUSED = _maps([("first_name", "Alice", "Maya")], [("first_name", "Bob", "Maya"
 @pytest.mark.parametrize(
     ("maps", "expected"),
     [
-        (_FALLBACKS, {"record": (5, 2, _FALLBACK_COUNTS), "run": (5, 2, _FALLBACK_COUNTS)}),
+        (_FALLBACKS, {"record": (5, 1, _FALLBACK_COUNTS_RECORD), "run": (5, 2, _FALLBACK_COUNTS)}),
         (_REUSED, {"record": (3, 0, {}), "run": (3, 1, {"first_name": {"placeholder_taken": 1}})}),
     ],
     ids=["within_record", "across_records"],
