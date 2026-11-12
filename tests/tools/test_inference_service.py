@@ -8,10 +8,15 @@ import asyncio
 import json
 import os
 import shutil
+import signal
 import socket
 import stat
+import subprocess
 import sys
+import time
 import venv
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -729,6 +734,242 @@ def test_real_cli_authenticated_lifecycle(tmp_path: Path) -> None:
         result = call("stop", "--receipt", str(receipt))
         assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["outcome"] in ("terminated", "forced")
+
+
+@dataclass
+class ProcessGroup:
+    """A real process group started from the fixture's ``group`` mode."""
+
+    leader: subprocess.Popen[bytes]
+    workers: list[int]
+    handle: models.LocalProcessHandle
+
+    @property
+    def receipt(self) -> models.LaunchReceipt:
+        return launch_receipt(compiler.compile_spec(generation(shutdown_timeout_seconds=0.5)), self.handle)
+
+    def reap_leader(self) -> None:
+        self.leader.wait(timeout=10)
+
+    def live_workers(self) -> list[int]:
+        return [pid for pid in self.workers if runtime.read_process_state(pid) not in {None, "Z", "X"}]
+
+
+StartGroup = Callable[..., ProcessGroup]
+
+
+@pytest.fixture
+def start_group(tmp_path: Path) -> Iterator[StartGroup]:
+    """Start real fixture process groups and kill whatever is left at teardown."""
+    started: list[ProcessGroup] = []
+
+    def start(
+        *,
+        token: str | None,
+        recorded_token: str = "launch-token",
+        workers: int = 2,
+        ignore_term: bool = False,
+        leader_exits: bool = False,
+        hold_mib: int = 0,
+    ) -> ProcessGroup:
+        ready = tmp_path / f"group-{len(started)}.json"
+        environment = {
+            name: value
+            for name, value in os.environ.items()
+            if name != launch_ownership.LAUNCH_TOKEN_ENVIRONMENT_VARIABLE
+        }
+        if token is not None:
+            environment[launch_ownership.LAUNCH_TOKEN_ENVIRONMENT_VARIABLE] = token
+        flags = [
+            "--hold-mib",
+            str(hold_mib),
+            *(["--ignore-term"] if ignore_term else []),
+            *(["--leader-exits"] if leader_exits else []),
+        ]
+        leader = subprocess.Popen(
+            [
+                sys.executable,
+                str(FIXTURES / "inference_process.py"),
+                "group",
+                "--workers",
+                str(workers),
+                "--ready",
+                str(ready),
+                *flags,
+            ],
+            env=environment,
+            start_new_session=True,
+        )
+        deadline = time.monotonic() + 20
+        while not ready.exists():
+            assert time.monotonic() < deadline, "fixture process group did not start"
+            time.sleep(0.05)
+        marker = runtime.read_process_start_marker(leader.pid)
+        assert marker is not None
+        group = ProcessGroup(
+            leader=leader,
+            workers=json.loads(ready.read_text())["workers"],
+            handle=models.LocalProcessHandle(
+                pid=leader.pid,
+                start_marker=marker,
+                launch_token_sha256=launch_ownership.launch_token_proof(recorded_token),
+                stdout_path=str(tmp_path / "stdout.log"),
+                stderr_path=str(tmp_path / "stderr.log"),
+            ),
+        )
+        started.append(group)
+        return group
+
+    yield start
+    for group in started:
+        for pid in (group.leader.pid, *group.workers):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        group.leader.wait(timeout=10)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="managed process identity uses Linux /proc")
+def test_stop_terminates_a_group_whose_leader_is_alive(start_group: StartGroup) -> None:
+    group = start_group(token="launch-token")
+
+    assert runtime.status_run(group.receipt).state == "running"
+    stopped = runtime.stop_run(group.receipt)
+
+    assert (stopped.outcome, stopped.cleanup_complete) == ("terminated", True)
+    assert group.live_workers() == []
+    assert runtime.stop_run(group.receipt).outcome == "already-stopped"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="managed process identity uses Linux /proc")
+def test_stop_forces_a_group_that_ignores_sigterm_and_waits_for_it_to_go(start_group: StartGroup) -> None:
+    """Workers holding memory take a moment to die after SIGKILL; the stop must wait for them."""
+    group = start_group(token="launch-token", workers=4, ignore_term=True, hold_mib=256)
+
+    stopped = runtime.stop_run(group.receipt)
+
+    assert (stopped.outcome, stopped.cleanup_complete) == ("forced", True)
+    assert group.live_workers() == []
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="managed process identity uses Linux /proc")
+def test_stop_reaches_this_launchs_workers_after_the_leader_is_gone(start_group: StartGroup) -> None:
+    """A crashed leader must not hide workers that still hold GPU memory."""
+    group = start_group(token="launch-token", leader_exits=True)
+    group.reap_leader()
+
+    assert runtime.status_run(group.receipt).state == "running"
+    stopped = runtime.stop_run(group.receipt)
+
+    assert (stopped.outcome, stopped.cleanup_complete) == ("terminated", True)
+    assert group.live_workers() == []
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="managed process identity uses Linux /proc")
+@pytest.mark.parametrize("foreign_token", [None, "another-launch"])
+def test_stale_receipt_refuses_a_leaderless_group_it_cannot_prove_it_owns(
+    start_group: StartGroup, foreign_token: str | None
+) -> None:
+    """A receipt whose leader is gone must not signal a group that merely has the recorded ID."""
+    group = start_group(token=foreign_token, recorded_token="launch-token", leader_exits=True)
+    group.reap_leader()
+
+    assert runtime.status_run(group.receipt).state == "ownership-unverified"
+    with (
+        mock.patch.object(runtime.os, "killpg", wraps=runtime.os.killpg) as killpg,
+        pytest.raises(runtime.RuntimeEffectError) as exc_info,
+    ):
+        runtime.stop_run(group.receipt)
+
+    assert exc_info.value.diagnostic.code == "process-group-ownership-unverified"
+    assert exc_info.value.diagnostic.cleanup_complete is False
+    killpg.assert_not_called()
+    assert sorted(group.live_workers()) == sorted(group.workers)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="managed process identity uses Linux /proc")
+def test_group_holding_only_an_unreaped_leader_counts_as_stopped(start_group: StartGroup) -> None:
+    group = start_group(token="launch-token", workers=0, leader_exits=True)
+    deadline = time.monotonic() + 10
+    while runtime.read_process_state(group.leader.pid) != "Z":
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+
+    assert runtime.status_run(group.receipt).state == "stopped"
+    assert runtime.stop_run(group.receipt).outcome == "already-stopped"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="managed process identity uses Linux /proc")
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() != 0 or shutil.which("unshare") is None,
+    reason="needs root and unshare to force PID reuse in a private PID namespace",
+)
+def test_stale_receipt_does_not_signal_a_new_session_that_reused_the_group_id(tmp_path: Path) -> None:
+    """Regression: once a group fully exits its ID can go to an unrelated session."""
+    environment = os.environ | {"PYTHONPATH": str(TOOLS)}
+    result = subprocess.run(
+        [
+            "unshare",
+            "--pid",
+            "--fork",
+            "--mount-proc",
+            sys.executable,
+            str(FIXTURES / "pid_reuse_probe.py"),
+            str(tmp_path),
+        ],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    observed = json.loads(result.stdout)
+
+    assert observed["foreign_pgid"] == observed["recorded_pgid"]
+    assert observed["status"] == "ownership-unverified"
+    assert observed["stop"] == {"code": "process-group-ownership-unverified", "cleanup_complete": False}
+    assert observed["foreign_workers_alive"] is True
+
+
+def _fixture_server_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **backend: object) -> models.RunPlan:
+    serving = tmp_path / "serving"
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(serving)
+    server = tmp_path / "tools/inference_service_compiler/vllm_server.py"
+    server.parent.mkdir(parents=True)
+    shutil.copyfile(FIXTURES / "inference_process.py", server)
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    monkeypatch.chdir(tmp_path)
+    return compiler.compile_spec(
+        generation(
+            backend=backend,
+            python_executable=str(serving / "bin/python"),
+            port=port,
+            startup_timeout_seconds=60,
+            shutdown_timeout_seconds=1,
+        )
+    )
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="managed process identity uses Linux /proc")
+def test_launch_fails_fast_and_cleans_up_when_the_endpoint_serves_another_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = _fixture_server_plan(tmp_path, monkeypatch, served_model_name="some/other-model")
+
+    started = time.monotonic()
+    with pytest.raises(runtime.RuntimeEffectError) as exc_info:
+        runtime.launch_plan(plan, secret_values={}, log_directory=tmp_path / "logs")
+
+    assert time.monotonic() - started < 30
+    diagnostic = exc_info.value.diagnostic
+    assert diagnostic.code == "served-model-mismatch"
+    assert "some/other-model" in diagnostic.message
+    assert diagnostic.cleanup_complete is True
+    pid = int(diagnostic.known_effects[0].split(":")[0])
+    os.waitpid(pid, 0)
 
 
 def test_launch_environment_passes_only_what_the_service_needs(monkeypatch: pytest.MonkeyPatch) -> None:
