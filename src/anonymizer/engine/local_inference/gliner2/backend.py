@@ -6,18 +6,40 @@ from __future__ import annotations
 
 import bisect
 import json
+import logging
 import os
 import shutil
 import tempfile
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 SUPPORTED_DEVICES = ("auto", "cuda", "mps", "cpu")
+SUPPORTED_DTYPES = ("auto", "float32", "bfloat16")
+SUPPORTED_ATTENTION = ("auto", "standard", "disentangled_flash")
+DTYPE_ENV = "ANONYMIZER_LOCAL_GLINER2_DTYPE"
+ATTENTION_ENV = "ANONYMIZER_LOCAL_GLINER2_ATTENTION"
+DEFAULT_INFERENCE_BATCH_SIZE = 32
 DEFAULT_CHUNK_LENGTH = 128
 DEFAULT_OVERLAP = 32
 MODEL_ID = "fastino/gliner2-privacy-filter-PII-multi"
 MODEL_REVISION = "59894c087cb2923b01f337d4ee72f6ff84d5bdd6"
+
+_DTYPE_ALIASES = {"fp32": "float32", "bf16": "bfloat16"}
+_WARMUP_TEXT = "Alice Smith lives in Paris."
+_WARMUP_LABELS = ["first_name", "city"]
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class LoadedModel:
+    """A loaded GLiNER2 model and the precision/attention it actually runs with."""
+
+    model: Any
+    dtype: str
+    attention: str
 
 
 def resolve_device(requested: str) -> str:
@@ -43,14 +65,77 @@ def resolve_device(requested: str) -> str:
     return normalized
 
 
-def load_model(device: str) -> Any:
-    """Download the pinned checkpoint and load it on ``device``."""
-    from gliner2 import GLiNER2
+def resolve_dtype(requested: str, device: str) -> str:
+    """Resolve the inference precision: bfloat16 on CUDA, float32 elsewhere."""
+    normalized = requested.strip().lower()
+    normalized = _DTYPE_ALIASES.get(normalized, normalized)
+    if normalized not in SUPPORTED_DTYPES:
+        raise ValueError(f"Unsupported GLiNER2 dtype {requested!r}; expected one of {SUPPORTED_DTYPES!r}.")
+    if normalized == "auto":
+        return "bfloat16" if device == "cuda" else "float32"
+    return normalized
+
+
+def resolve_attention(requested: str, device: str) -> tuple[str, bool]:
+    """Resolve the attention implementation and whether it was explicitly requested.
+
+    The automatic choice is DisentangledFlash on CUDA and standard attention elsewhere.
+    """
+    normalized = requested.strip().lower()
+    if normalized not in SUPPORTED_ATTENTION:
+        raise ValueError(f"Unsupported GLiNER2 attention {requested!r}; expected one of {SUPPORTED_ATTENTION!r}.")
+    if normalized == "auto":
+        return ("disentangled_flash" if device == "cuda" else "standard"), False
+    return normalized, True
+
+
+def load_model(device: str, *, dtype: str = "auto", attention: str = "auto") -> LoadedModel:
+    """Download the pinned checkpoint and load it on ``device`` with the resolved precision and attention.
+
+    An explicitly requested DisentangledFlash that cannot be enabled raises. The automatic CUDA
+    default falls back to standard attention with a warning instead.
+    """
     from huggingface_hub import snapshot_download
 
+    resolved_dtype = resolve_dtype(dtype, device)
+    resolved_attention, explicit_attention = resolve_attention(attention, device)
     snapshot_path = snapshot_download(repo_id=MODEL_ID, revision=MODEL_REVISION)
     compatible_snapshot = _prepare_transformers_v4_snapshot(Path(snapshot_path))
-    return GLiNER2.from_pretrained(compatible_snapshot, map_location=device)
+    model = _load_weights(compatible_snapshot, device, resolved_dtype)
+    if resolved_attention == "disentangled_flash":
+        try:
+            model.enable_disentangled_flash()
+            _warm_up(model)
+        except Exception as exc:
+            if explicit_attention:
+                raise RuntimeError(
+                    f"DisentangledFlash attention was requested via {ATTENTION_ENV} but could not be enabled "
+                    f"on {device}: {exc}"
+                ) from exc
+            logger.warning(
+                "DisentangledFlash could not be enabled on %s (%s); falling back to standard attention.",
+                device,
+                exc,
+            )
+            model = _load_weights(compatible_snapshot, device, resolved_dtype)
+            resolved_attention = "standard"
+    return LoadedModel(model=model, dtype=resolved_dtype, attention=resolved_attention)
+
+
+def _load_weights(snapshot: Path, device: str, dtype: str) -> Any:
+    import torch
+    from gliner2 import GLiNER2
+
+    model = GLiNER2.from_pretrained(snapshot, map_location=device)
+    if dtype == "bfloat16":
+        model = model.to(dtype=torch.bfloat16)
+    model.eval()
+    return model
+
+
+def _warm_up(model: Any) -> None:
+    """Run one tiny extraction so kernel compilation failures surface at load time."""
+    model.batch_extract_entities([_WARMUP_TEXT], _WARMUP_LABELS, batch_size=1, threshold=0.5)
 
 
 def _prepare_transformers_v4_snapshot(snapshot: Path, *, cache_root: Path | None = None) -> Path:

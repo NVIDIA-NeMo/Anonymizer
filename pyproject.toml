@@ -21,7 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 notebooks = [
     "datasets>=4.0.0,<6",
-    "gliner2==2.0.0",
+    "gliner2==2.1.0",
     "ipykernel>=6.29.0,<8",
     "jupyter>=1.0.0,<2",
     "jupytext>=1.16.0,<2",

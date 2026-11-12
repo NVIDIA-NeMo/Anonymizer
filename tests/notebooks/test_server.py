@@ -109,3 +109,7 @@ def test_chat_completion_returns_anonymizer_entity_contract(
     assert detect.await_args is not None
     params = detect.await_args.args[1]
     assert (params.chunk_length, params.overlap) == expected_window
+
+
+def test_default_inference_batch_size_is_32() -> None:
+    assert server.DEFAULT_INFERENCE_BATCH_SIZE == 32

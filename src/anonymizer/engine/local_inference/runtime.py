@@ -38,7 +38,7 @@ _SHUTDOWN_TIMEOUT_SECONDS = 10.0
 _MAX_PORT_ATTEMPTS = 3
 _CHILD_SECRET_ALLOWLIST = {LOCAL_TOKEN_ENV, "HF_TOKEN"}
 _SERVER_REQUIREMENTS = (
-    "gliner2[local]==2.0.0",
+    "gliner2[local,disentangled-flash]==2.1.0",
     "fastapi>=0.115,<1",
     "huggingface-hub>=0.33,<1",
     "protobuf>=5,<7",
