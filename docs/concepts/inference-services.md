@@ -94,8 +94,9 @@ it and waits for `/v1/models` and a task-specific request. The ownership check
 prevents an existing compatible service on the target port from satisfying a
 new launch. A generation service must return a chat completion. The detector
 must return a labelled entity with character offsets and a score. The launch
-receipt records the process group and Linux start marker so later commands do
-not signal a reused PID or an unrelated process group.
+receipt records the process group, the Linux start marker, and a digest of the
+launch token so later commands do not signal a reused PID or an unrelated
+process group.
 
 A v3 profile sets the endpoint at the top level and the serving backend in
 `[backend]`:
@@ -177,7 +178,10 @@ observed handle and its consistency fingerprint. The tool validates the output
 destination before launch and publishes file receipts with atomic replacement.
 If publication still fails, it makes a bounded attempt to stop the launched
 process. Later status and stop operations re-check the exact PID, Linux start
-marker, and process group.
+marker, and process group. If the leader has exited but workers remain, `stop`
+signals the group only when every remaining process carries the launch token;
+otherwise it refuses with `process-group-ownership-unverified` and `status`
+reports `ownership-unverified`.
 
 Read the non-secret client values from the compiled plan, then connect through the public factory:
 

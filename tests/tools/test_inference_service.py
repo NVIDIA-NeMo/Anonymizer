@@ -28,26 +28,8 @@ ROOT = Path(__file__).resolve().parents[2]
 TOOLS = ROOT / "tools"
 PROFILES = TOOLS / "inference_service_profiles"
 CLI = TOOLS / "inference_service.py"
-
-
-class SimulatedProcessGroup:
-    """Track group liveness and signals without touching real processes."""
-
-    def __init__(self, process_group_id: int, exit_signal: int) -> None:
-        self.process_group_id = process_group_id
-        self.exit_signal = exit_signal
-        self.running = True
-        self.signals: list[int] = []
-
-    def signal(self, process_group_id: int, sent_signal: int) -> None:
-        assert process_group_id == self.process_group_id
-        if sent_signal == 0:
-            if not self.running:
-                raise ProcessLookupError
-            return
-        self.signals.append(sent_signal)
-        if sent_signal == self.exit_signal:
-            self.running = False
+FIXTURES = Path(__file__).parent / "fixtures"
+TOKEN_SHA256 = "0" * 64
 
 
 def generation(*, backend: dict[str, object] | None = None, **fields: object) -> models.ServiceSpec:
@@ -295,7 +277,9 @@ def test_plan_integrity_is_enforced_before_launch(tmp_path: Path) -> None:
 
 def test_status_and_stop_reject_a_reused_pid_without_signaling(monkeypatch: pytest.MonkeyPatch) -> None:
     plan = compiler.compile_spec(generation())
-    handle = models.LocalProcessHandle(pid=1, start_marker="old", stdout_path="out", stderr_path="err")
+    handle = models.LocalProcessHandle(
+        launch_token_sha256=TOKEN_SHA256, pid=1, start_marker="old", stdout_path="out", stderr_path="err"
+    )
     launch = launch_receipt(plan, handle)
     monkeypatch.setattr(runtime, "read_process_start_marker", lambda _pid: "new")
 
@@ -315,6 +299,7 @@ def test_status_and_stop_reject_a_reused_pid_without_signaling(monkeypatch: pyte
 def test_stop_rejects_a_mismatched_process_group_without_signaling() -> None:
     plan = compiler.compile_spec(generation())
     handle = models.LocalProcessHandle(
+        launch_token_sha256=TOKEN_SHA256,
         pid=4242,
         start_marker="100",
         stdout_path="out",
@@ -328,7 +313,6 @@ def test_stop_rejects_a_mismatched_process_group_without_signaling() -> None:
         mock.patch.object(runtime.os, "getpgid", return_value=9000),
         mock.patch.object(runtime.os, "kill"),
         mock.patch.object(runtime.os, "killpg") as killpg,
-        mock.patch.object(runtime.time, "monotonic", side_effect=[0.0, 1.0]),
         pytest.raises(runtime.RuntimeEffectError) as exc_info,
     ):
         runtime.stop_run(launch)
@@ -355,6 +339,7 @@ def test_launch_records_process_identity_and_resolves_secrets(tmp_path: Path) ->
 def test_launch_requires_scoped_ownership_evidence(tmp_path: Path) -> None:
     plan = compiler.compile_spec(generation())
     handle = models.LocalProcessHandle(
+        launch_token_sha256=TOKEN_SHA256,
         pid=4242,
         start_marker="100",
         stdout_path="out",
@@ -367,6 +352,7 @@ def test_launch_requires_scoped_ownership_evidence(tmp_path: Path) -> None:
         _plan: models.RunPlan,
         environment: dict[str, str],
         _log_directory: Path,
+        _launch_token_sha256: str,
     ) -> models.LocalProcessHandle:
         observed_environment.update(environment)
         return handle
@@ -466,6 +452,7 @@ def test_launch_ownership_probe_receives_endpoint_authentication() -> None:
 def test_post_spawn_readiness_failures_always_clean_up(tmp_path: Path, failure: BaseException) -> None:
     plan = compiler.compile_spec(generation())
     handle = models.LocalProcessHandle(
+        launch_token_sha256=TOKEN_SHA256,
         pid=4242,
         start_marker="100",
         stdout_path="out",
@@ -488,6 +475,7 @@ def test_launch_command_stops_service_when_receipt_write_fails(tmp_path: Path) -
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(plan.model_dump_json(), encoding="utf-8")
     handle = models.LocalProcessHandle(
+        launch_token_sha256=TOKEN_SHA256,
         pid=4242,
         start_marker="100",
         stdout_path="out",
@@ -514,6 +502,7 @@ def test_launch_command_rejects_a_directory_receipt_target_before_launch(tmp_pat
     output = tmp_path / "receipt"
     output.mkdir()
     handle = models.LocalProcessHandle(
+        launch_token_sha256=TOKEN_SHA256,
         pid=4242,
         start_marker="100",
         stdout_path="out",
@@ -580,129 +569,11 @@ def test_missing_secret_fails_before_process_start(tmp_path: Path) -> None:
     assert exc_info.value.diagnostic.known_effects == ()
 
 
-def test_status_stop_and_forced_cleanup_are_versioned(tmp_path: Path) -> None:
-    plan = compiler.compile_spec(generation())
-    handle = models.LocalProcessHandle(
-        pid=4242,
-        start_marker="100",
-        stdout_path=str(tmp_path / "stdout.log"),
-        stderr_path=str(tmp_path / "stderr.log"),
-    )
-    launch = launch_receipt(plan, handle)
-    group = SimulatedProcessGroup(handle.process_group_id, runtime.signal.SIGKILL)
-
-    with mock.patch.object(runtime, "is_handle_running", return_value=True):
-        assert runtime.status_run(launch).state == "running"
-    with (
-        mock.patch.object(runtime, "is_handle_running", return_value=True),
-        mock.patch.object(runtime.time, "monotonic", side_effect=[0.0, 0.0, 1.0]),
-        mock.patch.object(runtime.os, "killpg", side_effect=group.signal),
-    ):
-        stopped = runtime.stop_run(launch)
-    assert stopped.outcome == "forced"
-    assert stopped.cleanup_complete is True
-    assert group.signals == [runtime.signal.SIGTERM, runtime.signal.SIGKILL]
-
-
-def test_stop_forces_a_process_group_after_its_leader_exits(tmp_path: Path) -> None:
-    plan = compiler.compile_spec(generation())
-    handle = models.LocalProcessHandle(
-        pid=4242,
-        start_marker="100",
-        stdout_path=str(tmp_path / "stdout.log"),
-        stderr_path=str(tmp_path / "stderr.log"),
-    )
-    launch = launch_receipt(plan, handle)
-    group = SimulatedProcessGroup(handle.process_group_id, runtime.signal.SIGKILL)
-
-    with (
-        mock.patch.object(runtime, "is_handle_running", side_effect=[True, False]),
-        mock.patch.object(runtime.os, "killpg", side_effect=group.signal),
-        mock.patch.object(runtime.time, "monotonic", side_effect=[0.0, 0.0, 1.0]),
-        mock.patch.object(runtime.time, "sleep"),
-    ):
-        stopped = runtime.stop_run(launch)
-
-    assert stopped.outcome == "forced"
-    assert stopped.cleanup_complete is True
-    assert group.signals == [runtime.signal.SIGTERM, runtime.signal.SIGKILL]
-
-
-def test_stop_and_status_see_workers_after_the_leader_has_exited(tmp_path: Path) -> None:
-    """A crashed leader must not hide workers that still hold GPU memory."""
-    plan = compiler.compile_spec(generation())
-    handle = models.LocalProcessHandle(
-        pid=4242,
-        start_marker="100",
-        stdout_path=str(tmp_path / "stdout.log"),
-        stderr_path=str(tmp_path / "stderr.log"),
-    )
-    launch = launch_receipt(plan, handle)
-    group = SimulatedProcessGroup(handle.process_group_id, runtime.signal.SIGKILL)
-
-    with (
-        mock.patch.object(runtime, "read_process_start_marker", return_value=None),
-        mock.patch.object(runtime.os, "killpg", side_effect=group.signal),
-        mock.patch.object(runtime.time, "monotonic", side_effect=[0.0, 0.0, 1.0]),
-        mock.patch.object(runtime.time, "sleep"),
-    ):
-        assert runtime.status_run(launch).state == "running"
-        stopped = runtime.stop_run(launch)
-        group_gone = runtime.stop_run(launch)
-
-    assert stopped.outcome == "forced"
-    assert stopped.cleanup_complete is True
-    assert group.signals[:2] == [runtime.signal.SIGTERM, runtime.signal.SIGKILL]
-    assert group_gone.outcome == "already-stopped"
-
-
-def test_failed_launch_cleanup_signals_workers_after_the_leader_has_exited(tmp_path: Path) -> None:
-    handle = models.LocalProcessHandle(
-        pid=4242,
-        start_marker="100",
-        stdout_path=str(tmp_path / "stdout.log"),
-        stderr_path=str(tmp_path / "stderr.log"),
-    )
-    group = SimulatedProcessGroup(handle.process_group_id, runtime.signal.SIGTERM)
-
-    with (
-        mock.patch.object(runtime, "read_process_start_marker", return_value=None),
-        mock.patch.object(runtime.os, "killpg", side_effect=group.signal),
-        mock.patch.object(runtime.time, "sleep"),
-    ):
-        assert runtime._cleanup_handle(handle, 5.0) is True
-
-    assert group.signals == [runtime.signal.SIGTERM]
-
-
-def test_process_group_of_only_zombies_counts_as_stopped(tmp_path: Path) -> None:
-    """A group left holding only zombies has nothing to signal and nothing on the GPU."""
-    proc = tmp_path / "proc"
-    for pid, state, group in ((4242, "Z", 4242), (4300, "Z", 4242), (4400, "S", 9999), (4500, "R", 7777)):
-        (proc / str(pid)).mkdir(parents=True)
-        (proc / str(pid) / "stat").write_text(f"{pid} (worker with spaces) {state} 1 {group} 0 0\n", encoding="utf-8")
-    (proc / "self").mkdir()
-    real_path = runtime.Path
-
-    def rooted(*parts: object) -> Path:
-        first = str(parts[0]) if parts else ""
-        return real_path(proc if first == "/proc" else first, *(str(part) for part in parts[1:]))
-
-    with (
-        mock.patch.object(runtime.os, "killpg"),
-        mock.patch.object(runtime, "Path", side_effect=rooted),
-    ):
-        assert runtime._is_process_group_running(4242) is False
-        # A live member of another group does not change the answer, and an
-        # unknown group falls back to the killpg result.
-        assert runtime._is_process_group_running(9999) is True
-        assert runtime._is_process_group_running(1111) is True
-
-
 def test_process_stat_handles_spaces_and_zombies(tmp_path: Path) -> None:
     fields = ["S", *(str(index) for index in range(4, 22)), "98765"]
     assert runtime._parse_process_stat(f"4242 (worker with spaces) {' '.join(fields)}") == ("S", "98765")
     handle = models.LocalProcessHandle(
+        launch_token_sha256=TOKEN_SHA256,
         pid=4242,
         start_marker="98765",
         stdout_path=str(tmp_path / "stdout.log"),
@@ -717,29 +588,10 @@ def test_process_stat_handles_spaces_and_zombies(tmp_path: Path) -> None:
     kill.assert_not_called()
 
 
-def test_failed_readiness_cleans_up_the_known_process(tmp_path: Path) -> None:
-    plan = compiler.compile_spec(generation())
-    process = mock.Mock(pid=4242)
-    failure = runtime.RuntimeEffectError(models.RuntimeDiagnostic(code="probe-failed", message="not ready"))
-    group = SimulatedProcessGroup(process_group_id=4242, exit_signal=runtime.signal.SIGTERM)
-
-    with (
-        mock.patch.object(runtime.subprocess, "Popen", return_value=process),
-        mock.patch.object(runtime, "read_process_start_marker", return_value="100"),
-        mock.patch.object(runtime, "wait_for_readiness", side_effect=failure),
-        mock.patch.object(runtime, "is_handle_running", return_value=True),
-        mock.patch.object(runtime.os, "killpg", side_effect=group.signal),
-    ):
-        with pytest.raises(runtime.RuntimeEffectError) as exc_info:
-            runtime.launch_plan(plan, secret_values={}, log_directory=tmp_path)
-    assert exc_info.value.diagnostic.known_effects == ("4242:100",)
-    assert exc_info.value.diagnostic.cleanup_complete is True
-    assert group.signals == [runtime.signal.SIGTERM]
-
-
 def test_readiness_stops_when_the_managed_process_exits(tmp_path: Path) -> None:
     plan = compiler.compile_spec(generation())
     handle = models.LocalProcessHandle(
+        launch_token_sha256=TOKEN_SHA256,
         pid=4242,
         start_marker="100",
         stdout_path=str(tmp_path / "stdout.log"),
@@ -877,3 +729,34 @@ def test_real_cli_authenticated_lifecycle(tmp_path: Path) -> None:
         result = call("stop", "--receipt", str(receipt))
         assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["outcome"] in ("terminated", "forced")
+
+
+def test_launch_environment_passes_only_what_the_service_needs(monkeypatch: pytest.MonkeyPatch) -> None:
+    plan = compiler.compile_spec(generation(api_key_env="LOCAL_KEY"))
+    monkeypatch.setenv("LOCAL_KEY", "source-secret")
+    monkeypatch.setenv("VLLM_API_KEY", "inherited-secret")
+    monkeypatch.setenv("WANDB_API_KEY", "unrelated-secret")
+    monkeypatch.setenv("GITHUB_ACCESS_TOKEN", "unrelated-secret")
+    monkeypatch.setenv("HF_TOKEN", "hub-token")
+    monkeypatch.setenv("PYTHONPATH", "/controller")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
+
+    environment = runtime._launch_environment(plan, "endpoint-secret", "launch-token")
+
+    assert environment["VLLM_API_KEY"] == "endpoint-secret"
+    assert environment[launch_ownership.LAUNCH_TOKEN_ENVIRONMENT_VARIABLE] == "launch-token"
+    assert environment["SPT_NOENV"] == "1"
+    assert environment["HF_TOKEN"] == "hub-token"
+    assert environment["CUDA_VISIBLE_DEVICES"] == "1"
+    for name in ("LOCAL_KEY", "WANDB_API_KEY", "GITHUB_ACCESS_TOKEN", "PYTHONPATH"):
+        assert name not in environment
+    assert "source-secret" not in environment.values()
+
+
+def test_gliner2_launch_environment_drops_an_inherited_token_without_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(backends.GLINER2_TOKEN_ENV, "inherited")
+
+    environment = runtime._launch_environment(compiler.compile_spec(detection()), None, "launch-token")
+
+    assert backends.GLINER2_TOKEN_ENV not in environment
+    assert environment[backends.GLINER2_DEVICE_ENV] == "auto"

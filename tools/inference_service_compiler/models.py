@@ -11,9 +11,9 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, fie
 
 SPEC_SCHEMA_VERSION = "inference-service.spec/v3"
 PLAN_SCHEMA_VERSION = "inference-service.run-plan/v3"
-LAUNCH_RECEIPT_SCHEMA_VERSION = "inference-service.launch-receipt/v2"
-STATUS_RECEIPT_SCHEMA_VERSION = "inference-service.status-receipt/v2"
-STOP_RECEIPT_SCHEMA_VERSION = "inference-service.stop-receipt/v2"
+LAUNCH_RECEIPT_SCHEMA_VERSION = "inference-service.launch-receipt/v3"
+STATUS_RECEIPT_SCHEMA_VERSION = "inference-service.status-receipt/v3"
+STOP_RECEIPT_SCHEMA_VERSION = "inference-service.stop-receipt/v3"
 
 GLINER2_MODEL_ID = "fastino/gliner2-privacy-filter-PII-multi"
 
@@ -164,6 +164,8 @@ class LocalProcessHandle(FrozenModel):
 
     pid: int = Field(ge=1)
     start_marker: str = Field(min_length=1)
+    launch_token_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    """Non-secret digest of the launch token every process in the group inherits."""
     stdout_path: str
     stderr_path: str
 
@@ -181,7 +183,7 @@ class LocalProcessHandle(FrozenModel):
 class LaunchReceipt(FrozenModel):
     """Durable record of a launched plan and its observed process."""
 
-    schema_version: Literal["inference-service.launch-receipt/v2"] = LAUNCH_RECEIPT_SCHEMA_VERSION
+    schema_version: Literal["inference-service.launch-receipt/v3"] = LAUNCH_RECEIPT_SCHEMA_VERSION
     plan: RunPlan
     launched_at: AwareDatetime
     handle: LocalProcessHandle
@@ -190,17 +192,18 @@ class LaunchReceipt(FrozenModel):
 class StatusReceipt(FrozenModel):
     """Recorded state observation for a managed handle."""
 
-    schema_version: Literal["inference-service.status-receipt/v2"] = STATUS_RECEIPT_SCHEMA_VERSION
+    schema_version: Literal["inference-service.status-receipt/v3"] = STATUS_RECEIPT_SCHEMA_VERSION
     plan_digest: str
     observed_at: AwareDatetime
     handle: LocalProcessHandle
-    state: Literal["running", "stopped"]
+    state: Literal["running", "stopped", "ownership-unverified"]
+    """``ownership-unverified``: the leader is gone and the surviving group cannot be shown to be this launch's."""
 
 
 class StopReceipt(FrozenModel):
     """Recorded cleanup outcome for a managed handle."""
 
-    schema_version: Literal["inference-service.stop-receipt/v2"] = STOP_RECEIPT_SCHEMA_VERSION
+    schema_version: Literal["inference-service.stop-receipt/v3"] = STOP_RECEIPT_SCHEMA_VERSION
     plan_digest: str
     stopped_at: AwareDatetime
     handle: LocalProcessHandle
@@ -211,6 +214,7 @@ class StopReceipt(FrozenModel):
 RuntimeErrorCode = Literal[
     "validation-failed",
     "probe-failed",
+    "served-model-mismatch",
     "missing-secret",
     "launch-exited",
     "launch-ownership-not-observed",
@@ -218,6 +222,7 @@ RuntimeErrorCode = Literal[
     "unexpected-readiness-failure",
     "process-identity-mismatch",
     "process-identity-unavailable",
+    "process-group-ownership-unverified",
     "missing-process-start-marker",
 ]
 
