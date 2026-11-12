@@ -19,11 +19,8 @@ def test_serving_project_pins_vllm_without_anonymizer_dependencies() -> None:
     """Serving resolves independently from Anonymizer and DataDesigner."""
     project = tomllib.loads((TOOLS_ROOT / "inference-service-runtime" / "pyproject.toml").read_text())
     dependencies = project["project"]["dependencies"]
-    assert "vllm==0.29.0" in dependencies
-    assert (
-        "vllm-factory[gliner] @ git+https://github.com/latenceainew/vllm-factory.git@"
-        "7d6ff68ce68f9f7c0a9d72f9645bcf6d335d02f0"
-    ) in dependencies
+    assert "vllm==0.33.0" in dependencies
+    assert not any(dependency.startswith("vllm-factory") for dependency in dependencies)
     assert {"nvidia-cuda-nvcc==13.0.88", "nvidia-cuda-crt==13.0.88", "nvidia-nvvm==13.0.88"} <= set(dependencies)
     lock = tomllib.loads((TOOLS_ROOT / "inference-service-runtime" / "uv.lock").read_text())
     assert not {"nemo-anonymizer", "data-designer"} & {package["name"] for package in lock["package"]}
