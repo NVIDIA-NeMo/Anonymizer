@@ -241,6 +241,7 @@ class EntityDetectionWorkflow:
                         labels=labels,
                         examples_by_label=label_config.validator_examples,
                         configured_examples=label_config.augmenter_examples,
+                        excluded_entity_labels=list(excluded_entity_labels or []),
                     ),
                     drop=True,
                 ),
@@ -261,6 +262,7 @@ class EntityDetectionWorkflow:
                         labels=labels,
                         strict_labels=label_config.strict_labels,
                         configured_examples=label_config.augmenter_examples,
+                        excluded_entity_labels=list(excluded_entity_labels or []),
                     ),
                     model_alias=augmenter_alias,
                     allowed_entity_labels=labels if label_config.strict_labels else None,
@@ -665,6 +667,7 @@ def _get_validation_prompt(
     labels: list[str],
     examples_by_label: dict[str, list[str]] | None = None,
     configured_examples: dict[str, list[str]] | None = None,
+    excluded_entity_labels: list[str] | None = None,
 ) -> str:
     prompt = """Validate entity tags for privacy-sensitive information. For each entity in the template below, fill in the "decision" and "reason" fields. Fill in "proposed_label" only when decision is "reclass".
 <<DATA_SUMMARY>>
@@ -692,7 +695,7 @@ What to DROP:
 - Kinship and family-role terms used as relationship descriptors are not quasi-identifiers.
 - Filenames that are system executables or binaries (e.g., ending in .exe, .dll, .sys).
 - If a single abbreviated letter (e.g. "A.") is tagged as a first_name but is not followed by a last_name, drop it.
-
+<<EXCLUDED_DROP>>
 PARTIAL-TOKEN RULE (HARD DROP):
 - If the tagged value is only a substring of a larger contiguous token (letters, digits, underscore with no whitespace boundary), DROP it.
 - A contiguous token means adjacent letters, digits, or underscore with no whitespace boundary.
@@ -759,9 +762,18 @@ Input text: <<TAGGED_TEXT>>
 Template: <<VALIDATION_SKELETON>>
 """
     context_section = f"\nData context: {data_summary}\n" if data_summary else ""
+    excluded = sorted(normalize_labels(excluded_entity_labels))
+    excluded_drop = (
+        "- Excluded entity types: drop these and close synonyms of them; do not return keep or reclass for: "
+        + ", ".join(_prompt_safe_configured_value(label) for label in excluded)
+        + "\n"
+        if excluded
+        else ""
+    )
     return substitute_placeholders(
         prompt,
         {
+            "<<EXCLUDED_DROP>>": excluded_drop,
             "<<TAG_NOTATION>>": COL_TAG_NOTATION,
             "<<TAGGED_TEXT>>": _jinja(VALIDATION_EXCERPT_VAR),
             "<<VALIDATION_SKELETON>>": _jinja(COL_VALIDATION_SKELETON),
@@ -775,12 +787,86 @@ Template: <<VALIDATION_SKELETON>>
     )
 
 
+_AUGMENT_EXAMPLE_TEXT = "Jane Doe lives in Santa Clara. She works full-time."
+_AUGMENT_EXAMPLE_ENTITIES: tuple[dict[str, str], ...] = (
+    {
+        "value": "Jane",
+        "context_before": "",
+        "context_after": " Doe lives in ",
+        "label": "first_name",
+        "reason": "first name",
+    },
+    {
+        "value": "Doe",
+        "context_before": "Jane ",
+        "context_after": " lives in Santa Clara. ",
+        "label": "last_name",
+        "reason": "last name",
+    },
+    {
+        "value": "Santa Clara",
+        "context_before": "Doe lives in ",
+        "context_after": ". She works full-time.",
+        "label": "city",
+        "reason": "city",
+    },
+    {
+        "value": "full-time",
+        "context_before": "in Santa Clara. She works ",
+        "context_after": ".",
+        "label": "employment_status",
+        "reason": "employment status",
+    },
+)
+
+# Label-specific guidance, rendered only when the label is active.
+_AUGMENT_LABEL_RULES: dict[str, tuple[str, ...]] = {
+    "unique_id": (
+        '- unique_id rules: unique_id\'s are never only one character long (ex: "6" is not a unique_id). '
+        'They are never event names or real words all strung together (ex: "ProcessManagementEvent" is NOT a unique_id).',
+    ),
+    "ipv4": (
+        "- ipv4 label: This includes specific IP addresses as well as internal IP subnet ranges "
+        "(ex: subnet=[224.0.0.0/4, 10.0.0.0/8]).",
+    ),
+    "filename": (
+        '- Filename Exclusions: The "filename" label should be reserved for user-created documents or data exports '
+        "(e.g., .pdf, .xlsx, .csv, .txt).",
+        "- Executable Distinction: Do not tag executable binaries (ending in .exe, .dll, or .sys) as filename. "
+        "Treat these extensions as non-sensitive system identifiers.",
+    ),
+}
+
+
+def _augment_example_block(*, labels: list[str], strict_labels: bool, excluded: set[str]) -> str:
+    """Build the worked example from labels the prompt actually allows.
+
+    Strict mode shows only entities whose label is in the allowed list, so the
+    example never demonstrates a label the model is told not to use. Permissive
+    mode may demonstrate labels outside the list, but never an excluded one.
+    """
+    if strict_labels:
+        active = set(labels)
+        entities = [entity for entity in _AUGMENT_EXAMPLE_ENTITIES if entity["label"] in active]
+    else:
+        entities = [entity for entity in _AUGMENT_EXAMPLE_ENTITIES if entity["label"] not in excluded]
+    if strict_labels:
+        header = "Example (return only entities that fit an allowed label; skip everything else):"
+        if not entities:
+            header = "Example (none of these entities fits the allowed labels, so nothing is returned):"
+    else:
+        header = "Example:"
+    output = json.dumps({"entities": entities}, ensure_ascii=False)
+    return f"{header}\nInput text: {_AUGMENT_EXAMPLE_TEXT}\nOutput: {output}"
+
+
 def _get_augment_prompt(
     *,
     data_summary: str | None,
     labels: list[str],
     strict_labels: bool = False,
     configured_examples: dict[str, list[str]] | None = None,
+    excluded_entity_labels: list[str] | None = None,
 ) -> str:
     if strict_labels:
         label_block = (
@@ -788,21 +874,22 @@ def _get_augment_prompt(
             "<<VALID_CLASSES>>\n\n"
             "Do not create new labels. If an entity does not fit any label in the list, skip it."
         )
-        example_block = """\
-Example (allowed labels: first_name, last_name, city — note that employment_status is NOT in the allowed list):
-Input text: Jane Doe lives in Santa Clara. She works full-time.
-Output: {"entities": [{"value": "Jane", "context_before": "", "context_after": " Doe lives in ", "label": "first_name", "reason": "first name"}, {"value": "Doe", "context_before": "Jane ", "context_after": " lives in Santa Clara. ", "label": "last_name", "reason": "last name"}, {"value": "Santa Clara", "context_before": "Doe lives in ", "context_after": ". She works full-time.", "label": "city", "reason": "city"}]}"""
-
     else:
         label_block = (
             "Here are the known entity classes. Strongly prefer labels from this list when they fit:\n"
             "<<VALID_CLASSES>>\n\n"
             "If no known label fits, create a concise snake_case label (e.g., clinic_name, server_name, transaction_id)."
         )
-        example_block = """\
-Example:
-Input text: Jane Doe lives in Santa Clara. She works full-time.
-Output: {"entities": [{"value": "Jane", "context_before": "", "context_after": " Doe lives in ", "label": "first_name", "reason": "first name"}, {"value": "Doe", "context_before": "Jane ", "context_after": " lives in Santa Clara. ", "label": "last_name", "reason": "last name"}, {"value": "Santa Clara", "context_before": "Doe lives in ", "context_after": ". She works full-time.", "label": "city", "reason": "city"}, {"value": "full-time", "context_before": "in Santa Clara. She works ", "context_after": ".", "label": "employment_status", "reason": "employment status"}]}"""
+    excluded = sorted(normalize_labels(excluded_entity_labels))
+    if excluded:
+        label_block += (
+            "\n\nDo not return entities of these excluded types or close synonyms of them: "
+            + ", ".join(_prompt_safe_configured_value(label) for label in excluded)
+            + "."
+        )
+    example_block = _augment_example_block(labels=labels, strict_labels=strict_labels, excluded=set(excluded))
+    rule_lines = [line for label in labels for line in _AUGMENT_LABEL_RULES.get(label, ())]
+    rules_section = "Other information:\n" + "\n".join(rule_lines) + "\n\n" if rule_lines else ""
 
     disguised_hints_block = (
         "- Identifiers may be disguised, fragmented, hyphenated, misspelled, obfuscated,\n"
@@ -820,9 +907,7 @@ Output: {"entities": [{"value": "Jane", "context_before": "", "context_after": "
 - Quasi-identifiers: Attributes that combine to narrow specificity (age, location, job title, timestamps, technical specs)
 - Technical secrets: Credentials (passwords, API keys, tokens), access (internal URLs, endpoints), proprietary terms
 
-We have the following type of data: <<DATA_SUMMARY>>
-
-<<LABEL_BLOCK>>
+<<DATA_SUMMARY>><<LABEL_BLOCK>>
 
 Rules:
 - Tag actual values, not placeholders
@@ -831,13 +916,7 @@ Rules:
   - Data: assigned values, cell contents, literals, user input
   Only tag data, never syntax
 
-Other information:
-- unique_id rules: unique_id's are never only one character long (ex: "6" is not a unique_id). They are never event names or real words all strung together (ex: "ProcessManagementEvent" is NOT a unique_id).
-- ipv4 label: This includes specific IP addresses as well as internal IP subnet ranges (ex: subnet=[224.0.0.0/4, 10.0.0.0/8]).
-- Filename Exclusions: The "filename" label should be reserved for user-created documents or data exports (e.g., .pdf, .xlsx, .csv, .txt).
-- Executable Distinction: Do not tag executable binaries (ending in .exe, .dll, or .sys) as filename. Treat these extensions as non-sensitive system identifiers.
-
-Additional extraction requirements:
+<<RULES_SECTION>>Additional extraction requirements:
 - The "value" field must be the EXACT verbatim span from the input text.
   Copy the text character-for-character exactly as it appears.
   Do NOT normalize, correct spelling, expand abbreviations, decode encodings,
@@ -881,11 +960,12 @@ Input text: <<INPUT_TEXT>>
             + "\n".join(configured_lines)
             + "\nThese examples are guidance, not an exhaustive format allowlist."
         )
-    context_section = data_summary if data_summary else "Not provided"
+    context_section = f"We have the following type of data: {data_summary}\n\n" if data_summary else ""
     return substitute_placeholders(
         prompt,
         {
             "<<LABEL_BLOCK>>": label_block,
+            "<<RULES_SECTION>>": rules_section,
             "<<EXAMPLE_BLOCK>>": example_block,
             "<<INPUT_TEXT>>": _jinja(COL_TEXT),
             "<<DATA_SUMMARY>>": context_section,

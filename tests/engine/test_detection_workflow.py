@@ -638,8 +638,9 @@ def test_augment_prompt_strict_when_explicit_labels_provided() -> None:
     assert "Do not create new labels" in prompt
     assert "Strongly prefer" not in prompt
     assert "create a concise snake_case label" not in prompt
-    assert "employment_status is NOT in the allowed list" in prompt
-    assert "employment_status" not in prompt.split("Output:")[1]
+    assert "employment_status" not in prompt
+    assert "first_name" not in prompt.split("Output:")[1]
+    assert "nothing is returned" in prompt
 
 
 @pytest.mark.parametrize("notation", list(TagNotation))
