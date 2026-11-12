@@ -658,6 +658,32 @@ def test_augment_prompt_strict_when_explicit_labels_provided() -> None:
     assert "employment_status" not in prompt.split("Output:")[1]
 
 
+@pytest.mark.parametrize("strict_labels", [False, True])
+@pytest.mark.parametrize("summary", [None, "Protect customer identities; preserve generic resource names."])
+def test_plain_augment_prompt_preserves_current_sensitivity_policy(strict_labels: bool, summary: str | None) -> None:
+    prompt = _get_augment_prompt(data_summary=summary, labels=["first_name"], strict_labels=strict_labels)
+    source = "Literal <city>source</city> remains source text."
+    rendered = Environment(undefined=StrictUndefined).from_string(prompt).render({COL_TEXT: source})
+
+    assert "Task: Find sensitive entities in text." in rendered
+    assert "Use surrounding text and field names to determine what a value actually represents." in rendered
+    assert "context supports both its entity label and its sensitivity" in rendered
+    assert f"Input text: {source}" in rendered
+    assert "ignore already tagged entities" not in rendered
+    assert "Already-detected entities" not in rendered
+    assert "<<SENSITIVITY_GUIDANCE>>" not in rendered
+    if summary:
+        assert summary in rendered
+        assert "Follow its explicit sensitivity rules when they conflict" in rendered
+        assert (
+            "Do not infer that a value is non-sensitive merely because the data summary does not mention it."
+            in rendered
+        )
+        assert "Do not add a value merely because it matches an allowed label" in rendered
+    else:
+        assert "Focus on:" in rendered
+
+
 @pytest.mark.parametrize("notation", list(TagNotation))
 @pytest.mark.parametrize("strict_labels", [False, True])
 def test_plain_augment_prompt_examples_ground_exact_source(notation: TagNotation, strict_labels: bool) -> None:
