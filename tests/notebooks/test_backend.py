@@ -15,7 +15,6 @@ import pytest
 from anonymizer.engine.detection.postprocess import parse_raw_entities
 from anonymizer.engine.local_inference.gliner2 import backend
 from anonymizer.engine.local_inference.gliner2.backend import (
-    _prepare_transformers_v4_snapshot,
     _resolve_document_overlaps,
     detect_entities_for_texts,
     flatten_result,
@@ -55,38 +54,6 @@ def test_flatten_result_converts_label_keyed_entities() -> None:
         }
     )
     assert result == [{"text": "Alice", "label": "first_name", "start": 0, "end": 5, "score": 0.91}]
-
-
-def test_pinned_snapshot_adapts_v5_tokenizer_field_without_changing_source(tmp_path: Path) -> None:
-    source = tmp_path / "source"
-    source.mkdir()
-    original = {"extra_special_tokens": ["[P]", "[E]"], "tokenizer_class": "DebertaV2Tokenizer"}
-    (source / "tokenizer_config.json").write_text(json.dumps(original))
-    (source / "model.safetensors").write_bytes(b"weights")
-
-    prepared = _prepare_transformers_v4_snapshot(source, cache_root=tmp_path / "cache")
-    adapted = json.loads((prepared / "tokenizer_config.json").read_text())
-
-    assert adapted["additional_special_tokens"] == ["[P]", "[E]"]
-    assert "extra_special_tokens" not in adapted
-    assert json.loads((source / "tokenizer_config.json").read_text()) == original
-
-
-def test_pinned_snapshot_dereferences_hugging_face_cache_symlinks(tmp_path: Path) -> None:
-    blobs = tmp_path / "blobs"
-    blobs.mkdir()
-    (blobs / "tokenizer").write_text(json.dumps({"tokenizer_class": "DebertaV2Tokenizer"}))
-    (blobs / "weights").write_bytes(b"weights")
-    source = tmp_path / "snapshots" / "revision"
-    source.mkdir(parents=True)
-    (source / "tokenizer_config.json").symlink_to(Path("../../blobs/tokenizer"))
-    (source / "model.safetensors").symlink_to(Path("../../blobs/weights"))
-
-    prepared = _prepare_transformers_v4_snapshot(source, cache_root=tmp_path / "cache")
-
-    assert not (prepared / "tokenizer_config.json").is_symlink()
-    assert not (prepared / "model.safetensors").is_symlink()
-    assert (prepared / "model.safetensors").read_bytes() == b"weights"
 
 
 def test_overlap_policy_preserves_existing_flat_flag_contract() -> None:
@@ -443,7 +410,6 @@ def _patch_loading(monkeypatch: pytest.MonkeyPatch, flash_error: Exception | Non
         return _LoadableModel(flash_error=flash_error)
 
     monkeypatch.setattr(huggingface_hub, "snapshot_download", lambda **_: "/snapshot")
-    monkeypatch.setattr(backend, "_prepare_transformers_v4_snapshot", lambda path: path)
     monkeypatch.setattr(backend, "_load_weights", load_weights)
     return loads
 

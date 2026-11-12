@@ -114,22 +114,33 @@ stop_local_runtime()
 The notebook helper wraps `create_anonymizer(gliner=NativeGliner(...))` and preserves its original
 `gliner_device` argument. It:
 
-- creates a cached, dependency-isolated server environment containing `gliner2[local]` on first use;
+- creates a cached, dependency-isolated server environment containing `gliner2[local,disentangled-flash]` on first use;
 - downloads the exact Hugging Face revision
   `59894c087cb2923b01f337d4ee72f6ff84d5bdd6` of
   `fastino/gliner2-privacy-filter-PII-multi`;
 - starts an authenticated server on an ephemeral loopback port;
-- selects CUDA, MPS, or CPU automatically;
+- selects CUDA, MPS, or CPU automatically, and runs bfloat16 with DisentangledFlash attention on CUDA
+  and float32 with standard attention on MPS and CPU;
 - injects only the detector provider and model selection, leaving configured LLM roles unchanged;
 - reuses the process for compatible calls and stops it at interpreter exit.
 
-The isolated server environment is necessary because GLiNER2 2.0's local inference stack and the
+The isolated server environment is necessary because GLiNER2's local inference stack and the
 current Data Designer release require incompatible `huggingface-hub` major versions. The helper hides
-that packaging detail from the notebook kernel. It also creates a local adapter copy of the pinned
-snapshot that translates the checkpoint's Transformers v5 tokenizer field name to the Transformers
-v4 name required by GLiNER2 2.0; model weights and source cache files remain unchanged. The revision
-pin applies only to this packaged notebook runtime. Production services control and pin their own
-model artifact independently.
+that packaging detail from the notebook kernel. The revision pin applies only to this packaged
+notebook runtime. Production services control and pin their own model artifact independently.
+
+The server reads these environment variables at startup:
+
+| Variable | Values | Default |
+|---|---|---|
+| `ANONYMIZER_LOCAL_GLINER2_DEVICE` | `auto`, `cuda`, `mps`, `cpu` | `auto` |
+| `ANONYMIZER_LOCAL_GLINER2_DTYPE` | `auto`, `float32`, `bfloat16` | `auto`: `bfloat16` on CUDA, `float32` elsewhere |
+| `ANONYMIZER_LOCAL_GLINER2_ATTENTION` | `auto`, `standard`, `disentangled_flash` | `auto`: `disentangled_flash` on CUDA, `standard` elsewhere |
+
+If the automatic CUDA default cannot load the DisentangledFlash kernel, the server logs a warning and
+uses standard attention. An explicit `disentangled_flash` request that cannot load stops startup
+with an error. Requests use an inference batch size of 32 unless they pass `batch_size`. The
+startup log and `GET /v1/models` report the device, dtype, and attention in use.
 
 Notebook CI runs on a CPU runner and constrains its isolated runtime to the CPU
 build of PyTorch through `.github/constraints/notebook-ci.txt`. It caches only

@@ -5,11 +5,7 @@
 from __future__ import annotations
 
 import bisect
-import json
 import logging
-import os
-import shutil
-import tempfile
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -99,9 +95,8 @@ def load_model(device: str, *, dtype: str = "auto", attention: str = "auto") -> 
 
     resolved_dtype = resolve_dtype(dtype, device)
     resolved_attention, explicit_attention = resolve_attention(attention, device)
-    snapshot_path = snapshot_download(repo_id=MODEL_ID, revision=MODEL_REVISION)
-    compatible_snapshot = _prepare_transformers_v4_snapshot(Path(snapshot_path))
-    model = _load_weights(compatible_snapshot, device, resolved_dtype)
+    snapshot = Path(snapshot_download(repo_id=MODEL_ID, revision=MODEL_REVISION))
+    model = _load_weights(snapshot, device, resolved_dtype)
     if resolved_attention == "disentangled_flash":
         try:
             model.enable_disentangled_flash()
@@ -117,7 +112,7 @@ def load_model(device: str, *, dtype: str = "auto", attention: str = "auto") -> 
                 device,
                 exc,
             )
-            model = _load_weights(compatible_snapshot, device, resolved_dtype)
+            model = _load_weights(snapshot, device, resolved_dtype)
             resolved_attention = "standard"
     return LoadedModel(model=model, dtype=resolved_dtype, attention=resolved_attention)
 
@@ -136,46 +131,6 @@ def _load_weights(snapshot: Path, device: str, dtype: str) -> Any:
 def _warm_up(model: Any) -> None:
     """Run one tiny extraction so kernel compilation failures surface at load time."""
     model.batch_extract_entities([_WARMUP_TEXT], _WARMUP_LABELS, batch_size=1, threshold=0.5)
-
-
-def _prepare_transformers_v4_snapshot(snapshot: Path, *, cache_root: Path | None = None) -> Path:
-    """Adapt the pinned checkpoint's v5 tokenizer field for GLiNER2's v4 dependency."""
-    root = cache_root or Path(os.getenv("XDG_CACHE_HOME", Path.home() / ".cache")) / "nemo-anonymizer"
-    target = root / "model-adapters" / MODEL_REVISION
-    tokenizer_config = target / "tokenizer_config.json"
-    if tokenizer_config.is_file():
-        return target
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary_root = Path(tempfile.mkdtemp(prefix="model-adapter-", dir=target.parent))
-    temporary = temporary_root / "snapshot"
-    try:
-        shutil.copytree(snapshot, temporary, copy_function=_link_or_copy)
-        config_path = temporary / "tokenizer_config.json"
-        config = json.loads(config_path.read_text())
-        extra_tokens = config.pop("extra_special_tokens", None)
-        if extra_tokens is not None:
-            config["additional_special_tokens"] = extra_tokens
-        config_path.unlink()
-        config_path.write_text(json.dumps(config, indent=2) + "\n")
-        try:
-            os.replace(temporary, target)
-        except OSError:
-            if not tokenizer_config.is_file():
-                raise
-        return target
-    finally:
-        shutil.rmtree(temporary_root, ignore_errors=True)
-
-
-def _link_or_copy(source: str, destination: str) -> str:
-    """Hard-link cached model artifacts when possible, copying as a fallback."""
-    resolved_source = str(Path(source).resolve(strict=True))
-    try:
-        os.link(resolved_source, destination)
-        return destination
-    except OSError:
-        return shutil.copy2(resolved_source, destination)
 
 
 def overlap_policy(flat_ner: bool) -> str:
