@@ -8,7 +8,13 @@ import hashlib
 import os
 import secrets
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING
+
+from inference_service_compiler.models import Sha256Hex
+
+if TYPE_CHECKING:
+    from starlette.requests import Request
+    from starlette.responses import Response
 
 LAUNCH_TOKEN_ENVIRONMENT_VARIABLE = "ANONYMIZER_INFERENCE_LAUNCH_TOKEN"
 LAUNCH_OWNERSHIP_HEADER = "X-Anonymizer-Launch-Token"
@@ -17,15 +23,15 @@ LAUNCH_OWNERSHIP_PROOF_FIELD = "launch_token_sha256"
 LAUNCH_OWNERSHIP_MIDDLEWARE = "inference_service_compiler.launch_ownership.launch_ownership"
 
 
-def launch_token_proof(token: str) -> str:
+def launch_token_proof(token: str) -> Sha256Hex:
     """Return the non-secret proof expected from the launched server."""
-    return hashlib.sha256(token.encode()).hexdigest()
+    return Sha256Hex(hashlib.sha256(token.encode()).hexdigest())
 
 
 async def launch_ownership(
-    request: Any,
-    call_next: Callable[[Any], Awaitable[Any]],
-) -> Any:
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
     """Prove that this server inherited the controller's launch-scoped token.
 
     Installed as vLLM middleware; the native GLiNER2 server serves the same contract.

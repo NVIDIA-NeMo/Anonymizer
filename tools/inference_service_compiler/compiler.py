@@ -9,15 +9,8 @@ import hmac
 import json
 
 from inference_service_compiler.backends import traits
+from inference_service_compiler.errors import PlanIntegrityError
 from inference_service_compiler.models import RunPlan, ServiceSpec
-
-
-class InferenceServiceError(Exception):
-    """Base for every failure the command line reports as bad input or a failed effect."""
-
-
-class PlanIntegrityError(InferenceServiceError, ValueError):
-    """A serialized plan does not match its digest or its spec's compilation."""
 
 
 def compile_spec(spec: ServiceSpec) -> RunPlan:

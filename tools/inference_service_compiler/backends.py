@@ -28,14 +28,13 @@ Probe = Callable[[httpx.Client, str], None]
 """Send one task request to ``base_url``; raise ``ValueError`` with the reason it is not ready."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BackendTraits:
     """How to start, authenticate, and probe one backend."""
 
     argv: tuple[str, ...]
     validate_argv: tuple[str, ...]
     """Checks the serving environment and arguments without starting the server."""
-    served_model_name: str
     api_key_child_env: str
     """Child environment variable that receives the endpoint bearer token."""
     probe: Probe
@@ -60,7 +59,6 @@ def _vllm_traits(spec: ServiceSpec, backend: VllmBackend) -> BackendTraits:
     return BackendTraits(
         argv=argv,
         validate_argv=(*argv, "--validate"),
-        served_model_name=backend.model_name,
         api_key_child_env="VLLM_API_KEY",
         probe=lambda client, base_url: _probe_chat(client, base_url, backend.model_name, backend.probe_extra_body),
     )
@@ -71,7 +69,6 @@ def _gliner2_traits(spec: ServiceSpec, backend: Gliner2Backend) -> BackendTraits
     return BackendTraits(
         argv=(python, "-m", GLINER2_MODULE, "--host", spec.host, "--port", str(spec.port)),
         validate_argv=(python, "-m", GLINER2_MODULE, "--prepare"),
-        served_model_name=backend.model_name,
         api_key_child_env=GLINER2_TOKEN_ENV,
         probe=lambda client, base_url: _probe_detection(client, base_url, backend.model_name),
         child_environment={GLINER2_DEVICE_ENV: backend.device},

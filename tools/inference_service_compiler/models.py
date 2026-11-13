@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import re
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NewType
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, field_validator
 
@@ -36,6 +36,14 @@ VLLM_OWNED_OPTIONS = frozenset(
     }
 )
 _OPTION_KEY = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+Pid = NewType("Pid", int)
+ProcessGroupId = NewType("ProcessGroupId", int)
+Sha256Hex = NewType("Sha256Hex", str)
+"""Lowercase hexadecimal SHA-256 digest."""
+
+ServiceState = Literal["running", "stopped", "ownership-unverified"]
+StopOutcome = Literal["terminated", "already-stopped", "forced"]
 
 OptionValue = bool | int | float | str | list[str | int | float] | dict[str, JsonValue]
 
@@ -162,17 +170,17 @@ class LocalProcessHandle(FrozenModel):
     The service is launched as a session leader, so its PID is also its process group ID.
     """
 
-    pid: int = Field(ge=1)
+    pid: Pid = Field(ge=1)
     start_marker: str = Field(min_length=1)
-    launch_token_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    launch_token_sha256: Sha256Hex = Field(pattern=r"^[0-9a-f]{64}$")
     """Non-secret digest of the launch token every process in the group inherits."""
     stdout_path: str
     stderr_path: str
 
     @property
-    def process_group_id(self) -> int:
+    def process_group_id(self) -> ProcessGroupId:
         """Return the process group created by the launch."""
-        return self.pid
+        return ProcessGroupId(self.pid)
 
     @property
     def label(self) -> str:
@@ -196,7 +204,7 @@ class StatusReceipt(FrozenModel):
     plan_digest: str
     observed_at: AwareDatetime
     handle: LocalProcessHandle
-    state: Literal["running", "stopped", "ownership-unverified"]
+    state: ServiceState
     """``ownership-unverified``: the leader is gone and the surviving group cannot be shown to be this launch's."""
 
 
@@ -207,7 +215,7 @@ class StopReceipt(FrozenModel):
     plan_digest: str
     stopped_at: AwareDatetime
     handle: LocalProcessHandle
-    outcome: Literal["terminated", "already-stopped", "forced"]
+    outcome: StopOutcome
     cleanup_complete: bool
 
 

@@ -19,14 +19,15 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 from unittest import mock
 
 import httpx
 import pytest
 from pydantic import ValidationError
+from starlette.requests import Request
+from starlette.responses import Response
 
-from inference_service_compiler import backends, cli, compiler, launch_ownership, models, runtime
+from inference_service_compiler import backends, cli, compiler, launch_ownership, models, procfs, runtime
 from inference_service_compiler.profiles import load_profile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -391,12 +392,14 @@ def test_launch_requires_scoped_ownership_evidence(tmp_path: Path) -> None:
 
 
 def test_launch_ownership_endpoint_requires_and_proves_the_scoped_token() -> None:
-    async def next_handler(_request: object) -> object:
-        return mock.sentinel.next_response
+    passthrough = Response("passed through")
 
-    def request(path: str, token: str | None) -> SimpleNamespace:
-        headers = {} if token is None else {launch_ownership.LAUNCH_OWNERSHIP_HEADER: token}
-        return SimpleNamespace(url=SimpleNamespace(path=path), headers=headers)
+    async def next_handler(_request: Request) -> Response:
+        return passthrough
+
+    def request(path: str, token: str | None) -> Request:
+        headers = [] if token is None else [(launch_ownership.LAUNCH_OWNERSHIP_HEADER.lower().encode(), token.encode())]
+        return Request({"type": "http", "method": "GET", "path": path, "headers": headers, "query_string": b""})
 
     with mock.patch.dict(
         runtime.os.environ,
@@ -414,10 +417,10 @@ def test_launch_ownership_endpoint_requires_and_proves_the_scoped_token() -> Non
         passed_through = asyncio.run(launch_ownership.launch_ownership(request("/v1/models", None), next_handler))
 
     assert wrong.status_code == 404
-    assert json.loads(owned.body) == {
+    assert json.loads(bytes(owned.body)) == {
         launch_ownership.LAUNCH_OWNERSHIP_PROOF_FIELD: launch_ownership.launch_token_proof("launch-secret")
     }
-    assert passed_through is mock.sentinel.next_response
+    assert passed_through is passthrough
 
 
 def test_compatible_preexisting_endpoint_cannot_prove_launch_ownership() -> None:
@@ -472,7 +475,9 @@ def test_post_spawn_readiness_failures_always_clean_up(tmp_path: Path, failure: 
     with (
         mock.patch.object(runtime, "_launch_process", return_value=handle),
         mock.patch.object(runtime, "wait_for_readiness", side_effect=failure),
-        mock.patch.object(runtime, "_cleanup_handle", return_value=True) as cleanup,
+        mock.patch.object(
+            runtime, "_stop_group", return_value=runtime._StopResult(outcome="terminated", cleanup_complete=True)
+        ) as cleanup,
         pytest.raises(type(failure)),
     ):
         runtime.launch_plan(plan, secret_values={}, log_directory=tmp_path)
@@ -581,7 +586,7 @@ def test_missing_secret_fails_before_process_start(tmp_path: Path) -> None:
 
 def test_process_stat_handles_spaces_and_zombies(tmp_path: Path) -> None:
     fields = ["S", *(str(index) for index in range(4, 22)), "98765"]
-    assert runtime._parse_process_stat(f"4242 (worker with spaces) {' '.join(fields)}") == ("S", "98765")
+    assert procfs.parse_process_stat(f"4242 (worker with spaces) {' '.join(fields)}") == ("S", "98765")
     handle = models.LocalProcessHandle(
         launch_token_sha256=TOKEN_SHA256,
         pid=4242,
@@ -757,7 +762,7 @@ class ProcessGroup:
         self.leader.wait(timeout=10)
 
     def live_workers(self) -> list[int]:
-        return [pid for pid in self.workers if runtime.read_process_state(pid) not in {None, "Z", "X"}]
+        return [pid for pid in self.workers if runtime.read_process_state(models.Pid(pid)) not in {None, "Z", "X"}]
 
 
 StartGroup = Callable[..., ProcessGroup]
@@ -809,7 +814,7 @@ def start_group(tmp_path: Path) -> Iterator[StartGroup]:
         while not ready.exists():
             assert time.monotonic() < deadline, "fixture process group did not start"
             time.sleep(0.05)
-        marker = runtime.read_process_start_marker(leader.pid)
+        marker = runtime.read_process_start_marker(models.Pid(leader.pid))
         assert marker is not None
         group = ProcessGroup(
             leader=leader,
@@ -897,7 +902,7 @@ def test_stale_receipt_refuses_a_leaderless_group_it_cannot_prove_it_owns(
 def test_group_holding_only_an_unreaped_leader_counts_as_stopped(start_group: StartGroup) -> None:
     group = start_group(token="launch-token", workers=0, leader_exits=True)
     deadline = time.monotonic() + 10
-    while runtime.read_process_state(group.leader.pid) != "Z":
+    while runtime.read_process_state(models.Pid(group.leader.pid)) != "Z":
         assert time.monotonic() < deadline
         time.sleep(0.05)
 

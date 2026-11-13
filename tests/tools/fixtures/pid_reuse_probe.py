@@ -61,7 +61,7 @@ def main() -> None:
     scratch = Path(sys.argv[1])
     token = "owned-launch-token"
     owned, _ = start_group(scratch, "owned", token=token, leader_exits=False)
-    owned_pid = owned.pid
+    owned_pid = models.Pid(owned.pid)
     marker = runtime.read_process_start_marker(owned_pid)
     assert marker is not None
     handle = models.LocalProcessHandle(

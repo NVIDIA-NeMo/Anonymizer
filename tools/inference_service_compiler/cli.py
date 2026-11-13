@@ -16,7 +16,8 @@ from typing import ParamSpec, TypeVar
 import cyclopts
 from pydantic import BaseModel, ValidationError
 
-from inference_service_compiler.compiler import InferenceServiceError, compile_spec, load_plan
+from inference_service_compiler.compiler import compile_spec, load_plan
+from inference_service_compiler.errors import InferenceServiceError
 from inference_service_compiler.models import ConnectionInfo, LaunchReceipt, RunPlan
 from inference_service_compiler.profiles import load_profile
 from inference_service_compiler.runtime import (
