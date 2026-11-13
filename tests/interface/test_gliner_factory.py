@@ -17,6 +17,7 @@ from data_designer.config.models import ModelProvider
 from pydantic import ValidationError
 
 import anonymizer
+from anonymizer.engine.local_inference.runtime import NativeRequest
 
 
 def test_native_factory_uses_inputs_validated_before_runtime_acquisition(
@@ -37,10 +38,10 @@ def test_native_factory_uses_inputs_validated_before_runtime_acquisition(
     provider_path.write_text(
         json.dumps({"providers": [{"name": "custom", "endpoint": "https://example.test/v1", "api_key": "KEY"}]})
     )
-    runtime = controller._LocalRuntime(Mock(), "http://127.0.0.1:1234/v1", "cpu", "auto", "token")
+    runtime = controller._LocalRuntime(Mock(), "http://127.0.0.1:1234/v1", NativeRequest("cpu"), "token")
 
     @contextmanager
-    def acquire(device: str, dtype: str) -> Iterator[controller._LocalRuntime]:
+    def acquire(*_: str) -> Iterator[controller._LocalRuntime]:
         model_path.unlink()
         provider_path.unlink()
         yield runtime
@@ -229,13 +230,12 @@ def test_native_factory_preserves_word_chunk_defaults(tmp_path: Path, monkeypatc
     runtime = _runtime._LocalRuntime(
         process=Mock(),
         endpoint="http://127.0.0.1:1234/v1",
-        requested_device="cpu",
-        requested_dtype="auto",
+        request=NativeRequest("cpu"),
         token="token",
     )
     from contextlib import nullcontext
 
-    monkeypatch.setattr(_runtime, "singleton_runtime", lambda _device, _dtype: nullcontext(runtime))
+    monkeypatch.setattr(_runtime, "singleton_runtime", lambda *_: nullcontext(runtime))
     provider = ModelProvider(name="custom", endpoint="https://example.test/v1", api_key="CUSTOM_KEY")
     source = json.dumps({"model_configs": [{"alias": "custom-llm", "model": "test/llm", "provider": "custom"}]})
     run_config = anonymizer.RunConfig(buffer_size=123)
@@ -261,7 +261,7 @@ def test_session_builds_real_client_and_preserves_configuration(tmp_path: Path) 
 
     process = Mock()
     process.poll.return_value = None
-    candidate = controller._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "auto", "token")
+    candidate = controller._LocalRuntime(process, "http://127.0.0.1:1234/v1", NativeRequest("cpu"), "token")
     provider = ModelProvider(name="custom", endpoint="https://example.test/v1", api_key="CUSTOM_KEY")
     source = json.dumps({"model_configs": [{"alias": "custom-llm", "model": "test/llm", "provider": "custom"}]})
     run_config = anonymizer.RunConfig(buffer_size=123)
@@ -295,7 +295,7 @@ def test_session_cleans_up_when_client_construction_fails(monkeypatch: pytest.Mo
     monkeypatch.setenv(controller.LOCAL_TOKEN_ENV, "original")
     process = Mock()
     process.poll.return_value = None
-    candidate = controller._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "auto", "token")
+    candidate = controller._LocalRuntime(process, "http://127.0.0.1:1234/v1", NativeRequest("cpu"), "token")
 
     def start(_: str, __: str = "auto") -> controller._LocalRuntime:
         controller._registry.set_token("token")
@@ -327,19 +327,25 @@ def test_native_dtype_reaches_the_runtime_for_both_construction_paths(monkeypatc
 
     from anonymizer.engine.local_inference import runtime as _runtime
 
-    runtime = _runtime._LocalRuntime(Mock(), "http://127.0.0.1:1234/v1", "cpu", "auto", "token")
-    requests: list[tuple[str, str]] = []
+    runtime = _runtime._LocalRuntime(Mock(), "http://127.0.0.1:1234/v1", NativeRequest("cpu"), "token")
+    requests: list[tuple[str, str, str]] = []
 
-    def acquire(device: str, dtype: str) -> object:
-        requests.append((device, dtype))
+    def acquire(device: str, dtype: str, attention: str) -> object:
+        requests.append((device, dtype, attention))
         return nullcontext(runtime)
 
     monkeypatch.setattr(_runtime, "singleton_runtime", acquire)
     monkeypatch.setattr(_runtime, "runtime_context", acquire)
     assert anonymizer.NativeGliner().dtype == "auto"
-    anonymizer.create_anonymizer(gliner=anonymizer.NativeGliner(device="cpu", dtype="bfloat16"))
-    with anonymizer.native_runtime(device="cpu", dtype="bfloat16"):
+    anonymizer.create_anonymizer(
+        gliner=anonymizer.NativeGliner(device="cpu", dtype="bfloat16", attention="disentangled_flash")
+    )
+    with anonymizer.native_runtime(device="cpu", dtype="bfloat16", attention="disentangled_flash"):
         pass
     with anonymizer.native_runtime():
         pass
-    assert requests == [("cpu", "bfloat16"), ("cpu", "bfloat16"), ("auto", "auto")]
+    assert requests == [
+        ("cpu", "bfloat16", "disentangled_flash"),
+        ("cpu", "bfloat16", "disentangled_flash"),
+        ("auto", "auto", "auto"),
+    ]

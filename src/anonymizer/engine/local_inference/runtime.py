@@ -23,12 +23,18 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO
+from typing import IO, NamedTuple
 
 import httpx
 
 from anonymizer.engine.local_inference.gliner2 import MODEL_ID, MODEL_REVISION
-from anonymizer.engine.local_inference.gliner2.contract import DeviceRequest, DtypeRequest, ModelCard, ModelList
+from anonymizer.engine.local_inference.gliner2.contract import (
+    AttentionRequest,
+    DeviceRequest,
+    DtypeRequest,
+    ModelCard,
+    ModelList,
+)
 
 LOCAL_TOKEN_ENV = "ANONYMIZER_LOCAL_GLINER2_TOKEN"
 
@@ -36,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 _DEVICE_ENV = "ANONYMIZER_LOCAL_GLINER2_DEVICE"
 _DTYPE_ENV = "ANONYMIZER_LOCAL_GLINER2_DTYPE"
+_ATTENTION_ENV = "ANONYMIZER_LOCAL_GLINER2_ATTENTION"
 _STARTUP_TIMEOUT_SECONDS = 300.0
 _SHUTDOWN_TIMEOUT_SECONDS = 10.0
 _MAX_PORT_ATTEMPTS = 3
@@ -76,18 +83,21 @@ class _LogTail:
         return "\n".join(self._lines) or "No child-process output was captured."
 
 
+class NativeRequest(NamedTuple):
+    """What a caller asked of the native runtime; a running runtime is reused only for an equal request."""
+
+    device: DeviceRequest = "auto"
+    dtype: DtypeRequest = "auto"
+    attention: AttentionRequest = "auto"
+
+
 @dataclass(frozen=True)
 class _LocalRuntime:
     process: subprocess.Popen[str]
     endpoint: str
-    requested_device: DeviceRequest
-    requested_dtype: DtypeRequest
+    request: NativeRequest
     token: str
     log: _LogTail = field(default_factory=_LogTail)
-
-    def differs(self, requested_device: DeviceRequest, requested_dtype: DtypeRequest) -> bool:
-        """Whether this runtime was started for a different (device, dtype) request."""
-        return (self.requested_device, self.requested_dtype) != (requested_device, requested_dtype)
 
 
 @dataclass(frozen=True)
@@ -119,26 +129,26 @@ class _RuntimeRegistry:
         self._saved_token: _SavedVariable | None = None
 
     @contextmanager
-    def singleton(self, requested_device: DeviceRequest, requested_dtype: DtypeRequest) -> Iterator[_LocalRuntime]:
+    def singleton(self, request: NativeRequest) -> Iterator[_LocalRuntime]:
         """Get the persistent singleton, respecting an active scoped runtime."""
         with self.lock:
             if self.context_count and self.context_owned:
                 raise RuntimeError("Use the native runtime session to construct clients inside its context.")
-            yield self.ensure(requested_device, requested_dtype)
+            yield self.ensure(request)
 
     @contextmanager
-    def borrow(self, requested_device: DeviceRequest, requested_dtype: DtypeRequest) -> Iterator[_LocalRuntime]:
+    def borrow(self, request: NativeRequest) -> Iterator[_LocalRuntime]:
         """Borrow a singleton or own a runtime until the last nested context exits."""
         with self.lock:
             previous = self.runtime
             if (
                 not self.context_count
                 and previous is not None
-                and previous.differs(requested_device, requested_dtype)
+                and previous.request != request
                 and previous.process.poll() is None
             ):
-                raise RuntimeError("Cannot borrow a native runtime with a different device or precision.")
-            runtime = self.ensure(requested_device, requested_dtype)
+                raise RuntimeError("Cannot borrow a native runtime with a different device, precision or attention.")
+            runtime = self.ensure(request)
             if self.context_count == 0:
                 self.context_owned = runtime is not previous
             self.context_count += 1
@@ -168,45 +178,39 @@ class _RuntimeRegistry:
             finally:
                 self.restore_token()
 
-    def ensure(self, requested_device: DeviceRequest, requested_dtype: DtypeRequest) -> _LocalRuntime:
+    def ensure(self, request: NativeRequest) -> _LocalRuntime:
         """Reuse the running runtime, or replace it, or start one."""
         runtime = self.runtime
         if self.context_count:
-            if (
-                runtime is None
-                or runtime.process.poll() is not None
-                or runtime.differs(requested_device, requested_dtype)
-            ):
+            if runtime is None or runtime.process.poll() is not None or runtime.request != request:
                 raise RuntimeError(
                     "Cannot replace a native runtime while a context is active, including after the process exits."
                 )
             _verify_readiness(runtime)
             return runtime
         if runtime is not None and runtime.process.poll() is None:
-            if not runtime.differs(requested_device, requested_dtype):
+            if runtime.request == request:
                 _verify_readiness(runtime)
                 return runtime
             logger.warning(
-                "Replacing the native GLiNER2 runtime (%s/%s -> %s/%s); previously returned Anonymizer instances "
+                "Replacing the native GLiNER2 runtime (%s -> %s); previously returned Anonymizer instances "
                 "are no longer supported.",
-                runtime.requested_device,
-                runtime.requested_dtype,
-                requested_device,
-                requested_dtype,
+                tuple(runtime.request),
+                tuple(request),
             )
             self.stop()
         elif runtime is not None:
             self.runtime = None
-        self.runtime = self._start_ready(requested_device, requested_dtype)
+        self.runtime = self._start_ready(request)
         return self.runtime
 
-    def _start_ready(self, requested_device: DeviceRequest, requested_dtype: DtypeRequest) -> _LocalRuntime:
+    def _start_ready(self, request: NativeRequest) -> _LocalRuntime:
         """Start a child, retrying on a new port when it does not become ready."""
         last_error: Exception | None = None
         runtime: _LocalRuntime | None = None
         for _ in range(_MAX_PORT_ATTEMPTS):
             try:
-                runtime = _start_runtime(requested_device, requested_dtype)
+                runtime = _start_runtime(request)
             except BaseException:
                 self.restore_token()
                 raise
@@ -248,17 +252,21 @@ _registry = _RuntimeRegistry()
 
 
 def singleton_runtime(
-    requested_device: DeviceRequest, requested_dtype: DtypeRequest = "auto"
+    requested_device: DeviceRequest = "auto",
+    requested_dtype: DtypeRequest = "auto",
+    requested_attention: AttentionRequest = "auto",
 ) -> AbstractContextManager[_LocalRuntime]:
     """Get the persistent singleton, respecting an active scoped runtime."""
-    return _registry.singleton(requested_device, requested_dtype)
+    return _registry.singleton(NativeRequest(requested_device, requested_dtype, requested_attention))
 
 
 def runtime_context(
-    requested_device: DeviceRequest, requested_dtype: DtypeRequest = "auto"
+    requested_device: DeviceRequest = "auto",
+    requested_dtype: DtypeRequest = "auto",
+    requested_attention: AttentionRequest = "auto",
 ) -> AbstractContextManager[_LocalRuntime]:
     """Borrow a singleton or own a runtime until the last nested context exits."""
-    return _registry.borrow(requested_device, requested_dtype)
+    return _registry.borrow(NativeRequest(requested_device, requested_dtype, requested_attention))
 
 
 def stop_local_runtime() -> None:
@@ -266,7 +274,7 @@ def stop_local_runtime() -> None:
     _registry.stop()
 
 
-def _start_runtime(requested_device: DeviceRequest, requested_dtype: DtypeRequest = "auto") -> _LocalRuntime:
+def _start_runtime(request: NativeRequest) -> _LocalRuntime:
     server_packages = _ensure_server_environment()
     listener = _reserve_listener()
     port = int(listener.getsockname()[1])
@@ -274,9 +282,12 @@ def _start_runtime(requested_device: DeviceRequest, requested_dtype: DtypeReques
     _registry.set_token(token)
     child_environment = _child_environment()
     child_environment[LOCAL_TOKEN_ENV] = token
-    child_environment[_DEVICE_ENV] = requested_device
-    if requested_dtype != "auto":  # an explicit request overrides the inherited variable
-        child_environment[_DTYPE_ENV] = requested_dtype
+    child_environment[_DEVICE_ENV] = request.device
+    # An explicit request overrides the inherited variable; "auto" leaves it in effect.
+    if request.dtype != "auto":
+        child_environment[_DTYPE_ENV] = request.dtype
+    if request.attention != "auto":
+        child_environment[_ATTENTION_ENV] = request.attention
     existing_python_path = child_environment.get("PYTHONPATH")
     child_environment["PYTHONPATH"] = os.pathsep.join(filter(None, (str(server_packages), existing_python_path)))
     command = [
@@ -303,8 +314,7 @@ def _start_runtime(requested_device: DeviceRequest, requested_dtype: DtypeReques
     runtime = _LocalRuntime(
         process=process,
         endpoint=f"http://127.0.0.1:{port}/v1",
-        requested_device=requested_device,
-        requested_dtype=requested_dtype,
+        request=request,
         token=token,
     )
     runtime.log.follow(process.stdout)

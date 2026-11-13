@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from anonymizer.engine.local_inference.gliner2.contract import (
     DEFAULT_CHUNK_LENGTH,
     DEFAULT_OVERLAP,
+    AttentionRequest,
     DeviceRequest,
     DtypeRequest,
 )
@@ -42,6 +43,7 @@ class NativeGliner(BaseModel):
 
     device: DeviceRequest = "auto"
     dtype: DtypeRequest = "auto"
+    attention: AttentionRequest = "auto"
 
 
 class GlinerEndpoint(BaseModel):
@@ -90,7 +92,7 @@ def create_anonymizer(
         case NativeGliner():
             from anonymizer.engine.local_inference.runtime import singleton_runtime
 
-            with singleton_runtime(gliner.device, gliner.dtype) as runtime:
+            with singleton_runtime(gliner.device, gliner.dtype, gliner.attention) as runtime:
                 return _create_endpoint_anonymizer(
                     endpoint=GlinerEndpoint.for_native(runtime),
                     parsed=parsed,
@@ -162,7 +164,9 @@ class NativeRuntimeSession:
 
 
 @contextmanager
-def native_runtime(*, device: DeviceRequest = "auto", dtype: DtypeRequest = "auto") -> Iterator[NativeRuntimeSession]:
+def native_runtime(
+    *, device: DeviceRequest = "auto", dtype: DtypeRequest = "auto", attention: AttentionRequest = "auto"
+) -> Iterator[NativeRuntimeSession]:
     """Run native GLiNER for the duration of a client session.
 
     An existing singleton is borrowed and remains running after exit. Nested
@@ -170,8 +174,8 @@ def native_runtime(*, device: DeviceRequest = "auto", dtype: DtypeRequest = "aut
     """
     from anonymizer.engine.local_inference.runtime import runtime_context
 
-    request = NativeGliner(device=device, dtype=dtype)
-    with runtime_context(request.device, request.dtype) as runtime:
+    request = NativeGliner(device=device, dtype=dtype, attention=attention)
+    with runtime_context(request.device, request.dtype, request.attention) as runtime:
         yield NativeRuntimeSession(endpoint=GlinerEndpoint.for_native(runtime))
 
 

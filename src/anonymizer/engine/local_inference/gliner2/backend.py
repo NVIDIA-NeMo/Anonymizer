@@ -15,7 +15,6 @@ from typing import Any, NamedTuple, Protocol, cast, get_args
 try:
     from .contract import (  # noqa: TID252 - direct-script fallback keeps server dependencies isolated
         Attention,
-        AttentionChoice,
         AttentionRequest,
         DetectedEntity,
         Device,
@@ -29,7 +28,6 @@ try:
 except ImportError:  # Direct execution inside the isolated server environment.
     from contract import (  # ty: ignore[unresolved-import] -- direct-script import path
         Attention,
-        AttentionChoice,
         AttentionRequest,
         DetectedEntity,
         Device,
@@ -124,30 +122,29 @@ def resolve_dtype(requested: str) -> Dtype:
     return dtype
 
 
-def resolve_attention(requested: str, device: Device) -> AttentionChoice:
-    """Resolve the attention implementation and whether it was explicitly requested.
+def resolve_attention(requested: str) -> Attention:
+    """Resolve the attention implementation: standard unless DisentangledFlash is requested explicitly.
 
-    The automatic choice is DisentangledFlash on CUDA and standard attention elsewhere.
+    In gliner2 2.1.0 DisentangledFlash prepares position plans for every distinct input length and keeps
+    them, so latency and GPU memory grow with the number of distinct lengths seen. It suits fixed-length
+    batch workloads only.
     """
     normalized = requested.strip().lower()
     if normalized not in SUPPORTED_ATTENTION:
         raise ValueError(f"Unsupported GLiNER2 attention {requested!r}; expected one of {SUPPORTED_ATTENTION!r}.")
     attention = cast(AttentionRequest, normalized)
-    if attention == "auto":
-        return AttentionChoice("disentangled_flash" if device == "cuda" else "standard", explicit=False)
-    return AttentionChoice(attention, explicit=True)
+    return "standard" if attention == "auto" else attention
 
 
 def load_model(device: Device, *, dtype: str = "auto", attention: str = "auto") -> LoadedModel:
     """Download the pinned checkpoint and load it on ``device`` with the resolved precision and attention.
 
-    An explicitly requested DisentangledFlash that cannot be enabled raises. The automatic CUDA
-    default falls back to standard attention with a warning instead.
+    A DisentangledFlash request that cannot be enabled raises.
     """
     from huggingface_hub import snapshot_download
 
     resolved_dtype = resolve_dtype(dtype)
-    resolved_attention, explicit_attention = resolve_attention(attention, device)
+    resolved_attention = resolve_attention(attention)
     snapshot = Path(snapshot_download(repo_id=MODEL_ID, revision=MODEL_REVISION))
     model = _load_weights(snapshot, device, resolved_dtype)
     if resolved_attention == "disentangled_flash":
@@ -155,18 +152,10 @@ def load_model(device: Device, *, dtype: str = "auto", attention: str = "auto") 
             model.enable_disentangled_flash()
             _warm_up(model)
         except Exception as exc:
-            if explicit_attention:
-                raise RuntimeError(
-                    f"DisentangledFlash attention was requested via {ATTENTION_ENV} but could not be enabled "
-                    f"on {device}: {exc}"
-                ) from exc
-            logger.warning(
-                "DisentangledFlash could not be enabled on %s (%s); falling back to standard attention.",
-                device,
-                exc,
-            )
-            model = _load_weights(snapshot, device, resolved_dtype)
-            resolved_attention = "standard"
+            raise RuntimeError(
+                f"DisentangledFlash attention was requested via {ATTENTION_ENV} but could not be enabled "
+                f"on {device}: {exc}"
+            ) from exc
     return LoadedModel(model=model, device=device, dtype=resolved_dtype, attention=resolved_attention)
 
 

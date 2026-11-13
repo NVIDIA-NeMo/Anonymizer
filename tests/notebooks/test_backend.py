@@ -24,7 +24,7 @@ from anonymizer.engine.local_inference.gliner2.backend import (
     flatten_result,
     overlap_policy,
 )
-from anonymizer.engine.local_inference.gliner2.contract import DetectedEntity, Device, Label, OverlapPolicy, Span
+from anonymizer.engine.local_inference.gliner2.contract import DetectedEntity, Label, OverlapPolicy, Span
 
 
 def _split_words(text: str, lower: bool = True) -> Iterator[tuple[str, int, int]]:
@@ -416,24 +416,19 @@ def test_resolve_dtype_is_float32_unless_bfloat16_is_requested(requested: str, e
 
 
 @pytest.mark.parametrize(
-    ("requested", "device", "expected"),
+    ("requested", "expected"),
     [
-        ("auto", "cuda", ("disentangled_flash", False)),
-        ("auto", "mps", ("standard", False)),
-        ("auto", "cpu", ("standard", False)),
-        ("standard", "cuda", ("standard", True)),
-        ("Disentangled_Flash", "cpu", ("disentangled_flash", True)),
+        ("auto", "standard"),
+        ("standard", "standard"),
+        ("disentangled_flash", "disentangled_flash"),
+        ("Disentangled_Flash", "disentangled_flash"),
     ],
 )
-def test_resolve_attention_defaults_to_flash_on_cuda_only(
-    requested: str, device: Device, expected: tuple[str, bool]
-) -> None:
-    assert backend.resolve_attention(requested, device) == expected
+def test_resolve_attention_is_standard_unless_flash_is_requested(requested: str, expected: str) -> None:
+    assert backend.resolve_attention(requested) == expected
 
 
-@pytest.mark.parametrize(
-    "call", [lambda: backend.resolve_dtype("fp16"), lambda: backend.resolve_attention("sdpa", "cuda")]
-)
+@pytest.mark.parametrize("call", [lambda: backend.resolve_dtype("fp16"), lambda: backend.resolve_attention("sdpa")])
 def test_unsupported_precision_or_attention_is_rejected(call: Any) -> None:
     with pytest.raises(ValueError, match="Unsupported GLiNER2"):
         call()
@@ -467,12 +462,19 @@ def _patch_loading(monkeypatch: pytest.MonkeyPatch, flash_error: Exception | Non
     return loads
 
 
-def test_cuda_default_loads_bf16_with_flash(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cuda_default_loads_float32_with_standard_attention(monkeypatch: pytest.MonkeyPatch) -> None:
     loads = _patch_loading(monkeypatch, flash_error=None)
     loaded = backend.load_model("cuda")
-    assert (loaded.dtype, loaded.attention) == ("float32", "disentangled_flash")
-    assert cast(_LoadableModel, loaded.model).flash_enabled
+    assert (loaded.dtype, loaded.attention) == ("float32", "standard")
+    assert not cast(_LoadableModel, loaded.model).flash_enabled
     assert loads == ["float32"]
+
+
+def test_flash_is_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_loading(monkeypatch, flash_error=None)
+    loaded = backend.load_model("cuda", attention="disentangled_flash")
+    assert loaded.attention == "disentangled_flash"
+    assert cast(_LoadableModel, loaded.model).flash_enabled
 
 
 def test_bfloat16_is_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -482,17 +484,7 @@ def test_bfloat16_is_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
     assert loads == ["bfloat16"]
 
 
-def test_cuda_default_falls_back_to_standard_attention_with_warning(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    loads = _patch_loading(monkeypatch, flash_error=RuntimeError("triton unavailable"))
-    loaded = backend.load_model("cuda")
-    assert (loaded.dtype, loaded.attention) == ("float32", "standard")
-    assert loads == ["float32", "float32"]
-    assert "falling back to standard attention" in caplog.text
-
-
-def test_explicit_flash_that_cannot_load_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_flash_that_cannot_load_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_loading(monkeypatch, flash_error=ImportError("no disentangled_flash"))
     with pytest.raises(RuntimeError, match=backend.ATTENTION_ENV):
         backend.load_model("cuda", attention="disentangled_flash")

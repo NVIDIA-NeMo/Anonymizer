@@ -33,13 +33,6 @@ DtypeRequest = Literal["auto", "float32", "bfloat16"]
 AttentionRequest = Literal["auto", "standard", "disentangled_flash"]
 
 
-class AttentionChoice(NamedTuple):
-    """The resolved attention implementation and whether the caller asked for it explicitly."""
-
-    attention: Attention
-    explicit: bool
-
-
 class Span(NamedTuple):
     """A half-open character range ``[start, end)``."""
 
