@@ -12,6 +12,7 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TypedDict, TypeGuard, cast
 
@@ -74,7 +75,7 @@ from anonymizer.engine.graph_core.authoring import (
     Requests,
     Workflow,
 )
-from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
+from anonymizer.engine.graph_core.execution import ProtectionResult, Reason, TargetOutcome, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
@@ -219,6 +220,39 @@ def _evaluate_on_graph(
             raise entry.error
     raise_if_cancelled(result)
     return current, failures, result
+
+
+def _reported_outcomes(result: ProtectionResult) -> tuple[TargetOutcome, ...]:
+    """Each row's outcome with every verifier's assessment as a reason naming the verifier, ordered ``passed``,
+    ``scored``, ``could_not_assess``, ``failed`` (worst last) so ``reason`` names the worst check; an execution error,
+    such as a verifier that raised, comes after them and is the ``reason``. The ungraded rewrite judge reports
+    ``scored`` when it returned scores. Qualification and release stay as derived."""
+    codes = {True: "passed", False: "failed", None: "could_not_assess"}
+    rank = {"passed": 0, "scored": 1, "could_not_assess": 2, "failed": 3}
+    ungraded = _ASSESSMENTS[COL_JUDGE_EVALUATION][0]
+    names = result.prepared.names
+    return tuple(
+        replace(
+            outcome,
+            reasons=(
+                *sorted(
+                    (
+                        Reason(
+                            "scored" if a.satisfied and names[i] == ungraded else codes[a.satisfied],
+                            names[i],
+                            names[i],
+                            a.reason,
+                        )
+                        for i, out in sorted(row.outputs.items())
+                        if isinstance(a := out.get("assessment"), Assessment)
+                    ),
+                    key=lambda r: rank[r.code],
+                ),
+                *outcome.reasons,
+            ),
+        )
+        for row, outcome in zip(result.state.rows, result.outcomes)
+    )
 
 
 def _has_entities_for_evaluation(raw: object) -> bool:
@@ -728,7 +762,7 @@ class Anonymizer:
                 COL_JUDGE_EVALUATION,
                 *((COL_DETECTION_VALID,) if evaluate_config.compute_detection_validity else ()),
             )
-            judged_df, all_failed, _ = _evaluate_on_graph(
+            judged_df, all_failed, evaluation = _evaluate_on_graph(
                 internal_df,
                 COL_REWRITTEN_TEXT,
                 [
@@ -778,7 +812,7 @@ class Anonymizer:
                         ("attribute fidelity", COL_ATTRIBUTE_FIDELITY_VALID, None),
                     ]
                 )
-            judged_df, all_failed, _ = _evaluate_on_graph(
+            judged_df, all_failed, evaluation = _evaluate_on_graph(
                 internal_df,
                 COL_REPLACED_TEXT,
                 [
@@ -808,6 +842,7 @@ class Anonymizer:
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
+            _outcomes=_reported_outcomes(evaluation),
         )
         if result.failed_records:
             logger.debug("%d evaluation failed record(s).", len(result.failed_records))
