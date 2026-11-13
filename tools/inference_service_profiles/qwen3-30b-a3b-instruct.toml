@@ -1,11 +1,11 @@
 schema_version = "inference-service.spec/v3"
-port = 8000
+port = 8017
 startup_timeout_seconds = 1800
 shutdown_timeout_seconds = 60
 
 [backend]
 kind = "vllm"
-served_model_name = "qwen3-30b-a3b-instruct-local"
+served_model_name = "qwen3-30b-a3b-instruct"
 
 [backend.model]
 model_id = "Qwen/Qwen3-30B-A3B-Instruct-2507"

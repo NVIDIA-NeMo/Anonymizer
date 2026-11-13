@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Providers for local-models.yaml: one per running server, named local-<profile>
+# and listening on that profile's port. The shipped profiles do not
+# authenticate requests, so api_key is a placeholder.
+
+providers:
+  - name: local-gliner2
+    endpoint: http://127.0.0.1:8001/v1
+    provider_type: openai
+    api_key: EMPTY
+
+  - name: local-gemma-4-26b-a4b-it
+    endpoint: http://127.0.0.1:8011/v1
+    provider_type: openai
+    api_key: EMPTY
+
+  - name: local-gpt-oss-120b
+    endpoint: http://127.0.0.1:8013/v1
+    provider_type: openai
+    api_key: EMPTY
+
+  - name: local-nemotron-3.5-lightning
+    endpoint: http://127.0.0.1:8014/v1
+    provider_type: openai
+    api_key: EMPTY
+
+  - name: local-nemotron-3.5-super-vl
+    endpoint: http://127.0.0.1:8016/v1
+    provider_type: openai
+    api_key: EMPTY
+
+  - name: local-qwen3.8-27b
+    endpoint: http://127.0.0.1:8018/v1
+    provider_type: openai
+    api_key: EMPTY

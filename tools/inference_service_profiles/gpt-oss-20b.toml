@@ -1,11 +1,11 @@
 schema_version = "inference-service.spec/v3"
-port = 8000
+port = 8012
 startup_timeout_seconds = 1200
 shutdown_timeout_seconds = 60
 
 [backend]
 kind = "vllm"
-served_model_name = "gpt-oss-20b-local"
+served_model_name = "gpt-oss-20b"
 
 [backend.model]
 model_id = "openai/gpt-oss-20b"

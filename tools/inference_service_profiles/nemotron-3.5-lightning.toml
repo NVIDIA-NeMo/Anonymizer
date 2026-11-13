@@ -1,11 +1,11 @@
 schema_version = "inference-service.spec/v3"
-port = 8000
+port = 8014
 startup_timeout_seconds = 1800
 shutdown_timeout_seconds = 60
 
 [backend]
 kind = "vllm"
-served_model_name = "nemotron-3.5-lightning-local"
+served_model_name = "nemotron-3.5-lightning"
 
 [backend.model]
 model_id = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"

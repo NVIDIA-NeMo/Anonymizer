@@ -22,19 +22,19 @@ The tool lives under `tools/` and is not installed with the
 
 Eleven profiles ship in `tools/inference_service_profiles/`:
 
-| Profile | Endpoint model name | Role and hardware guidance |
-| --- | --- | --- |
-| `gliner2-native.toml` | `fastino/gliner2-privacy-filter-PII-multi` | Multilingual PII detector served by Anonymizer's native GLiNER2 server |
-| `vllm-local-test.toml` | `anonymizer-local` | TinyLlama lifecycle smoke test |
-| `gemma-4-12b-it.toml` | `gemma-4-12b-it-local` | Instruction-tuned Gemma 4 generation; requires an NVIDIA GPU with at least 40 GB of memory |
-| `gpt-oss-20b.toml` | `gpt-oss-20b-local` | Compact GPT-OSS generation |
-| `gpt-oss-120b.toml` | `gpt-oss-120b-local` | GPT-OSS generation on a dedicated 80 GB GPU |
-| `qwen3-30b-a3b-instruct.toml` | `qwen3-30b-a3b-instruct-local` | Multilingual generation |
-| `nemotron-3.5-lightning.toml` | `nemotron-3.5-lightning-local` | High-throughput generation on an 80 GB GPU |
-| `nemotron-3.5-lightning-nvfp4.toml` | `nemotron-3.5-lightning-nvfp4-local` | Official NVFP4 checkpoint with a conservative single-H100 configuration |
-| `gemma-4-26b-a4b-it.toml` | `gemma-4-26b-a4b-it-local` | Gemma 4 26B-A4B MoE generation, text only, 48K context; one 80 GB GPU |
-| `qwen3.8-27b.toml` | `qwen3.8-27b-local` | Qwen3.8 27B generation, text only, 32K context; one 80 GB GPU |
-| `nemotron-3.5-super-vl.toml` | `nemotron-3.5-super-vl-local` | Nemotron 3.5 Super VL 120B-A12B (BF16), text only, 48K context; four 80 GB GPUs with tensor parallelism and `trust-remote-code` |
+| Profile | Port | Endpoint model name | Role and hardware guidance |
+| --- | --- | --- | --- |
+| `gliner2-native.toml` | 8001 | `fastino/gliner2-privacy-filter-PII-multi` | Multilingual PII detector served by Anonymizer's native GLiNER2 server |
+| `vllm-local-test.toml` | 8000 | `anonymizer-local` | TinyLlama lifecycle smoke test |
+| `gemma-4-12b-it.toml` | 8010 | `gemma-4-12b-it` | Instruction-tuned Gemma 4 generation; requires an NVIDIA GPU with at least 40 GB of memory |
+| `gpt-oss-20b.toml` | 8012 | `gpt-oss-20b` | Compact GPT-OSS generation |
+| `gpt-oss-120b.toml` | 8013 | `gpt-oss-120b` | GPT-OSS generation on a dedicated 80 GB GPU |
+| `qwen3-30b-a3b-instruct.toml` | 8017 | `qwen3-30b-a3b-instruct` | Multilingual generation |
+| `nemotron-3.5-lightning.toml` | 8014 | `nemotron-3.5-lightning` | High-throughput generation on an 80 GB GPU |
+| `nemotron-3.5-lightning-nvfp4.toml` | 8015 | `nemotron-3.5-lightning-nvfp4` | Official NVFP4 checkpoint with a conservative single-H100 configuration |
+| `gemma-4-26b-a4b-it.toml` | 8011 | `gemma-4-26b-a4b-it` | Gemma 4 26B-A4B MoE generation, text only, 48K context; one 80 GB GPU |
+| `qwen3.8-27b.toml` | 8018 | `qwen3.8-27b` | Qwen3.8 27B generation, text only, 32K context; one 80 GB GPU |
+| `nemotron-3.5-super-vl.toml` | 8016 | `nemotron-3.5-super-vl` | Nemotron 3.5 Super VL 120B-A12B (BF16), text only, 48K context; four 80 GB GPUs with tensor parallelism and `trust-remote-code` |
 
 Each generation profile pins its Hugging Face revision and runs stock vLLM.
 The detector profile starts from the main project environment
@@ -329,7 +329,7 @@ docker exec anonymizer-local-models \
   python tools/inference_service.py probe \
   --plan /state/gpt-oss-plan.json
 
-curl -sf http://127.0.0.1:8000/v1/models | python -m json.tool
+curl -sf http://127.0.0.1:8012/v1/models | python -m json.tool
 ```
 
 ### Stop cleanly
@@ -355,7 +355,7 @@ Add the local endpoint to a provider file:
 
 ```yaml title="providers.yaml"
 providers:
-  - name: local-gliner
+  - name: local-gliner2
     endpoint: http://127.0.0.1:8001/v1
     provider_type: openai
     api_key: EMPTY
@@ -367,7 +367,7 @@ Then route the detector alias to that provider in your model configuration:
 model_configs:
   - alias: gliner-pii-detector
     model: fastino/gliner2-privacy-filter-PII-multi
-    provider: local-gliner
+    provider: local-gliner2
     inference_parameters:
       max_parallel_requests: 8
       timeout: 120
@@ -381,8 +381,10 @@ every alias needed by the selected pipeline. See
 [`tools/inference_service_profiles/examples/local-models.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/tools/inference_service_profiles/examples/local-models.yaml)
 is a complete role configuration that uses only the shipped profiles: GLiNER2
 detection with Gemma 4 26B-A4B, Qwen3.8 27B, Nemotron 3.5 Lightning, and
-Nemotron 3.5 Super VL for the LLM roles. Its header lists which profile serves
-each provider name; add one provider entry per running server.
+Nemotron 3.5 Super VL for the LLM roles.
+[`local-providers.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/tools/inference_service_profiles/examples/local-providers.yaml)
+beside it points each provider at its profile's port. Each profile listens on its
+own port, so the servers can run side by side on one host.
 
 For the detector request and response contract, chunking behavior, and a live
 PII request, see [Self-hosting GLiNER](self-hosting-gliner.md).

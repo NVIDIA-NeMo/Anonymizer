@@ -1,11 +1,11 @@
 schema_version = "inference-service.spec/v3"
-port = 8000
+port = 8011
 startup_timeout_seconds = 1800
 shutdown_timeout_seconds = 60
 
 [backend]
 kind = "vllm"
-served_model_name = "gemma-4-26b-a4b-it-local"
+served_model_name = "gemma-4-26b-a4b-it"
 
 [backend.model]
 model_id = "google/gemma-4-26B-A4B-it"
