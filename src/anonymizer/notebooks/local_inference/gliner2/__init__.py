@@ -1,9 +1,0 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-"""Compatibility exports for native GLiNER2."""
-
-from __future__ import annotations
-
-from anonymizer.engine.local_inference.gliner2 import MODEL_ID, MODEL_REVISION
-
-__all__ = ["MODEL_ID", "MODEL_REVISION"]
