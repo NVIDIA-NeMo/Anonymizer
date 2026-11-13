@@ -551,7 +551,30 @@ def test_validation_prompt_includes_label_examples() -> None:
     assert 'The entity label "occupation" refers only to a specific paid job title or profession' in prompt
     assert "AGE RULE:" in prompt
     assert "indicate duration, not age" in prompt
-    assert "tagged as a first_name but is not followed by a last_name, drop it" in prompt
+    assert "tagged as a first_name but is not followed by a last_name, drop it" not in prompt
+
+
+@pytest.mark.parametrize("notation", list(TagNotation))
+@pytest.mark.parametrize("strict_labels", [False, True])
+def test_name_guidance_prompts_render_without_lone_initial_drop_rule(
+    notation: TagNotation, strict_labels: bool
+) -> None:
+    """Both prompts render in every tag notation and label mode; the lone-initial drop rule stays removed."""
+    labels = ["first_name", "last_name"]
+    context = {COL_TAG_NOTATION: notation.value}
+    validation = Environment().from_string(_get_validation_prompt(data_summary=None, labels=labels)).render(**context)
+    Environment().from_string(
+        _get_augment_prompt(data_summary=None, labels=labels, strict_labels=strict_labels)
+    ).render(**context)
+
+    assert "is not followed by a last_name, drop it" not in validation
+
+
+def test_contextual_personal_name_guidance_preserves_default_label_scope() -> None:
+    label_config = resolve_entity_label_config(entity_labels=None)
+
+    assert {"first_name", "last_name"} <= set(label_config.labels)
+    assert {"middle_name", "full_name", "name_initial"}.isdisjoint(label_config.labels)
 
 
 @pytest.mark.parametrize("data_summary", [None, "", "Medical records. Public hospital names are not sensitive."])
@@ -570,7 +593,7 @@ def test_detection_prompt_builders_substitute_placeholders_and_summary(
 
     if not data_summary:
         assert "data summary" not in validation.lower()
-        assert "Data summary: Not provided" in augment
+        assert "data summary" not in augment.lower()
         assert "Focus on:" in augment
 
 
@@ -612,6 +635,38 @@ def test_validation_prompt_example_matches_conflict_skeleton_and_excerpt_offsets
     assert output[4]["decision"] == "drop"
 
 
+def test_validation_prompt_keeps_contextual_partial_dates() -> None:
+    prompt = _get_validation_prompt(data_summary=None, labels=["date"])
+
+    assert "DATE RULE:" in prompt
+    assert "a day, month, and year are NOT all required" in prompt
+    assert '"The appointment is in March"' in prompt
+    assert '"She joined in 2024"' in prompt
+    assert '"We met in March 2024"' in prompt
+    assert '"The appointment is on the 15th"' in prompt
+    assert "Standalone numbers without date context are not dates" in prompt
+    assert '"March forward"' in prompt
+    assert '"2024 items"' in prompt
+    assert 'Vague time references (e.g., "today", "now", "soon")' in prompt
+    assert "Generic time references that are not specific dates" not in prompt
+    assert set(ENTITY_LABEL_EXAMPLES["date"]) >= {"March", "2024", "March 2024", "the 15th"}
+    assert f"- date: {', '.join(ENTITY_LABEL_EXAMPLES['date'])}" in prompt
+
+
+@pytest.mark.parametrize("strict_labels", [False, True])
+def test_augment_prompt_uses_same_partial_date_policy(strict_labels: bool) -> None:
+    prompt = _get_augment_prompt(data_summary=None, labels=["date"], strict_labels=strict_labels)
+
+    assert "date includes complete and partial calendar dates" in prompt
+    assert "a day, month, and year are NOT all required" in prompt
+    for example in ("in March", "in 2024", "in March 2024", "on the 15th"):
+        assert f'"{example}"' in prompt
+    assert "Standalone numbers without date context" in prompt
+    assert '"March forward"' in prompt
+    assert '"2024 items"' in prompt
+    assert 'vague time words such as "today", "now", and "soon" are not dates' in prompt
+
+
 def test_validation_prompt_adds_configured_examples_to_full_label_config() -> None:
     label_config = resolve_entity_label_config(
         entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
@@ -644,7 +699,7 @@ def test_augment_prompt_permissive_when_using_defaults() -> None:
     assert '"context_before"' in prompt
     assert '"context_after"' in prompt
     assert "a few words (two to five)" in prompt
-    assert "Never copy those tags" in prompt
+    assert "Never copy those tags" not in prompt
 
 
 def test_augment_prompt_strict_when_explicit_labels_provided() -> None:
@@ -654,16 +709,40 @@ def test_augment_prompt_strict_when_explicit_labels_provided() -> None:
     assert "Do not create new labels" in prompt
     assert "Strongly prefer" not in prompt
     assert "create a concise snake_case label" not in prompt
-    assert "employment_status is NOT in the allowed list" in prompt
-    assert "employment_status" not in prompt.split("Output:")[1]
+    assert "employment_status" not in prompt
+    assert "first_name" not in prompt.split("Output:")[1]
+    assert "nothing is returned" in prompt
+
+
+@pytest.mark.parametrize("strict_labels", [False, True])
+@pytest.mark.parametrize("summary", [None, "Protect customer identities; preserve generic resource names."])
+def test_plain_augment_prompt_preserves_current_sensitivity_policy(strict_labels: bool, summary: str | None) -> None:
+    prompt = _get_augment_prompt(data_summary=summary, labels=["first_name"], strict_labels=strict_labels)
+    source = "Literal <city>source</city> remains source text."
+    rendered = Environment(undefined=StrictUndefined).from_string(prompt).render({COL_TEXT: source})
+
+    assert "Task: Find sensitive entities in text." in rendered
+    assert "Use surrounding text and field names to determine what a value actually represents." in rendered
+    assert "context supports both its entity label and its sensitivity" in rendered
+    assert f"Input text: {source}" in rendered
+    assert "ignore already tagged entities" not in rendered
+    assert "Already-detected entities" not in rendered
+    assert "<<SENSITIVITY_GUIDANCE>>" not in rendered
+    if summary:
+        assert summary in rendered
+        assert "Follow its explicit sensitivity rules when they conflict" in rendered
+        assert (
+            "Do not infer that a value is non-sensitive merely because the data summary does not mention it."
+            in rendered
+        )
+        assert "Do not add a value merely because it matches an allowed label" in rendered
+    else:
+        assert "Focus on:" in rendered
 
 
 @pytest.mark.parametrize("notation", list(TagNotation))
 @pytest.mark.parametrize("strict_labels", [False, True])
-@pytest.mark.parametrize("has_overlap_groups", [False, True])
-def test_augment_prompt_examples_ground_context_across_entity_tags(
-    notation: TagNotation, strict_labels: bool, has_overlap_groups: bool
-) -> None:
+def test_plain_augment_prompt_examples_ground_exact_source(notation: TagNotation, strict_labels: bool) -> None:
     prompt = _get_augment_prompt(
         data_summary=None, labels=["first_name", "last_name", "city"], strict_labels=strict_labels
     )
@@ -675,7 +754,7 @@ def test_augment_prompt_examples_ground_context_across_entity_tags(
                 COL_TAG_NOTATION: notation.value,
                 COL_INITIAL_TAGGED_TEXT: "",
                 COL_SEED_ENTITIES_JSON: "[]",
-                "has_overlap_groups": has_overlap_groups,
+                COL_TEXT: "Literal <city>source</city> stays unchanged.",
             }
         )
     )
@@ -692,25 +771,15 @@ def test_augment_prompt_examples_ground_context_across_entity_tags(
         output=output,
     )
 
-    assert ("A tag named NAGROUP_gN" in rendered) is has_overlap_groups
-    assert ("the whole region as already tagged" in rendered) is has_overlap_groups
-    assert ("never return it as a label" in rendered) is has_overlap_groups
+    assert "NAGROUP" not in rendered
+    assert "Already-detected entities" not in rendered
+    assert "already-tagged" not in rendered
+    assert "engine-inserted" not in rendered
+    assert "Input text: Literal <city>source</city> stays unchanged." in rendered
     assert "a few words (two to five)" in rendered
     assert "Context does not have to identify a unique occurrence" in rendered
-    example_label = "NAGROUP_g1" if has_overlap_groups else "city"
-    assert _format_entity_tag(value="Santa Clara", label=example_label, notation=notation) in rendered
-    example_seeds = json.loads(
-        next(line for line in rendered.splitlines() if line.startswith("Already-detected entities: ")).removeprefix(
-            "Already-detected entities: "
-        )
-    )
-    assert example_seeds == (
-        [{"value": "Santa Clara", "label": "city"}, {"value": "Clara", "label": "first_name"}]
-        if has_overlap_groups
-        else [{"value": "Santa Clara", "label": "city"}]
-    )
     assert output.entities[1].context_after == " lives in Santa Clara. "
-    expected_values = ["Jane", "Doe"] if strict_labels else ["Jane", "Doe", "full-time"]
+    expected_values = ["Jane", "Doe", "Santa Clara"] if strict_labels else ["Jane", "Doe", "Santa Clara", "full-time"]
     assert result.failures == ()
     assert [item.value for item in result.grounded_entities.entities] == expected_values
     assert [
@@ -718,7 +787,7 @@ def test_augment_prompt_examples_ground_context_across_entity_tags(
         for item in result.occurrences
     ] == [(value, source.index(value), source.index(value) + len(value)) for value in expected_values]
     if not strict_labels:
-        assert output.entities[2].context_before == "in Santa Clara. She works "
+        assert output.entities[3].context_before == "in Santa Clara. She works "
 
 
 def test_augment_prompt_receives_only_configured_examples() -> None:

@@ -9,7 +9,7 @@ Entity detection is the first stage of every Anonymizer pipeline. Both replace a
 
 ## How it works
 
-Detection combines a lightweight GLiNER2 PII model with LLM-based refinement. GLiNER2 produces an initial set of entity spans, an LLM validates those candidates by keeping, reclassifying, or dropping them based on context, and then an augmenter finds entities GLiNER2 missed. Augmented findings are merged directly and are not independently revalidated.
+Detection combines a lightweight GLiNER2 PII model with LLM-based refinement. GLiNER2 produces an initial set of entity spans, an LLM validates those candidates by keeping, reclassifying, or dropping them based on context, and then an augmenter independently finds sensitive entities in the canonical plain source text. It receives no detector tags or seed-entity list. Grounded findings, including rediscoveries of existing detections, use the shared admission and final reconciliation policy and are not independently revalidated.
 
 Augmenter suggestions must match the source text and their supplied context exactly. If some do not, Anonymizer keeps the matching suggestions and asks the augmenter to correct only the others once. Suggestions that still do not match are dropped; the record and its other detections are retained. Transport errors or responses that do not match the required schema still fail the record.
 
@@ -148,12 +148,16 @@ Anonymizer ships with a comprehensive default label set covering:
 - **Demographics** (e.g. `gender`, `race_ethnicity`, `religious_belief`, `political_view`, `language`)
 - **Financial** (e.g. `credit_debit_card`, `account_number`, `bank_routing_number`, `tax_id`)
 
+The `date` label includes complete dates and partial calendar references, such as a month (`March`), year (`2024`), month and year (`March 2024`), or day of the month (`the 15th`), when the surrounding text establishes their date meaning. Standalone numbers without date context and vague time words such as `today`, `now`, and `soon` are not dates.
+
 To inspect the full list:
 
 ```python
 from anonymizer import DEFAULT_ENTITY_LABELS
 print(DEFAULT_ENTITY_LABELS)
 ```
+
+Validation and augmentation use context to recognize personal names, including short names, lowercase or uppercase names, and personal initials with or without a following surname, such as initials that stand in for a person in running text. Short name values in structured fields (for example, `"surname": "Ng"`) are recognized the same way. A letter used as a variable, grade, unit, or list marker is not a personal name. Initials are never expanded into inferred names; labels still follow your configured label scope.
 
 The label settings serve different purposes:
 
