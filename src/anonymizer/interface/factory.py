@@ -70,7 +70,7 @@ def create_anonymizer(
     parsed, providers = _parse_gliner_model_inputs(model_configs=model_configs, model_providers=model_providers)
     if isinstance(gliner, NativeGliner):
         from anonymizer.engine.local_inference.gliner2 import MODEL_ID
-        from anonymizer.engine.local_inference.gliner2.backend import DEFAULT_CHUNK_LENGTH, DEFAULT_OVERLAP
+        from anonymizer.engine.local_inference.gliner2.contract import DEFAULT_CHUNK_LENGTH, DEFAULT_OVERLAP
         from anonymizer.engine.local_inference.runtime import LOCAL_TOKEN_ENV, singleton_runtime
 
         with singleton_runtime(gliner.device) as runtime:
@@ -132,7 +132,7 @@ class NativeRuntimeSession:
         data_designer_run_config: RunConfig | None = None,
     ) -> Anonymizer:
         """Construct a client connected to this session's endpoint."""
-        from anonymizer.engine.local_inference.gliner2.backend import DEFAULT_CHUNK_LENGTH, DEFAULT_OVERLAP
+        from anonymizer.engine.local_inference.gliner2.contract import DEFAULT_CHUNK_LENGTH, DEFAULT_OVERLAP
 
         parsed, providers = _parse_gliner_model_inputs(model_configs=model_configs, model_providers=model_providers)
         return _create_endpoint_anonymizer(

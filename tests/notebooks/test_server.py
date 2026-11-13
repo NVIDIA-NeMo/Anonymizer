@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from anonymizer.engine.local_inference.gliner2 import MODEL_ID, MODEL_REVISION, server
 from anonymizer.engine.local_inference.gliner2.backend import LoadedModel
-from anonymizer.engine.local_inference.gliner2.contract import DetectedEntity, Label, Span
+from anonymizer.engine.local_inference.gliner2.contract import DetectedEntity, DetectionRequest, Label, Span
 
 
 def _entity(text: str, label: str = "pii", score: float = 0.9) -> DetectedEntity:
@@ -124,8 +124,45 @@ def test_chat_completion_returns_anonymizer_entity_contract(
     assert (params.chunk_length, params.overlap) == expected_window
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"not json",
+        b"[]",
+        b'{"threshold": "high"}',
+        b'{"chunk_length": null}',
+        b'{"labels": "name"}',
+    ],
+)
+def test_malformed_detection_request_is_rejected_with_422(monkeypatch: pytest.MonkeyPatch, body: bytes) -> None:
+    monkeypatch.setenv(server.TOKEN_ENV, "secret")
+    with patch.object(server, "loaded", _loaded()), patch.object(server.detector, "detect", AsyncMock()) as detect:
+        client = TestClient(server.app, raise_server_exceptions=False)
+        unauthorized = client.post("/v1/chat/completions", content=body)
+        response = client.post("/v1/chat/completions", headers={"Authorization": "Bearer secret"}, content=body)
+    assert unauthorized.status_code == 401
+    assert response.status_code == 422
+    detect.assert_not_awaited()
+
+
+def test_detection_request_reads_text_from_the_last_message_and_ignores_unknown_keys() -> None:
+    request = DetectionRequest.model_validate(
+        {
+            "messages": [
+                {"role": "system", "content": "ignored"},
+                {"role": "user", "content": [{"type": "text", "text": "Alice "}, {"text": "Smith"}]},
+            ],
+            "labels": ["name", 3],
+            "max_tokens": 5,
+        }
+    )
+    assert request.text() == "Alice Smith"
+    assert request.labels == ["name", "3"]
+    assert DetectionRequest.model_validate({"messages": "nope"}).text() == ""
+
+
 def test_default_inference_batch_size_is_32() -> None:
-    assert server.DEFAULT_INFERENCE_BATCH_SIZE == 32
+    assert DetectionRequest().batch_size == 32
 
 
 def test_launch_ownership_constants_match_the_managed_tool_contract() -> None:

@@ -4,13 +4,12 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import assert_never
 
 import httpx
-from pydantic import JsonValue
+from pydantic import BaseModel, JsonValue
 
 from inference_service_compiler.models import Gliner2Backend, ServiceSpec, VllmBackend
 
@@ -91,6 +90,23 @@ def _probe_chat(client: httpx.Client, base_url: str, model: str, extra_body: Map
         raise ValueError("chat completion content must be a string")
 
 
+class _ProbeEntity(BaseModel):
+    """One entity of the detector's reply, as far as the probe checks it.
+
+    The native server's wire models live in the ``anonymizer`` package, which this tool is deployed without
+    (it is copied alone into the serving image), so the probe reads the reply through its own minimal model.
+    """
+
+    label: JsonValue = None
+    start: JsonValue = None
+    end: JsonValue = None
+    score: JsonValue = None
+
+
+class _ProbeContent(BaseModel):
+    entities: list[_ProbeEntity]
+
+
 def _probe_detection(client: httpx.Client, base_url: str, model: str) -> None:
     """Require dynamic labels, character offsets, and scores from one detection request."""
     response = client.post(
@@ -103,16 +119,14 @@ def _probe_detection(client: httpx.Client, base_url: str, model: str) -> None:
         },
     )
     response.raise_for_status()
-    entities = json.loads(response.json()["choices"][0]["message"]["content"])["entities"]
-    if not isinstance(entities, list) or not entities:
+    content = _ProbeContent.model_validate_json(response.json()["choices"][0]["message"]["content"])
+    if not content.entities:
         raise ValueError("detector returned no entities for the probe text")
-    for entity in entities:
-        if not isinstance(entity, dict):
-            raise ValueError("detector entities must be objects")
-        if entity.get("label") != "person":
-            raise ValueError(f"detector ignored the requested labels: {entity.get('label')!r}")
-        start, end, score = entity.get("start"), entity.get("end"), entity.get("score")
+    for entity in content.entities:
+        if entity.label != "person":
+            raise ValueError(f"detector ignored the requested labels: {entity.label!r}")
+        start, end = entity.start, entity.end
         if not (isinstance(start, int) and isinstance(end, int) and 0 <= start < end <= len(_GLINER2_PROBE_TEXT)):
             raise ValueError(f"detector returned invalid offsets {start!r}..{end!r}")
-        if not isinstance(score, int | float):
+        if not isinstance(entity.score, int | float):
             raise ValueError("detector entities must carry a numeric score")

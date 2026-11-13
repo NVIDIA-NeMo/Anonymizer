@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import httpx
 import pytest
 
 from anonymizer.engine.local_inference import runtime as _runtime
@@ -163,21 +164,54 @@ def test_interrupted_startup_stops_candidate_and_restores_token(monkeypatch: pyt
     assert _runtime._runtime is None
 
 
-def test_read_metadata_rejects_wrong_revision() -> None:
-    runtime = _runtime._LocalRuntime(
+def _model_card_response(**changes: str) -> httpx.Response:
+    card = {
+        "id": _runtime.MODEL_ID,
+        "object": "model",
+        "revision": _runtime.MODEL_REVISION,
+        "device": "cpu",
+        "dtype": "float32",
+        "attention": "standard",
+        **changes,
+    }
+    request = httpx.Request("GET", "http://127.0.0.1:1234/v1/models")
+    return httpx.Response(200, json={"object": "list", "data": [card]}, request=request)
+
+
+def _starting_runtime() -> _runtime._LocalRuntime:
+    return _runtime._LocalRuntime(
         process=Mock(),
         endpoint="http://127.0.0.1:1234/v1",
         requested_device="auto",
         selected_device="starting",
         token="secret",
     )
-    response = Mock()
-    response.json.return_value = {"data": [{"id": _runtime.MODEL_ID, "revision": "moving-head", "device": "cpu"}]}
+
+
+def test_read_model_card_returns_the_pinned_checkpoint_card() -> None:
+    with patch("anonymizer.engine.local_inference.runtime.httpx.get", return_value=_model_card_response()):
+        card = _runtime._read_model_card(_starting_runtime())
+    assert (card.device, card.dtype, card.attention) == ("cpu", "float32", "standard")
+
+
+def test_read_model_card_rejects_wrong_revision() -> None:
     with (
-        patch("anonymizer.engine.local_inference.runtime.httpx.get", return_value=response),
+        patch(
+            "anonymizer.engine.local_inference.runtime.httpx.get",
+            return_value=_model_card_response(revision="moving-head"),
+        ),
         pytest.raises(ValueError, match="pinned"),
     ):
-        _runtime._read_metadata(runtime)
+        _runtime._read_model_card(_starting_runtime())
+
+
+@pytest.mark.parametrize("changes", [{"device": "tpu"}, {"dtype": "fp8"}])
+def test_read_model_card_rejects_malformed_metadata(changes: dict[str, str]) -> None:
+    with (
+        patch("anonymizer.engine.local_inference.runtime.httpx.get", return_value=_model_card_response(**changes)),
+        pytest.raises(ValueError),  # noqa: PT011 - pydantic's ValidationError is a ValueError
+    ):
+        _runtime._read_model_card(_starting_runtime())
 
 
 def test_scoped_runtime_owns_process_until_last_context(monkeypatch: pytest.MonkeyPatch) -> None:

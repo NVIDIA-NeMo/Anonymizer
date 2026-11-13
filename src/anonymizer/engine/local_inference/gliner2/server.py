@@ -19,18 +19,15 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
-from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 try:
     from .backend import (  # noqa: TID252 - direct-script fallback keeps server dependencies isolated
         ATTENTION_ENV,
-        DEFAULT_CHUNK_LENGTH,
-        DEFAULT_INFERENCE_BATCH_SIZE,
-        DEFAULT_OVERLAP,
         DTYPE_ENV,
         MODEL_ID,
         MODEL_REVISION,
@@ -40,13 +37,19 @@ try:
         load_model,
         resolve_device,
     )
-    from .contract import DetectedEntity  # noqa: TID252 - direct-script fallback
+    from .contract import (  # noqa: TID252 - direct-script fallback
+        ChatChoice,
+        ChatMessage,
+        DetectedEntity,
+        DetectionContent,
+        DetectionRequest,
+        DetectionResponse,
+        ModelCard,
+        ModelList,
+    )
 except ImportError:  # Direct execution inside the isolated server environment.
     from backend import (  # ty: ignore[unresolved-import] -- direct-script import path
         ATTENTION_ENV,
-        DEFAULT_CHUNK_LENGTH,
-        DEFAULT_INFERENCE_BATCH_SIZE,
-        DEFAULT_OVERLAP,
         DTYPE_ENV,
         MODEL_ID,
         MODEL_REVISION,
@@ -56,11 +59,19 @@ except ImportError:  # Direct execution inside the isolated server environment.
         load_model,
         resolve_device,
     )
-    from contract import DetectedEntity  # ty: ignore[unresolved-import] -- direct-script import path
+    from contract import (  # ty: ignore[unresolved-import] -- direct-script import path
+        ChatChoice,
+        ChatMessage,
+        DetectedEntity,
+        DetectionContent,
+        DetectionRequest,
+        DetectionResponse,
+        ModelCard,
+        ModelList,
+    )
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8001
-DEFAULT_FLAT_NER = False
 TOKEN_ENV = "ANONYMIZER_LOCAL_GLINER2_TOKEN"
 DEVICE_ENV = "ANONYMIZER_LOCAL_GLINER2_DEVICE"
 # Launch-ownership contract shared with tools/inference_service_compiler; keep these strings in sync.
@@ -217,92 +228,58 @@ def launch_ownership(request: Request) -> JSONResponse:
 
 
 @app.get("/v1/models")
-def list_models(request: Request) -> dict[str, Any]:
+def list_models(request: Request) -> ModelList:
     """Return readiness and immutable checkpoint identity."""
     _authorize(request)
     if loaded is None:
         raise HTTPException(status_code=503, detail="GLiNER2 is not loaded")
-    return {
-        "object": "list",
-        "data": [
-            {
-                "id": MODEL_ID,
-                "object": "model",
-                "revision": MODEL_REVISION,
-                "device": loaded.device,
-                "dtype": loaded.dtype,
-                "attention": loaded.attention,
-            }
-        ],
-    }
+    card = ModelCard(
+        id=MODEL_ID,
+        revision=MODEL_REVISION,
+        device=loaded.device,
+        dtype=loaded.dtype,
+        attention=loaded.attention,
+    )
+    return ModelList(data=[card])
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(request: Request) -> dict[str, Any]:
+async def chat_completions(request: Request) -> DetectionResponse:
     """Run GLiNER2 through the detector chat-completion contract."""
     _authorize(request)
     if loaded is None:
         raise HTTPException(status_code=503, detail="GLiNER2 is not loaded")
-    body = await request.json()
-    text = _extract_text(body.get("messages", []))
-    labels = body.get("labels") or []
+    try:
+        detection = DetectionRequest.model_validate_json(await request.body())
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422, detail=exc.errors(include_url=False, include_context=False, include_input=False)
+        ) from exc
     params = DetectParams(
-        labels=tuple(str(label) for label in labels),
-        threshold=float(body.get("threshold", 0.3)),
-        chunk_length=int(body.get("chunk_length", DEFAULT_CHUNK_LENGTH)),
-        overlap=int(body.get("overlap", DEFAULT_OVERLAP)),
-        flat_ner=bool(body.get("flat_ner", DEFAULT_FLAT_NER)),
-        inference_batch_size=int(body.get("batch_size", DEFAULT_INFERENCE_BATCH_SIZE)),
+        labels=tuple(detection.labels),
+        threshold=detection.threshold,
+        chunk_length=detection.chunk_length,
+        overlap=detection.overlap,
+        flat_ner=detection.flat_ner,
+        inference_batch_size=detection.batch_size,
     )
     try:
-        entities = await detector.detect(text, params)
+        entities = await detector.detect(detection.text(), params)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    content = json.dumps({"entities": [_wire_entity(entity) for entity in entities]})
-    return {
-        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": body.get("model", MODEL_ID),
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": content},
-                "finish_reason": "stop",
-            }
-        ],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-    }
-
-
-def _wire_entity(entity: DetectedEntity) -> dict[str, Any]:
-    return {
-        "text": entity.text,
-        "label": entity.label,
-        "start": entity.span.start,
-        "end": entity.span.end,
-        "score": entity.score,
-    }
+    content = json.dumps(DetectionContent.from_entities(entities).model_dump())
+    return DetectionResponse(
+        id=f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        created=int(time.time()),
+        model=MODEL_ID if detection.model is None else detection.model,
+        choices=[ChatChoice(message=ChatMessage(content=content))],
+    )
 
 
 def _authorize(request: Request) -> None:
     expected = os.getenv(TOKEN_ENV)
     if expected and request.headers.get("authorization") != f"Bearer {expected}":
         raise HTTPException(status_code=401, detail="Invalid local runtime token")
-
-
-def _extract_text(messages: object) -> str:
-    if not isinstance(messages, list) or not messages:
-        return ""
-    last = messages[-1]
-    if not isinstance(last, dict):
-        return ""
-    content = last.get("content", "")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
-    return str(content)
 
 
 def main() -> None:

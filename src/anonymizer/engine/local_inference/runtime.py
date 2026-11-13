@@ -28,6 +28,7 @@ from typing import IO
 import httpx
 
 from anonymizer.engine.local_inference.gliner2 import MODEL_ID, MODEL_REVISION
+from anonymizer.engine.local_inference.gliner2.contract import ModelCard, ModelList
 
 LOCAL_TOKEN_ENV = "ANONYMIZER_LOCAL_GLINER2_TOKEN"
 
@@ -313,36 +314,34 @@ def _wait_until_ready(runtime: _LocalRuntime) -> None:
         if runtime.process.poll() is not None:
             raise RuntimeError(f"Local GLiNER2 exited during startup.\n{_format_log_tail(runtime)}")
         try:
-            metadata = _read_metadata(runtime)
+            card = _read_model_card(runtime)
         except (httpx.HTTPError, ValueError) as exc:
             last_error = exc
             time.sleep(0.25)
             continue
-        runtime.selected_device = str(metadata["device"])
+        runtime.selected_device = card.device
         return
     raise RuntimeError(f"Timed out waiting for local GLiNER2.\n{_format_log_tail(runtime)}") from last_error
 
 
 def _verify_readiness(runtime: _LocalRuntime) -> None:
-    metadata = _read_metadata(runtime)
-    runtime.selected_device = str(metadata["device"])
+    runtime.selected_device = _read_model_card(runtime).device
 
 
-def _read_metadata(runtime: _LocalRuntime) -> dict[str, object]:
+def _read_model_card(runtime: _LocalRuntime) -> ModelCard:
     response = httpx.get(
         f"{runtime.endpoint}/models",
         headers={"Authorization": f"Bearer {runtime.token}"},
         timeout=2.0,
     )
     response.raise_for_status()
-    payload = response.json()
-    data = payload.get("data")
-    if not isinstance(data, list) or not data or not isinstance(data[0], dict):
+    models = ModelList.model_validate_json(response.content)
+    if len(models.data) != 1:
         raise ValueError("Local GLiNER2 returned malformed model metadata.")
-    metadata = data[0]
-    if metadata.get("id") != MODEL_ID or metadata.get("revision") != MODEL_REVISION:
+    card = models.data[0]
+    if card.id != MODEL_ID or card.revision != MODEL_REVISION:
         raise ValueError("Local endpoint did not report the expected pinned GLiNER2 model.")
-    return metadata
+    return card
 
 
 def _reserve_listener() -> socket.socket:
