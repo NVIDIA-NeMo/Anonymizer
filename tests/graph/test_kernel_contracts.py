@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import pytest
+
 import anonymizer.graph as graph
 
 
@@ -94,3 +96,17 @@ def test_static_context_is_not_encoded_without_a_byte_ceiling() -> None:
     op = graph.Operation("read", lambda text, context: text, inputs={"text": "text", "context": "context"})
     g = graph.ProtectionGraph(scope, (target,), context=(graph.ContextScope(target, (scope.datum("\ud800"),)),))
     assert graph.protect(graph.prepare(g, graph.Workflow("w", (op,)))).outcome(target).terminal == "success"
+
+
+def test_final_text_of_another_kind_is_rejected() -> None:
+    kind = graph.register_kind("test-dict-text", lambda value: isinstance(value, dict))
+    scope = graph.GraphScope()
+    g = graph.ProtectionGraph(scope, (scope.datum("Alice"),))
+    check = graph.Operation.verifier(
+        "v", lambda text, target: graph.Assessment(True, target), {"text": kind, "target": "datum"}, checks=("c",)
+    )
+    wrap = graph.Operation("wrap", lambda text: {"value": text}, outputs={"text": kind})
+    with pytest.raises(graph.GraphRejection) as rejected:
+        graph.prepare(g, graph.Workflow("w", (wrap, check), requires=("c",)))
+    assert rejected.value.code == "final_text_not_text"
+

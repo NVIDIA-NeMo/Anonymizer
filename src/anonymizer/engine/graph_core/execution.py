@@ -122,6 +122,8 @@ def _prepare(
     nodes = tuple(k.Node(name, op.inputs, op.outputs, op.fn, op.scope) for name, op in ops)
     plan = k.compile_sequence(nodes, {**SEEDS, "context": _context_kind(graph)})
     final_text = max((i for i, n in enumerate(nodes) if "text" in n.outputs), default=None)
+    if final_text is not None and nodes[final_text].outputs["text"] != TEXT:
+        raise k.GraphRejection("final_text_not_text", nodes[final_text].name)
     covering = frozenset(
         i
         for i, (_, op) in enumerate(ops)
