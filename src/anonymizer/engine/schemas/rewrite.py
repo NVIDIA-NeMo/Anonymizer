@@ -8,7 +8,10 @@ Each schema group corresponds to one pipeline step:
     Step 1 — Domain classification
         DomainClassificationSchema
 
-    Step 2 — Sensitivity disposition (per-entity protection plan)
+    Step 1b — Entity classification (direct vs. quasi-identifier, non-latent entities)
+        EntityLabelClassificationSchema, EntityLabelClassificationsSchema
+
+    Step 2 — Sensitivity disposition (document-level protection plan + per-entity dispositions)
         EntityDispositionSchema, SensitivityDispositionSchema
 
     Step 3a — Meaning unit extraction
@@ -33,17 +36,18 @@ Each schema group corresponds to one pipeline step:
         Uses LLMJudgeColumnConfig with Score rubrics (no custom schema needed)
 
 Supporting enums: Domain, EntitySource, EntityCategory, SensitivityLevel,
-                  ProtectionMethod, CombinedRiskLevel, PrivacyAnswer
+                  ProtectionMethod, PrivacyAnswer
 """
 
 from __future__ import annotations
 
 import logging
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
-logger = logging.getLogger("anonymizer.schemas.rewrite")
+logger = logging.getLogger("anonymizer.rewrite.sensitivity_disposition")
 
 # ---------------------------------------------------------------------------
 # Domain
@@ -89,6 +93,33 @@ class DomainClassificationSchema(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Entity Classification (direct vs. quasi-identifier, non-latent entities only)
+# ---------------------------------------------------------------------------
+
+
+class EntityLabelClassificationSchema(BaseModel):
+    """LLM classification of one entity label not covered by DEFAULT_ENTITY_LABEL_CATEGORY.
+
+    Restricted to direct/quasi — this step never runs on latent entities, so
+    ``latent_identifier`` (the third EntityCategory value) is not a valid output here.
+    """
+
+    label: str = Field(min_length=1)
+    category: Literal["direct_identifier", "quasi_identifier"]
+
+
+class EntityLabelClassificationsSchema(BaseModel):
+    """LLM output schema for the entity classification step.
+
+    One call per row/document: the prompt lists every unmapped label present
+    in that row, and this returns one entry per label. Empty when every label
+    in the document is already covered by DEFAULT_ENTITY_LABEL_CATEGORY.
+    """
+
+    classifications: list[EntityLabelClassificationSchema] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # Sensitivity Disposition
 # ---------------------------------------------------------------------------
 
@@ -118,66 +149,75 @@ class ProtectionMethod(str, Enum):
     leave_as_is = "leave_as_is"
 
 
-class CombinedRiskLevel(str, Enum):
-    low = "low"
-    medium = "medium"
-    high = "high"
+class RawEntityDispositionSchema(BaseModel):
+    """Model-generated protection decision, with identity reconstructed from its ID."""
 
-
-class EntityDispositionSchema(BaseModel):
-    """Protection decision for one tagged or latent entity in rewrite planning.
-
-    Each instance represents one entry in the sensitivity disposition, not each
-    repeated text span where that entity may appear.
-    """
-
-    model_config = ConfigDict(use_enum_values=True)
+    model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
     id: int = Field(ge=1)
-    source: EntitySource
-    category: EntityCategory
     sensitivity: SensitivityLevel
-    entity_label: str = Field(min_length=1)
-    entity_value: str = Field(min_length=1)
-    protection_reason: str = Field(min_length=10, max_length=500)
     protection_method_suggestion: ProtectionMethod
-    combined_risk_level: CombinedRiskLevel
+    low_sensitivity_reason: str | None = Field(
+        default=None,
+        description="Justification for every low-sensitivity rating, whether protected or retained; null for medium/high.",
+    )
 
     @property
     def needs_protection(self) -> bool:
         return self.protection_method_suggestion != ProtectionMethod.leave_as_is
 
     @model_validator(mode="after")
-    def _validate_protection_consistency(self) -> EntityDispositionSchema:
-        if (
-            self.combined_risk_level == CombinedRiskLevel.low
-            and self.protection_method_suggestion != ProtectionMethod.leave_as_is
-        ):
-            logger.warning(
-                "Low combined risk conflicts with protection intent; promoting risk to 'medium'.",
-            )
-            # Trust the protection intent over the risk label; promote risk to medium
-            # rather than suppressing the protection.
-            self.combined_risk_level = CombinedRiskLevel.medium.value  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
-        if (
-            self.combined_risk_level == CombinedRiskLevel.high
-            and self.protection_method_suggestion == ProtectionMethod.leave_as_is
-        ):
-            raise ValueError(
-                f"Entity {self.id}: combined_risk_level='high' cannot have protection_method_suggestion='leave_as_is'"
-            )
+    def _validate_protection_consistency(self) -> RawEntityDispositionSchema:
+        if self.sensitivity != SensitivityLevel.low:
+            self.low_sensitivity_reason = None
         return self
 
 
+class EntityDispositionSchema(RawEntityDispositionSchema):
+    """Protection decision with authoritative identity for one supplied entity.
+
+    Each instance represents a unique entity value/label pair rather than each
+    repeated text span. Low sensitivity may be protected or retained; medium/high require protection.
+    """
+
+    model_config = ConfigDict(use_enum_values=True, extra="ignore")
+
+    source: EntitySource
+    category: EntityCategory
+    entity_label: str = Field(min_length=1)
+    entity_value: str = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_protection_policy(cls, data: object) -> object:
+        """Resolve retention only after authoritative category reconstruction."""
+        if not isinstance(data, dict) or data.get("protection_method_suggestion") != ProtectionMethod.leave_as_is:
+            return data
+        if data.get("category") == "direct_identifier":
+            logger.warning(
+                "Normalizing disposition entity %s: sensitivity/method %s/leave_as_is -> high/replace.",
+                data.get("id"),
+                data.get("sensitivity"),
+            )
+            return {**data, "sensitivity": "high", "protection_method_suggestion": "replace"}
+        methods = {SensitivityLevel.high: "replace", SensitivityLevel.medium: "generalize"}
+        method = methods.get(data.get("sensitivity"))
+        if method is None:
+            return data
+        logger.warning(
+            "Normalizing disposition entity %s: sensitivity/method %s/leave_as_is -> %s/%s.",
+            data.get("id"),
+            data.get("sensitivity"),
+            data.get("sensitivity"),
+            method,
+        )
+        return {**data, "protection_method_suggestion": method}
+
+
 class SensitivityDispositionSchema(BaseModel):
-    """Complete sensitivity disposition for a document — LLM output schema.
+    """Per-entity dispositions with stable sequential IDs and protection consistency.
 
-    Validates that entity IDs are sequential from 1 and that each entity's
-    ``protection_method_suggestion`` is consistent with its ``combined_risk_level``.
-
-    ``sensitivity_disposition`` requires at least one entry (``min_length=1``).
-    The orchestrator short-circuits before this step when detection finds no
-    entities, so an empty list here indicates a pipeline bug.
+    The orchestrator skips this step when detection finds no entities.
     """
 
     # Non-empty by design: the rewrite workflow only runs when entities were detected.
@@ -186,9 +226,13 @@ class SensitivityDispositionSchema(BaseModel):
     sensitivity_disposition: list[EntityDispositionSchema] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def _normalize_ids(self) -> SensitivityDispositionSchema:
-        for i, entry in enumerate(self.sensitivity_disposition, start=1):
-            entry.id = i
+    def _validate_ids(self) -> SensitivityDispositionSchema:
+        # IDs are assigned upstream (1..N, explicit then latent) and must not be renumbered.
+        ids = [entry.id for entry in self.sensitivity_disposition]
+        expected = list(range(1, len(ids) + 1))
+        if ids != expected:
+            raise ValueError(f"Entity IDs must be sequential 1..{len(ids)} in input order; got {ids}")
+
         return self
 
     @property
@@ -219,7 +263,7 @@ class SensitivityDispositionSchema(BaseModel):
         lines = []
         for e in entities:
             lines.append(
-                f'- [{e.sensitivity.upper()}] {e.entity_label}: "{e.entity_value}" → {e.protection_method_suggestion} (Reason: {e.protection_reason})'
+                f'- [{e.sensitivity.upper()}] {e.entity_label}: "{e.entity_value}" → {e.protection_method_suggestion}'
             )
         return "\n".join(lines)
 
@@ -231,22 +275,73 @@ class StrictProtectionMethod(str, Enum):
     suppress_inference = "suppress_inference"
 
 
-class StrictCombinedRiskLevel(str, Enum):
+class StrictSensitivityLevel(str, Enum):
+    low = "low"
     medium = "medium"
     high = "high"
 
 
 class StrictEntityDispositionSchema(EntityDispositionSchema):
-    """Strict variant: leave_as_is and low combined_risk_level are excluded."""
+    """Strict variant: every sensitivity level is allowed; leave_as_is is excluded."""
 
+    sensitivity: StrictSensitivityLevel
     protection_method_suggestion: StrictProtectionMethod
-    combined_risk_level: StrictCombinedRiskLevel
+
+    @model_validator(mode="before")
+    @classmethod
+    def _protect_low_retention(cls, data: object) -> object:
+        if (
+            isinstance(data, dict)
+            and data.get("category") != "direct_identifier"
+            and data.get("sensitivity") == "low"
+            and data.get("protection_method_suggestion") == "leave_as_is"
+        ):
+            logger.warning(
+                "Normalizing disposition entity %s: sensitivity/method low/leave_as_is -> low/generalize (strict mode).",
+                data.get("id"),
+            )
+            return {**data, "protection_method_suggestion": "generalize"}
+        return data
 
 
 class StrictSensitivityDispositionSchema(SensitivityDispositionSchema):
     """Strict variant container: every entity must be protected."""
 
     sensitivity_disposition: list[StrictEntityDispositionSchema] = Field(min_length=1)
+
+
+class RawSensitivityDispositionSchema(BaseModel):
+    """Compact model response; complete inventory coverage is checked during reconstruction."""
+
+    sensitivity_disposition: list[RawEntityDispositionSchema] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_ids(self) -> RawSensitivityDispositionSchema:
+        ids = [entry.id for entry in self.sensitivity_disposition]
+        expected = list(range(1, len(ids) + 1))
+        if ids != expected:
+            raise ValueError(f"Entity IDs must be sequential 1..{len(ids)} in input order; got {ids}")
+        return self
+
+
+class StrictRawEntityDispositionSchema(RawEntityDispositionSchema):
+    """Compact strict decision: every entity must receive protection."""
+
+    sensitivity: StrictSensitivityLevel
+    protection_method_suggestion: StrictProtectionMethod
+
+    @field_validator("protection_method_suggestion", mode="plain", json_schema_input_type=StrictProtectionMethod)
+    @classmethod
+    def _preserve_raw_method(cls, value: object) -> str:
+        # Keep recoverable retention slips intact until the category is known,
+        # while the generated strict output schema continues to request protection.
+        return ProtectionMethod(value).value
+
+
+class StrictRawSensitivityDispositionSchema(RawSensitivityDispositionSchema):
+    """Compact strict response with the same authoritative reconstruction."""
+
+    sensitivity_disposition: list[StrictRawEntityDispositionSchema] = Field(min_length=1)
 
 
 # ---------------------------------------------------------------------------

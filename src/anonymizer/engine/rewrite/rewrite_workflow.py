@@ -58,6 +58,7 @@ from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
+from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
 from anonymizer.engine.rewrite.parsers import normalize_payload
@@ -423,15 +424,16 @@ def _rewrite_lowered(
 class RewriteWorkflow:
     """Top-level orchestrator for the rewrite pipeline.
 
-    Chains all sub-workflows in order: domain classification,
-    sensitivity disposition, QA generation, rewrite generation,
-    and the evaluate-repair loop. The final judge runs separately
-    via evaluate().
+    Chains all sub-workflows in order: domain classification, entity
+    classification, sensitivity disposition, QA generation, rewrite
+    generation, and the evaluate-repair loop. The final judge runs
+    separately via evaluate().
     """
 
     def __init__(self, adapter: NddAdapter) -> None:
         self._adapter = adapter
         self._domain_wf = DomainClassificationWorkflow()
+        self._entity_classification_wf = EntityClassificationWorkflow()
         self._disposition_wf = SensitivityDispositionWorkflow()
         self._qa_wf = QAGenerationWorkflow()
         self._rewrite_gen_wf = RewriteGenerationWorkflow()
@@ -590,8 +592,19 @@ class RewriteWorkflow:
         preview_num_records: int | None = None,
         strict_entity_protection: bool = False,
     ) -> Callable[[], None]:
-        """The frame stages over ``rows``: replacement map, pipeline, then the evaluate-repair loop."""
+        """The frame stages over ``rows``: label classification, replacement map, pipeline, then the evaluate-repair
+        loop."""
+        label_categories: dict[str, str] = {}
+
+        def classify() -> None:
+            label_categories.update(
+                self._entity_classification_wf.classify_dataset(
+                    rows.frame, adapter=self._adapter, model_configs=model_configs, selected_models=selected_models
+                )
+            )
+
         stages = [
+            ("label-classification", classify),
             ("replacement-map", lambda: self._replacement_map(rows, model_configs, replace_model_selection)),
             (
                 "pipeline",
@@ -603,6 +616,7 @@ class RewriteWorkflow:
                     data_summary=data_summary,
                     preview_num_records=preview_num_records,
                     strict_entity_protection=strict_entity_protection,
+                    label_categories=label_categories,
                 ),
             ),
             *self._evaluate_repair_stages(
@@ -635,7 +649,7 @@ class RewriteWorkflow:
         )
         rows.failed.extend(replace_result.failed_records)
 
-    # --- Step 2: domain, disposition, QA, rewrite (single adapter call) ---
+    # --- Step 2: domain, entity classification, disposition, QA, rewrite (single adapter call) ---
     def _pipeline(
         self,
         rows: _Rows,
@@ -646,9 +660,11 @@ class RewriteWorkflow:
         data_summary: str | None,
         preview_num_records: int | None,
         strict_entity_protection: bool,
+        label_categories: dict[str, str],
     ) -> None:
         pipeline_columns = [
             *self._domain_wf.columns(selected_models=selected_models, data_summary=data_summary),
+            *self._entity_classification_wf.columns(selected_models=selected_models, label_categories=label_categories),
             *self._disposition_wf.columns(
                 selected_models=selected_models,
                 privacy_goal=privacy_goal,

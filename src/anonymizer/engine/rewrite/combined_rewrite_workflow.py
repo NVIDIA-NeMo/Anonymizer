@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -53,6 +54,7 @@ from anonymizer.engine.replace.llm_replace_workflow import (
     _requested_values,
 )
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
+from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.findings import needs_human_review
 from anonymizer.engine.rewrite.parsers import normalize_payload
@@ -76,6 +78,8 @@ from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 from anonymizer.measurement import stage_timer
+
+logger = logging.getLogger("anonymizer.rewrite.combined_workflow")
 
 
 @dataclass(frozen=True)
@@ -395,17 +399,21 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
         evaluation: EvaluationCriteria,
         data_summary: str | None = None,
         strict_entity_protection: bool = False,
+        label_categories: dict[str, str] | None = None,
     ) -> CombinedRewriteGraph:
         columns = _replacement_columns(replace_model_selection)
         columns.extend(
             DomainClassificationWorkflow().columns(selected_models=selected_models, data_summary=data_summary)
         )
         columns.extend(
+            EntityClassificationWorkflow().columns(selected_models=selected_models, label_categories=label_categories)
+        )
+        columns.extend(
             SensitivityDispositionWorkflow().columns(
                 selected_models=selected_models,
                 privacy_goal=privacy_goal,
-                data_summary=data_summary,
                 strict_entity_protection=strict_entity_protection,
+                data_summary=data_summary,
             )
         )
         columns.extend(QAGenerationWorkflow().columns(selected_models=selected_models))
@@ -545,17 +553,22 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
         preview_num_records: int | None = None,
         strict_entity_protection: bool = False,
     ) -> Callable[[], None]:
-        """One combined workflow call over ``rows``, leaving the final candidates in ``rows.frame``."""
-        graph = self.build_graph(
-            selected_models=selected_models,
-            replace_model_selection=replace_model_selection,
-            privacy_goal=privacy_goal,
-            evaluation=evaluation,
-            data_summary=data_summary,
-            strict_entity_protection=strict_entity_protection,
-        )
+        """Label classification, then one combined workflow call over ``rows``, leaving the final candidates in
+        ``rows.frame``."""
 
         def generate() -> None:
+            label_categories = self._entity_classification_wf.classify_dataset(
+                rows.frame, adapter=self._adapter, model_configs=model_configs, selected_models=selected_models
+            )
+            graph = self.build_graph(
+                selected_models=selected_models,
+                replace_model_selection=replace_model_selection,
+                privacy_goal=privacy_goal,
+                evaluation=evaluation,
+                data_summary=data_summary,
+                strict_entity_protection=strict_entity_protection,
+                label_categories=label_categories,
+            )
             seed = select_seed_cols(rows.frame, derive_seed_columns(graph.columns, rows.frame))
             run_result = self._adapter.run_workflow(
                 seed,

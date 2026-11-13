@@ -144,36 +144,37 @@ class _Instance:
         return None
 
 
-def _disposition(schema: dict[str, Any], text: str) -> list[dict[str, Any]]:
-    defs = schema.get("$defs", {})
-
-    def pick(name: str, preferred: str) -> str:
-        values = defs.get(name, {}).get("enum", [preferred])
-        return preferred if preferred in values else values[0]
-
-    found = re.search(r"(\{'entities_by_value': \[.*?\]\})", text, re.S)
-    entities: list[tuple[str, str]] = []
-    if found:
-        try:
-            parsed = ast.literal_eval(found.group(1))
-            entities = [(e["value"], (e.get("labels") or ["unknown"])[0]) for e in parsed["entities_by_value"]]
-        except (ValueError, SyntaxError, KeyError, TypeError):
-            entities = []
-    entities = entities or [(value, label) for value, label in VOCAB if value in text] or [("stub", "unknown")]
-    return [
-        {
-            "id": index,
-            "source": pick("EntitySource", "tagged"),
-            "category": pick("EntityCategory", "direct_identifier"),
-            "sensitivity": pick("SensitivityLevel", "high"),
-            "entity_label": label,
-            "entity_value": value,
-            "protection_reason": "stub: identifies the subject of the document",
-            "protection_method_suggestion": pick("ProtectionMethod", "replace"),
-            "combined_risk_level": pick("CombinedRiskLevel", "high"),
-        }
-        for index, (value, label) in enumerate(entities, start=1)
-    ]
+def _disposition(text: str) -> list[dict[str, Any]]:
+    inventory = re.search(r"<input>(.*?)</input>", text, re.S)
+    if inventory is None:
+        raise ValueError("Disposition prompt is missing its entity inventory")
+    explicit = re.search(
+        r"Explicit entities with stable IDs, labels, and values:\s*\n(.*?)\nCategories for explicit entities:",
+        inventory.group(1),
+        re.S,
+    )
+    latent = re.search(
+        r"Latent entities with stable IDs, values, and supporting evidence:\s*\n(.*)",
+        inventory.group(1),
+        re.S,
+    )
+    if explicit is None or latent is None:
+        raise ValueError("Disposition prompt is missing its numbered entity sections")
+    decisions = []
+    for section, method in ((explicit, "replace"), (latent, "suppress_inference")):
+        for line in section.group(1).splitlines():
+            if not line.strip() or line.strip() == "(none)":
+                continue
+            entity = json.loads(line)
+            decisions.append(
+                {
+                    "id": entity["id"],
+                    "sensitivity": "high",
+                    "protection_method_suggestion": method,
+                    "low_sensitivity_reason": None,
+                }
+            )
+    return decisions
 
 
 def _structured_payload(schema: dict[str, Any], text: str) -> Any:
@@ -200,7 +201,7 @@ def _structured_payload(schema: dict[str, Any], text: str) -> Any:
         generator = _Instance(schema, text)
         return {"items": [generator.make(schema["properties"]["items"].get("items") or {}, "items")]}
     if props == {"sensitivity_disposition"}:
-        return {"sensitivity_disposition": _disposition(schema, text)}
+        return {"sensitivity_disposition": _disposition(text)}
     if props == {"rewritten_text"}:
         match = re.search(r"Tagged text:\s*\n(.*?)\n", text)
         tagged = match.group(1) if match else _source_text(text)

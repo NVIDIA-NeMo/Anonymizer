@@ -1470,7 +1470,7 @@ def _step_to_field(step: str) -> str:
             return "latent_detection"
         case "replace-map-generation" | "substitute-map":
             return "replace_map_generation"
-        case "rewrite-pipeline" | "rewrite-combined":
+        case "rewrite-pipeline" | "rewrite-combined" | "rewrite-label-classification":
             return "rewrite_pipeline"
         case "rewrite-final-judge":
             return "rewrite_final_judge"

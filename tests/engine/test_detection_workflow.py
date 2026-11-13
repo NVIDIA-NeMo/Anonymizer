@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import cast
 from unittest.mock import Mock
 
@@ -596,9 +597,24 @@ def test_validation_prompt_includes_label_examples() -> None:
     assert "tagged as a first_name but is not followed by a last_name, drop it" in prompt
 
 
-def test_validation_prompt_includes_data_summary() -> None:
-    prompt = _get_validation_prompt(data_summary="Medical records", labels=["first_name"])
-    assert "Data context: Medical records" in prompt
+@pytest.mark.parametrize("data_summary", [None, "", "Medical records. Public hospital names are not sensitive."])
+@pytest.mark.parametrize("strict_labels", [False, True])
+def test_detection_prompt_builders_substitute_placeholders_and_summary(
+    data_summary: str | None, strict_labels: bool
+) -> None:
+    labels = ["first_name", "organization"]
+    validation = _get_validation_prompt(data_summary=data_summary, labels=labels)
+    augment = _get_augment_prompt(data_summary=data_summary, labels=labels, strict_labels=strict_labels)
+
+    for prompt in (validation, augment):
+        assert re.search(r"<<[A-Z_]+>>", prompt) is None
+        if data_summary:
+            assert prompt.count(data_summary) == 1
+
+    if not data_summary:
+        assert "data summary" not in validation.lower()
+        assert "Data summary: Not provided" in augment
+        assert "Focus on:" in augment
 
 
 def test_validation_prompt_adds_configured_examples_to_full_label_config() -> None:

@@ -218,15 +218,25 @@ def _make_entity(**kwargs) -> dict:
     defaults = {
         "id": 1,
         "source": "tagged",
-        "category": "direct_identifier",
+        "category": "quasi_identifier" if kwargs.get("sensitivity", "high") != "high" else "direct_identifier",
         "sensitivity": "high",
         "entity_label": "first_name",
         "entity_value": "Alice",
-        "protection_reason": "Direct identifier that uniquely identifies the individual.",
         "protection_method_suggestion": "replace",
-        "combined_risk_level": "high",
     }
+    if kwargs.get("sensitivity") == "low":
+        defaults["low_sensitivity_reason"] = "The retained detail adds no meaningful linkage in this synthetic context."
     return {**defaults, **kwargs}
+
+
+@pytest.mark.parametrize("schema", [EntityDispositionSchema, StrictEntityDispositionSchema])
+def test_disposition_omits_legacy_protection_reason(schema: type[EntityDispositionSchema]) -> None:
+    original = _make_entity()
+    legacy = {**original, "protection_reason": "Replace Alice with Bob and retain identifying context."}
+    assert schema.model_validate(original).model_dump(mode="json") == schema.model_validate(legacy).model_dump(
+        mode="json"
+    )
+    assert "protection_reason" not in schema.model_json_schema()["properties"]
 
 
 @pytest.fixture()
@@ -240,10 +250,10 @@ def mixed_disposition() -> SensitivityDispositionSchema:
                     id=2,
                     entity_label="city",
                     entity_value="Portland",
+                    sensitivity="low",
                     protection_method_suggestion="leave_as_is",
-                    combined_risk_level="low",
                 ),
-            ]
+            ],
         }
     )
 
@@ -252,52 +262,101 @@ def mixed_disposition() -> SensitivityDispositionSchema:
 
 
 @pytest.mark.parametrize("method", ["replace", "generalize", "remove", "suppress_inference"])
-def test_entity_disposition_low_risk_non_leave_as_is_promotes_risk_to_medium(method: str) -> None:
+def test_entity_disposition_low_sensitivity_with_protection_stays_low(method: str) -> None:
     entity = EntityDispositionSchema.model_validate(
-        _make_entity(combined_risk_level="low", protection_method_suggestion=method)
+        _make_entity(sensitivity="low", protection_method_suggestion=method)
     )
-    assert entity.combined_risk_level == "medium"
+    assert entity.sensitivity == "low"
     assert entity.protection_method_suggestion == method
-    # Coerced and non-coerced paths must produce the same serialization type (plain string, not enum).
     dumped = entity.model_dump()
-    assert dumped["combined_risk_level"] == "medium"
-    assert type(dumped["combined_risk_level"]) is str
+    assert dumped["sensitivity"] == "low"
+    assert type(dumped["sensitivity"]) is str
+    assert "combined_risk_level" not in dumped
 
 
-def test_entity_disposition_invalid_high_risk_but_leave_as_is() -> None:
-    with pytest.raises(ValidationError, match="combined_risk_level='high'"):
-        EntityDispositionSchema.model_validate(
-            _make_entity(combined_risk_level="high", protection_method_suggestion="leave_as_is")
+@pytest.mark.parametrize(("sensitivity", "method"), [("high", "replace"), ("medium", "generalize")])
+@pytest.mark.parametrize("category", ["direct_identifier", "quasi_identifier", "latent_identifier"])
+def test_entity_disposition_normalizes_retention_by_sensitivity(
+    sensitivity: str, method: str, category: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    entity = EntityDispositionSchema.model_validate(
+        _make_entity(sensitivity=sensitivity, category=category, protection_method_suggestion="leave_as_is")
+    )
+    assert entity.sensitivity == ("high" if category == "direct_identifier" else sensitivity)
+    assert entity.protection_method_suggestion == ("replace" if category == "direct_identifier" else method)
+    assert entity.low_sensitivity_reason is None
+    warnings = {record.getMessage() for record in caplog.records if record.levelname == "WARNING"}
+    assert len(warnings) == 1
+    message = warnings.pop()
+    assert f"{sensitivity}/leave_as_is" in message
+    assert f"{entity.sensitivity}/{entity.protection_method_suggestion}" in message
+    assert "entity 1" in message
+    assert entity.entity_value not in message
+
+
+def test_entity_disposition_accepts_low_leave_as_is() -> None:
+    entity = EntityDispositionSchema.model_validate(
+        _make_entity(sensitivity="low", protection_method_suggestion="leave_as_is")
+    )
+    assert entity.needs_protection is False
+    assert entity.model_dump()["low_sensitivity_reason"]
+
+
+@pytest.mark.parametrize("reason", [None, "", "   "])
+def test_low_sensitivity_accepts_unavailable_contextual_reason(reason: str | None) -> None:
+    entity = EntityDispositionSchema.model_validate(
+        _make_entity(sensitivity="low", protection_method_suggestion="leave_as_is", low_sensitivity_reason=reason)
+    )
+    assert entity.low_sensitivity_reason == reason
+    assert entity.sensitivity == "low"
+
+
+def test_low_sensitivity_accepts_missing_reason() -> None:
+    payload = _make_entity(sensitivity="low", protection_method_suggestion="leave_as_is")
+    del payload["low_sensitivity_reason"]
+    entity = EntityDispositionSchema.model_validate(payload)
+    assert entity.low_sensitivity_reason is None
+
+
+@pytest.mark.parametrize("sensitivity", ["medium", "high"])
+def test_protected_entity_clears_low_reason(sensitivity: str) -> None:
+    entity = EntityDispositionSchema.model_validate(
+        _make_entity(
+            sensitivity=sensitivity, protection_method_suggestion="replace", low_sensitivity_reason="Diagnostic"
+        )
+    )
+    assert entity.low_sensitivity_reason is None
+
+
+# SensitivityDispositionSchema — ID identity and plan validation
+
+
+def _plan_names_entity_1() -> dict:
+    return {"mandatory_protections": [{"entity_id": 1, "requirement": "Always replace person names."}]}
+
+
+def test_sensitivity_disposition_rejects_non_sequential_ids() -> None:
+    with pytest.raises(ValidationError, match="sequential 1..2"):
+        SensitivityDispositionSchema.model_validate(
+            {
+                "sensitivity_disposition": [
+                    _make_entity(id=1),
+                    _make_entity(id=3, entity_label="last_name", entity_value="Smith"),
+                ],
+            }
         )
 
 
-# SensitivityDispositionSchema — ID normalization
-
-
-def test_sensitivity_disposition_renumbers_non_sequential_ids() -> None:
-    schema = SensitivityDispositionSchema.model_validate(
-        {
-            "sensitivity_disposition": [
-                _make_entity(id=1),
-                _make_entity(id=3, entity_label="last_name", entity_value="Smith"),
-            ],
-        }
-    )
-    assert [e.id for e in schema.sensitivity_disposition] == [1, 2]
-
-
-def test_sensitivity_disposition_renumbers_duplicate_ids() -> None:
-    schema = SensitivityDispositionSchema.model_validate(
-        {
-            "sensitivity_disposition": [
-                _make_entity(id=1),
-                _make_entity(id=1, entity_label="last_name", entity_value="Smith"),
-            ],
-        }
-    )
-    assert [e.id for e in schema.sensitivity_disposition] == [1, 2]
-    assert schema.sensitivity_disposition[0].entity_value == "Alice"
-    assert schema.sensitivity_disposition[1].entity_value == "Smith"
+def test_sensitivity_disposition_rejects_duplicate_ids() -> None:
+    with pytest.raises(ValidationError, match="sequential 1..2"):
+        SensitivityDispositionSchema.model_validate(
+            {
+                "sensitivity_disposition": [
+                    _make_entity(id=1),
+                    _make_entity(id=1, entity_label="last_name", entity_value="Smith"),
+                ],
+            }
+        )
 
 
 def test_sensitivity_disposition_protected_entities(mixed_disposition: SensitivityDispositionSchema) -> None:
@@ -318,9 +377,9 @@ def test_sensitivity_disposition_get_entities_by_method(mixed_disposition: Sensi
 def test_sensitivity_disposition_medium_and_high_sensitivity_entities(
     mixed_disposition: SensitivityDispositionSchema,
 ) -> None:
-    # Both entities in mixed_disposition have sensitivity=high
+    # Alice is high; Portland is low (leave_as_is), so only Alice qualifies.
     result = mixed_disposition.medium_and_high_sensitivity_entities
-    assert len(result) == 2
+    assert [e.entity_label for e in result] == ["first_name"]
 
 
 def test_sensitivity_disposition_format_for_rewrite_context(mixed_disposition: SensitivityDispositionSchema) -> None:
@@ -339,15 +398,14 @@ def test_sensitivity_disposition_format_for_rewrite_context_empty_when_no_protec
                     id=1,
                     sensitivity="low",
                     protection_method_suggestion="leave_as_is",
-                    combined_risk_level="low",
                 ),
-            ]
+            ],
         }
     )
     assert schema.format_for_rewrite_context() == "No entities needing protection."
 
 
-def test_sensitivity_disposition_format_for_rewrite_context_includes_low_when_protected() -> None:
+def test_sensitivity_disposition_format_for_rewrite_context_preserves_protected_low() -> None:
     schema = SensitivityDispositionSchema.model_validate(
         {
             "sensitivity_disposition": [
@@ -357,10 +415,8 @@ def test_sensitivity_disposition_format_for_rewrite_context_includes_low_when_pr
                     entity_label="city",
                     entity_value="Portland",
                     protection_method_suggestion="generalize",
-                    combined_risk_level="medium",
-                    protection_reason="City combined with other quasi-identifiers enables re-identification",
                 ),
-            ]
+            ],
         }
     )
     context = schema.format_for_rewrite_context()
@@ -555,41 +611,63 @@ def _make_strict_entity(**kwargs) -> dict:
         "sensitivity": "high",
         "entity_label": "first_name",
         "entity_value": "Alice",
-        "protection_reason": "Direct identifier that uniquely identifies the individual.",
         "protection_method_suggestion": "replace",
-        "combined_risk_level": "high",
     }
     return {**defaults, **kwargs}
 
 
-def test_strict_entity_rejects_leave_as_is() -> None:
-    with pytest.raises(ValidationError):
-        StrictEntityDispositionSchema.model_validate(
-            _make_strict_entity(protection_method_suggestion="leave_as_is", combined_risk_level="medium")
-        )
+def test_strict_entity_normalizes_medium_leave_as_is() -> None:
+    entity = StrictEntityDispositionSchema.model_validate(
+        _make_strict_entity(protection_method_suggestion="leave_as_is", sensitivity="medium")
+    )
+    assert entity.protection_method_suggestion == "replace"
+    assert entity.sensitivity == "high"
 
 
-def test_strict_entity_rejects_low_combined_risk_level() -> None:
-    with pytest.raises(ValidationError):
-        StrictEntityDispositionSchema.model_validate(
-            _make_strict_entity(combined_risk_level="low", protection_method_suggestion="replace")
+def test_strict_entity_preserves_protected_low_sensitivity() -> None:
+    schema = StrictEntityDispositionSchema.model_json_schema()
+    assert schema["$defs"]["StrictSensitivityLevel"]["enum"] == ["low", "medium", "high"]
+    assert "leave_as_is" not in schema["$defs"]["StrictProtectionMethod"]["enum"]
+    entity = StrictEntityDispositionSchema.model_validate(
+        _make_strict_entity(
+            sensitivity="low", protection_method_suggestion="replace", low_sensitivity_reason="Low linkage risk."
         )
+    )
+    assert entity.needs_protection is True
+    assert entity.sensitivity == "low"
 
 
 def test_strict_entity_accepts_valid_protected_entity() -> None:
     entity = StrictEntityDispositionSchema.model_validate(_make_strict_entity())
     assert entity.needs_protection is True
-    assert entity.combined_risk_level == "high"
+    assert entity.sensitivity == "high"
 
 
-def test_strict_sensitivity_disposition_inherits_id_normalization() -> None:
-    schema = StrictSensitivityDispositionSchema.model_validate(
-        {
-            "sensitivity_disposition": [
-                _make_strict_entity(id=1),
-                _make_strict_entity(id=5, entity_label="last_name", entity_value="Smith"),
-            ]
-        }
-    )
-    assert [e.id for e in schema.sensitivity_disposition] == [1, 2]
+def test_strict_sensitivity_disposition_inherits_id_validation() -> None:
+    payload = {
+        "sensitivity_disposition": [
+            _make_strict_entity(id=1),
+            _make_strict_entity(id=5, entity_label="last_name", entity_value="Smith"),
+        ],
+    }
+    with pytest.raises(ValidationError, match="sequential 1..2"):
+        StrictSensitivityDispositionSchema.model_validate(payload)
+    payload["sensitivity_disposition"][1]["id"] = 2
+    schema = StrictSensitivityDispositionSchema.model_validate(payload)
     assert isinstance(schema, SensitivityDispositionSchema)
+
+
+def test_sensitivity_disposition_output_contains_only_entities() -> None:
+    payload = {"sensitivity_disposition": [_make_entity(id=1)]}
+    disposition = SensitivityDispositionSchema.model_validate(payload)
+    assert set(disposition.model_dump()) == {"sensitivity_disposition"}
+    assert set(SensitivityDispositionSchema.model_json_schema()["properties"]) == {"sensitivity_disposition"}
+
+
+def test_medium_retained_disposition_normalizes_to_generalize() -> None:
+    entity = EntityDispositionSchema.model_validate(
+        _make_entity(sensitivity="medium", protection_method_suggestion="leave_as_is")
+    )
+    assert entity.sensitivity == "medium"
+    assert entity.protection_method_suggestion == "generalize"
+    assert entity.low_sensitivity_reason is None

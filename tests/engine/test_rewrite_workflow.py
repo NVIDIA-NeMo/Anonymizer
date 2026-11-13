@@ -34,6 +34,7 @@ from anonymizer.engine.constants import (
     COL_PRIVACY_QA_REANSWER,
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
+    COL_RAW_SENSITIVITY_DISPOSITION,
     COL_REPAIR_ITERATIONS,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
@@ -354,12 +355,20 @@ def test_calls_sub_workflows_in_order(
             replace_model_selection=stub_replace_model_selection,
             privacy_goal=_PRIVACY_GOAL,
             evaluation=_EVALUATION,
+            data_summary="Customer support conversations",
         )
 
     workflow_names = [call.kwargs["workflow_name"] for call in adapter.run_workflow.call_args_list]
     assert workflow_names[0] == "rewrite-pipeline"
     assert workflow_names[1].startswith("rewrite-evaluate")
     assert "rewrite-final-judge" not in workflow_names
+
+    disposition = next(
+        column
+        for column in adapter.run_workflow.call_args_list[0].kwargs["columns"]
+        if column.name == COL_RAW_SENSITIVITY_DISPOSITION
+    )
+    assert "<data_summary>\nCustomer support conversations\n</data_summary>" in disposition.prompt
 
     assert len(result.dataframe) == 1
 
@@ -1636,19 +1645,19 @@ def test_run_needs_human_review_not_overwritten_by_evaluate(
     assert bool(result.dataframe[COL_NEEDS_HUMAN_REVIEW].iloc[0]) is True
 
 
-def test_combined_runner_overriding_build_graph_with_release_signature_runs(
+def test_combined_runner_overriding_build_graph_runs(
     stub_df_with_entities: pd.DataFrame,
     stub_eval_df: pd.DataFrame,
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
-    """A caller's CombinedRewriteWorkflow may override build_graph with 0.4.0's six keyword arguments."""
+    """A caller's CombinedRewriteWorkflow may override build_graph; the override must accept ``label_categories``."""
     from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteGraph, CombinedRewriteWorkflow
 
     calls = []
 
     class GraphOverride(CombinedRewriteWorkflow):
-        def build_graph(  # 0.4.0 public signature
+        def build_graph(
             self,
             *,
             selected_models: RewriteModelSelection,
@@ -1657,6 +1666,7 @@ def test_combined_runner_overriding_build_graph_with_release_signature_runs(
             evaluation: EvaluationCriteria,
             data_summary: str | None = None,
             strict_entity_protection: bool = False,
+            label_categories: dict[str, str] | None = None,
         ) -> CombinedRewriteGraph:
             calls.append(True)
             return super().build_graph(
@@ -1666,6 +1676,7 @@ def test_combined_runner_overriding_build_graph_with_release_signature_runs(
                 evaluation=evaluation,
                 data_summary=data_summary,
                 strict_entity_protection=strict_entity_protection,
+                label_categories=label_categories,
             )
 
     from data_designer.config.column_configs import CustomColumnConfig
