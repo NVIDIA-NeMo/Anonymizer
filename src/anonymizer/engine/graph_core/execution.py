@@ -111,9 +111,10 @@ def _prepare(
         return (*w.requires, *(c for s in w.steps if isinstance(s, Workflow) for c in requirements(s)))
 
     def annotates(w: Workflow) -> bool:
-        return any(isinstance(s, Workflow) and (s.release == "annotation" or annotates(s)) for s in w.steps)
+        return any(isinstance(s, Workflow) and (s.release != "protected" or annotates(s)) for s in w.steps)
 
-    # A nested annotation keeps source text; releasing it as protected would drop that restriction.
+    # A nested annotation keeps source text; releasing it as protected would drop that restriction. Any nested
+    # release other than "protected" is refused, so a misspelled one cannot slip through.
     if workflow.release == "protected" and annotates(workflow):
         raise k.GraphRejection("annotation_in_protected", workflow.name)
     # A nested workflow's requirements are requirements of the invocation.

@@ -111,6 +111,23 @@ def test_final_text_of_another_kind_is_rejected() -> None:
     assert rejected.value.code == "final_text_not_text"
 
 
+@pytest.mark.parametrize("release", ["Annotation", "annotated", "protected"])
+def test_nested_release_other_than_protected_is_rejected(release: str) -> None:
+    scope = graph.GraphScope()
+    g = graph.ProtectionGraph(scope, (scope.datum("Alice"),))
+    check = graph.Operation.verifier(
+        "v", lambda text, target: graph.Assessment(True, target), {"text": "text", "target": "datum"}, checks=("c",)
+    )
+    inner = graph.Workflow("tag", (graph.Operation("wrap", lambda text: f"<{text}>"), check), release=release)  # ty: ignore[invalid-argument-type]
+    outer = graph.Workflow("w", (inner,), requires=("c",))
+    if release == "protected":
+        assert graph.protect(graph.prepare(g, outer)).protected
+        return
+    with pytest.raises(graph.GraphRejection) as rejected:
+        graph.prepare(g, outer)
+    assert rejected.value.code == "annotation_in_protected"
+
+
 def test_annotation_nested_in_protected_workflow_is_rejected() -> None:
     scope = graph.GraphScope()
     target = scope.datum("Alice")
