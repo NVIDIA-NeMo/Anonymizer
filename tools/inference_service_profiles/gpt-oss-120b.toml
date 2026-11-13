@@ -14,7 +14,7 @@ revision = "b5c939de8f754692c1647ca79fbf85e8c1e70f8a"
 [backend.options]
 reasoning-parser = "openai_gptoss"
 gpu-memory-utilization = 0.95
-max-model-len = 8192
+max-model-len = 49152
 max-num-seqs = 8
 enable-prefix-caching = true
 async-scheduling = true

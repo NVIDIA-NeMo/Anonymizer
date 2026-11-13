@@ -57,10 +57,17 @@ request, for example `reasoning_effort="low"` in the OpenAI client. Putting
 this field inside `chat_template_kwargs` does not control GPT-OSS effort.
 The readiness probe sends only the fields in the profile's
 `[backend.probe_extra_body]`; the GPT-OSS profiles request low effort there and
-the Nemotron and Gemma profiles disable thinking. This does not set a default for
-subsequent client requests.
+the Nemotron, Gemma, and Qwen3.8 profiles disable thinking. This does not set a default for
+subsequent client requests. vLLM ignores OpenRouter's `reasoning` field; to
+switch thinking per request, set `chat_template_kwargs.enable_thinking` in the
+model's `inference_parameters.extra_body`.
 
-The Gemma profile uses the instruction-tuned
+The `gpt-oss-120b`, `nemotron-3.5-lightning`, Gemma 4 26B-A4B, Qwen3.8, and
+Nemotron Super VL profiles allow 32K-49K tokens of context so that requests
+with large `max_tokens` budgets (16,384 to 32,768) fit; vLLM rejects a request
+whose prompt plus `max_tokens` exceeds the profile's `max-model-len`.
+
+The Gemma 4 12B profile uses the instruction-tuned
 [`google/gemma-4-12B-it`](https://huggingface.co/google/gemma-4-12B-it)
 checkpoint and bounds its larger native context window to 8,192 tokens. The
 Nemotron NVFP4 profile uses NVIDIA's

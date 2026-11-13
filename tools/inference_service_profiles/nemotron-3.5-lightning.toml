@@ -14,7 +14,7 @@ revision = "33268dc8a6da85a56be2b12241453e4e1237bbe1"
 [backend.options]
 reasoning-parser = "nemotron_v3"
 gpu-memory-utilization = 0.88
-max-model-len = 8192
+max-model-len = 49152
 max-num-seqs = 16
 enable-prefix-caching = true
 async-scheduling = true
