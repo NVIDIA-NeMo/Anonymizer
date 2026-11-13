@@ -4,18 +4,15 @@
 # Self-hosting GLiNER2
 
 Anonymizer uses [`fastino/gliner2-privacy-filter-PII-multi`](https://huggingface.co/fastino/gliner2-privacy-filter-PII-multi)
-for first-pass entity detection. The bundled model configuration sends detector requests to an
-OpenAI-compatible endpoint at `http://127.0.0.1:8001/v1`; it does not start a server automatically.
-
-This keeps plain `Anonymizer()` suitable for applications that manage their own services. Start a
-compatible GLiNER2 endpoint before calling `run()`, or use the notebook helper below for an ephemeral
-in-kernel development server.
+for first-pass entity detection. Use `native_runtime()` to manage the lifetime of a local GLiNER2 runtime, or use
+`GlinerEndpoint` with `create_anonymizer()` to connect to a service that you already manage. Plain `Anonymizer()` remains unchanged and uses the
+bundled model and provider files.
 
 ## Server contract
 
 Anonymizer does not perform a separate model-discovery probe for externally managed providers. The
 configured service is responsible for serving the requested detector model; connection and response
-errors surface through the normal Data Designer model request. The notebook-managed runtime is
+errors surface through the normal Data Designer model request. The library-managed native runtime is
 different: its owner uses authenticated `GET /v1/models` readiness checks to verify the exact model
 ID and pinned revision before returning an `Anonymizer`.
 
@@ -36,6 +33,10 @@ the normal OpenAI-compatible request. Anonymizer always sends `labels`, `thresho
 }
 ```
 
+The native server implements this HTTP contract, including `overlap` and `flat_ner`. The contract
+does not promise identical predictions across runtimes. Model versions,
+inference engines, and overlap resolution can produce different entity lists.
+
 !!! note "Chunk defaults and units"
 
     The bundled GLiNER2 server defaults to **128 native word tokens per chunk**
@@ -50,7 +51,7 @@ through unchanged; omitted fields use the server's defaults.
 The native splitter preserves source offsets and avoids cutting words. Unspaced
 Chinese or Japanese text can form a single long token, so word-window size does
 not guarantee a subword-token limit; evaluate chunk sizes for your language.
-Returned entities must match the original source text at their reported offsets.
+Returned entities use character offsets into the original source text, and each entity's text must match that span.
 
 The response must use the chat-completion shape. `message.content` is a JSON string containing an
 `entities` list. Each entity has `text`, `label`, `start`, `end`, and `score` fields:
@@ -67,18 +68,38 @@ The response must use the chat-completion shape. `message.content` is a JSON str
 }
 ```
 
-A production deployment should provide the chat-completion contract through a separately managed,
-authenticated service and configure its provider endpoint in `providers.yaml`. The native PyTorch
-server bundled with Anonymizer is intended only for notebooks and development. A vLLM-based
-production serving path is planned separately; this release does not depend on it.
+On Linux/NVIDIA GPU hosts, the managed tool described in
+[Deploy local models](inference-services.md) launches this native server with launch
+receipts, ownership checks, and bounded cleanup. Other production deployments should provide the
+chat-completion contract through a separately managed, authenticated service and configure its
+provider endpoint in `providers.yaml`.
 
-## Local notebook runtime
+## Native Runtime
 
-Install the notebook extra and create the client through `create_anonymizer()`:
+Install the notebook extra, then request the library-managed runtime:
 
 ```bash
 pip install "nemo-anonymizer[notebooks]"
 ```
+
+```python
+from anonymizer import native_runtime
+
+with native_runtime(device="auto") as session:
+    anonymizer = session.create_anonymizer()
+    # Run preview or anonymization here.
+```
+
+`device="auto"` selects CUDA, MPS, or CPU. You can also pass `"cuda"`, `"mps"`, or `"cpu"`.
+Use the client while the context is open; a client backed by a context-owned process is no longer valid after it closes. `session.endpoint` exposes the `GlinerEndpoint` connection. Nested contexts share the runtime until the last context exits. A context can borrow an existing singleton without stopping it on exit when its device, dtype, and attention all match; any mismatch raises an error, and explicit shutdown is unavailable while a context is active.
+
+If the process exits while a context is active, close the active contexts before
+acquiring a new runtime. Further acquisitions fail instead of silently replacing
+the endpoint used by existing sessions.
+
+`create_anonymizer(gliner=NativeGliner(...))` uses a process-global singleton that stops at interpreter exit.
+
+## Notebook Compatibility Wrapper
 
 ```python
 from anonymizer.notebooks import create_anonymizer, stop_local_runtime
@@ -90,24 +111,45 @@ anonymizer = create_anonymizer()
 stop_local_runtime()
 ```
 
-The helper:
+The notebook helper wraps `create_anonymizer(gliner=NativeGliner(...))` and preserves its original
+`gliner_device` argument. It:
 
-- creates a cached, dependency-isolated server environment containing `gliner2[local]` on first use;
+- creates a cached, dependency-isolated server environment containing `gliner2[local,disentangled-flash]` on first use;
 - downloads the exact Hugging Face revision
   `59894c087cb2923b01f337d4ee72f6ff84d5bdd6` of
   `fastino/gliner2-privacy-filter-PII-multi`;
 - starts an authenticated server on an ephemeral loopback port;
-- selects CUDA, MPS, or CPU automatically;
+- selects CUDA, MPS, or CPU automatically, and runs float32 with standard attention everywhere (pass
+  `dtype="bfloat16"` to `NativeGliner` or `native_runtime` for higher batch throughput at slightly different
+  scores, and `attention="disentangled_flash"` to opt in to DisentangledFlash on CUDA);
 - injects only the detector provider and model selection, leaving configured LLM roles unchanged;
 - reuses the process for compatible calls and stops it at interpreter exit.
 
-The isolated server environment is necessary because GLiNER2 2.0's local inference stack and the
+The isolated server environment is necessary because GLiNER2's local inference stack and the
 current Data Designer release require incompatible `huggingface-hub` major versions. The helper hides
-that packaging detail from the notebook kernel. It also creates a local adapter copy of the pinned
-snapshot that translates the checkpoint's Transformers v5 tokenizer field name to the Transformers
-v4 name required by GLiNER2 2.0; model weights and source cache files remain unchanged. The revision
-pin applies only to this packaged notebook runtime. Production services control and pin their own
-model artifact independently.
+that packaging detail from the notebook kernel. The revision pin applies to the native server (the notebook helper, `native_runtime`, and the
+`gliner2-native` profile). Production services control and pin their own model artifact independently.
+
+The server reads these environment variables at startup:
+
+| Variable | Values | Default |
+|---|---|---|
+| `ANONYMIZER_LOCAL_GLINER2_DEVICE` | `auto`, `cuda`, `mps`, `cpu` | `auto` |
+| `ANONYMIZER_LOCAL_GLINER2_DTYPE` | `auto`, `float32`, `bfloat16` | `auto`: `float32` on every device; `bfloat16` is opt-in for higher batch throughput at slightly different scores |
+| `ANONYMIZER_LOCAL_GLINER2_ATTENTION` | `auto`, `standard`, `disentangled_flash` | `auto`: `standard` on every device; `disentangled_flash` is opt-in |
+
+A `disentangled_flash` request that cannot load stops startup with an error. In gliner2 2.1.0 the kernel
+prepares position plans for every distinct input length and keeps them, so latency and GPU memory grow
+with the number of distinct lengths seen (the 65th distinct length took 3.7 s and memory grew about 2 GB
+over 65 lengths in our measurements). Use it only for fixed-length batch workloads; float32 output is
+identical to standard attention. Requests use an inference batch size of 32 unless they pass `batch_size`. The
+startup log and `GET /v1/models` report the device, dtype, and attention in use.
+
+A library-managed runtime takes its precision and attention from the `dtype` and `attention` arguments of
+`NativeGliner` and `native_runtime`, which override `ANONYMIZER_LOCAL_GLINER2_DTYPE` and
+`ANONYMIZER_LOCAL_GLINER2_ATTENTION`; with the default `"auto"` the variable still applies.
+Asking for a different device, dtype or attention than a running runtime was started with replaces it (or is an error
+inside an active `native_runtime` context).
 
 Notebook CI runs on a CPU runner and constrains its isolated runtime to the CPU
 build of PyTorch through `.github/constraints/notebook-ci.txt`. It caches only
@@ -132,7 +174,7 @@ runtime. The most recent request wins.
 
 ## Running the development server directly
 
-A compatibility entry point remains available from a source checkout:
+A development entry point is available from a source checkout:
 
 ```bash
 uv sync --extra notebooks
@@ -157,50 +199,35 @@ inference_parameters:
 The notebook helper supplies these settings automatically. The threshold still
 comes from `Detect(gliner_threshold=...)`.
 
-## Configuring a managed endpoint
+## Connect to a Managed Endpoint
 
-Custom provider and model files replace the bundled lists, so include the detector plus every LLM
-provider and model alias your selected workflow uses.
+Start the service through its own deployment system, then pass its connection values to
+`GlinerEndpoint`:
 
-```yaml title="providers.yaml"
-providers:
-  - name: my-gliner2-service
-    endpoint: https://gliner2.internal.example/v1
-    provider_type: openai
-    api_key: GLINER2_API_KEY
-
-  - name: nvidia
-    endpoint: https://integrate.api.nvidia.com/v1
-    provider_type: openai
-    api_key: NVIDIA_API_KEY
-```
-
-```yaml title="models.yaml"
-model_configs:
-  - alias: gliner-pii-detector
-    model: fastino/gliner2-privacy-filter-PII-multi
-    provider: my-gliner2-service
-    skip_health_check: true
-    inference_parameters:
-      max_parallel_requests: 8
-      timeout: 120
-
-  # Include the LLM aliases used by your selected detection, replacement,
-  # rewrite, and evaluation roles here too.
+```bash
+export GLINER2_API_KEY="your-service-key"
 ```
 
 ```python
-from anonymizer import Anonymizer
+from anonymizer import GlinerEndpoint, create_anonymizer
 
-anonymizer = Anonymizer(
-    model_providers="providers.yaml",
-    model_configs="models.yaml",
+anonymizer = create_anonymizer(
+    gliner=GlinerEndpoint(
+        url="https://gliner2.internal.example/v1",
+        model="fastino/gliner2-privacy-filter-PII-multi",
+        api_key_env="GLINER2_API_KEY",
+    )
 )
 ```
 
-Set `skip_health_check: true` for the detector alias because a generic text-generation health probe
-does not contain the required GLiNER2 `labels` field. Anonymizer performs a detector-specific endpoint
-check immediately before the default detection workflow runs.
+The factory adds one detector model and provider, selects that detector, and preserves all other
+model configs, providers, and selected roles. It sets the detector's `skip_health_check` flag because
+a generic text-generation probe lacks the required `labels` field. Reserved factory alias and
+provider names cause a configuration error instead of replacing caller entries.
+
+`GlinerEndpoint` only creates the Anonymizer client. It does not launch, stop, probe, or otherwise own
+the service. Keep service shutdown in the deployment system that started it. The installed-library
+path does not import vLLM, GLiNER2, Torch, FastAPI, or source-tree tools.
 
 Tune recall and precision with `Detect(gliner_threshold=...)`. The default threshold is `0.3`; lower
 values increase recall, while higher values generally increase precision.

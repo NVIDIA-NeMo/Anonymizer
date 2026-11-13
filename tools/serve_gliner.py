@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from anonymizer.notebooks._runtime import run_development_server
+from anonymizer.engine.local_inference.runtime import run_development_server
 
 if __name__ == "__main__":
     run_development_server()

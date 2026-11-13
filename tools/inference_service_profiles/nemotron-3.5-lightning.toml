@@ -1,0 +1,25 @@
+schema_version = "inference-service.spec/v3"
+port = 8014
+startup_timeout_seconds = 1800
+shutdown_timeout_seconds = 60
+
+[backend]
+kind = "vllm"
+model = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+revision = "33268dc8a6da85a56be2b12241453e4e1237bbe1"
+served_model_name = "nemotron-3.5-lightning"
+
+[backend.options]
+reasoning-parser = "nemotron_v3"
+gpu-memory-utilization = 0.88
+max-model-len = 49152
+max-num-seqs = 16
+enable-prefix-caching = true
+async-scheduling = true
+mamba-backend = "flashinfer"
+mamba-ssm-cache-dtype = "float16"
+enable-mamba-cache-stochastic-rounding = true
+mamba-cache-philox-rounds = 5
+
+[backend.probe_extra_body]
+chat_template_kwargs = { enable_thinking = false }

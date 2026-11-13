@@ -1,0 +1,22 @@
+schema_version = "inference-service.spec/v3"
+port = 8018
+startup_timeout_seconds = 1800
+shutdown_timeout_seconds = 60
+
+[backend]
+kind = "vllm"
+model = "Qwen/Qwen3.8-27B"
+revision = "37561816e66b5b9153b1b64c10968c18c1e6f4a0"
+served_model_name = "qwen3.8-27b"
+
+[backend.options]
+reasoning-parser = "qwen3"
+gpu-memory-utilization = 0.90
+max-model-len = 32768
+max-num-seqs = 16
+enable-prefix-caching = true
+async-scheduling = true
+language-model-only = true
+
+[backend.probe_extra_body]
+chat_template_kwargs = { enable_thinking = false }

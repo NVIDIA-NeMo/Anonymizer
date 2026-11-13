@@ -21,7 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 notebooks = [
     "datasets>=4.0.0,<6",
-    "gliner2==2.0.0",
+    "gliner2==2.1.0",
     "ipykernel>=6.29.0,<8",
     "jupyter>=1.0.0,<2",
     "jupytext>=1.16.0,<2",
@@ -90,6 +90,7 @@ constraint-dependencies = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tools"]
 markers = [
     "e2e: end-to-end tests",
     "integration: integration tests",
@@ -100,14 +101,21 @@ include = ["src", "tests", "tests_e2e", "docs", "scripts", "tools"]
 
 [tool.ty.environment]
 python-version = "3.11"
-root = ["src", ".", "tools/measurement"]
+root = ["src", ".", "tools", "tools/measurement"]
 
 [[tool.ty.overrides]]
-include = ["src/anonymizer/notebooks/local_inference/gliner2/backend.py"]
+include = ["src/anonymizer/engine/local_inference/gliner2/backend.py"]
 
 [tool.ty.overrides.analysis]
 # Notebook dependencies may be absent; inline ignores fail when they are installed.
 allowed-unresolved-imports = ["torch", "gliner2"]
+
+[[tool.ty.overrides]]
+include = ["tools/inference_service_compiler/vllm_compat.py"]
+
+[tool.ty.overrides.analysis]
+# vLLM is installed only in tools/inference-service-runtime, never in the main environment.
+allowed-unresolved-imports = ["vllm.**", "uvloop"]
 
 [tool.coverage.run]
 omit = []

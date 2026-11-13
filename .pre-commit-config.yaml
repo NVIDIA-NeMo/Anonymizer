@@ -10,6 +10,7 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
+        args: [--unsafe]  # MkDocs uses custom !ENV and Python-name tags.
       - id: check-added-large-files
       - id: check-json
       - id: check-toml
