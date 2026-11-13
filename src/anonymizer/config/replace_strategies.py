@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import re
 from string import Formatter
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
 def _normalize_replace_kind(value: Any) -> Any:
@@ -119,6 +120,9 @@ class Annotate(ReplaceMethodBase):
 class Hash(ReplaceMethodBase):
     """Replace each entity with a deterministic hash token."""
 
+    # Validation errors would otherwise echo the plaintext key.
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     kind: Literal["hash"] = "hash"
     algorithm: Literal["sha256", "sha1", "md5"] = Field(default="sha256", description="Hash algorithm.")
     digest_length: int = Field(
@@ -127,6 +131,31 @@ class Hash(ReplaceMethodBase):
     format_template: str = Field(
         default="<HASH_{label}_{digest}>", description="Template with {digest} required and optional {label}."
     )
+    key: SecretStr | None = Field(
+        default=None,
+        description="Secret key. When set, the digest is HMAC-SHA256 of the case- and whitespace-folded text "
+        "and `algorithm` must stay `sha256`; without a key, unkeyed digests of low-entropy values are reversible.",
+    )
+
+    @field_validator("key")
+    @classmethod
+    def validate_key(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return value
+        secret = value.get_secret_value()
+        if not secret.strip():
+            raise ValueError("key must not be empty or whitespace")
+        if set(secret) == {"*"}:
+            raise ValueError(
+                "key is a masked placeholder; a keyed Hash does not survive serialization, so pass the real key"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_keyed_algorithm(self) -> Hash:
+        if self.key is not None and self.algorithm != "sha256":
+            raise ValueError("a keyed Hash always uses HMAC-SHA256; leave algorithm at its default 'sha256'")
+        return self
 
     @field_validator("format_template")
     @classmethod
@@ -145,7 +174,12 @@ class Hash(ReplaceMethodBase):
             text: Original entity text (e.g. ``"Alice"``).
             label: Entity label (e.g. ``"first_name"``).
         """
-        digest = hashlib.new(self.algorithm, text.encode("utf-8")).hexdigest()[: self.digest_length]
+        if self.key is None:
+            digest = hashlib.new(self.algorithm, text.encode("utf-8")).hexdigest()[: self.digest_length]
+        else:
+            folded = " ".join(text.casefold().split()).encode("utf-8")
+            key = self.key.get_secret_value().encode("utf-8")
+            digest = hmac.new(key, folded, hashlib.sha256).hexdigest()[: self.digest_length]
         return self._render_template(
             template=self.format_template,
             text=text,
