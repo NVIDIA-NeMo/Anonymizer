@@ -23,6 +23,8 @@ class ChildLaunch(NamedTuple):
     """The serving child's own arguments."""
 
     spec: ServiceSpec
+    backend: VllmBackend
+    """``spec.backend``, already narrowed to the vLLM backend."""
     validate_only: bool
 
 
@@ -67,22 +69,25 @@ def parse_launch_spec(argv: Sequence[str]) -> ChildLaunch:
     parser.add_argument("--validate", action="store_true")
     options = parser.parse_args(argv)
     spec = ServiceSpec.model_validate_json(options.launch_spec_json)
-    _vllm_backend(spec)
-    return ChildLaunch(spec=spec, validate_only=options.validate)
+    return ChildLaunch(spec=spec, backend=_vllm_backend(spec), validate_only=options.validate)
 
 
 def run_server(argv: Sequence[str]) -> None:
     """Validate the launch spec with vLLM's parser, then run the server unless ``--validate``."""
-    spec, validate_only = parse_launch_spec(argv)
+    launch = parse_launch_spec(argv)
     expose_interpreter_tools()
-    arguments = vllm_compat.make_serve_parser().parse_args(serve_arguments(spec))
+    arguments = vllm_compat.make_serve_parser().parse_args(serve_arguments(launch.spec))
     vllm_compat.validate_serve_arguments(arguments)
-    if validate_only:
+    if launch.validate_only:
         return
     # vLLM 0.33 JIT-compiles FlashInfer kernels (sampling, for example) for many models, not only Mamba.
-    mamba_backend = str(_vllm_backend(spec).options.get("mamba-backend", ""))
-    configure_flashinfer_toolchain(required=mamba_backend.lower() == "flashinfer")
+    configure_flashinfer_toolchain(required=_requires_flashinfer(launch.backend))
     vllm_compat.run_api_server(arguments)
+
+
+def _requires_flashinfer(backend: VllmBackend) -> bool:
+    """Whether the profile selects FlashInfer for Mamba layers, which cannot run without a CUDA compiler."""
+    return str(backend.options.get("mamba-backend", "")).lower() == "flashinfer"
 
 
 def _vllm_backend(spec: ServiceSpec) -> VllmBackend:

@@ -239,9 +239,11 @@ def group_ownership(handle: LocalProcessHandle) -> GroupOwnership:
 
 
 def _looks_sensitive(name: str) -> bool:
-    """Apply the secret-name policy of ``anonymizer.engine.local_inference.runtime``.
+    """Whether ``name`` ends with a secret suffix (``_API_KEY``, ``_PASSWORD``, ...).
 
-    ``HF_TOKEN`` stays: the served model may need it to download weights.
+    This tool cannot import ``anonymizer`` (it ships without it), so it repeats the suffix list of
+    ``anonymizer.engine.local_inference.runtime``. That module also scrubs ``HF_TOKEN`` and then allowlists it;
+    here ``HF_TOKEN`` has no secret suffix and so stays, because the served model may need it to download weights.
     """
     return name.upper().endswith(_SECRET_SUFFIXES)
 

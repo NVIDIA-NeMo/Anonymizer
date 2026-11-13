@@ -90,9 +90,10 @@ def test_tokens_parse_exactly_under_an_argparse_parser_without_abbreviations() -
 
 def test_child_reads_the_spec_from_the_compiled_plan() -> None:
     plan = compiler.compile_spec(spec(options={"max-model-len": 2048}))
-    parsed, validate_only = vllm_runtime.parse_launch_spec([*plan.argv[2:], "--validate"])
-    assert parsed == plan.spec
-    assert validate_only is True
+    launch = vllm_runtime.parse_launch_spec([*plan.argv[2:], "--validate"])
+    assert launch.spec == plan.spec
+    assert launch.backend is launch.spec.backend
+    assert launch.validate_only is True
 
 
 def test_child_refuses_a_non_vllm_backend() -> None:
