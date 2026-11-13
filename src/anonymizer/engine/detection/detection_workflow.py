@@ -696,10 +696,11 @@ What to DROP:
 
 PERSONAL NAMES:
 - Keep a supplied first_name or last_name label when context supports that personal-name use. Names can be short or written in lowercase, uppercase, or mixed case; capitalization alone neither proves nor rules out a name.
-- Personal initials, with or without a period, can identify people in signatures, greetings, or name sequences. Do not drop an initial solely because no surname follows.
+- Personal initials, with or without a period, can identify people in signatures, greetings, name sequences, or running text where they stand in for a person (e.g., "the lease was signed by K.M. on the tenant's behalf"). Do not drop an initial solely because no surname follows.
 - Use context to distinguish given names from surnames; do not infer that role solely from word order. Never expand an initial into an inferred name.
+- In structured data (JSON, forms, tables), a value in a name field is a name even when it is short (e.g., "surname": "Ng"); the field name itself is not.
 - Drop name tags on variables, grades, units, list markers, ordinary words, or chat abbreviations when they are not being used as personal names.
-- Examples: "First initial: Q." and "hi rose, can you review?" support personal-name uses; "a rose in the garden", "Grade: A", "4 m", and "ty for the help" do not.
+- Examples: "First initial: Q." and "hi rose, can you review?" support personal-name uses; "a rose in the garden", "Grade: A", "4 m", and "thx for the help" do not.
 
 PARTIAL-TOKEN RULE (HARD DROP):
 - If the tagged value is only a substring of a larger contiguous token (letters, digits, underscore with no whitespace boundary), DROP it.
@@ -857,11 +858,12 @@ Rules:
   Only tag data, never syntax
 
 PERSONAL NAMES:
-- Find untagged personal names even when they are short or written in lowercase, uppercase, or mixed case; capitalization alone neither proves nor rules out a name.
-- Personal initials, with or without a period, can identify people in signatures, greetings, or name sequences. Do not skip an initial solely because no surname follows.
+- Find personal names even when they are short or written in lowercase, uppercase, or mixed case; capitalization alone neither proves nor rules out a name.
+- Personal initials, with or without a period, can identify people in signatures, greetings, name sequences, or running text where they stand in for a person (e.g., "the lease was signed by K.M. on the tenant's behalf"). Do not skip an initial solely because no surname follows.
 - Use context and the permitted labels to distinguish given names from surnames; do not infer that role solely from word order. Never expand an initial into an inferred name.
+- In structured data (JSON, forms, tables), a value in a name field is a name even when it is short (e.g., "surname": "Ng"); never extract the field name itself.
 - Do not extract variables, grades, units, list markers, ordinary words, or chat abbreviations as names when they are not being used as personal names.
-- Examples: "First initial: Q." and "hi rose, can you review?" support personal-name uses; "a rose in the garden", "Grade: A", "4 m", and "ty for the help" do not.
+- Examples: "First initial: Q." and "hi rose, can you review?" support personal-name uses; "a rose in the garden", "Grade: A", "4 m", and "thx for the help" do not.
 
 Other information:
 - unique_id rules: unique_id's are never only one character long (ex: "6" is not a unique_id). They are never event names or real words all strung together (ex: "ProcessManagementEvent" is NOT a unique_id).

@@ -551,7 +551,30 @@ def test_validation_prompt_includes_label_examples() -> None:
     assert 'The entity label "occupation" refers only to a specific paid job title or profession' in prompt
     assert "AGE RULE:" in prompt
     assert "indicate duration, not age" in prompt
-    assert "tagged as a first_name but is not followed by a last_name, drop it" in prompt
+    assert "tagged as a first_name but is not followed by a last_name, drop it" not in prompt
+
+
+@pytest.mark.parametrize("notation", list(TagNotation))
+@pytest.mark.parametrize("strict_labels", [False, True])
+def test_name_guidance_prompts_render_without_lone_initial_drop_rule(
+    notation: TagNotation, strict_labels: bool
+) -> None:
+    """Both prompts render in every tag notation and label mode; the lone-initial drop rule stays removed."""
+    labels = ["first_name", "last_name"]
+    context = {COL_TAG_NOTATION: notation.value}
+    validation = Environment().from_string(_get_validation_prompt(data_summary=None, labels=labels)).render(**context)
+    Environment().from_string(
+        _get_augment_prompt(data_summary=None, labels=labels, strict_labels=strict_labels)
+    ).render(**context)
+
+    assert "is not followed by a last_name, drop it" not in validation
+
+
+def test_contextual_personal_name_guidance_preserves_default_label_scope() -> None:
+    label_config = resolve_entity_label_config(entity_labels=None)
+
+    assert {"first_name", "last_name"} <= set(label_config.labels)
+    assert {"middle_name", "full_name", "name_initial"}.isdisjoint(label_config.labels)
 
 
 @pytest.mark.parametrize("data_summary", [None, "", "Medical records. Public hospital names are not sensitive."])
