@@ -28,13 +28,14 @@ from typing import IO
 import httpx
 
 from anonymizer.engine.local_inference.gliner2 import MODEL_ID, MODEL_REVISION
-from anonymizer.engine.local_inference.gliner2.contract import ModelCard, ModelList
+from anonymizer.engine.local_inference.gliner2.contract import DtypeRequest, ModelCard, ModelList
 
 LOCAL_TOKEN_ENV = "ANONYMIZER_LOCAL_GLINER2_TOKEN"
 
 logger = logging.getLogger(__name__)
 
 _DEVICE_ENV = "ANONYMIZER_LOCAL_GLINER2_DEVICE"
+_DTYPE_ENV = "ANONYMIZER_LOCAL_GLINER2_DTYPE"
 _STARTUP_TIMEOUT_SECONDS = 300.0
 _SHUTDOWN_TIMEOUT_SECONDS = 10.0
 _MAX_PORT_ATTEMPTS = 3
@@ -56,6 +57,7 @@ class _LocalRuntime:
     requested_device: str
     selected_device: str
     token: str
+    requested_dtype: DtypeRequest = "auto"
     log_lines: deque[str] = field(default_factory=lambda: deque(maxlen=200))
     log_thread: threading.Thread | None = None
 
@@ -69,16 +71,16 @@ _context_owned = False
 
 
 @contextmanager
-def singleton_runtime(requested_device: str) -> Iterator[_LocalRuntime]:
+def singleton_runtime(requested_device: str, requested_dtype: DtypeRequest = "auto") -> Iterator[_LocalRuntime]:
     """Get the persistent singleton, respecting an active scoped runtime."""
     with _runtime_lock:
         if _context_count and _context_owned:
             raise RuntimeError("Use the native runtime session to construct clients inside its context.")
-        yield _ensure_runtime(requested_device)
+        yield _ensure_runtime(requested_device, requested_dtype)
 
 
 @contextmanager
-def runtime_context(requested_device: str) -> Iterator[_LocalRuntime]:
+def runtime_context(requested_device: str, requested_dtype: DtypeRequest = "auto") -> Iterator[_LocalRuntime]:
     """Borrow a singleton or own a runtime until the last nested context exits."""
     global _context_count, _context_owned
     with _runtime_lock:
@@ -86,11 +88,11 @@ def runtime_context(requested_device: str) -> Iterator[_LocalRuntime]:
         if (
             not _context_count
             and previous is not None
-            and previous.requested_device != requested_device
+            and _differs(previous, requested_device, requested_dtype)
             and previous.process.poll() is None
         ):
-            raise RuntimeError("Cannot borrow a native runtime with a different device.")
-        runtime = _ensure_runtime(requested_device)
+            raise RuntimeError("Cannot borrow a native runtime with a different device or precision.")
+        runtime = _ensure_runtime(requested_device, requested_dtype)
         if _context_count == 0:
             _context_owned = runtime is not previous
         _context_count += 1
@@ -125,24 +127,35 @@ def _shutdown_runtime() -> None:
             _restore_token_environment()
 
 
-def _ensure_runtime(requested_device: str) -> _LocalRuntime:
+def _differs(runtime: _LocalRuntime, requested_device: str, requested_dtype: DtypeRequest) -> bool:
+    """Whether ``runtime`` was started for a different (device, dtype) request."""
+    return (runtime.requested_device, runtime.requested_dtype) != (requested_device, requested_dtype)
+
+
+def _ensure_runtime(requested_device: str, requested_dtype: DtypeRequest = "auto") -> _LocalRuntime:
     global _runtime
     if _context_count:
-        if _runtime is None or _runtime.process.poll() is not None or _runtime.requested_device != requested_device:
+        if (
+            _runtime is None
+            or _runtime.process.poll() is not None
+            or _differs(_runtime, requested_device, requested_dtype)
+        ):
             raise RuntimeError(
                 "Cannot replace a native runtime while a context is active, including after the process exits."
             )
         _verify_readiness(_runtime)
         return _runtime
     if _runtime is not None and _runtime.process.poll() is None:
-        if _runtime.requested_device == requested_device:
+        if not _differs(_runtime, requested_device, requested_dtype):
             _verify_readiness(_runtime)
             return _runtime
         logger.warning(
-            "Replacing the native GLiNER2 runtime (%s -> %s); previously returned Anonymizer instances "
+            "Replacing the native GLiNER2 runtime (%s/%s -> %s/%s); previously returned Anonymizer instances "
             "are no longer supported.",
             _runtime.requested_device,
+            _runtime.requested_dtype,
             requested_device,
+            requested_dtype,
         )
         stop_local_runtime()
     elif _runtime is not None:
@@ -151,7 +164,7 @@ def _ensure_runtime(requested_device: str) -> _LocalRuntime:
     last_error: Exception | None = None
     for _ in range(_MAX_PORT_ATTEMPTS):
         try:
-            runtime = _start_runtime(requested_device)
+            runtime = _start_runtime(requested_device, requested_dtype)
         except BaseException:
             _restore_token_environment()
             raise
@@ -179,7 +192,7 @@ def _ensure_runtime(requested_device: str) -> _LocalRuntime:
     raise RuntimeError(f"Unable to start the local GLiNER2 runtime.\n{_format_log_tail(runtime)}") from last_error
 
 
-def _start_runtime(requested_device: str) -> _LocalRuntime:
+def _start_runtime(requested_device: str, requested_dtype: DtypeRequest = "auto") -> _LocalRuntime:
     server_packages = _ensure_server_environment()
     listener = _reserve_listener()
     port = int(listener.getsockname()[1])
@@ -188,6 +201,8 @@ def _start_runtime(requested_device: str) -> _LocalRuntime:
     child_environment = _child_environment()
     child_environment[LOCAL_TOKEN_ENV] = token
     child_environment[_DEVICE_ENV] = requested_device
+    if requested_dtype != "auto":  # an explicit request overrides the inherited variable
+        child_environment[_DTYPE_ENV] = requested_dtype
     existing_python_path = child_environment.get("PYTHONPATH")
     child_environment["PYTHONPATH"] = os.pathsep.join(filter(None, (str(server_packages), existing_python_path)))
     command = [
@@ -215,6 +230,7 @@ def _start_runtime(requested_device: str) -> _LocalRuntime:
         process=process,
         endpoint=f"http://127.0.0.1:{port}/v1",
         requested_device=requested_device,
+        requested_dtype=requested_dtype,
         selected_device="starting",
         token=token,
     )

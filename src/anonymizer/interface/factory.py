@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Literal
 from data_designer.config.models import ModelProvider
 from pydantic import BaseModel, ConfigDict, Field
 
+from anonymizer.engine.local_inference.gliner2.contract import DtypeRequest
 from anonymizer.engine.ndd.model_loader import parse_model_configs, parse_model_providers
 
 if TYPE_CHECKING:
@@ -32,6 +33,7 @@ class NativeGliner(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
+    dtype: DtypeRequest = "auto"
 
 
 class GlinerEndpoint(BaseModel):
@@ -73,7 +75,7 @@ def create_anonymizer(
         from anonymizer.engine.local_inference.gliner2.contract import DEFAULT_CHUNK_LENGTH, DEFAULT_OVERLAP
         from anonymizer.engine.local_inference.runtime import LOCAL_TOKEN_ENV, singleton_runtime
 
-        with singleton_runtime(gliner.device) as runtime:
+        with singleton_runtime(gliner.device, gliner.dtype) as runtime:
             return _create_endpoint_anonymizer(
                 endpoint=GlinerEndpoint(url=runtime.endpoint, model=MODEL_ID, api_key_env=LOCAL_TOKEN_ENV),
                 parsed=parsed,
@@ -146,7 +148,9 @@ class NativeRuntimeSession:
 
 
 @contextmanager
-def native_runtime(*, device: Literal["auto", "cpu", "cuda", "mps"] = "auto") -> Iterator[NativeRuntimeSession]:
+def native_runtime(
+    *, device: Literal["auto", "cpu", "cuda", "mps"] = "auto", dtype: DtypeRequest = "auto"
+) -> Iterator[NativeRuntimeSession]:
     """Run native GLiNER for the duration of a client session.
 
     An existing singleton is borrowed and remains running after exit. Nested
@@ -155,8 +159,8 @@ def native_runtime(*, device: Literal["auto", "cpu", "cuda", "mps"] = "auto") ->
     from anonymizer.engine.local_inference.gliner2 import MODEL_ID
     from anonymizer.engine.local_inference.runtime import LOCAL_TOKEN_ENV, runtime_context
 
-    request = NativeGliner(device=device)
-    with runtime_context(request.device) as runtime:
+    request = NativeGliner(device=device, dtype=dtype)
+    with runtime_context(request.device, request.dtype) as runtime:
         yield NativeRuntimeSession(
             endpoint=GlinerEndpoint(url=runtime.endpoint, model=MODEL_ID, api_key_env=LOCAL_TOKEN_ENV)
         )

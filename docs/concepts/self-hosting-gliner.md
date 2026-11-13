@@ -119,8 +119,9 @@ The notebook helper wraps `create_anonymizer(gliner=NativeGliner(...))` and pres
   `59894c087cb2923b01f337d4ee72f6ff84d5bdd6` of
   `fastino/gliner2-privacy-filter-PII-multi`;
 - starts an authenticated server on an ephemeral loopback port;
-- selects CUDA, MPS, or CPU automatically, and runs bfloat16 with DisentangledFlash attention on CUDA
-  and float32 with standard attention on MPS and CPU;
+- selects CUDA, MPS, or CPU automatically, and runs float32 everywhere, with DisentangledFlash attention
+  on CUDA and standard attention on MPS and CPU (pass `dtype="bfloat16"` to `NativeGliner` or `native_runtime`
+  for higher batch throughput at slightly different scores);
 - injects only the detector provider and model selection, leaving configured LLM roles unchanged;
 - reuses the process for compatible calls and stops it at interpreter exit.
 
@@ -134,13 +135,18 @@ The server reads these environment variables at startup:
 | Variable | Values | Default |
 |---|---|---|
 | `ANONYMIZER_LOCAL_GLINER2_DEVICE` | `auto`, `cuda`, `mps`, `cpu` | `auto` |
-| `ANONYMIZER_LOCAL_GLINER2_DTYPE` | `auto`, `float32`, `bfloat16` | `auto`: `bfloat16` on CUDA, `float32` elsewhere |
+| `ANONYMIZER_LOCAL_GLINER2_DTYPE` | `auto`, `float32`, `bfloat16` | `auto`: `float32` on every device; `bfloat16` is opt-in for higher batch throughput at slightly different scores |
 | `ANONYMIZER_LOCAL_GLINER2_ATTENTION` | `auto`, `standard`, `disentangled_flash` | `auto`: `disentangled_flash` on CUDA, `standard` elsewhere |
 
 If the automatic CUDA default cannot load the DisentangledFlash kernel, the server logs a warning and
 uses standard attention. An explicit `disentangled_flash` request that cannot load stops startup
 with an error. Requests use an inference batch size of 32 unless they pass `batch_size`. The
 startup log and `GET /v1/models` report the device, dtype, and attention in use.
+
+A library-managed runtime takes its precision from the `dtype` argument of `NativeGliner` and `native_runtime`,
+which overrides `ANONYMIZER_LOCAL_GLINER2_DTYPE`; with the default `dtype="auto"` the variable still applies.
+Asking for a different device or dtype than a running runtime was started with replaces it (or is an error
+inside an active `native_runtime` context).
 
 Notebook CI runs on a CPU runner and constrains its isolated runtime to the CPU
 build of PyTorch through `.github/constraints/notebook-ci.txt`. It caches only

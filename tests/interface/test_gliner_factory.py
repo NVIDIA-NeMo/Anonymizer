@@ -40,7 +40,7 @@ def test_native_factory_uses_inputs_validated_before_runtime_acquisition(
     runtime = controller._LocalRuntime(Mock(), "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
 
     @contextmanager
-    def acquire(device: str) -> Iterator[controller._LocalRuntime]:
+    def acquire(device: str, dtype: str) -> Iterator[controller._LocalRuntime]:
         model_path.unlink()
         provider_path.unlink()
         yield runtime
@@ -235,7 +235,7 @@ def test_native_factory_preserves_word_chunk_defaults(tmp_path: Path, monkeypatc
     )
     from contextlib import nullcontext
 
-    monkeypatch.setattr(_runtime, "singleton_runtime", lambda _device: nullcontext(runtime))
+    monkeypatch.setattr(_runtime, "singleton_runtime", lambda _device, _dtype: nullcontext(runtime))
     provider = ModelProvider(name="custom", endpoint="https://example.test/v1", api_key="CUSTOM_KEY")
     source = json.dumps({"model_configs": [{"alias": "custom-llm", "model": "test/llm", "provider": "custom"}]})
     run_config = anonymizer.RunConfig(buffer_size=123)
@@ -297,7 +297,7 @@ def test_session_cleans_up_when_client_construction_fails(monkeypatch: pytest.Mo
     process.poll.return_value = None
     candidate = controller._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
 
-    def start(_: str) -> controller._LocalRuntime:
+    def start(_: str, __: str = "auto") -> controller._LocalRuntime:
         controller._set_token_environment("token")
         return candidate
 
@@ -320,3 +320,26 @@ def test_notebook_factory_remains_a_native_singleton_wrapper() -> None:
     with patch.object(_runtime, "create_public_anonymizer", return_value=Mock()) as factory:
         _runtime.create_anonymizer(gliner_device="cpu")
     assert factory.call_args.kwargs["gliner"] == anonymizer.NativeGliner(device="cpu")
+
+
+def test_native_dtype_reaches_the_runtime_for_both_construction_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    from contextlib import nullcontext
+
+    from anonymizer.engine.local_inference import runtime as _runtime
+
+    runtime = _runtime._LocalRuntime(Mock(), "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
+    requests: list[tuple[str, str]] = []
+
+    def acquire(device: str, dtype: str) -> object:
+        requests.append((device, dtype))
+        return nullcontext(runtime)
+
+    monkeypatch.setattr(_runtime, "singleton_runtime", acquire)
+    monkeypatch.setattr(_runtime, "runtime_context", acquire)
+    assert anonymizer.NativeGliner().dtype == "auto"
+    anonymizer.create_anonymizer(gliner=anonymizer.NativeGliner(device="cpu", dtype="bfloat16"))
+    with anonymizer.native_runtime(device="cpu", dtype="bfloat16"):
+        pass
+    with anonymizer.native_runtime():
+        pass
+    assert requests == [("cpu", "bfloat16"), ("cpu", "bfloat16"), ("auto", "auto")]

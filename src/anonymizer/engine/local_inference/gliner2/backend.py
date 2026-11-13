@@ -108,15 +108,19 @@ def resolve_device(requested: str) -> Device:
     return device
 
 
-def resolve_dtype(requested: str, device: Device) -> Dtype:
-    """Resolve the inference precision: bfloat16 on CUDA, float32 elsewhere."""
+def resolve_dtype(requested: str) -> Dtype:
+    """Resolve the inference precision: float32 unless bfloat16 is requested explicitly.
+
+    bfloat16 raises batch throughput but shifts scores enough to drop borderline entities at the default
+    threshold, so it is opt-in on every device.
+    """
     normalized = requested.strip().lower()
     normalized = _DTYPE_ALIASES.get(normalized, normalized)
     if normalized not in SUPPORTED_DTYPES:
         raise ValueError(f"Unsupported GLiNER2 dtype {requested!r}; expected one of {SUPPORTED_DTYPES!r}.")
     dtype = cast(DtypeRequest, normalized)
     if dtype == "auto":
-        return "bfloat16" if device == "cuda" else "float32"
+        return "float32"
     return dtype
 
 
@@ -142,7 +146,7 @@ def load_model(device: Device, *, dtype: str = "auto", attention: str = "auto") 
     """
     from huggingface_hub import snapshot_download
 
-    resolved_dtype = resolve_dtype(dtype, device)
+    resolved_dtype = resolve_dtype(dtype)
     resolved_attention, explicit_attention = resolve_attention(attention, device)
     snapshot = Path(snapshot_download(repo_id=MODEL_ID, revision=MODEL_REVISION))
     model = _load_weights(snapshot, device, resolved_dtype)
