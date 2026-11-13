@@ -68,10 +68,10 @@ def program() -> list[dict[str, str]]:
 
     # E22.5 a Replace row with a span the map does not cover fails replacements_applied.
     entities = {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
-    lowered = _lower(
+    graph5 = _lower(
         pd.DataFrame({COL_TEXT: ["Alice met Bob"], COL_FINAL_ENTITIES: [entities]}), COL_TEXT, COL_FINAL_ENTITIES
     )
-    graph5, r5 = _protect_rows(lowered, "replace", lambda i, rows: {}, False)
+    r5 = _protect_rows(graph5, "replace", lambda i, rows: {}, False)
     o5 = r5.outcome(graph5.targets[0])
     want5 = (Reason("failed", "replacements_applied", "verify-patches"),)
     c.check("E22.5", o5.qualification == "not_met" and o5.reasons == want5, f"reasons={o5.reasons}")

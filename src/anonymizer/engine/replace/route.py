@@ -66,7 +66,7 @@ from anonymizer.engine.replace.strategies import (
     apply_replacements_to_spans,
 )
 from anonymizer.engine.row_partitioning import resolve_source_positions
-from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
 from anonymizer.logging import ProgressTracker
 from anonymizer.measurement import record_stage
 
@@ -91,8 +91,8 @@ def run_local_route(
         tracker.record_success()
         return _build_local_replacement_map(entities=entities, strategy=strategy)
 
-    lowered = _lower(output_df, text_column, entities_column)
-    graph, result = _protect_rows(lowered, type(strategy).__name__.lower(), build_map, isinstance(strategy, Annotate))
+    graph = _lower(output_df, text_column, entities_column)
+    result = _protect_rows(graph, type(strategy).__name__.lower(), build_map, isinstance(strategy, Annotate))
     output_df[COL_REPLACEMENT_MAP] = [result.value(d, "replacement_map") for d in graph.targets]
     _log_stats(output_df[COL_REPLACEMENT_MAP])
     output_df[COL_REPLACED_TEXT] = [result.value(d) for d in graph.targets]
@@ -113,7 +113,8 @@ def run_substitute_route(
     map_step = _substitute_map_step(
         llm_workflow, replace_method, map_arguments, failures, lambda target: (dataframe, target)
     )
-    graph, result = _protect_rows(_lower(dataframe, COL_TEXT, COL_FINAL_ENTITIES), "substitute", None, False, map_step)
+    graph = _lower(dataframe, COL_TEXT, COL_FINAL_ENTITIES)
+    result = _protect_rows(graph, "substitute", None, False, map_step)
     kept = [position for position, target in enumerate(graph.targets) if result.outcome(target).available]
     output_df = dataframe.iloc[kept].reset_index(drop=True)
     targets = [graph.targets[position] for position in kept]
@@ -203,8 +204,8 @@ def run_replace_pipeline(
             return _build_local_replacement_map(entities=entities, strategy=replace_method)
 
     started = time.perf_counter()
-    _, result = _protect_rows(
-        (graph, state.rows),
+    result = _protect_rows(
+        graph,
         type(replace_method).__name__.lower(),
         build_map,
         isinstance(replace_method, Annotate),
@@ -249,51 +250,56 @@ def run_replace_pipeline(
     return ReplacementResult(output_df, failures, detected[0], elapsed[0], outcomes)
 
 
-def _lower(
-    dataframe: pd.DataFrame, text_column: str, entities_column: str
-) -> tuple[ProtectionGraph, dict[Datum, EntitiesSchema]]:
+def _lower(dataframe: pd.DataFrame, text_column: str, entities_column: str) -> ProtectionGraph:
     """One target per row (``str(text)``, as 0.4.0) with its accepted entity spans as mentions."""
     n = len(dataframe)
     texts = dataframe[text_column] if text_column in dataframe.columns else repeat("", n)
     raw_entities = dataframe[entities_column] if entities_column in dataframe.columns else repeat({}, n)
     scope = GraphScope()
-    rows: dict[Datum, EntitiesSchema] = {}
+    targets: list[Datum] = []
     mentions: list[Mention] = []
     for text, raw in zip(texts, raw_entities):
-        datum = scope.datum(str(text))
-        rows[datum] = entities = EntitiesSchema.from_raw(raw, strict=True)
-        mentions.extend(accepted_mentions(datum, entities))
-    return ProtectionGraph(scope, tuple(rows), tuple(mentions)), rows
+        targets.append(datum := scope.datum(str(text)))
+        mentions.extend(accepted_mentions(datum, EntitiesSchema.from_raw(raw, strict=True)))
+    return ProtectionGraph(scope, tuple(targets), tuple(mentions))
 
 
 def _protect_rows(
-    lowered: tuple[ProtectionGraph, dict[Datum, EntitiesSchema]],
+    graph: ProtectionGraph,
     name: str,
     build_map: Callable[[int, EntitiesSchema], dict[str, Any]] | None,
     annotate: bool,
     map_step: Operation | None = None,
     detect_op: Operation | None = None,
-) -> tuple[ProtectionGraph, ProtectionResult]:
+) -> ProtectionResult:
     """Run ``replace`` then the patch verifier over every lowered row.
 
-    Each row's map comes from ``map_step``'s ``replacement_map`` port when there is one, else from ``build_map``;
-    ``detect_op``, when given, runs first and supplies the mentions and row entities the graph does not declare.
+    ``replace`` applies the row's accepted ``mentions``. Each row's map comes from ``map_step``'s
+    ``replacement_map`` port when there is one, else from ``build_map`` over those mentions; ``detect_op``, when
+    given, runs first and supplies the mentions the graph does not declare.
     """
-    graph, rows = lowered
     positions = {target: position for position, target in enumerate(graph.targets)}
 
-    def replace(text: str, target: Datum, replacement_map: dict[str, Any] | None = None) -> dict[str, Any]:
+    def replace(
+        text: str, target: Datum, mentions: tuple[Mention, ...], replacement_map: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        entities = EntitiesSchema(
+            entities=[
+                EntitySchema(value=m.text or "", label=m.label, start_position=m.start, end_position=m.end)
+                for m in mentions
+            ]
+        )
         if map_step is None:
             assert build_map is not None, "a workflow without a map step needs build_map"
-            rmap = build_map(positions[target], rows[target])
+            rmap = build_map(positions[target], entities)
         else:
             rmap = replacement_map
         replaced, application = apply_replacements_to_spans(
-            text=text, entities=rows[target], replacements=_parse_replacements(rmap), allow_value_fallback=True
+            text=text, entities=entities, replacements=_parse_replacements(rmap), allow_value_fallback=True
         )
         return {"text": replaced, "replacement_map": rmap, "application": application.to_metrics()}
 
-    replace_inputs = {"text": TEXT, "target": DATUM}
+    replace_inputs = {"text": TEXT, "target": DATUM, "mentions": MENTIONS}
     if map_step is not None:
         replace_inputs["replacement_map"] = REPLACEMENT_MAP
     operations = (
@@ -327,7 +333,7 @@ def _protect_rows(
         max_mentions=sum(len(d.text) for d in graph.targets),
         max_context_items=0,
     )
-    return graph, _run(graph, workflow, limits)
+    return _run(graph, workflow, limits)
 
 
 def _run(graph: ProtectionGraph, workflow: Workflow, limits: Limits) -> ProtectionResult:

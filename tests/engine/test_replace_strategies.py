@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from unittest.mock import Mock, patch
 
 import pandas as pd
@@ -14,6 +15,7 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
 )
 from anonymizer.engine.detection.postprocess import EntitySpan
+from anonymizer.engine.replace import route
 from anonymizer.engine.replace.strategies import (
     ReplacementEntry,
     apply_entity_spans,
@@ -47,6 +49,29 @@ def test_apply_local_replace_strategy_records_progress_for_each_entity_value() -
     assert tracker.log_final.call_count == 1
     assert result[COL_REPLACED_TEXT].tolist() == ["***", "No PII"]
     assert result[COL_REPLACEMENT_MAP].iloc[0]["replacements"][0]["synthetic"] == "***"
+
+
+@pytest.mark.parametrize("narrowed", [False, True])
+def test_replace_applies_only_the_accepted_mentions(narrowed: bool) -> None:
+    """``replace`` applies the mentions the graph accepted, not every entity in the row's payload."""
+    entities = [
+        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+        {"value": "Bob", "label": "first_name", "start_position": 10, "end_position": 13},
+    ]
+    dataframe = pd.DataFrame({"source": ["Alice met Bob."], "detected": [{"entities": entities}]})
+    real_prepare = route.prepare
+
+    def accept_first(graph, workflow, **kwargs):
+        if narrowed:
+            graph = dataclasses.replace(graph, mentions=graph.mentions[:1])
+        return real_prepare(graph, workflow, **kwargs)
+
+    with patch.object(route, "prepare", accept_first):
+        result = apply_local_replace_strategy(
+            dataframe, strategy=Redact(format_template="***"), text_column="source", entities_column="detected"
+        )
+
+    assert result[COL_REPLACED_TEXT].tolist() == ["*** met Bob." if narrowed else "*** met ***."]
 
 
 @pytest.mark.parametrize("fallback", [False, True])
