@@ -593,7 +593,7 @@ def test_detection_prompt_builders_substitute_placeholders_and_summary(
 
     if not data_summary:
         assert "data summary" not in validation.lower()
-        assert "Data summary: Not provided" in augment
+        assert "data summary" not in augment.lower()
         assert "Focus on:" in augment
 
 
@@ -633,6 +633,38 @@ def test_validation_prompt_example_matches_conflict_skeleton_and_excerpt_offsets
     assert output[3]["decision"] == "reclass"
     assert output[3]["proposed_label"] == "city"
     assert output[4]["decision"] == "drop"
+
+
+def test_validation_prompt_keeps_contextual_partial_dates() -> None:
+    prompt = _get_validation_prompt(data_summary=None, labels=["date"])
+
+    assert "DATE RULE:" in prompt
+    assert "a day, month, and year are NOT all required" in prompt
+    assert '"The appointment is in March"' in prompt
+    assert '"She joined in 2024"' in prompt
+    assert '"We met in March 2024"' in prompt
+    assert '"The appointment is on the 15th"' in prompt
+    assert "Standalone numbers without date context are not dates" in prompt
+    assert '"March forward"' in prompt
+    assert '"2024 items"' in prompt
+    assert 'Vague time references (e.g., "today", "now", "soon")' in prompt
+    assert "Generic time references that are not specific dates" not in prompt
+    assert set(ENTITY_LABEL_EXAMPLES["date"]) >= {"March", "2024", "March 2024", "the 15th"}
+    assert f"- date: {', '.join(ENTITY_LABEL_EXAMPLES['date'])}" in prompt
+
+
+@pytest.mark.parametrize("strict_labels", [False, True])
+def test_augment_prompt_uses_same_partial_date_policy(strict_labels: bool) -> None:
+    prompt = _get_augment_prompt(data_summary=None, labels=["date"], strict_labels=strict_labels)
+
+    assert "date includes complete and partial calendar dates" in prompt
+    assert "a day, month, and year are NOT all required" in prompt
+    for example in ("in March", "in 2024", "in March 2024", "on the 15th"):
+        assert f'"{example}"' in prompt
+    assert "Standalone numbers without date context" in prompt
+    assert '"March forward"' in prompt
+    assert '"2024 items"' in prompt
+    assert 'vague time words such as "today", "now", and "soon" are not dates' in prompt
 
 
 def test_validation_prompt_adds_configured_examples_to_full_label_config() -> None:
@@ -677,8 +709,9 @@ def test_augment_prompt_strict_when_explicit_labels_provided() -> None:
     assert "Do not create new labels" in prompt
     assert "Strongly prefer" not in prompt
     assert "create a concise snake_case label" not in prompt
-    assert "employment_status is NOT in the allowed list" in prompt
-    assert "employment_status" not in prompt.split("Output:")[1]
+    assert "employment_status" not in prompt
+    assert "first_name" not in prompt.split("Output:")[1]
+    assert "nothing is returned" in prompt
 
 
 @pytest.mark.parametrize("strict_labels", [False, True])
