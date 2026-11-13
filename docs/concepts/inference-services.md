@@ -24,24 +24,24 @@ Eleven profiles ship in `tools/inference_service_profiles/`:
 
 | Profile | Port | Endpoint model name | Role and hardware guidance |
 | --- | --- | --- | --- |
-| `gliner2-native.toml` | 8001 | `fastino/gliner2-privacy-filter-PII-multi` | Multilingual PII detector served by Anonymizer's native GLiNER2 server |
 | `vllm-local-test.toml` | 8000 | `anonymizer-local` | TinyLlama lifecycle smoke test |
+| `gliner2-native.toml` | 8001 | `fastino/gliner2-privacy-filter-PII-multi` | Multilingual PII detector served by Anonymizer's native GLiNER2 server |
 | `gemma-4-12b-it.toml` | 8010 | `gemma-4-12b-it` | Instruction-tuned Gemma 4 generation; requires an NVIDIA GPU with at least 40 GB of memory |
+| `gemma-4-26b-a4b-it.toml` | 8011 | `gemma-4-26b-a4b-it` | Gemma 4 26B-A4B MoE generation, text only, 48K context; one 80 GB GPU |
 | `gpt-oss-20b.toml` | 8012 | `gpt-oss-20b` | Compact GPT-OSS generation |
 | `gpt-oss-120b.toml` | 8013 | `gpt-oss-120b` | GPT-OSS generation on a dedicated 80 GB GPU |
-| `qwen3-30b-a3b-instruct.toml` | 8017 | `qwen3-30b-a3b-instruct` | Multilingual generation |
 | `nemotron-3.5-lightning.toml` | 8014 | `nemotron-3.5-lightning` | High-throughput generation on an 80 GB GPU |
 | `nemotron-3.5-lightning-nvfp4.toml` | 8015 | `nemotron-3.5-lightning-nvfp4` | Official NVFP4 checkpoint with a conservative single-H100 configuration |
-| `gemma-4-26b-a4b-it.toml` | 8011 | `gemma-4-26b-a4b-it` | Gemma 4 26B-A4B MoE generation, text only, 48K context; one 80 GB GPU |
-| `qwen3.8-27b.toml` | 8018 | `qwen3.8-27b` | Qwen3.8 27B generation, text only, 32K context; one 80 GB GPU |
 | `nemotron-3.5-super-vl.toml` | 8016 | `nemotron-3.5-super-vl` | Nemotron 3.5 Super VL 120B-A12B (BF16), text only, 48K context; four 80 GB GPUs with tensor parallelism and `trust-remote-code` |
+| `qwen3-30b-a3b-instruct.toml` | 8017 | `qwen3-30b-a3b-instruct` | Multilingual generation |
+| `qwen3.8-27b.toml` | 8018 | `qwen3.8-27b` | Qwen3.8 27B generation, text only, 32K context; one 80 GB GPU |
 
 Each generation profile pins its Hugging Face revision and runs stock vLLM.
 The detector profile starts from the main project environment
 (`.venv/bin/python -m anonymizer.engine.local_inference.serve`), which runs
 Anonymizer's native GLiNER2 server from a cached, dependency-isolated
 environment; the server pins the GLiNER2 checkpoint and revision itself.
-`validate` builds or reuses that environment (a one-time `pip` install), so run
+`validate` builds or reuses that environment (a one-time install with pip, or `uv pip` when pip is absent), so run
 it before the first `launch`.
 
 The generation profiles select vLLM reasoning parsers through
@@ -76,8 +76,8 @@ checkpoint. vLLM detects its ModelOpt quantization from the checkpoint, so the
 profile does not request online quantization.
 
 GPU memory also depends on the architecture, context length, concurrency, and
-other processes. Lower `max_model_len`, `max_num_seqs`, or
-`gpu_memory_utilization` when vLLM cannot reserve its KV cache. Do not co-host
+other processes. Lower `max-model-len`, `max-num-seqs`, or
+`gpu-memory-utilization` when vLLM cannot reserve its KV cache. Do not co-host
 the GPT-OSS 120B profile with another model on an 80 GB GPU.
 
 ## Understand the lifecycle
@@ -98,7 +98,7 @@ plan: it does not authenticate the plan's author or sign the plan.
 
 `validate` checks the serving environment without starting a server. For vLLM
 it runs vLLM's own argument parser and pre-load checks in the serving
-interpreter; for GLiNER2 it imports the native server there. It does not
+interpreter; for GLiNER2 it builds or reuses the isolated server environment without importing the model stack. It does not
 establish model or hardware compatibility; startup and task probes provide
 additional checks.
 
@@ -131,14 +131,13 @@ pinned vLLM defaults. Names must be lowercase kebab-case, and empty lists are
 rejected.
 
 The tool derives `model`, `revision`, `tokenizer-revision`,
-`served-model-name`, `host`, `port`, `uds`, `middleware`, and the LoRA options
+`served-model-name`, `host`, `port`, `uds`, `config`, `middleware`, and the LoRA options
 from the rest of the profile, so `[backend.options]` cannot set them. Supply the
 endpoint bearer token through the environment variable named by `api_key_env`;
 the launcher passes it to the child as `VLLM_API_KEY` or
 `ANONYMIZER_LOCAL_GLINER2_TOKEN`. Use `HF_TOKEN` for Hugging Face access.
 Literal `api-key` and `hf-token` options are rejected so credentials do not
-enter plans or process arguments. Recompile saved plans after migrating a
-profile to v3.
+enter plans or process arguments.
 
 ## Deploy on the GPU host
 
@@ -156,15 +155,15 @@ The serving project's lockfile pins vLLM 0.33.0 and the CUDA compiler wheels
 that FlashInfer uses to JIT-compile kernels (sampling for GPT-OSS, Mamba for
 Nemotron). Its environment does
 not install Anonymizer or DataDesigner. Install Anonymizer separately for client
-code; the native notebook runtime continues to use the notebook extra.
+code; the native notebook runtime uses the notebook extra.
 
 vLLM profiles default to `tools/inference-service-runtime/.venv/bin/python`
 and the GLiNER2 profile to the root `.venv/bin/python`. You can run the
 controller from either environment; it starts the serving interpreter directly.
-To use another serving environment, set `python_executable` in your profile. Recompile existing plans after migrating
-from the root `local-models` group. The launcher clears inherited `PYTHONHOME`,
-`PYTHONPATH`, and `VIRTUAL_ENV` before starting the child; GPU, Hugging Face, and
-other runtime settings remain inherited. Avoid setting `UV_PROJECT_ENVIRONMENT`
+To use another serving environment, set `python_executable` in your profile. The launcher clears inherited `PYTHONHOME`,
+`PYTHONPATH`, and `VIRTUAL_ENV` before starting the child, and removes variables
+ending in `_API_KEY`, `_ACCESS_TOKEN`, `_AUTH_TOKEN`, `_PASSWORD`, or `_SECRET`; GPU,
+Hugging Face, and other runtime settings remain inherited. Avoid setting `UV_PROJECT_ENVIRONMENT`
 to the root `.venv` when syncing the serving project.
 
 ### Compile and launch
@@ -272,7 +271,7 @@ docker build \
   .
 ```
 
-The build uses the repository lockfile. It downloads several large GPU wheels,
+The build uses the serving project's lockfile (`tools/inference-service-runtime/uv.lock`). It downloads several large GPU wheels,
 so allow enough disk space for the image and model cache.
 
 ### Start the deployment container

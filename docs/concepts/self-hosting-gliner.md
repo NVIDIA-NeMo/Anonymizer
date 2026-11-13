@@ -12,7 +12,7 @@ bundled model and provider files.
 
 Anonymizer does not perform a separate model-discovery probe for externally managed providers. The
 configured service is responsible for serving the requested detector model; connection and response
-errors surface through the normal Data Designer model request. The notebook-managed runtime is
+errors surface through the normal Data Designer model request. The library-managed native runtime is
 different: its owner uses authenticated `GET /v1/models` readiness checks to verify the exact model
 ID and pinned revision before returning an `Anonymizer`.
 
@@ -69,7 +69,7 @@ The response must use the chat-completion shape. `message.content` is a JSON str
 ```
 
 On Linux/NVIDIA GPU hosts, the managed tool described in
-[Run local inference services](inference-services.md) launches this native server with launch
+[Deploy local models](inference-services.md) launches this native server with launch
 receipts, ownership checks, and bounded cleanup. Other production deployments should provide the
 chat-completion contract through a separately managed, authenticated service and configure its
 provider endpoint in `providers.yaml`.
@@ -91,13 +91,13 @@ with native_runtime(device="auto") as session:
 ```
 
 `device="auto"` selects CUDA, MPS, or CPU. You can also pass `"cuda"`, `"mps"`, or `"cpu"`.
-Use the client while the context is open; a client backed by a context-owned process is no longer valid after it closes. `session.endpoint` exposes the `GlinerEndpoint` connection. Nested contexts share the runtime until the last context exits. A context can borrow an existing singleton on the same device without stopping it on exit. A device mismatch raises an error, and explicit shutdown is unavailable while a context is active.
+Use the client while the context is open; a client backed by a context-owned process is no longer valid after it closes. `session.endpoint` exposes the `GlinerEndpoint` connection. Nested contexts share the runtime until the last context exits. A context can borrow an existing singleton without stopping it on exit when its device, dtype, and attention all match; any mismatch raises an error, and explicit shutdown is unavailable while a context is active.
 
 If the process exits while a context is active, close the active contexts before
 acquiring a new runtime. Further acquisitions fail instead of silently replacing
 the endpoint used by existing sessions.
 
-For compatibility, `create_anonymizer(gliner=NativeGliner(device="auto"))` retains the process-global singleton behavior and stops it at interpreter exit.
+`create_anonymizer(gliner=NativeGliner(...))` uses a process-global singleton that stops at interpreter exit.
 
 ## Notebook Compatibility Wrapper
 
@@ -127,8 +127,8 @@ The notebook helper wraps `create_anonymizer(gliner=NativeGliner(...))` and pres
 
 The isolated server environment is necessary because GLiNER2's local inference stack and the
 current Data Designer release require incompatible `huggingface-hub` major versions. The helper hides
-that packaging detail from the notebook kernel. The revision pin applies only to this packaged
-notebook runtime. Production services control and pin their own model artifact independently.
+that packaging detail from the notebook kernel. The revision pin applies to the native server (the notebook helper, `native_runtime`, and the
+`gliner2-native` profile). Production services control and pin their own model artifact independently.
 
 The server reads these environment variables at startup:
 
@@ -174,7 +174,7 @@ runtime. The most recent request wins.
 
 ## Running the development server directly
 
-A compatibility entry point remains available from a source checkout:
+A development entry point is available from a source checkout:
 
 ```bash
 uv sync --extra notebooks

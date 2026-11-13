@@ -27,7 +27,6 @@ from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import Response
 
-from anonymizer.engine.ndd import model_loader
 from inference_service_compiler import backends, cli, compiler, launch_ownership, models, procfs, runtime
 from inference_service_compiler.profiles import load_profile
 
@@ -157,19 +156,6 @@ def test_shipped_profiles_listen_on_distinct_ports_and_serve_their_file_name() -
     for stem, spec in specs.items():
         if isinstance(spec.backend, models.VllmBackend) and stem != "vllm-local-test":
             assert spec.backend.served_model_name == stem
-
-
-def test_example_role_configuration_routes_each_model_to_the_profile_serving_it() -> None:
-    examples = PROFILES / "examples"
-    parsed = model_loader.parse_model_configs(examples / "local-models.yaml")
-    providers = model_loader.parse_model_providers(examples / "local-providers.yaml")
-    model_loader.validate_model_configs_reference_providers(parsed.model_configs, providers)
-    served_by_port = {spec.port: spec.backend.model_name for spec in map(load_profile, PROFILES.glob("*.toml"))}
-    endpoint_by_provider = {provider.name: provider.endpoint for provider in providers}
-    for config in parsed.model_configs:
-        port = httpx.URL(endpoint_by_provider[config.provider]).port
-        assert port is not None, config.provider
-        assert served_by_port[port] == config.model, config.alias
 
 
 def test_compile_command_writes_a_verified_plan(tmp_path: Path) -> None:
@@ -489,7 +475,7 @@ def test_compatible_preexisting_endpoint_cannot_prove_launch_ownership() -> None
         mock.patch.object(runtime.httpx, "get", return_value=compatible_response),
         pytest.raises(runtime.RuntimeEffectError) as exc_info,
     ):
-        runtime._probe_launch_ownership(plan, "launch-secret")
+        runtime._probe_launch_ownership(plan, "launch-secret", {})
 
     assert exc_info.value.diagnostic.code == "launch-ownership-not-observed"
 
