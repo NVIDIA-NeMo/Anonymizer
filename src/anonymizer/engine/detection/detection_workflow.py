@@ -693,7 +693,7 @@ What to DROP:
   Note: Most cities/companies ARE quasi-identifiers and should be KEPT (Portland, London, Brasilia, etc.)
 - Placeholders or label names (e.g., "name", "email", "date")
 - Syntax/metadata in structured formats (field names, column headers, keywords)
-- Generic time references that are not specific dates (e.g., "today", "now", "soon")
+- Vague time references (e.g., "today", "now", "soon")
 - Kinship and family-role terms used as relationship descriptors are not quasi-identifiers.
 - Filenames that are system executables or binaries (e.g., ending in .exe, .dll, .sys).
 - If a single abbreviated letter (e.g. "A.") is tagged as a first_name but is not followed by a last_name, drop it.
@@ -729,6 +729,12 @@ AGE RULE:
 - Patterns like "X years", "X months", or "X days" describing how long something happened indicate duration, not age.
 - If the number refers to time, duration, counts, prices, measurements, codes, or dates — it is NOT age.
 - If unclear, drop the tag.
+
+DATE RULE:
+- Keep complete and partial calendar dates under "date"; a day, month, and year are NOT all required.
+- Keep named months, calendar years, and month/year combinations when context establishes calendar meaning: "March" in "The appointment is in March", "2024" in "She joined in 2024", and "March 2024" in "We met in March 2024".
+- Keep a day of the month only with clear date context: "the 15th" in "The appointment is on the 15th". Standalone numbers without date context are not dates.
+- Do not treat "March" in "March forward", a quantity such as "2024 items", or vague time words such as "today", "now", and "soon" as dates.
 
 
 Additional rules:
@@ -864,6 +870,9 @@ _AUGMENT_EXAMPLE_ENTITIES: tuple[dict[str, str], ...] = (
 
 # Label-specific guidance, rendered only when the label is active.
 _AUGMENT_LABEL_RULES: dict[str, tuple[str, ...]] = {
+    "date": (
+        '- date includes complete and partial calendar dates; a day, month, and year are NOT all required. Include named months, calendar years, month/year combinations, and days of the month when context establishes calendar meaning (e.g., "in March", "in 2024", "in March 2024", "on the 15th"). Standalone numbers without date context, "March forward", "2024 items", and vague time words such as "today", "now", and "soon" are not dates.',
+    ),
     "unique_id": (
         '- unique_id rules: unique_id\'s are never only one character long (ex: "6" is not a unique_id). '
         'They are never event names or real words all strung together (ex: "ProcessManagementEvent" is NOT a unique_id).',
