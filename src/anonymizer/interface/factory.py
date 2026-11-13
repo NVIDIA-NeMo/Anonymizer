@@ -5,26 +5,34 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from data_designer.config.models import ModelProvider
+from data_designer.config.models import ChatCompletionInferenceParams, ModelConfig, ModelProvider
 from pydantic import BaseModel, ConfigDict, Field
 
-from anonymizer.engine.local_inference.gliner2.contract import DeviceRequest, DtypeRequest
+from anonymizer.engine.local_inference.gliner2.contract import (
+    DEFAULT_CHUNK_LENGTH,
+    DEFAULT_OVERLAP,
+    DeviceRequest,
+    DtypeRequest,
+)
 from anonymizer.engine.ndd.model_loader import parse_model_configs, parse_model_providers
 
 if TYPE_CHECKING:
     from data_designer.config.run_config import RunConfig
 
+    from anonymizer.engine.local_inference.runtime import _LocalRuntime
     from anonymizer.engine.ndd.model_loader import ParsedModelConfigs
     from anonymizer.interface.anonymizer import Anonymizer
 
 GLINER_MODEL_ALIAS = "anonymizer-gliner-detector"
 GLINER_PROVIDER_NAME = "anonymizer-gliner-endpoint"
+# Word windowing the native server applies to every detection request this client sends.
+NATIVE_DETECTION_DEFAULTS = {"chunk_length": DEFAULT_CHUNK_LENGTH, "overlap": DEFAULT_OVERLAP}
 
 
 class NativeGliner(BaseModel):
@@ -44,6 +52,14 @@ class GlinerEndpoint(BaseModel):
     url: str = Field(min_length=1)
     model: str = Field(min_length=1)
     api_key_env: str | None = Field(min_length=1)
+
+    @classmethod
+    def for_native(cls, runtime: _LocalRuntime) -> GlinerEndpoint:
+        """The endpoint of a library-managed native runtime."""
+        from anonymizer.engine.local_inference.gliner2 import MODEL_ID
+        from anonymizer.engine.local_inference.runtime import LOCAL_TOKEN_ENV
+
+        return cls(url=runtime.endpoint, model=MODEL_ID, api_key_env=LOCAL_TOKEN_ENV)
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,28 +86,28 @@ def create_anonymizer(
     if not isinstance(gliner, (NativeGliner, GlinerEndpoint)):
         raise TypeError("gliner must be NativeGliner or GlinerEndpoint")
     parsed, providers = _parse_gliner_model_inputs(model_configs=model_configs, model_providers=model_providers)
-    if isinstance(gliner, NativeGliner):
-        from anonymizer.engine.local_inference.gliner2 import MODEL_ID
-        from anonymizer.engine.local_inference.gliner2.contract import DEFAULT_CHUNK_LENGTH, DEFAULT_OVERLAP
-        from anonymizer.engine.local_inference.runtime import LOCAL_TOKEN_ENV, singleton_runtime
+    match gliner:
+        case NativeGliner():
+            from anonymizer.engine.local_inference.runtime import singleton_runtime
 
-        with singleton_runtime(gliner.device, gliner.dtype) as runtime:
+            with singleton_runtime(gliner.device, gliner.dtype) as runtime:
+                return _create_endpoint_anonymizer(
+                    endpoint=GlinerEndpoint.for_native(runtime),
+                    parsed=parsed,
+                    providers=providers,
+                    artifact_path=artifact_path,
+                    data_designer_run_config=data_designer_run_config,
+                    extra_body=NATIVE_DETECTION_DEFAULTS,
+                )
+        case GlinerEndpoint():
             return _create_endpoint_anonymizer(
-                endpoint=GlinerEndpoint(url=runtime.endpoint, model=MODEL_ID, api_key_env=LOCAL_TOKEN_ENV),
+                endpoint=gliner,
                 parsed=parsed,
                 providers=providers,
                 artifact_path=artifact_path,
                 data_designer_run_config=data_designer_run_config,
-                extra_body={"chunk_length": DEFAULT_CHUNK_LENGTH, "overlap": DEFAULT_OVERLAP},
+                extra_body=None,
             )
-    return _create_endpoint_anonymizer(
-        endpoint=gliner,
-        parsed=parsed,
-        providers=providers,
-        artifact_path=artifact_path,
-        data_designer_run_config=data_designer_run_config,
-        extra_body=None,
-    )
 
 
 def _create_endpoint_anonymizer(
@@ -101,7 +117,7 @@ def _create_endpoint_anonymizer(
     providers: list[ModelProvider],
     artifact_path: str | Path | None,
     data_designer_run_config: RunConfig | None,
-    extra_body: dict[str, int] | None,
+    extra_body: Mapping[str, int] | None,
 ) -> Anonymizer:
     configuration = _build_gliner_model_configuration(
         parsed=parsed,
@@ -134,12 +150,10 @@ class NativeRuntimeSession:
         data_designer_run_config: RunConfig | None = None,
     ) -> Anonymizer:
         """Construct a client connected to this session's endpoint."""
-        from anonymizer.engine.local_inference.gliner2.contract import DEFAULT_CHUNK_LENGTH, DEFAULT_OVERLAP
-
         parsed, providers = _parse_gliner_model_inputs(model_configs=model_configs, model_providers=model_providers)
         return _create_endpoint_anonymizer(
             endpoint=self.endpoint,
-            extra_body={"chunk_length": DEFAULT_CHUNK_LENGTH, "overlap": DEFAULT_OVERLAP},
+            extra_body=NATIVE_DETECTION_DEFAULTS,
             parsed=parsed,
             providers=providers,
             artifact_path=artifact_path,
@@ -154,14 +168,11 @@ def native_runtime(*, device: DeviceRequest = "auto", dtype: DtypeRequest = "aut
     An existing singleton is borrowed and remains running after exit. Nested
     contexts share the process; clients of an owned process expire on exit.
     """
-    from anonymizer.engine.local_inference.gliner2 import MODEL_ID
-    from anonymizer.engine.local_inference.runtime import LOCAL_TOKEN_ENV, runtime_context
+    from anonymizer.engine.local_inference.runtime import runtime_context
 
     request = NativeGliner(device=device, dtype=dtype)
     with runtime_context(request.device, request.dtype) as runtime:
-        yield NativeRuntimeSession(
-            endpoint=GlinerEndpoint(url=runtime.endpoint, model=MODEL_ID, api_key_env=LOCAL_TOKEN_ENV)
-        )
+        yield NativeRuntimeSession(endpoint=GlinerEndpoint.for_native(runtime))
 
 
 def _parse_gliner_model_inputs(
@@ -184,26 +195,33 @@ def _build_gliner_model_configuration(
     parsed: ParsedModelConfigs,
     providers: list[ModelProvider],
     endpoint: GlinerEndpoint,
-    extra_body: dict[str, int] | None = None,
+    extra_body: Mapping[str, int] | None = None,
 ) -> _AnonymizerModelConfiguration:
     """Inject one detector while preserving all unrelated caller configuration."""
-    model_entries = [config.model_dump(mode="json", exclude_none=True) for config in parsed.model_configs]
-    model_entries.append(
-        {
-            "alias": GLINER_MODEL_ALIAS,
-            "model": endpoint.model,
-            "provider": GLINER_PROVIDER_NAME,
-            "skip_health_check": True,
-            "inference_parameters": {
-                "max_parallel_requests": 8,
-                "timeout": 120,
-                **({"extra_body": extra_body} if extra_body is not None else {}),
-            },
+    detector = ModelConfig(
+        alias=GLINER_MODEL_ALIAS,
+        model=endpoint.model,
+        provider=GLINER_PROVIDER_NAME,
+        skip_health_check=True,
+        inference_parameters=ChatCompletionInferenceParams(
+            max_parallel_requests=8,
+            timeout=120,
+            extra_body=dict(extra_body) if extra_body is not None else None,
+        ),
+    )
+    selected = parsed.selected_models.model_copy(
+        update={
+            "detection": parsed.selected_models.detection.model_copy(update={"entity_detector": GLINER_MODEL_ALIAS})
         }
     )
-    selections = parsed.selected_models.model_dump(mode="json")
-    selections["detection"]["entity_detector"] = GLINER_MODEL_ALIAS
-    serialized = json.dumps({"model_configs": model_entries, "selected_models": selections})
+    serialized = json.dumps(
+        {
+            "model_configs": [
+                config.model_dump(mode="json", exclude_none=True) for config in [*parsed.model_configs, detector]
+            ],
+            "selected_models": selected.model_dump(mode="json"),
+        }
+    )
     detector_provider = ModelProvider(
         name=GLINER_PROVIDER_NAME,
         endpoint=endpoint.url,
