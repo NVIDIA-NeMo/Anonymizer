@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
+import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -28,9 +30,9 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
-    COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
+    COL_SENSITIVITY_DISPOSITION,
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
@@ -61,7 +63,7 @@ from anonymizer.engine.rewrite.domain_classification import DomainClassification
 from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
-from anonymizer.engine.rewrite.parsers import normalize_payload
+from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
 from anonymizer.engine.rewrite.rewrite_generation import (
@@ -276,15 +278,81 @@ def _rewrite_entry(row: dict[str, object]) -> dict[str, object] | RewriteUnavail
     text = row[COL_REWRITTEN_TEXT]
     if not isinstance(text, str):
         return RewriteUnavailable("the rewritten text is not a string")
-    ready = bool(row[COL_REWRITE_REPLACEMENT_READY]) if COL_REWRITE_REPLACEMENT_READY in row else True
     metrics = {
         "utility_score": row.get(COL_UTILITY_SCORE),
         "leakage_mass": row.get(COL_LEAKAGE_MASS),
         "any_high_leaked": row.get(COL_ANY_HIGH_LEAKED),
-        "replacement_ready": ready,
+        "replacements_applied": _no_original_value(text, row.get(COL_SENSITIVITY_DISPOSITION)),
         "weighted_leakage_rate": row.get(COL_WEIGHTED_LEAKAGE_RATE),
     }
     return {"text": text, "metrics": metrics}
+
+
+def _no_original_value(text: str, disposition: object) -> bool | None:
+    """Whether no value the policy replaces appears in ``text``; ``None`` when the disposition is unavailable.
+
+    The values are the non-latent disposition entries whose suggestion is ``replace``. Each is matched on its own by
+    ``_occurs``.
+    """
+    payload = normalize_payload(disposition)
+    if isinstance(payload, dict) and payload.get("sensitivity_disposition") == []:
+        return True  # no detected entities: nothing is replaced
+    try:
+        entries = parse_sensitivity_disposition(payload).sensitivity_disposition
+    except (ValueError, TypeError):
+        return None
+    values = [e.entity_value for e in entries if e.protection_method_suggestion == "replace" and e.source != "latent"]
+    plain = _normalized(text)
+    folded = plain.casefold()
+    return not any(_occurs(_normalized(value), plain, folded) for value in values)
+
+
+def _normalized(text: str) -> str:
+    """NFKD with combining marks dropped and whitespace collapsed."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return " ".join("".join(c for c in decomposed if unicodedata.category(c) != "Mn").split())
+
+
+# Scripts written without spaces between words: Han, Hiragana, Katakana, Thai, Lao, Khmer, Myanmar.
+_UNSPACED = (
+    (0x0E00, 0x0EFF),
+    (0x1000, 0x109F),
+    (0x1780, 0x17FF),
+    (0x19E0, 0x19FF),
+    (0x3040, 0x30FF),
+    (0x31F0, 0x31FF),
+    (0x3400, 0x4DBF),
+    (0x4E00, 0x9FFF),
+    (0xA9E0, 0xA9FF),
+    (0xAA60, 0xAA7F),
+    (0xF900, 0xFAFF),
+    (0x20000, 0x323AF),
+)
+
+
+def _unspaced(char: str) -> bool:
+    return any(low <= ord(char) <= high for low, high in _UNSPACED)
+
+
+def _short_code(value: str) -> bool:
+    """A value of at most three characters, all uppercase: matched with its case."""
+    return len(value) <= 3 and value.isupper()
+
+
+def _occurs(value: str, text: str, folded: str) -> bool:
+    """Whether ``value`` occurs in ``text`` (both ``_normalized``; ``folded`` is ``text`` casefolded).
+
+    Case-insensitive unless ``_short_code``. A value whose first and last characters are in ``_UNSPACED`` matches as a
+    substring when it has two or more characters, and never when it has one; any other value matches where no letter
+    or digit directly precedes or follows it.
+    """
+    if not value:
+        return False
+    if not _short_code(value):
+        value, text = value.casefold(), folded
+    if _unspaced(value[0]) and _unspaced(value[-1]):
+        return len(value) >= 2 and value in text
+    return re.search(r"(?<![^\W_])" + re.escape(value) + r"(?![^\W_])", text) is not None
 
 
 def _unavailable(value: Any) -> bool:
@@ -297,7 +365,7 @@ def _high_leak(metrics: dict[str, Any]) -> bool | None:
 
 
 def _replacements_applied(metrics: dict[str, Any]) -> bool | None:
-    value = metrics["replacement_ready"]
+    value = metrics["replacements_applied"]
     return None if _unavailable(value) else bool(value)
 
 
@@ -318,7 +386,8 @@ def _final_checks(evaluation: EvaluationCriteria) -> tuple[Operation, ...]:
     def verifier(check: str, predicate: Callable[[dict[str, Any]], bool | None]) -> Operation:
         def assess(text: str, metrics: dict[str, Any], target: Datum) -> Assessment:
             satisfied = predicate(metrics)
-            return Assessment(satisfied, target, "metric_unavailable" if satisfied is None else "")
+            missing = "replacement_policy_unavailable" if check == "replacements_applied" else "metric_unavailable"
+            return Assessment(satisfied, target, missing if satisfied is None else "")
 
         inputs = {"text": TEXT, "metrics": REWRITE_METRICS, "target": DATUM}
         return Operation.verifier(f"assess-{check}", assess, inputs, checks=(check,))
@@ -539,7 +608,13 @@ class RewriteWorkflow:
             entries = {state.owners[r[ROW_ORDER_COL]]: _rewrite_entry(r) for r in rows.frame.to_dict("records")}
             for order in passthrough_rows[ROW_ORDER_COL]:
                 owner = state.owners[order]
-                entries[owner] = _rewrite_entry({COL_REWRITTEN_TEXT: owner.text, **_PASSTHROUGH_DEFAULTS})
+                entries[owner] = _rewrite_entry(
+                    {
+                        COL_REWRITTEN_TEXT: owner.text,
+                        COL_SENSITIVITY_DISPOSITION: {"sensitivity_disposition": []},
+                        **_PASSTHROUGH_DEFAULTS,
+                    }
+                )
             return [entries.get(datum) for datum in target]
 
         result = _protect_rewrite(graph, rewrite, evaluation, detect_op)

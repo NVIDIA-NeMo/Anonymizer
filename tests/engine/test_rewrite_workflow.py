@@ -37,6 +37,7 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_REANSWER,
     COL_RAW_SENSITIVITY_DISPOSITION,
     COL_REPAIR_ITERATIONS,
+    COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
@@ -53,6 +54,7 @@ from anonymizer.engine.rewrite.rewrite_workflow import (
     RewriteWorkflow,
     _detection_valid_fraction,
     _join_new_columns,
+    _no_original_value,
 )
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import AnonymizerWorkflowError
@@ -97,6 +99,27 @@ def test_join_new_columns_preserves_surviving_target_order() -> None:
     assert result[RECORD_ID_COLUMN].tolist() == ["turn-2", "turn-1"]
     assert result["existing"].tolist() == [2, 1]
     assert result["new"].tolist() == [20, 10]
+
+
+def _disposition(*entries: tuple[str, str, str]) -> dict[str, Any]:
+    """A sensitivity disposition from ``(value, method, source)`` triples."""
+    return {
+        "sensitivity_disposition": [
+            {
+                "id": i,
+                "sensitivity": "high",
+                "protection_method_suggestion": method,
+                "source": source,
+                "category": "latent_identifier" if source == "latent" else "direct_identifier",
+                "entity_label": "label",
+                "entity_value": value,
+            }
+            for i, (value, method, source) in enumerate(entries, start=1)
+        ]
+    }
+
+
+_ALICE_POLICY = _disposition(("Alice", "replace", "tagged"))
 
 
 @pytest.fixture
@@ -176,6 +199,7 @@ def stub_pipeline_df(stub_pre_gen_df: pd.DataFrame) -> pd.DataFrame:
     """Result of the combined rewrite-pipeline adapter call."""
     df = stub_pre_gen_df.copy()
     df[COL_REWRITTEN_TEXT] = "Maria works"
+    df[COL_SENSITIVITY_DISPOSITION] = [_ALICE_POLICY]
     df[COL_REPAIR_ITERATIONS] = 0
     return df
 
@@ -695,8 +719,18 @@ class _ScriptedAdapter:
     Repair ``N`` returns ``"<record id> repaired N"`` so every iteration's output is distinct.
     """
 
-    def __init__(self, repairs_needed: dict[str, int]) -> None:
+    def __init__(
+        self,
+        repairs_needed: dict[str, int],
+        *,
+        initial: str = "{} initial",
+        repaired: str = "{} repaired {}",
+        policy: object = _ALICE_POLICY,
+        replacement_map: object = None,
+    ) -> None:
         self.repairs_needed = repairs_needed
+        self.initial, self.repaired, self.policy = initial, repaired, policy
+        self.replacement_map = replacement_map
         self.seeds: dict[str, pd.DataFrame] = {}
 
     def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **_: object) -> WorkflowRunResult:
@@ -705,7 +739,12 @@ class _ScriptedAdapter:
         record_ids = output[RECORD_ID_COLUMN].astype(str)
         iteration = int(workflow_name.rsplit("-", 1)[1]) if workflow_name[-1].isdigit() else 0
         if workflow_name == "rewrite-pipeline":
-            output[COL_REWRITTEN_TEXT] = [f"{record_id} initial" for record_id in record_ids]
+            output[COL_REWRITTEN_TEXT] = [self.initial.format(record_id) for record_id in record_ids]
+            output[COL_REWRITE_REPLACEMENT_READY] = True
+            # The map omits the policy's values unless a test supplies one: the final text decides regardless.
+            output[COL_REPLACEMENT_MAP_FOR_PROMPT] = [self.replacement_map for _ in record_ids]
+            if self.policy is not None:
+                output[COL_SENSITIVITY_DISPOSITION] = [self.policy for _ in record_ids]
             output[COL_PRIVACY_QA] = [dict(_PRIVACY_QA) for _ in record_ids]
         elif workflow_name.startswith("rewrite-evaluate-"):
             needs_repair = [iteration < self.repairs_needed[record_id] for record_id in record_ids]
@@ -717,7 +756,7 @@ class _ScriptedAdapter:
             output[COL_NEEDS_REPAIR] = needs_repair
         elif workflow_name.startswith("rewrite-repair-"):
             output[COL_LEAKED_PRIVACY_ITEMS] = f"leaked items {iteration}"
-            output[COL_REWRITTEN_TEXT_NEXT] = [f"{record_id} repaired {iteration}" for record_id in record_ids]
+            output[COL_REWRITTEN_TEXT_NEXT] = [self.repaired.format(record_id, iteration) for record_id in record_ids]
         return WorkflowRunResult(dataframe=output, failed_records=[])
 
     @property
@@ -935,6 +974,7 @@ def test_repair_loop_through_run_returns_each_rows_last_repair(
             COL_REWRITTEN_TEXT: ["twice-0", "exhausted-0"],
             COL_PRIVACY_QA: [dict(_PRIVACY_QA), dict(_PRIVACY_QA)],
             _REPAIRS_NEEDED: [2, 5],
+            COL_SENSITIVITY_DISPOSITION: [_ALICE_POLICY, _ALICE_POLICY],
         }
     )
 
@@ -1796,3 +1836,113 @@ def test_run_reports_each_rows_protection_outcome(tmp_path: Path) -> None:
 
     assert [result.outcome(row).qualification for row in range(2)] == ["met", "not_met"]
     assert [reason.check for reason in result.outcome(1).reasons] == ["leakage_within_threshold"]
+
+
+def _run_outcome(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
+    """Run one ``Alice`` row through ``Anonymizer.run()`` with ``adapter`` and return its outcome."""
+    entities = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{RECORD_ID_COLUMN: ["rec"], COL_ENTITIES_BY_VALUE: [entities]}),
+        failed_records=[],
+        source_positions=(0,),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(csv_path, index=False)
+    anonymizer = Anonymizer(detection_workflow=detector, rewrite_runner=RewriteWorkflow(adapter=Mock(wraps=adapter)))
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        mock_replace_cls.return_value.generate_map_only.side_effect = lambda frame, **_: Mock(
+            dataframe=frame, failed_records=[], source_positions=tuple(range(len(frame)))
+        )
+        result = anonymizer.run(
+            config=AnonymizerConfig(
+                rewrite=Rewrite(privacy_goal=_PRIVACY_GOAL, risk_tolerance="minimal", max_repair_iterations=1),
+                emit_telemetry=False,
+            ),
+            data=AnonymizerInput(source=str(csv_path), text_column="text"),
+        )
+    return result.outcome(0)
+
+
+@pytest.mark.parametrize(
+    ("adapter", "reasons"),
+    [
+        pytest.param(
+            _ScriptedAdapter({"rec": 0}, initial="ALICE  works there"),
+            [("failed", "replacements_applied", "")],
+            id="kept-by-generation",
+        ),
+        pytest.param(
+            _ScriptedAdapter({"rec": 1}, repaired="Alice is back ({})"),
+            [("failed", "replacements_applied", "")],
+            id="reintroduced-by-repair",
+        ),
+        pytest.param(
+            _ScriptedAdapter({"rec": 0}, policy=None),
+            [("could_not_assess", "replacements_applied", "replacement_policy_unavailable")],
+            id="policy-unavailable",
+        ),
+        pytest.param(_ScriptedAdapter({"rec": 0}), [], id="gone-without-map"),
+        pytest.param(
+            _ScriptedAdapter({"rec": 0}, initial="Alice stays", replacement_map={"replacements": []}),
+            [("failed", "replacements_applied", "")],
+            id="kept-with-empty-map",
+        ),
+    ],
+)
+def test_replacements_applied_assesses_the_final_text(
+    adapter: _ScriptedAdapter, reasons: list[tuple[str, str, str]], tmp_path: Path
+) -> None:
+    """The readiness flag is True and the map omits the value, yet the final text decides the check."""
+    outcome = _run_outcome(adapter, tmp_path)
+
+    assert outcome.qualification == ("not_met" if reasons else "met")
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == reasons
+
+
+@pytest.mark.parametrize(
+    ("text", "original", "expected"),
+    [
+        ("maria met alice", "Alice", False),
+        ("met  Alice\n Smith today", "Alice Smith", False),
+        ("Alicea and Malice", "Alice", True),
+        ("order #W1234567.", "#W1234567", False),
+        ("order X#W1234567", "#W1234567", True),
+        ("mail a.b@x.org!", "a.b@x.org", False),
+        ("mail aa.b@x.org", "a.b@x.org", True),
+        ("Jose called", "José", False),
+        ("from istanbul", "İstanbul", False),
+        ("Herr Muller", "Müller", False),
+        ("Herr Müller", "Muller", False),
+        ("sign in here", "IN", True),
+        ("sign IN here", "IN", False),
+        ("SIGNED BY ALICE", "Alice", False),
+        ("张伟在北京工作", "张伟", False),
+        ("王先生在北京", "王", True),
+        ("김철수씨가 왔다", "김철수", True),
+        ("김철수 씨가 왔다", "김철수", False),
+    ],
+)
+def test_no_original_value_matching(text: str, original: str, expected: bool) -> None:
+    policy = _disposition((original, "replace", "tagged"))
+    assert _no_original_value(text, policy) is expected
+
+
+def test_no_original_value_reads_the_policy_not_the_map() -> None:
+    """Values come from the policy's replace entries; kept values are not checked; no map is involved."""
+    policy = _disposition(("Bob", "replace", "tagged"), ("Acme", "generalize", "tagged"))
+    assert _no_original_value("Maria met Bob at Acme", policy) is False
+    assert _no_original_value("Maria met Ana at Acme", policy) is True
+
+
+def test_no_original_value_unavailable_policy() -> None:
+    assert _no_original_value("text", None) is None
+    assert _no_original_value("text", {"sensitivity_disposition": [{"entity_value": "x"}]}) is None
+    assert _no_original_value("text", ["not a dict"]) is None
+
+
+def test_no_original_value_skips_latent_entities() -> None:
+    """A latent value the policy replaces is not checked; an explicit one still is."""
+    latent = _disposition(("Maria", "replace", "tagged"), ("a company", "replace", "latent"))
+    assert _no_original_value("Ana works at a company", latent) is True
+    assert _no_original_value("Maria works at a company", latent) is False

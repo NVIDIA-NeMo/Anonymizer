@@ -37,6 +37,7 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
     COL_REWRITTEN_TEXT_NEXT,
+    COL_SENSITIVITY_DISPOSITION,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
@@ -375,6 +376,9 @@ def test_run_keeps_review_flag_for_unavailable_utility(
     output = dataframe.copy()
     output[COL_REWRITTEN_TEXT] = ["Maria works at a company", "Maria works at a firm"]
     output[COL_UTILITY_SCORE] = [np.nan, 0.9]
+    entry = {"id": 1, "sensitivity": "high", "protection_method_suggestion": "replace", "source": "tagged"}
+    entry |= {"category": "direct_identifier", "entity_label": "first_name", "entity_value": "Alice"}
+    output[COL_SENSITIVITY_DISPOSITION] = [{"sensitivity_disposition": [entry]}] * 2
     output[COL_LEAKAGE_MASS] = 0.1
     output[COL_WEIGHTED_LEAKAGE_RATE] = 0.05
     output[COL_ANY_HIGH_LEAKED] = False

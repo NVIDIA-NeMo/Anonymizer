@@ -62,6 +62,8 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_REANSWER,
     COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
+    COL_REPLACEMENT_MAP_FOR_PROMPT,
+    COL_REWRITE_DISPOSITION_BLOCK,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
@@ -81,6 +83,9 @@ from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelit
 from anonymizer.engine.graph_core import execution
 from anonymizer.engine.graph_core.observe import _ACTIVATION
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.rewrite.rewrite_generation import (
+    _filter_replacement_map_for_prompt,
+)
 from anonymizer.measurement import MeasurementCollector, measurement_session
 
 RECORDINGS = Path(__file__).parent / "recordings"
@@ -283,7 +288,12 @@ class Script:
         if workflow == "replace-map-generation":
             return {COL_REPLACEMENT_MAP: [_replacement_map(text, case.lexicon) for text in texts]}
         if workflow in ("rewrite-pipeline", "rewrite-combined"):
+            # The scripted disposition is empty, so the policy replaces nothing; the prompt map comes from the real
+            # step's filter over the row's replacement map.
+            policy = [_filter_replacement_map_for_prompt({**row, COL_REWRITE_DISPOSITION_BLOCK: []}) for row in rows]
             return {
+                COL_REWRITE_DISPOSITION_BLOCK: [row[COL_REWRITE_DISPOSITION_BLOCK] for row in policy],
+                COL_REPLACEMENT_MAP_FOR_PROMPT: [row[COL_REPLACEMENT_MAP_FOR_PROMPT] for row in policy],
                 COL_DOMAIN: [{"domain": "OTHER", "domain_confidence": 0.9}] * len(rows),
                 COL_DOMAIN_SUPPLEMENT: ["supplement"] * len(rows),
                 COL_DOMAIN_SUPPLEMENT_PRIVACY: ["privacy supplement"] * len(rows),
