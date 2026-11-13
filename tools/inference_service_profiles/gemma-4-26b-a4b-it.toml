@@ -1,0 +1,24 @@
+schema_version = "inference-service.spec/v3"
+port = 8000
+startup_timeout_seconds = 1800
+shutdown_timeout_seconds = 60
+
+[backend]
+kind = "vllm"
+served_model_name = "gemma-4-26b-a4b-it-local"
+
+[backend.model]
+model_id = "google/gemma-4-26B-A4B-it"
+revision = "4d7ae4984b7db7de8f8457170b3f1a419ee76d52"
+
+[backend.options]
+reasoning-parser = "gemma4"
+gpu-memory-utilization = 0.90
+max-model-len = 49152
+max-num-seqs = 16
+enable-prefix-caching = true
+async-scheduling = true
+language-model-only = true
+
+[backend.probe_extra_body]
+chat_template_kwargs = { enable_thinking = false }

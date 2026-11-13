@@ -20,7 +20,7 @@ The tool lives under `tools/` and is not installed with the
 
 ## Choose models
 
-Eight profiles ship in `tools/inference_service_profiles/`:
+Eleven profiles ship in `tools/inference_service_profiles/`:
 
 | Profile | Endpoint model name | Role and hardware guidance |
 | --- | --- | --- |
@@ -32,6 +32,9 @@ Eight profiles ship in `tools/inference_service_profiles/`:
 | `qwen3-30b-a3b-instruct.toml` | `qwen3-30b-a3b-instruct-local` | Multilingual generation |
 | `nemotron-3.5-lightning.toml` | `nemotron-3.5-lightning-local` | High-throughput generation on an 80 GB GPU |
 | `nemotron-3.5-lightning-nvfp4.toml` | `nemotron-3.5-lightning-nvfp4-local` | Official NVFP4 checkpoint with a conservative single-H100 configuration |
+| `gemma-4-26b-a4b-it.toml` | `gemma-4-26b-a4b-it-local` | Gemma 4 26B-A4B MoE generation, text only, 48K context; one 80 GB GPU |
+| `qwen3.8-27b.toml` | `qwen3.8-27b-local` | Qwen3.8 27B generation, text only, 32K context; one 80 GB GPU |
+| `nemotron-3.5-super-vl.toml` | `nemotron-3.5-super-vl-local` | Nemotron 3.5 Super VL 120B-A12B (BF16), text only, 48K context; four 80 GB GPUs with tensor parallelism and `trust-remote-code` |
 
 Each generation profile pins its Hugging Face revision and runs stock vLLM.
 The detector profile starts from the main project environment
