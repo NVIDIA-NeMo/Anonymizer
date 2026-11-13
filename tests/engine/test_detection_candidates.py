@@ -3,12 +3,17 @@
 
 from __future__ import annotations
 
+import random
 from itertools import permutations
 
 import pytest
 
 from anonymizer.engine.detection.admission import apply_validation_admission
 from anonymizer.engine.detection.candidates import (
+    _overlaps,
+    _publication_key,
+    _rank_candidates,
+    _source_ref_key,
     coalesce_exact_candidates,
     materialize_admitted_candidates,
     reconcile_candidates,
@@ -438,3 +443,94 @@ def test_reconciliation_is_order_independent_and_keeps_touching_spans() -> None:
     expected = (left, right)
     for ordering in permutations((left, right, bridge)):
         assert reconcile_candidates(ordering) == expected
+
+
+def _reference_reconcile(candidates: list[AdmittedCandidate]) -> tuple[AdmittedCandidate, ...]:
+    """Straightforward reconciliation that scans every accepted span for overlap."""
+    by_source: dict[SourceTextRef, list[AdmittedCandidate]] = {}
+    for candidate in candidates:
+        by_source.setdefault(candidate.source_text_ref, []).append(candidate)
+    reconciled: list[AdmittedCandidate] = []
+    for source_ref in sorted(by_source, key=_source_ref_key):
+        accepted: list[AdmittedCandidate] = []
+        for candidate in _rank_candidates(by_source[source_ref]):
+            if any(_overlaps(candidate, existing) for existing in accepted):
+                continue
+            accepted.append(candidate)
+        reconciled.extend(sorted(accepted, key=_publication_key))
+    return tuple(reconciled)
+
+
+def _random_candidates(rng: random.Random) -> list[AdmittedCandidate]:
+    sources = [SourceTextRef(record_id=f"record-{i}", field_id="text") for i in range(rng.randint(1, 3))]
+    extent = rng.choice([8, 20, 60])
+    kinds = ["regex_user", "initial_detector", "augmenter"]
+    candidates: list[AdmittedCandidate] = []
+    for index in range(rng.randint(1, 40)):
+        start = rng.randrange(extent)
+        end = start + rng.randint(1, max(1, extent // 3))
+        if candidates and rng.random() < 0.25:
+            # Reuse existing geometry so identical-bounds ranking decides.
+            donor = rng.choice(candidates)
+            start, end = donor.start_position, donor.end_position
+        candidate = _candidate(
+            result_id=f"r{index}",
+            observation_id="o",
+            value="x" * (end - start),
+            label=rng.choice(["first_name", "city", "Other", " other "]),
+            start=start,
+            end=end,
+            source_kind=rng.choice(kinds),
+            source_instance=rng.choice(["a", "b"]),
+            explicit=rng.random() < 0.8,
+            score=rng.choice([0.2, 0.5, 0.9]),
+        )
+        candidates.append(candidate.model_copy(update={"source_text_ref": rng.choice(sources)}))
+    return candidates
+
+
+@pytest.mark.parametrize("seed", range(300))
+def test_reconciliation_matches_full_scan_reference(seed: int) -> None:
+    rng = random.Random(seed)
+    candidates = _random_candidates(rng)
+    expected = _reference_reconcile(candidates)
+    assert reconcile_candidates(candidates) == expected
+    rng.shuffle(candidates)
+    assert reconcile_candidates(candidates) == expected
+
+
+def test_reconciliation_matches_reference_for_many_identical_geometries() -> None:
+    candidates = [
+        _candidate(
+            result_id=f"r{index}",
+            observation_id="o",
+            value="Alice",
+            label=f"label_{index % 4}",
+            start=start,
+            end=start + 5,
+            source_kind=("regex_user", "initial_detector", "augmenter")[index % 3],
+            explicit=index % 5 != 0,
+            score=(index % 7) / 10,
+        )
+        for index in range(60)
+        for start in (0, 3, 5)
+    ]
+    result = reconcile_candidates(candidates)
+    assert result == _reference_reconcile(candidates)
+    assert [(c.start_position, c.end_position) for c in result] == [(0, 5), (5, 10)]
+
+
+def test_reconciliation_handles_thousands_of_disjoint_spans() -> None:
+    candidates = [
+        _candidate(
+            result_id="r1",
+            observation_id=str(index),
+            value="abcd",
+            label="x",
+            start=index * 5,
+            end=index * 5 + 4,
+        )
+        for index in range(5000)
+    ]
+    result = reconcile_candidates(candidates)
+    assert result == tuple(candidates)
