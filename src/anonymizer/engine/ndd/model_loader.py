@@ -300,6 +300,7 @@ def validate_model_alias_references(
     check_evaluate: bool = False,
     check_rewrite_judge: bool = False,
     check_detection_validity_judge: bool = False,
+    check_privacy_leakage: bool = False,
 ) -> None:
     """Validate that active workflow model aliases exist in the model pool.
 
@@ -312,6 +313,7 @@ def validate_model_alias_references(
     ``check_detection_validity_judge`` validates ``evaluate.detection_validity_judge``
     and must be set independently because detection validity is disabled by default
     (``EvaluateConfig.compute_detection_validity=False``).
+    ``check_privacy_leakage`` validates the optional Replace privacy roles.
     """
     known_aliases = {model_config.alias for model_config in model_configs}
     detection_roles = selected_models.detection.model_dump()
@@ -328,6 +330,14 @@ def validate_model_alias_references(
             _collect_role(roles_to_check, f"replace.{role}", alias)
     if check_evaluate:
         evaluate_roles = selected_models.evaluate.model_dump()
+        if check_privacy_leakage:
+            _collect_role(
+                roles_to_check,
+                "evaluate.privacy_entity_classifier",
+                evaluate_roles["privacy_entity_classifier"] or evaluate_roles["privacy_sensitivity_analyzer"],
+            )
+            for role in ("privacy_sensitivity_analyzer", "privacy_qa_judge"):
+                _collect_role(roles_to_check, f"evaluate.{role}", evaluate_roles[role])
         _collect_role(roles_to_check, "evaluate.entity_coverage_judge", evaluate_roles["entity_coverage_judge"])
         if check_detection_validity_judge:
             _collect_role(

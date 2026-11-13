@@ -42,7 +42,7 @@ def test_workflow_name_scan_finds_literals() -> None:
 
 
 # Steps that run only from evaluate(), which emits no telemetry, so no failure count reads them.
-_EVALUATE_ONLY = {"replace-judges"}
+_EVALUATE_ONLY = {"replace-judges", "replace-privacy", "replace-label-classification"}
 
 
 @pytest.mark.parametrize("name", sorted(_workflow_names() - _EVALUATE_ONLY))

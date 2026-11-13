@@ -9,16 +9,30 @@ import pandas as pd
 
 from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import PrivacyGoal
+from anonymizer.engine.evaluation.privacy_findings import build_privacy_findings
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.interface.display import render_record_html
 
 
 class _DisplayMixin:
-    """Shared ``display_record`` behavior for result types."""
+    """Shared record display and privacy findings for result types."""
 
     trace_dataframe: pd.DataFrame
     resolved_text_column: str
     _display_cycle_index: int
+
+    @property
+    def privacy_findings(self) -> pd.DataFrame:
+        """Saved entity-level privacy assessments as a fresh, editable dataframe.
+
+        Includes all assessed targets, with zero-based record_index, record_id,
+        original value/label, category, sensitivity and its reason, question,
+        answer, confidence, reason, evidence, leakage_contribution, and
+        evaluation_status (evaluated/unavailable/not_evaluated) plus evaluation_error.
+        Rewrite entities excluded from QA are not_evaluated. No model calls run.
+        Missing answers have unavailable contributions, never implied zero leakage.
+        """
+        return build_privacy_findings(self.trace_dataframe)
 
     def display_record(self, index: int | None = None) -> None:
         """Render a record with entity highlights and replacement map in a notebook.
@@ -56,6 +70,8 @@ class AnonymizerResult(_DisplayMixin):
             to avoid colliding with an Anonymizer output column, in which case
             it is the post-rename identifier (e.g. ``"final_entities__input"``).
         failed_records: Records that failed during pipeline processing.
+        privacy_findings: Fresh dataframe of saved entity-level privacy assessments
+            and evaluation statuses, built without model calls.
         replace_method: The replace strategy that produced this result. Set by
             ``run()`` / ``preview()``; consumed by ``evaluate()`` to dispatch the
             right judges. ``None`` on results that were constructed by hand or
@@ -117,6 +133,8 @@ class PreviewResult(_DisplayMixin):
             it is the post-rename identifier (e.g. ``"final_entities__input"``).
         failed_records: Records that failed during pipeline processing.
         preview_num_records: Number of records requested for the preview.
+        privacy_findings: Fresh dataframe of saved entity-level privacy assessments
+            and evaluation statuses, built without model calls.
         replace_method: The replace strategy that produced this preview. Set by
             ``preview()``; consumed by ``evaluate()`` to dispatch the right
             judges. ``None`` on results that were constructed by hand or loaded

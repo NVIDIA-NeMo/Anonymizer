@@ -14,6 +14,137 @@ Anonymizer provides LLM-as-judge evaluation for both modes, replace and rewrite,
 
 ## Replace Evaluation
 
+### Inspect entity-level privacy findings
+
+Both `AnonymizerResult` and `PreviewResult` expose saved privacy assessments as a
+dataframe through `privacy_findings`. After Replace privacy evaluation, or after
+Rewrite's automatic evaluation:
+
+```python
+findings = evaluated.privacy_findings
+
+# Indexes are zero-based, matching display_record().
+first_record = findings[findings.record_index == 0]
+reported_leaks = findings[
+    (findings.answer == "yes") & (findings.evaluation_status == "evaluated")
+].drop(columns=["evaluation_status", "evaluation_error"])
+unavailable = findings[findings.evaluation_status == "unavailable"]
+```
+
+The reported-leaks view includes only completed positive assessments and hides
+the redundant status/error columns. The full `findings` table retains those fields.
+
+The table includes `record_index`, `record_id`, `entity_value`, `entity_label`,
+`category`, `sensitivity`, `sensitivity_reason`, `question`, `answer`, `confidence`,
+`reason`, `evidence`, `leakage_contribution`, `evaluation_status`, and `evaluation_error`.
+Record IDs are the internal IDs used by the pipeline; positional indexes let you
+locate records even when IDs are absent from older results.
+For Rewrite, `sensitivity_reason` uses the available disposition rationale
+(`protection_reason` or legacy `low_sensitivity_reason`), not a newly generated
+explanation of sensitivity.
+
+`evaluated` means a complete final QA answer is available, whether yes or no.
+`not_evaluated` includes Rewrite entities exempted from privacy QA and targets
+whose privacy evaluation has not run. `unavailable` means evaluation failed or
+the saved answer is missing or incomplete. Unavailable and unevaluated
+contributions are null, not zero. If an unavailable record has no recoverable
+targets, a row with null entity fields retains its diagnostic. Known empty
+entity sets produce no rows; an empty table still has the same columns.
+
+The accessor reads the final saved questions and answers, not pre-repair issues.
+It preserves the judge's assessments and does not validate their semantic
+correctness. Each access builds a fresh table without model calls; editing its
+evidence lists cannot mutate the result's trace.
+
+### Optional privacy leakage evaluation
+
+Enable recovery checks for the original detected entities with:
+
+```python
+from anonymizer import EvaluateConfig
+
+evaluated = anonymizer.evaluate(
+    result,
+    config=EvaluateConfig(compute_privacy_leakage=True),
+)
+```
+
+To answer smaller batches of questions per record:
+
+```python
+evaluated = anonymizer.evaluate(
+    result,
+    config=EvaluateConfig(compute_privacy_leakage=True, privacy_qa_batch_size=5),
+)
+```
+
+`privacy_qa_batch_size` defaults to `None` (one call per record). Each batch
+receives the full replaced text and preserves the original question IDs. Batches
+run sequentially within a record, with independent correction retries, and their
+answers are merged back in question order. Classification and sensitivity logic
+are unchanged. If any batch fails, the record's privacy answers and leakage score
+remain unavailable; partial answers are not scored. Smaller batches increase
+request count and repeat the text in each request. The option does not affect Rewrite.
+
+This option is off by default and works with Substitute, Redact, Hash, and Annotate.
+It assigns category and sensitivity to each detected
+value/label pair, generates privacy questions, and answers them using the replaced
+text. All detected entities are evaluated, including low-sensitivity entities.
+Sensitivity assessment uses the original text and optional dataset summary;
+Replace does not run domain classification or domain supplements.
+It shares Rewrite's sensitivity policy: generic quasi-identifiers default to low
+unless distinguishing context makes them useful for linkage, while specific
+quasi-identifiers default to medium unless they add no meaningful linkage or
+recognition risk in the document. A planned edit does not justify a low rating.
+Standard labels use the same fixed direct/quasi category mapping as Rewrite;
+direct identifiers must be high sensitivity. Like Rewrite, Replace collects the
+union of unmapped labels across the dataset and classifies them in one upfront
+call, based on general label meaning rather than particular values. No classification
+model call runs when every label is covered by the default table. The completed
+category map is shared across records and supplied to sensitivity assessment.
+The sensitivity model returns only a stable target ID, sensitivity, and
+reason. Original entity values, labels, and categories are joined back locally, so Unicode
+spelling and label text do not have to be reproduced by the model. Missing,
+duplicate, or unknown IDs trigger correction retries.
+It does not discover latent entities, require a privacy goal, or rewrite or repair output.
+
+`evaluated.dataframe` includes `leakage_mass`: the sum of sensitivity weight ×
+confidence for answers indicating that an original value remains recoverable.
+Weights are high = 1.0, medium = 0.6, low = 0.3. No normalized leakage rate or
+high-leak flag is added for Replace.
+
+`evaluated.trace_dataframe` also includes:
+
+| Column | Contents |
+|---|---|
+| `_entity_sensitivity` | Original values and labels, category, sensitivity, and contextual reason |
+| `_entity_classification` | Shared taxonomy restricted to labels detected in each record |
+| `_privacy_qa` | Questions targeting the original values |
+| `_privacy_qa_reanswer` | Yes/no, confidence, reason, and evidence quotes for every question |
+| `_privacy_leakage_contributions` | Per-entity contributions, including zero for negative answers |
+| `_privacy_qa_error` | Diagnostic when evaluation is unavailable |
+
+The judge assesses both direct mentions and contextual inference. A reported leak
+is a model assessment, including its reasoning and confidence, rather than proof
+of successful re-identification. Annotate can deliberately retain recoverable values.
+
+Incomplete answers trigger correction retries. Failed evaluation preserves the
+record with an unavailable score rather than reporting zero leakage or inventing
+a leak. Records with no detected entities receive zero mass without model calls.
+Repeated opt-in evaluation recomputes and replaces prior privacy fields.
+
+The `evaluate` model-selection section provides
+`privacy_sensitivity_analyzer` (default `gpt-oss-120b`), and
+`privacy_qa_judge` (default `nemotron-30b-thinking`). These aliases are validated
+only when Replace privacy evaluation is enabled. Rewrite already computes privacy
+leakage; this option does not rerun its privacy evaluation.
+The optional `privacy_entity_classifier` override selects a separate model for
+the upfront custom-label call; when omitted, it reuses `privacy_sensitivity_analyzer`.
+If the shared taxonomy cannot be completed, affected privacy scores remain
+unavailable rather than falling back to per-record category guesses.
+
+### Standard Replace judges
+
 Replace evaluation is **optional and post-hoc** — you call `Anonymizer.evaluate()` on a result from `run()` or `preview()`:
 
 ```python

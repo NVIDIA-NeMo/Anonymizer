@@ -28,7 +28,7 @@ from anonymizer.config.anonymizer_config import (
     TextRecordsInput,
 )
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection
-from anonymizer.config.replace_strategies import Redact, Substitute
+from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_DETECTED_TAGGED_TEXT,
@@ -37,8 +37,10 @@ from anonymizer.engine.constants import (
     COL_ENTITY_COVERAGE,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
+    COL_LEAKAGE_MASS,
     COL_MISSED_ENTITIES,
     COL_NEEDS_HUMAN_REVIEW,
+    COL_PRIVACY_LEAKAGE_CONTRIBUTIONS,
     COL_REPLACED_TEXT,
     COL_REPLACEMENT_MAP,
     COL_REWRITTEN_TEXT,
@@ -60,6 +62,56 @@ from anonymizer.interface.anonymizer import (
     _resolve_model_providers,
 )
 from anonymizer.interface.errors import InvalidConfigError, InvalidInputError
+
+
+@pytest.mark.parametrize("strategy", [Substitute(), Redact(), Hash(), Annotate()])
+def test_evaluate_replace_privacy_opt_in_exposes_mass_and_trace_details(
+    stub_input: AnonymizerInput, strategy: Substitute | Redact | Hash | Annotate
+) -> None:
+    anonymizer, _, runner, _ = _make_anonymizer()
+    original = anonymizer.run(config=AnonymizerConfig(replace=strategy), data=stub_input)
+    frame = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice"],
+            COL_REPLACED_TEXT: ["Maya"],
+            COL_LEAKAGE_MASS: [0.3],
+            COL_PRIVACY_LEAKAGE_CONTRIBUTIONS: [[{"leakage_contribution": 0.3}]],
+        }
+    )
+    runner.evaluate.return_value = ReplacementResult(dataframe=frame, failed_records=[])
+    evaluated = anonymizer.evaluate(
+        original, config=EvaluateConfig(compute_privacy_leakage=True, privacy_qa_batch_size=5)
+    )
+    assert runner.evaluate.call_args.kwargs["compute_privacy_leakage"] is True
+    assert runner.evaluate.call_args.kwargs["privacy_qa_batch_size"] == 5
+    assert evaluated.dataframe[COL_LEAKAGE_MASS].tolist() == [0.3]
+    assert COL_PRIVACY_LEAKAGE_CONTRIBUTIONS not in evaluated.dataframe
+    assert COL_PRIVACY_LEAKAGE_CONTRIBUTIONS in evaluated.trace_dataframe
+    assert COL_LEAKAGE_MASS not in original.trace_dataframe
+
+
+def test_privacy_roles_validated_only_for_opted_in_replace(stub_input: AnonymizerInput) -> None:
+    anonymizer, _, runner, _ = _make_anonymizer()
+    original = anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+    anonymizer._selected_models.evaluate.privacy_qa_judge = "unknown-privacy-model"
+    runner.evaluate.return_value = ReplacementResult(dataframe=original.trace_dataframe, failed_records=[])
+    anonymizer.evaluate(original)
+    assert runner.evaluate.call_args.kwargs["compute_privacy_leakage"] is False
+    with pytest.raises(InvalidConfigError, match="privacy_qa_judge"):
+        anonymizer.evaluate(original, config=EvaluateConfig(compute_privacy_leakage=True))
+
+
+def test_privacy_option_does_not_rerun_rewrite_privacy(stub_input: AnonymizerInput) -> None:
+    anonymizer, _, replace_runner, rewrite_runner = _make_anonymizer()
+    original = anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input)
+    anonymizer._selected_models.evaluate.privacy_qa_judge = "unknown-privacy-model"
+    rewrite_runner.evaluate.return_value = RewriteResult(
+        dataframe=rewrite_runner.run.return_value.dataframe, failed_records=[]
+    )
+    evaluated = anonymizer.evaluate(original, config=EvaluateConfig(compute_privacy_leakage=True))
+    assert evaluated.dataframe[COL_LEAKAGE_MASS].tolist() == [0.3]
+    assert "compute_privacy_leakage" not in rewrite_runner.evaluate.call_args.kwargs
+    replace_runner.evaluate.assert_not_called()
 
 
 @pytest.fixture

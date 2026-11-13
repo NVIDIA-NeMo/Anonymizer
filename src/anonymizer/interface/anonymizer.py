@@ -589,9 +589,8 @@ class Anonymizer:
             output: An :class:`AnonymizerResult` or :class:`PreviewResult` from
                 a prior ``preview()`` / ``run()``. Carries the trace dataframe,
                 the resolved text-column name, and the anonymization config.
-            config: Optional :class:`EvaluateConfig` for evaluation-specific
-                knobs (placeholder today; reserved for metric selection,
-                per-judge model/prompt overrides, etc.).
+            config: Optional :class:`EvaluateConfig` to enable detection validity
+                or privacy leakage evaluation of Replace output.
         """
         evaluate_config = config or EvaluateConfig()
         rewrite_config = cast(PrivacyGoal | None, getattr(output, "rewrite_config", None))
@@ -615,6 +614,7 @@ class Anonymizer:
                 check_evaluate=True,
                 check_rewrite_judge=is_rewrite,
                 check_detection_validity_judge=evaluate_config.compute_detection_validity,
+                check_privacy_leakage=evaluate_config.compute_privacy_leakage and not is_rewrite,
             )
         except ValueError as exc:
             raise InvalidConfigError(str(exc)) from exc
@@ -625,6 +625,8 @@ class Anonymizer:
         num_records = len(output.trace_dataframe)
         mode_name = "rewrite" if is_rewrite else type(replace_method).__name__
         active_judges = ["rewrite_judge", "entity_coverage_judge"] if is_rewrite else ["entity_coverage_judge"]
+        if evaluate_config.compute_privacy_leakage and not is_rewrite:
+            active_judges.extend(["privacy_entity_classifier", "privacy_sensitivity_analyzer", "privacy_qa_judge"])
         if evaluate_config.compute_detection_validity:
             active_judges.append("detection_validity_judge")
         if isinstance(replace_method, Substitute):
@@ -735,9 +737,13 @@ class Anonymizer:
                 entity_labels=entity_labels,
                 excluded_entity_labels=excluded_entity_labels,
                 compute_detection_validity=evaluate_config.compute_detection_validity,
+                compute_privacy_leakage=evaluate_config.compute_privacy_leakage,
+                privacy_qa_batch_size=evaluate_config.privacy_qa_batch_size,
                 data_summary=data_summary,
             )
             replace_checks = [("entity coverage", COL_ENTITY_COVERAGE, None)]
+            if evaluate_config.compute_privacy_leakage:
+                replace_checks.append(("privacy leakage", COL_LEAKAGE_MASS, None))
             if evaluate_config.compute_detection_validity:
                 replace_checks.append(("detection validity", COL_DETECTION_VALID, None))
             if isinstance(replace_method, Substitute):
@@ -1261,6 +1267,7 @@ def _build_user_dataframe(
 
     Replace:     {text_col}, {text_col}_replaced, {text_col}_with_spans, final_entities,
                  entity_coverage, missed_entities (always after evaluate()),
+                 leakage_mass (only after optional privacy leakage evaluation),
                  detection_valid, detection_invalid_entities (only when compute_detection_validity=True)
     Rewrite:     {text_col}, {text_col}_rewritten, utility_score, leakage_mass, weighted_leakage_rate,
                  any_high_leaked, needs_human_review
@@ -1298,6 +1305,7 @@ def _build_user_dataframe(
             COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
             COL_ATTRIBUTE_FIDELITY_VALID,
             COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
+            COL_LEAKAGE_MASS,
         }
         if compute_detection_validity:
             allowed |= {COL_DETECTION_VALID, COL_DETECTION_INVALID_ENTITIES}

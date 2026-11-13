@@ -552,5 +552,5 @@ class EntitiesByValueSchema(BaseModel):
     entities_by_value: list[EntityByValueSchema] = Field(default_factory=list)
 
     @classmethod
-    def from_raw(cls, raw: object) -> EntitiesByValueSchema:
-        return _parse_raw_wrapper(cls, raw, "entities_by_value", fallback_keys=("entities",))
+    def from_raw(cls, raw: object, *, strict: bool = False) -> EntitiesByValueSchema:
+        return _parse_raw_wrapper(cls, raw, "entities_by_value", fallback_keys=("entities",), strict=strict)

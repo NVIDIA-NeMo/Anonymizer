@@ -23,6 +23,7 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     _jinja,
 )
+from anonymizer.engine.evaluation.privacy_qa import build_privacy_question
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import parse_sensitivity_disposition
@@ -32,7 +33,6 @@ from anonymizer.engine.schemas import (
     EntityCategory,
     MeaningUnitsSchema,
     PrivacyQAPairsSchema,
-    PrivacyQuestionSchema,
     QualityQAPairsSchema,
     SensitivityDispositionSchema,
     SensitivityLevel,
@@ -310,13 +310,13 @@ def generate_privacy_qa_from_disposition(
     questions = []
     for idx, entity in enumerate(disposition.protected_entities, start=1):
         questions.append(
-            PrivacyQuestionSchema(
-                id=idx,
-                question=f"Can the {entity.entity_label} '{entity.entity_value}' be deduced from the rewritten text?",
+            build_privacy_question(
+                question_id=idx,
                 sensitivity=SensitivityLevel(entity.sensitivity),
                 entity_label=entity.entity_label,
                 entity_value=entity.entity_value,
                 category=EntityCategory(entity.category),
+                text_kind="rewritten",
             )
         )
     return PrivacyQAPairsSchema(items=questions)

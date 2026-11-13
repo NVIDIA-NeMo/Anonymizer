@@ -29,6 +29,7 @@ from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
+from anonymizer.engine.evaluation.replace.privacy_leakage import ReplacePrivacyLeakageWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
@@ -142,6 +143,8 @@ class ReplacementWorkflow:
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         compute_detection_validity: bool = False,
+        compute_privacy_leakage: bool = False,
+        privacy_qa_batch_size: int | None = None,
         data_summary: str | None = None,
     ) -> ReplacementResult:
         """Run the LLM evaluation judges on an already-replaced dataframe.
@@ -150,6 +153,8 @@ class ReplacementWorkflow:
         runs type fidelity, relational consistency, and attribute fidelity.
         Detection validity runs only when ``compute_detection_validity=True``.
         All active judges are submitted as columns of one DataDesigner workflow.
+        When ``compute_privacy_leakage=True``, a separate privacy workflow adds
+        leakage mass and entity-level diagnostics while preserving all records.
 
         ``entity_labels`` and ``excluded_entity_labels`` together define the label
         scope passed to the coverage judge — only entities whose labels were in
@@ -191,6 +196,17 @@ class ReplacementWorkflow:
             preview_num_records=preview_num_records,
             failed_records=failed_records,
         )
+        if compute_privacy_leakage:
+            privacy_result = ReplacePrivacyLeakageWorkflow(self._adapter).run(
+                judged_df,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                data_summary=data_summary,
+                preview_num_records=preview_num_records,
+                privacy_qa_batch_size=privacy_qa_batch_size,
+            )
+            judged_df = privacy_result.dataframe
+            failed_records.extend(privacy_result.failed_records)
         return ReplacementResult(dataframe=judged_df, failed_records=failed_records)
 
     # ---------------------------------------------------------------------------

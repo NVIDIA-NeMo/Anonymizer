@@ -14,6 +14,8 @@ selected_models:
   replace_type_fidelity_judge: gpt-oss-120b
   replace_relational_consistency_judge: gpt-oss-120b
   replace_attribute_fidelity_judge: gpt-oss-120b
+  privacy_sensitivity_analyzer: gpt-oss-120b
+  privacy_qa_judge: nemotron-30b-thinking
 
   # --- Rewrite evaluation ---
   rewrite_judge: nemotron-30b-thinking

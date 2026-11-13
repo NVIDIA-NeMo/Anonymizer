@@ -352,9 +352,6 @@ class EvaluateConfig(BaseModel):
     mode is **not** here: it travels on the ``AnonymizerResult`` /
     ``PreviewResult`` produced by ``run()`` / ``preview()`` and is read directly
     by ``evaluate()``, so users don't restate it and can't mis-state it.
-
-    Today this is an empty placeholder; fields will be added as evaluation
-    knobs are introduced.
     """
 
     compute_detection_validity: bool = False
@@ -364,4 +361,20 @@ class EvaluateConfig(BaseModel):
     experiments. When True, adds
     ``detection_valid`` and ``detection_invalid_entities`` columns to the
     evaluate() output alongside ``entity_coverage``.
+    """
+
+    compute_privacy_leakage: bool = False
+    """Evaluate recovery of original detected entities from Replace output.
+
+    Adds leakage_mass to the result dataframe and entity sensitivities, privacy
+    QA, answers, contributions, and diagnostics to trace_dataframe. Includes
+    low-sensitivity entities; performs no latent discovery, rewriting, or repair.
+    Rewrite already computes privacy leakage and does not repeat it here.
+    """
+
+    privacy_qa_batch_size: int | None = Field(default=None, ge=1, strict=True)
+    """Maximum privacy questions per model call in optional Replace evaluation.
+
+    None keeps one call per record. Every batch receives the full replaced text;
+    original question IDs are preserved. Has no effect on Rewrite evaluation.
     """

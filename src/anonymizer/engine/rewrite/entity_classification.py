@@ -17,7 +17,7 @@ from data_designer.engine.models.parsers.errors import ParserException
 from data_designer.engine.models.recipes.response_recipes import PydanticResponseRecipe
 from pydantic import BaseModel
 
-from anonymizer.config.models import RewriteModelSelection
+from anonymizer.config.models import EvaluateModelSelection, RewriteModelSelection
 from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_ENTITY_CLASSIFICATION,
@@ -240,7 +240,8 @@ class EntityClassificationWorkflow:
         *,
         adapter: NddAdapter,
         model_configs: list[ModelConfig],
-        selected_models: RewriteModelSelection,
+        selected_models: RewriteModelSelection | EvaluateModelSelection,
+        workflow_name: str = "rewrite-label-classification",
     ) -> dict[str, str]:
         labels = sorted({label for raw in dataframe[COL_ENTITIES_BY_VALUE] for label in _unique_labels(raw)})
         local, unmapped = classify_labels_locally(labels)
@@ -253,7 +254,7 @@ class EntityClassificationWorkflow:
             seed,
             model_configs=model_configs,
             columns=self.columns(selected_models=selected_models)[1:],
-            workflow_name="rewrite-label-classification",
+            workflow_name=workflow_name,
         )
         if result.failed_records or len(result.dataframe) != 1:
             raise AnonymizerWorkflowError(
@@ -263,7 +264,10 @@ class EntityClassificationWorkflow:
         return {label: categories[label] for label in labels}
 
     def columns(
-        self, *, selected_models: RewriteModelSelection, label_categories: dict[str, str] | None = None
+        self,
+        *,
+        selected_models: RewriteModelSelection | EvaluateModelSelection,
+        label_categories: dict[str, str] | None = None,
     ) -> list[ColumnConfigT]:
         if label_categories is not None:
             return [
@@ -273,7 +277,11 @@ class EntityClassificationWorkflow:
                     generator_params=LabelClassificationParams(categories=label_categories),
                 )
             ]
-        classifier_alias = resolve_model_alias("entity_classifier", selected_models)
+        classifier_alias = (
+            selected_models.privacy_entity_classifier or selected_models.privacy_sensitivity_analyzer
+            if isinstance(selected_models, EvaluateModelSelection)
+            else resolve_model_alias("entity_classifier", selected_models)
+        )
         return [
             CustomColumnConfig(
                 name=COL_ENTITY_CLASSIFICATION_LOCAL,

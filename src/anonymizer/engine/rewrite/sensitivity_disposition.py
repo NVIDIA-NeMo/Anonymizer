@@ -27,6 +27,12 @@ from anonymizer.engine.constants import (
     COL_TAGGED_TEXT,
     _jinja,
 )
+from anonymizer.engine.evaluation.sensitivity_rules import (
+    DIRECT_IDENTIFIER_SENSITIVITY_RULES,
+    QUASI_IDENTIFIER_SENSITIVITY_RULES,
+    SENSITIVITY_CONTEXT_RULES,
+    SENSITIVITY_RISK_SCOPE,
+)
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import normalize_payload
@@ -186,36 +192,11 @@ Do not add, omit, combine, split, or discover entities.
 </scope>
 
 <sensitivity_policy>
-Assess whether retaining the information could identify or enable linkage to a person, organization, record, system, or other protected asset, or expose confidential information such as credentials, access details, or proprietary information. Apply the privacy goal and consider the complete document and combinations of details.
+<<SENSITIVITY_RISK_SCOPE>> Apply the privacy goal and consider the complete document and combinations of details.
 
-Direct identifiers:
-Assign high. They must always be protected.
+<<DIRECT_IDENTIFIER_SENSITIVITY_RULES>>
 
-Generic quasi-identifiers:
-Assign low unless the document supplies distinguishing context that makes
-this information materially useful for linkage or recognition.
-
-Generic information describes an unnamed role, institution type, activity,
-setting, or unspecified fact without distinguishing a particular instance.
-Examples include "bank", "court", "lawyer", "hospital", "local library",
-"community food pantry", and "unspecified date".
-
-An entity label, capitalization, or the presence of identifying information
-elsewhere is not sufficient reason to assign medium. Formal references such
-as "Court" or "Government" may still be generic.
-"The only surgeon in the village", however, has distinguishing context.
-
-Specific quasi-identifiers:
-Assign medium unless retaining the information adds no meaningful linkage
-or recognition risk in this document.
-
-Specific information expresses a named affiliation or location, a concrete
-attribute, or a precise fact—for example, a named employer, city, nationality,
-language, exact age, date, or amount. Proper nouns often indicate specificity,
-but capitalization alone does not.
-
-Specific does not automatically mean identifying. For example, "English"
-may qualify for low when it adds no meaningful re-identification risk.
+<<QUASI_IDENTIFIER_SENSITIVITY_RULES>>
 
 Latent inferences:
 Assign medium unless permitting the inference adds no meaningful linkage
@@ -227,9 +208,7 @@ than explicitly stated. Use the supplied latent entities and their evidence.
 An explicit requirement in the privacy goal to conceal a value or inference
 overrides low eligibility.
 
-Do not assume another planned edit makes information safe.
-Do not equate commonness with safety or require unique identification to
-establish risk. Do not invent unsupported identification paths.
+<<SENSITIVITY_CONTEXT_RULES>>
 
 </sensitivity_policy>
 
@@ -289,6 +268,10 @@ Before returning, verify:
         prompt,
         {
             "<<PRIVACY_GOAL>>": privacy_goal_str,
+            "<<SENSITIVITY_RISK_SCOPE>>": SENSITIVITY_RISK_SCOPE,
+            "<<DIRECT_IDENTIFIER_SENSITIVITY_RULES>>": DIRECT_IDENTIFIER_SENSITIVITY_RULES,
+            "<<QUASI_IDENTIFIER_SENSITIVITY_RULES>>": QUASI_IDENTIFIER_SENSITIVITY_RULES,
+            "<<SENSITIVITY_CONTEXT_RULES>>": SENSITIVITY_CONTEXT_RULES,
             "<<INPUT_GUIDANCE>>": input_guidance,
             "<<DATA_SUMMARY_BLOCK>>": summary_block,
             "<<TAGGED_TEXT>>": _jinja(COL_TAGGED_TEXT),

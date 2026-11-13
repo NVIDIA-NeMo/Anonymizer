@@ -406,10 +406,10 @@ class PrivacyQuestionSchema(BaseModel):
 
 
 class PrivacyQAPairsSchema(BaseModel):
-    """Privacy QA pairs for a document — generated from disposition without an LLM.
+    """Privacy QA pairs for a document — generated from entity assessments without an LLM.
 
     All questions expect the answer ``no``. A ``yes`` answer indicates a privacy leak.
-    See ``generate_privacy_qa_from_disposition``.
+    Rewrite selects protected disposition entries; Replace includes all assessed entities.
     """
 
     items: list[PrivacyQuestionSchema]

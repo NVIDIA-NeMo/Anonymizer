@@ -108,6 +108,10 @@ class EvaluateModelSelection(BaseModel):
     replace_relational_consistency_judge: str
     replace_attribute_fidelity_judge: str
     rewrite_judge: str
+    privacy_sensitivity_analyzer: str = "gpt-oss-120b"
+    privacy_entity_classifier: str | None = None
+    """Dataset custom-label classifier; None reuses privacy_sensitivity_analyzer."""
+    privacy_qa_judge: str = "nemotron-30b-thinking"
 
 
 class ModelSelection(BaseModel):
