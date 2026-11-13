@@ -15,11 +15,11 @@ class RiskTolerance(str, Enum):
 
     Each preset bundles a coherent set of repair and review thresholds:
 
-    - **minimal** — Tight leakage threshold (0.6), flags for review aggressively.
+    - **minimal** — Tight leakage threshold (0.4), flags for review aggressively.
       Good for medical, legal, and financial data.
-    - **low** — Default. Moderate leakage threshold (1.0).
+    - **low** — Default. Moderate leakage threshold (0.5).
       Good for most privacy-sensitive data.
-    - **moderate** — Relaxed leakage threshold (1.5), lower review bar.
+    - **moderate** — Relaxed leakage threshold (1.0), lower review bar.
     - **high** — High leakage threshold (2.0), does not auto-repair
       individual high-sensitivity leaks.
     """
@@ -84,23 +84,26 @@ _FLAG_ON = (
     Finding.unavailable_evidence,
 )
 
+# Leakage-based repair needs mass strictly above the threshold. A single confident medium-sensitivity
+# leak (weight 0.6 x confidence 1.0) has mass 0.6, so it is repaired on minimal and low but not on
+# moderate or high. Keep the four repair thresholds strictly ascending: minimal < low < moderate < high.
 _RISK_TOLERANCE_BUNDLES: dict[RiskTolerance, _RiskToleranceBundle] = {
     RiskTolerance.minimal: _RiskToleranceBundle(
-        repair_threshold=0.6,
+        repair_threshold=0.4,
         flag_utility_below=0.6,
-        flag_leakage_above=1.0,
+        flag_leakage_above=0.5,
         repair_on=(Finding.high_leak, Finding.leakage_above_repair),
         flag_on=_FLAG_ON,
     ),
     RiskTolerance.low: _RiskToleranceBundle(
-        repair_threshold=1.0,
+        repair_threshold=0.5,
         flag_utility_below=0.5,
         flag_leakage_above=2.0,
         repair_on=(Finding.high_leak, Finding.leakage_above_repair),
         flag_on=_FLAG_ON,
     ),
     RiskTolerance.moderate: _RiskToleranceBundle(
-        repair_threshold=1.5,
+        repair_threshold=1.0,
         flag_utility_below=0.4,
         flag_leakage_above=2.5,
         repair_on=(Finding.high_leak, Finding.leakage_above_repair),

@@ -97,9 +97,9 @@ Controls the automated repair loop and human review flagging. Each preset bundle
 
 | Preset | Repair threshold | Repair on any high leak | Flag utility below | Flag leakage above |
 |--------|-----------------|------------------------|--------------------|--------------------|
-| `minimal` | 0.6 | Yes | 0.6 | 1.0 |
-| `low` | 1.0 | Yes | 0.5 | 2.0 |
-| `moderate` | 1.5 | Yes | 0.4 | 2.5 |
+| `minimal` | 0.4 | Yes | 0.6 | 0.5 |
+| `low` | 0.5 | Yes | 0.5 | 2.0 |
+| `moderate` | 1.0 | Yes | 0.4 | 2.5 |
 | `high` | 2.0 | No | 0.3 | 3.0 |
 
 The **repair threshold** is the leakage mass above which a record is sent for repair.
@@ -107,6 +107,8 @@ The **repair threshold** is the leakage mass above which a record is sent for re
 > A leakage mass of 1.0 roughly equals one high-sensitivity entity leaked at full confidence.
 
 Privacy questions are generated only for entities assigned a protective method. Entities assigned `leave_as_is` receive no privacy question and do not contribute to leakage mass. A protected low-sensitivity entity does receive a question: if the judge answers yes with confidence 0.8, it contributes `0.3 × 0.8 = 0.24`.
+
+Leakage-based repair needs a leakage mass strictly above the repair threshold. A single medium-sensitivity entity leaked at full confidence has a leakage mass of 0.6, so it is repaired under `minimal` and `low`, is left alone under `moderate` and `high`, and, if it survives repair, is flagged for human review under `minimal` only (whose review threshold is 0.5).
 
 ```python
 config = AnonymizerConfig(
