@@ -241,6 +241,7 @@ class EntityDetectionWorkflow:
                         labels=labels,
                         examples_by_label=label_config.validator_examples,
                         configured_examples=label_config.augmenter_examples,
+                        excluded_entity_labels=list(excluded_entity_labels or []),
                     ),
                     drop=True,
                 ),
@@ -261,6 +262,7 @@ class EntityDetectionWorkflow:
                         labels=labels,
                         strict_labels=label_config.strict_labels,
                         configured_examples=label_config.augmenter_examples,
+                        excluded_entity_labels=list(excluded_entity_labels or []),
                     ),
                     model_alias=augmenter_alias,
                     allowed_entity_labels=labels if label_config.strict_labels else None,
@@ -665,6 +667,7 @@ def _get_validation_prompt(
     labels: list[str],
     examples_by_label: dict[str, list[str]] | None = None,
     configured_examples: dict[str, list[str]] | None = None,
+    excluded_entity_labels: list[str] | None = None,
 ) -> str:
     prompt = """Validate entity tags for privacy-sensitive information. For each entity in the template below, fill in the "decision" and "reason" fields. Fill in "proposed_label" only when decision is "reclass".
 
@@ -694,7 +697,7 @@ What to DROP:
 - Kinship and family-role terms used as relationship descriptors are not quasi-identifiers.
 - Filenames that are system executables or binaries (e.g., ending in .exe, .dll, .sys).
 - If a single abbreviated letter (e.g. "A.") is tagged as a first_name but is not followed by a last_name, drop it.
-
+<<EXCLUDED_DROP>>
 PARTIAL-TOKEN RULE (HARD DROP):
 - If the tagged value is only a substring of a larger contiguous token (letters, digits, underscore with no whitespace boundary), DROP it.
 - A contiguous token means adjacent letters, digits, or underscore with no whitespace boundary.
@@ -760,7 +763,7 @@ Input text: My ((SENSITIVE:first_name|name)) is ((SENSITIVE:first_name|Amy)), ((
 Input text: My <<SENSITIVE:first_name>>name<</SENSITIVE:first_name>> is <<SENSITIVE:first_name>>Amy<</SENSITIVE:first_name>>, <<SENSITIVE:age>>35<</SENSITIVE:age>> in <<SENSITIVE:NAGROUP_g1>>San Diego<</SENSITIVE:NAGROUP_g1>>, <<SENSITIVE:state>>California<</SENSITIVE:state>>.
 {%- endif -%}
 Template: {"decisions": [{"id": "c1", "conflict_group_id": null, "value": "name", "label": "first_name", "start_position": 3, "end_position": 7, "decision": null, "proposed_label": null, "reason": null}, {"id": "c2", "conflict_group_id": null, "value": "Amy", "label": "first_name", "start_position": 11, "end_position": 14, "decision": null, "proposed_label": null, "reason": null}, {"id": "c3", "conflict_group_id": null, "value": "35", "label": "age", "start_position": 16, "end_position": 18, "decision": null, "proposed_label": null, "reason": null}, {"id": "c4", "conflict_group_id": "g1", "value": "San Diego", "label": "country", "start_position": 22, "end_position": 31, "decision": null, "proposed_label": null, "reason": null}, {"id": "c5", "conflict_group_id": "g1", "value": "Diego", "label": "first_name", "start_position": 26, "end_position": 31, "decision": null, "proposed_label": null, "reason": null}, {"id": "c6", "conflict_group_id": null, "value": "California", "label": "state", "start_position": 33, "end_position": 43, "decision": null, "proposed_label": null, "reason": null}]}
-Output: {"decisions": [{"id": "c1", "decision": "drop", "proposed_label": "", "reason": "placeholder not actual name"}, {"id": "c2", "decision": "keep", "proposed_label": "", "reason": "real first name"}, {"id": "c3", "decision": "keep", "proposed_label": "", "reason": "age quasi-identifier"}, {"id": "c4", "decision": "reclass", "proposed_label": "city", "reason": "city not country"}, {"id": "c5", "decision": "drop", "proposed_label": "", "reason": "part of the city name, not a person"}, {"id": "c6", "decision": "keep", "proposed_label": "", "reason": "state quasi-identifier"}]}
+Output: <<VALIDATION_EXAMPLE_OUTPUT>>
 
 ---
 Input text: <<TAGGED_TEXT>>
@@ -782,9 +785,19 @@ Template: <<VALIDATION_SKELETON>>
         if data_summary
         else ""
     )
+    excluded = sorted(normalize_labels(excluded_entity_labels))
+    excluded_drop = (
+        "- Excluded entity types: drop these and close synonyms of them; do not return keep or reclass for: "
+        + ", ".join(_prompt_safe_configured_value(label) for label in excluded)
+        + "\n"
+        if excluded
+        else ""
+    )
     return substitute_placeholders(
         prompt,
         {
+            "<<EXCLUDED_DROP>>": excluded_drop,
+            "<<VALIDATION_EXAMPLE_OUTPUT>>": _validation_example_output(labels=labels, excluded=set(excluded)),
             "<<TAG_NOTATION>>": COL_TAG_NOTATION,
             "<<TAGGED_TEXT>>": _jinja(VALIDATION_EXCERPT_VAR),
             "<<VALIDATION_SKELETON>>": _jinja(COL_VALIDATION_SKELETON),
@@ -798,12 +811,114 @@ Template: <<VALIDATION_SKELETON>>
     )
 
 
+# Validator worked example: (id, label the decision depends on, decision, proposed_label, reason).
+_VALIDATION_EXAMPLE_DECISIONS: tuple[tuple[str, str | None, str, str, str], ...] = (
+    ("c1", None, "drop", "", "placeholder not actual name"),
+    ("c2", "first_name", "keep", "", "real first name"),
+    ("c3", "age", "keep", "", "age quasi-identifier"),
+    ("c4", "city", "reclass", "city", "city not country"),
+    ("c5", None, "drop", "", "part of the city name, not a person"),
+    ("c6", "state", "keep", "", "state quasi-identifier"),
+)
+
+
+def _validation_example_output(*, labels: list[str], excluded: set[str]) -> str:
+    """Example decisions that never keep or reclass to a label the prompt does not permit."""
+    permitted = set(labels) - excluded
+    decisions = []
+    for decision_id, needs, decision, proposed, reason in _VALIDATION_EXAMPLE_DECISIONS:
+        if needs is not None and needs not in permitted:
+            decision, proposed, reason = "drop", "", f"{needs} is not an allowed label here"
+        decisions.append({"id": decision_id, "decision": decision, "proposed_label": proposed, "reason": reason})
+    output = json.dumps({"decisions": decisions}, ensure_ascii=False)
+    if all(item["decision"] == "drop" for item in decisions):
+        return f"{output}\n(None of these labels is allowed here, so every candidate is dropped.)"
+    return output
+
+
+_AUGMENT_EXAMPLE_TEXT = "Jane Doe lives in Santa Clara. She works full-time."
+_AUGMENT_EXAMPLE_ENTITIES: tuple[dict[str, str], ...] = (
+    {
+        "value": "Jane",
+        "context_before": "",
+        "context_after": " Doe lives in ",
+        "label": "first_name",
+        "reason": "first name",
+    },
+    {
+        "value": "Doe",
+        "context_before": "Jane ",
+        "context_after": " lives in Santa Clara. ",
+        "label": "last_name",
+        "reason": "last name",
+    },
+    {
+        "value": "Santa Clara",
+        "context_before": "Doe lives in ",
+        "context_after": ". She works full-time.",
+        "label": "city",
+        "reason": "city",
+    },
+    {
+        "value": "full-time",
+        "context_before": "in Santa Clara. She works ",
+        "context_after": ".",
+        "label": "employment_status",
+        "reason": "employment status",
+    },
+)
+
+# Label-specific guidance, rendered only when the label is active.
+_AUGMENT_LABEL_RULES: dict[str, tuple[str, ...]] = {
+    "date": (
+        '- date includes complete and partial calendar dates; a day, month, and year are NOT all required. Include named months, calendar years, month/year combinations, and days of the month when context establishes calendar meaning (e.g., "in March", "in 2024", "in March 2024", "on the 15th"). Standalone numbers without date context, "March forward", "2024 items", and vague time words such as "today", "now", and "soon" are not dates.',
+    ),
+    "unique_id": (
+        '- unique_id rules: unique_id\'s are never only one character long (ex: "6" is not a unique_id). '
+        'They are never event names or real words all strung together (ex: "ProcessManagementEvent" is NOT a unique_id).',
+    ),
+    "ipv4": (
+        "- ipv4 label: This includes specific IP addresses as well as internal IP subnet ranges "
+        "(ex: subnet=[224.0.0.0/4, 10.0.0.0/8]).",
+    ),
+    "filename": (
+        '- Filename Exclusions: The "filename" label should be reserved for user-created documents or data exports '
+        "(e.g., .pdf, .xlsx, .csv, .txt).",
+        "- Executable Distinction: Do not tag executable binaries (ending in .exe, .dll, or .sys) as filename. "
+        "Treat these extensions as non-sensitive system identifiers.",
+    ),
+}
+
+
+def _augment_example_block(*, labels: list[str], strict_labels: bool, excluded: set[str]) -> str:
+    """Build the worked example from labels the prompt actually allows.
+
+    Strict mode shows only entities whose label is in the allowed list, so the
+    example never demonstrates a label the model is told not to use. Permissive
+    mode may demonstrate labels outside the list, but never an excluded one.
+    """
+    if strict_labels:
+        active = set(labels)
+        entities = [entity for entity in _AUGMENT_EXAMPLE_ENTITIES if entity["label"] in active]
+    else:
+        entities = [entity for entity in _AUGMENT_EXAMPLE_ENTITIES if entity["label"] not in excluded]
+    if strict_labels:
+        header = "Example (return only entities that fit an allowed label; skip everything else):"
+        if not entities:
+            header = "Example (none of these entities fits the allowed labels, so nothing is returned):"
+    else:
+        header = "Example:"
+    output = json.dumps({"entities": entities}, ensure_ascii=False)
+    return f"{header}\nInput text: {_AUGMENT_EXAMPLE_TEXT}\nOutput: {output}"
+
+
 def _get_augment_prompt(
     *,
     data_summary: str | None,
     labels: list[str],
     strict_labels: bool = False,
     configured_examples: dict[str, list[str]] | None = None,
+    excluded_entity_labels: list[str] | None = None,
 ) -> str:
     if strict_labels:
         label_block = (
@@ -811,21 +926,22 @@ def _get_augment_prompt(
             "<<VALID_CLASSES>>\n\n"
             "Do not create new labels. If an entity does not fit any label in the list, skip it."
         )
-        example_block = """\
-Example (allowed labels: first_name, last_name, city — note that employment_status is NOT in the allowed list):
-Input text: Jane Doe lives in Santa Clara. She works full-time.
-Output: {"entities": [{"value": "Jane", "context_before": "", "context_after": " Doe lives in ", "label": "first_name", "reason": "first name"}, {"value": "Doe", "context_before": "Jane ", "context_after": " lives in Santa Clara. ", "label": "last_name", "reason": "last name"}, {"value": "Santa Clara", "context_before": "Doe lives in ", "context_after": ". She works full-time.", "label": "city", "reason": "city"}]}"""
-
     else:
         label_block = (
             "Here are the known entity classes. Strongly prefer labels from this list when they fit:\n"
             "<<VALID_CLASSES>>\n\n"
             "If no known label fits, create a concise snake_case label (e.g., clinic_name, server_name, transaction_id)."
         )
-        example_block = """\
-Example:
-Input text: Jane Doe lives in Santa Clara. She works full-time.
-Output: {"entities": [{"value": "Jane", "context_before": "", "context_after": " Doe lives in ", "label": "first_name", "reason": "first name"}, {"value": "Doe", "context_before": "Jane ", "context_after": " lives in Santa Clara. ", "label": "last_name", "reason": "last name"}, {"value": "Santa Clara", "context_before": "Doe lives in ", "context_after": ". She works full-time.", "label": "city", "reason": "city"}, {"value": "full-time", "context_before": "in Santa Clara. She works ", "context_after": ".", "label": "employment_status", "reason": "employment status"}]}"""
+    excluded = sorted(normalize_labels(excluded_entity_labels))
+    if excluded:
+        label_block += (
+            "\n\nDo not return entities of these excluded types or close synonyms of them: "
+            + ", ".join(_prompt_safe_configured_value(label) for label in excluded)
+            + "."
+        )
+    example_block = _augment_example_block(labels=labels, strict_labels=strict_labels, excluded=set(excluded))
+    rule_lines = [line for label in labels for line in _AUGMENT_LABEL_RULES.get(label, ())]
+    rules_section = "Other information:\n" + "\n".join(rule_lines) + "\n\n" if rule_lines else ""
 
     disguised_hints_block = (
         "- Identifiers may be disguised, fragmented, hyphenated, misspelled, obfuscated,\n"
@@ -845,9 +961,7 @@ Use surrounding text and field names to determine what a value actually represen
 - Quasi-identifiers: Attributes that combine to narrow specificity (age, location, job title, timestamps, technical specs)
 - Technical secrets: Credentials (passwords, API keys, tokens), access (internal URLs, endpoints), proprietary terms
 
-Data summary: <<DATA_SUMMARY>>
-
-<<LABEL_BLOCK>>
+<<DATA_SUMMARY>><<LABEL_BLOCK>>
 
 Rules:
 - Tag actual values, not placeholders
@@ -856,14 +970,7 @@ Rules:
   - Data: assigned values, cell contents, literals, user input
   Only tag data, never syntax
 
-Other information:
-- date includes complete and partial calendar dates; a day, month, and year are NOT all required. Include named months, calendar years, month/year combinations, and days of the month when context establishes calendar meaning (e.g., "in March", "in 2024", "in March 2024", "on the 15th"). Standalone numbers without date context, "March forward", "2024 items", and vague time words such as "today", "now", and "soon" are not dates.
-- unique_id rules: unique_id's are never only one character long (ex: "6" is not a unique_id). They are never event names or real words all strung together (ex: "ProcessManagementEvent" is NOT a unique_id).
-- ipv4 label: This includes specific IP addresses as well as internal IP subnet ranges (ex: subnet=[224.0.0.0/4, 10.0.0.0/8]).
-- Filename Exclusions: The "filename" label should be reserved for user-created documents or data exports (e.g., .pdf, .xlsx, .csv, .txt).
-- Executable Distinction: Do not tag executable binaries (ending in .exe, .dll, or .sys) as filename. Treat these extensions as non-sensitive system identifiers.
-
-Additional extraction requirements:
+<<RULES_SECTION>>Additional extraction requirements:
 - The "value" field must be the EXACT verbatim span from the input text.
   Copy the text character-for-character exactly as it appears.
   Do NOT normalize, correct spelling, expand abbreviations, decode encodings,
@@ -924,12 +1031,13 @@ Input text: <<INPUT_TEXT>>
         if data_summary
         else "\n\nFocus on:"
     )
-    context_section = data_summary if data_summary else "Not provided"
+    context_section = f"Data summary: {data_summary}\n\n" if data_summary else ""
     return substitute_placeholders(
         prompt,
         {
             "<<SENSITIVITY_GUIDANCE>>": sensitivity_guidance,
             "<<LABEL_BLOCK>>": label_block,
+            "<<RULES_SECTION>>": rules_section,
             "<<EXAMPLE_BLOCK>>": example_block,
             "<<INPUT_TEXT>>": _jinja(COL_TEXT),
             "<<DATA_SUMMARY>>": context_section,
