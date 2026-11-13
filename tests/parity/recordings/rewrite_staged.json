@@ -1,0 +1,438 @@
+{
+ "run": {
+  "user_frame": {
+   "columns": ["id", "text", "text_rewritten", "utility_score", "leakage_mass", "weighted_leakage_rate", "any_high_leaked", "needs_human_review"],
+   "dtypes": {
+    "id": "object",
+    "text": "object",
+    "text_rewritten": "object",
+    "utility_score": "float64",
+    "leakage_mass": "float64",
+    "weighted_leakage_rate": "float64",
+    "any_high_leaked": "bool",
+    "needs_human_review": "bool"
+   },
+   "rows": [
+    {"id": "c", "text": "Bob lives in Paris.", "text_rewritten": "Carl lives in Oslo. (repaired)", "utility_score": 0.9, "leakage_mass": 0.0, "weighted_leakage_rate": 0.0, "any_high_leaked": false, "needs_human_review": false},
+    {"id": "e", "text": "Eve visits Rome.", "text_rewritten": "Nora visits Turin.", "utility_score": 0.9, "leakage_mass": 0.0, "weighted_leakage_rate": 0.0, "any_high_leaked": false, "needs_human_review": false}
+   ]
+  },
+  "trace_frame": {
+   "columns": ["id", "text", "_anonymizer_record_id", "_raw_detected_entities", "_seed_entities", "_tag_notation", "_seed_validation_candidates", "_seed_tagged_text", "_validated_entities", "_seed_entities_json", "_initial_tagged_text", "_validated_seed_entities", "_augmented_entities", "_merged_entities", "_merged_tagged_text", "_validation_candidates", "_detected_entities", "text_with_spans", "_latent_entities", "final_entities", "_entities_by_value", "_entity_classification", "_replacement_map", "_replacement_map_source", "_domain", "_domain_supplement", "_domain_supplement_privacy", "_disposition_explicit_entities", "_disposition_latent_entities", "_raw_sensitivity_disposition", "_sensitivity_disposition", "_disposition_coverage", "_sensitivity_disposition_block", "_meaning_units", "_meaning_units_serialized", "_quality_qa", "_privacy_qa", "_rewrite_disposition_block", "_replacement_map_for_prompt", "_rewrite_tagged_text", "_replacement_application", "_rewrite_replacement_ready", "_rewrite_baseline_text", "_full_rewrite", "text_rewritten", "_repair_iterations", "_quality_qa_reanswer", "_privacy_qa_reanswer", "_quality_qa_compare", "utility_score", "leakage_mass", "weighted_leakage_rate", "any_high_leaked", "_needs_repair", "_leaked_privacy_items", "_rewritten_text__next", "needs_human_review"],
+   "dtypes": {
+    "id": "object",
+    "text": "object",
+    "_anonymizer_record_id": "object",
+    "_raw_detected_entities": "object",
+    "_seed_entities": "object",
+    "_tag_notation": "object",
+    "_seed_validation_candidates": "object",
+    "_seed_tagged_text": "object",
+    "_validated_entities": "object",
+    "_seed_entities_json": "object",
+    "_initial_tagged_text": "object",
+    "_validated_seed_entities": "object",
+    "_augmented_entities": "object",
+    "_merged_entities": "object",
+    "_merged_tagged_text": "object",
+    "_validation_candidates": "object",
+    "_detected_entities": "object",
+    "text_with_spans": "object",
+    "_latent_entities": "object",
+    "final_entities": "object",
+    "_entities_by_value": "object",
+    "_entity_classification": "object",
+    "_replacement_map": "object",
+    "_replacement_map_source": "object",
+    "_domain": "object",
+    "_domain_supplement": "object",
+    "_domain_supplement_privacy": "object",
+    "_disposition_explicit_entities": "object",
+    "_disposition_latent_entities": "object",
+    "_raw_sensitivity_disposition": "object",
+    "_sensitivity_disposition": "object",
+    "_disposition_coverage": "object",
+    "_sensitivity_disposition_block": "object",
+    "_meaning_units": "object",
+    "_meaning_units_serialized": "object",
+    "_quality_qa": "object",
+    "_privacy_qa": "object",
+    "_rewrite_disposition_block": "object",
+    "_replacement_map_for_prompt": "object",
+    "_rewrite_tagged_text": "object",
+    "_replacement_application": "object",
+    "_rewrite_replacement_ready": "object",
+    "_rewrite_baseline_text": "object",
+    "_full_rewrite": "object",
+    "text_rewritten": "object",
+    "_repair_iterations": "int64",
+    "_quality_qa_reanswer": "object",
+    "_privacy_qa_reanswer": "object",
+    "_quality_qa_compare": "object",
+    "utility_score": "float64",
+    "leakage_mass": "float64",
+    "weighted_leakage_rate": "float64",
+    "any_high_leaked": "bool",
+    "_needs_repair": "object",
+    "_leaked_privacy_items": "object",
+    "_rewritten_text__next": "object",
+    "needs_human_review": "bool"
+   },
+   "rows": [
+    {"id": "c", "text": "Bob lives in Paris.", "_anonymizer_record_id": "c", "_raw_detected_entities": null, "_seed_entities": null, "_tag_notation": null, "_seed_validation_candidates": null, "_seed_tagged_text": null, "_validated_entities": null, "_seed_entities_json": null, "_initial_tagged_text": null, "_validated_seed_entities": null, "_augmented_entities": null, "_merged_entities": null, "_merged_tagged_text": null, "_validation_candidates": null, "_detected_entities": {"entities": [{"id": "first_name_0_3", "value": "Bob", "label": "first_name", "start_position": 0, "end_position": 3, "score": 0.9, "source": "detector"}, {"id": "city_13_18", "value": "Paris", "label": "city", "start_position": 13, "end_position": 18, "score": 0.9, "source": "detector"}]}, "text_with_spans": "<first_name>Bob</first_name> lives in <city>Paris</city>.", "_latent_entities": {"latent_entities": []}, "final_entities": {"entities": [{"id": "first_name_0_3", "value": "Bob", "label": "first_name", "start_position": 0, "end_position": 3, "score": 0.9, "source": "detector"}, {"id": "city_13_18", "value": "Paris", "label": "city", "start_position": 13, "end_position": 18, "score": 0.9, "source": "detector"}]}, "_entities_by_value": {"entities_by_value": [{"value": "Bob", "labels": ["first_name"]}, {"value": "Paris", "labels": ["city"]}]}, "_entity_classification": {"city": "quasi_identifier", "first_name": "direct_identifier"}, "_replacement_map": {"replacements": [{"original": "Bob", "label": "first_name", "synthetic": "Carl"}, {"original": "Paris", "label": "city", "synthetic": "Oslo"}]}, "_replacement_map_source": "llm", "_domain": {"domain": "OTHER", "domain_confidence": 0.9}, "_domain_supplement": "supplement", "_domain_supplement_privacy": "privacy supplement", "_disposition_explicit_entities": null, "_disposition_latent_entities": null, "_raw_sensitivity_disposition": null, "_sensitivity_disposition": {"sensitivity_disposition": []}, "_disposition_coverage": null, "_sensitivity_disposition_block": null, "_meaning_units": null, "_meaning_units_serialized": null, "_quality_qa": {"items": []}, "_privacy_qa": {"items": []}, "_rewrite_disposition_block": null, "_replacement_map_for_prompt": null, "_rewrite_tagged_text": null, "_replacement_application": {"targeted_span_count": 2, "applied_span_count": 2, "skipped_span_count": 0, "skipped_span_label_counts": {}}, "_rewrite_replacement_ready": true, "_rewrite_baseline_text": null, "_full_rewrite": null, "text_rewritten": "Carl lives in Oslo. (repaired)", "_repair_iterations": 1, "_quality_qa_reanswer": {"answers": []}, "_privacy_qa_reanswer": {"answers": []}, "_quality_qa_compare": {"results": []}, "utility_score": 0.9, "leakage_mass": 0.0, "weighted_leakage_rate": 0.0, "any_high_leaked": false, "_needs_repair": false, "_leaked_privacy_items": "leaked items 0", "_rewritten_text__next": "Carl lives in Oslo. (repaired)", "needs_human_review": false},
+    {"id": "e", "text": "Eve visits Rome.", "_anonymizer_record_id": "e", "_raw_detected_entities": null, "_seed_entities": null, "_tag_notation": null, "_seed_validation_candidates": null, "_seed_tagged_text": null, "_validated_entities": null, "_seed_entities_json": null, "_initial_tagged_text": null, "_validated_seed_entities": null, "_augmented_entities": null, "_merged_entities": null, "_merged_tagged_text": null, "_validation_candidates": null, "_detected_entities": {"entities": [{"id": "first_name_0_3", "value": "Eve", "label": "first_name", "start_position": 0, "end_position": 3, "score": 0.9, "source": "detector"}, {"id": "city_11_15", "value": "Rome", "label": "city", "start_position": 11, "end_position": 15, "score": 0.9, "source": "detector"}]}, "text_with_spans": "<first_name>Eve</first_name> visits <city>Rome</city>.", "_latent_entities": {"latent_entities": []}, "final_entities": {"entities": [{"id": "first_name_0_3", "value": "Eve", "label": "first_name", "start_position": 0, "end_position": 3, "score": 0.9, "source": "detector"}, {"id": "city_11_15", "value": "Rome", "label": "city", "start_position": 11, "end_position": 15, "score": 0.9, "source": "detector"}]}, "_entities_by_value": {"entities_by_value": [{"value": "Eve", "labels": ["first_name"]}, {"value": "Rome", "labels": ["city"]}]}, "_entity_classification": {"city": "quasi_identifier", "first_name": "direct_identifier"}, "_replacement_map": {"replacements": [{"original": "Eve", "label": "first_name", "synthetic": "Nora"}, {"original": "Rome", "label": "city", "synthetic": "Turin"}]}, "_replacement_map_source": "llm", "_domain": {"domain": "OTHER", "domain_confidence": 0.9}, "_domain_supplement": "supplement", "_domain_supplement_privacy": "privacy supplement", "_disposition_explicit_entities": null, "_disposition_latent_entities": null, "_raw_sensitivity_disposition": null, "_sensitivity_disposition": {"sensitivity_disposition": []}, "_disposition_coverage": null, "_sensitivity_disposition_block": null, "_meaning_units": null, "_meaning_units_serialized": null, "_quality_qa": {"items": []}, "_privacy_qa": {"items": []}, "_rewrite_disposition_block": null, "_replacement_map_for_prompt": null, "_rewrite_tagged_text": null, "_replacement_application": {"targeted_span_count": 2, "applied_span_count": 2, "skipped_span_count": 0, "skipped_span_label_counts": {}}, "_rewrite_replacement_ready": true, "_rewrite_baseline_text": null, "_full_rewrite": null, "text_rewritten": "Nora visits Turin.", "_repair_iterations": 0, "_quality_qa_reanswer": {"answers": []}, "_privacy_qa_reanswer": {"answers": []}, "_quality_qa_compare": {"results": []}, "utility_score": 0.9, "leakage_mass": 0.0, "weighted_leakage_rate": 0.0, "any_high_leaked": false, "_needs_repair": false, "_leaked_privacy_items": {"$": "NaN"}, "_rewritten_text__next": {"$": "NaN"}, "needs_human_review": false}
+   ]
+  },
+  "failed_records": [
+   {"record_id": "b", "step": "entity-detection", "reason": "Record missing"},
+   {"record_id": "d", "step": "latent-entity-detection", "reason": "Record missing"},
+   {"record_id": "a", "step": "rewrite-pipeline", "reason": "Record missing"}
+  ],
+  "outcomes": [
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []},
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []}
+  ],
+  "stages": [
+   {"stage": "graph_prepare", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 5, "target_count": 5, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_prepare", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 3, "target_count": 1, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_reconcile", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 3, "target_count": 1, "terminal_counts": {"success": 1}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_protect", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 3, "target_count": 1, "terminal_counts": {"success": 1}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "EntityDetectionWorkflow.run", "status": "completed", "elapsed_sec": "<varies>", "input_row_count": 5, "tag_latent_entities": true, "output_row_count": 3, "failed_record_count": 2, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "LlmReplaceWorkflow.fold", "status": "completed", "elapsed_sec": "<varies>", "consistency": "record", "input_row_count": 3, "entry_count": 6, "records_with_placeholder": 0, "fallback_counts": {}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_reconcile", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 5, "target_count": 5, "terminal_counts": {"failed": 3, "success": 2}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_protect", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 5, "target_count": 5, "terminal_counts": {"failed": 3, "success": 2}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "RewriteWorkflow.run", "status": "completed", "elapsed_sec": "<varies>", "input_row_count": 3, "entity_row_count": 3, "passthrough_row_count": 0, "output_row_count": 2, "failed_record_count": 1, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "Anonymizer._run_internal", "status": "completed", "elapsed_sec": "<varies>", "mode": "rewrite", "strategy": "Rewrite", "input_row_count": 5, "preview_num_records": null, "output_row_count": 2, "failed_record_count": 3, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"}
+  ],
+  "record_metrics": [
+   {"mode": "rewrite", "strategy": "Rewrite", "row_index": 0, "record_hash": "23e55fe3cebfcd5231fe7a24354acf609a9aee52fe777db1c877dbc7d1cca7a1", "text_length_chars": 19, "text_length_chars_bucket": "1-127", "text_length_tokens": 5, "text_length_tokens_bucket": "1-127", "final_entity_count": 2, "final_entity_label_counts": {"city": 1, "first_name": 1}, "ground_truth_entity_count": null, "ground_truth_entity_label_counts": null, "entity_true_positive_count": null, "entity_false_positive_count": null, "entity_false_negative_count": null, "entity_precision": null, "entity_recall": null, "entity_f1": null, "entity_relaxed_gt_found_count": null, "entity_relaxed_detected_tp_count": null, "entity_relaxed_label_compatible_gt_found_count": null, "entity_relaxed_label_compatible_detected_tp_count": null, "entity_relaxed_precision": null, "entity_relaxed_recall": null, "entity_relaxed_f1": null, "entity_relaxed_label_compatible_precision": null, "entity_relaxed_label_compatible_recall": null, "entity_relaxed_label_compatible_f1": null, "replacement_map_entry_count": 2, "replacement_map_entry_label_counts": {"city": 1, "first_name": 1}, "replacement_duplicate_value_count": 0, "replacement_missing_final_entity_count": 0, "replacement_missing_final_entity_label_counts": {}, "replacement_missing_final_value_count": 0, "replacement_synthetic_original_collision_count": 0, "replacement_synthetic_original_collision_label_counts": {}, "replacement_synthetic_original_collision_value_count": 0, "replacement_targeted_span_count": 2, "replacement_applied_span_count": 2, "replacement_skipped_span_count": 0, "replacement_skipped_span_label_counts": {}, "utility_score": 0.9, "leakage_mass": 0.0, "weighted_leakage_rate": 0.0, "any_high_leaked": false, "needs_human_review": false, "needs_repair": false, "original_value_leak_unique_value_count": 0, "original_value_leak_source_entity_occurrence_count": 0, "original_value_leak_source_entity_occurrence_label_counts": {}, "detected_candidate_count": 0, "validation_chunk_count": 0, "repair_iterations": 1, "llm_calls_estimated_by_stage": {"entity_detection": 2, "latent_entity_detection": 1, "replace_map_generation": 1, "rewrite_pipeline": 5, "rewrite_evaluate": 6, "rewrite_repair": 1, "rewrite_final_judge": 0}, "llm_calls_estimated_total": 16, "schema_version": 2, "record_type": "record", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"mode": "rewrite", "strategy": "Rewrite", "row_index": 1, "record_hash": "22ddbfa44ea97a215c4bc17e01a20b471e23ed685e98e3570245530e0a7c7056", "text_length_chars": 16, "text_length_chars_bucket": "1-127", "text_length_tokens": 5, "text_length_tokens_bucket": "1-127", "final_entity_count": 2, "final_entity_label_counts": {"city": 1, "first_name": 1}, "ground_truth_entity_count": null, "ground_truth_entity_label_counts": null, "entity_true_positive_count": null, "entity_false_positive_count": null, "entity_false_negative_count": null, "entity_precision": null, "entity_recall": null, "entity_f1": null, "entity_relaxed_gt_found_count": null, "entity_relaxed_detected_tp_count": null, "entity_relaxed_label_compatible_gt_found_count": null, "entity_relaxed_label_compatible_detected_tp_count": null, "entity_relaxed_precision": null, "entity_relaxed_recall": null, "entity_relaxed_f1": null, "entity_relaxed_label_compatible_precision": null, "entity_relaxed_label_compatible_recall": null, "entity_relaxed_label_compatible_f1": null, "replacement_map_entry_count": 2, "replacement_map_entry_label_counts": {"city": 1, "first_name": 1}, "replacement_duplicate_value_count": 0, "replacement_missing_final_entity_count": 0, "replacement_missing_final_entity_label_counts": {}, "replacement_missing_final_value_count": 0, "replacement_synthetic_original_collision_count": 0, "replacement_synthetic_original_collision_label_counts": {}, "replacement_synthetic_original_collision_value_count": 0, "replacement_targeted_span_count": 2, "replacement_applied_span_count": 2, "replacement_skipped_span_count": 0, "replacement_skipped_span_label_counts": {}, "utility_score": 0.9, "leakage_mass": 0.0, "weighted_leakage_rate": 0.0, "any_high_leaked": false, "needs_human_review": false, "needs_repair": false, "original_value_leak_unique_value_count": 0, "original_value_leak_source_entity_occurrence_count": 0, "original_value_leak_source_entity_occurrence_label_counts": {}, "detected_candidate_count": 0, "validation_chunk_count": 0, "repair_iterations": 0, "llm_calls_estimated_by_stage": {"entity_detection": 2, "latent_entity_detection": 1, "replace_map_generation": 1, "rewrite_pipeline": 5, "rewrite_evaluate": 3, "rewrite_repair": 0, "rewrite_final_judge": 0}, "llm_calls_estimated_total": 12, "schema_version": 2, "record_type": "record", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"}
+  ],
+  "run_record_fields": ["detect", "input_has_data_summary", "input_has_id_column", "input_row_count", "input_source", "input_text_column", "mode", "models", "preview_num_records", "record_type", "replace", "rewrite", "run_tags", "runtime", "schema_version", "source_hash", "strategy"],
+  "workflow_runs": [
+   {"workflow": "entity-detection", "seed_columns": ["id", "__nemo_anonymizer_text_input__", "_anonymizer_record_id"], "seed_rows": 5, "output_rows": 4, "preview_num_records": null, "inside_activation": true},
+   {"workflow": "latent-entity-detection", "seed_columns": ["id", "__nemo_anonymizer_text_input__", "_anonymizer_record_id", "_raw_detected_entities", "_seed_entities", "_tag_notation", "_seed_validation_candidates", "_seed_tagged_text", "_validated_entities", "_seed_entities_json", "_initial_tagged_text", "_validated_seed_entities", "_augmented_entities", "_merged_entities", "_merged_tagged_text", "_validation_candidates", "_detected_entities", "tagged_text"], "seed_rows": 4, "output_rows": 3, "preview_num_records": null, "inside_activation": true},
+   {"workflow": "replace-map-generation", "seed_columns": ["id", "__nemo_anonymizer_text_input__", "_anonymizer_record_id", "_raw_detected_entities", "_seed_entities", "_tag_notation", "_seed_validation_candidates", "_seed_tagged_text", "_validated_entities", "_seed_entities_json", "_initial_tagged_text", "_validated_seed_entities", "_augmented_entities", "_merged_entities", "_merged_tagged_text", "_validation_candidates", "_detected_entities", "tagged_text", "_latent_entities", "final_entities", "_entities_by_value", "_anonymizer_row_order", "_entity_classification", "_entity_examples", "_entities_for_replace", "_entities_for_replace_json"], "seed_rows": 3, "output_rows": 3, "preview_num_records": null, "inside_activation": true},
+   {"workflow": "rewrite-pipeline", "seed_columns": ["__nemo_anonymizer_text_input__", "_anonymizer_record_id", "_tag_notation", "tagged_text", "_latent_entities", "final_entities", "_entities_by_value", "_entity_classification", "_replacement_map"], "seed_rows": 3, "output_rows": 2, "preview_num_records": null, "inside_activation": true},
+   {"workflow": "rewrite-evaluate-0", "seed_columns": ["_anonymizer_record_id", "_quality_qa", "_privacy_qa", "_rewritten_text"], "seed_rows": 2, "output_rows": 2, "preview_num_records": null, "inside_activation": true},
+   {"workflow": "rewrite-repair-0", "seed_columns": ["__nemo_anonymizer_text_input__", "_anonymizer_record_id", "_privacy_qa", "_rewrite_baseline_text", "_rewritten_text", "_privacy_qa_reanswer", "utility_score", "leakage_mass", "any_high_leaked"], "seed_rows": 1, "output_rows": 1, "preview_num_records": null, "inside_activation": true},
+   {"workflow": "rewrite-evaluate-1", "seed_columns": ["_anonymizer_record_id", "_quality_qa", "_privacy_qa", "_rewritten_text"], "seed_rows": 1, "output_rows": 1, "preview_num_records": null, "inside_activation": true}
+  ],
+  "graph_invocations": 2,
+  "consumers": {
+   "display_record": {
+    "chars": 2461,
+    "sha256": "98494f0f48c2452c"
+   },
+   "parquet": {
+    "columns": ["id", "text", "text_rewritten", "utility_score", "leakage_mass", "weighted_leakage_rate", "any_high_leaked", "needs_human_review"],
+    "dtypes": {
+     "id": "object",
+     "text": "object",
+     "text_rewritten": "object",
+     "utility_score": "float64",
+     "leakage_mass": "float64",
+     "weighted_leakage_rate": "float64",
+     "any_high_leaked": "bool",
+     "needs_human_review": "bool"
+    }
+   },
+   "pickle": {
+    "trace_equal": true,
+    "user_equal": true,
+    "outcomes_kept": true
+   },
+   "user_columns_in_trace": true
+  }
+ },
+ "preview": {
+  "user_frame": {
+   "columns": ["id", "text", "text_rewritten", "utility_score", "leakage_mass", "weighted_leakage_rate", "any_high_leaked", "needs_human_review"],
+   "dtypes": {
+    "id": "object",
+    "text": "object",
+    "text_rewritten": "object",
+    "utility_score": "float64",
+    "leakage_mass": "float64",
+    "weighted_leakage_rate": "float64",
+    "any_high_leaked": "bool",
+    "needs_human_review": "bool"
+   },
+   "rows": [
+    {"id": "c", "text": "Bob lives in Paris.", "text_rewritten": "Carl lives in Oslo. (repaired)", "utility_score": 0.9, "leakage_mass": 0.0, "weighted_leakage_rate": 0.0, "any_high_leaked": false, "needs_human_review": false}
+   ]
+  },
+  "trace_frame": {
+   "columns": ["id", "text", "_anonymizer_record_id", "_raw_detected_entities", "_seed_entities", "_tag_notation", "_seed_validation_candidates", "_seed_tagged_text", "_validated_entities", "_seed_entities_json", "_initial_tagged_text", "_validated_seed_entities", "_augmented_entities", "_merged_entities", "_merged_tagged_text", "_validation_candidates", "_detected_entities", "text_with_spans", "_latent_entities", "final_entities", "_entities_by_value", "_entity_classification", "_replacement_map", "_replacement_map_source", "_domain", "_domain_supplement", "_domain_supplement_privacy", "_disposition_explicit_entities", "_disposition_latent_entities", "_raw_sensitivity_disposition", "_sensitivity_disposition", "_disposition_coverage", "_sensitivity_disposition_block", "_meaning_units", "_meaning_units_serialized", "_quality_qa", "_privacy_qa", "_rewrite_disposition_block", "_replacement_map_for_prompt", "_rewrite_tagged_text", "_replacement_application", "_rewrite_replacement_ready", "_rewrite_baseline_text", "_full_rewrite", "text_rewritten", "_repair_iterations", "_quality_qa_reanswer", "_privacy_qa_reanswer", "_quality_qa_compare", "utility_score", "leakage_mass", "weighted_leakage_rate", "any_high_leaked", "_needs_repair", "_leaked_privacy_items", "_rewritten_text__next", "needs_human_review"],
+   "dtypes": {
+    "id": "object",
+    "text": "object",
+    "_anonymizer_record_id": "object",
+    "_raw_detected_entities": "object",
+    "_seed_entities": "object",
+    "_tag_notation": "object",
+    "_seed_validation_candidates": "object",
+    "_seed_tagged_text": "object",
+    "_validated_entities": "object",
+    "_seed_entities_json": "object",
+    "_initial_tagged_text": "object",
+    "_validated_seed_entities": "object",
+    "_augmented_entities": "object",
+    "_merged_entities": "object",
+    "_merged_tagged_text": "object",
+    "_validation_candidates": "object",
+    "_detected_entities": "object",
+    "text_with_spans": "object",
+    "_latent_entities": "object",
+    "final_entities": "object",
+    "_entities_by_value": "object",
+    "_entity_classification": "object",
+    "_replacement_map": "object",
+    "_replacement_map_source": "object",
+    "_domain": "object",
+    "_domain_supplement": "object",
+    "_domain_supplement_privacy": "object",
+    "_disposition_explicit_entities": "object",
+    "_disposition_latent_entities": "object",
+    "_raw_sensitivity_disposition": "object",
+    "_sensitivity_disposition": "object",
+    "_disposition_coverage": "object",
+    "_sensitivity_disposition_block": "object",
+    "_meaning_units": "object",
+    "_meaning_units_serialized": "object",
+    "_quality_qa": "object",
+    "_privacy_qa": "object",
+    "_rewrite_disposition_block": "object",
+    "_replacement_map_for_prompt": "object",
+    "_rewrite_tagged_text": "object",
+    "_replacement_application": "object",
+    "_rewrite_replacement_ready": "object",
+    "_rewrite_baseline_text": "object",
+    "_full_rewrite": "object",
+    "text_rewritten": "object",
+    "_repair_iterations": "int64",
+    "_quality_qa_reanswer": "object",
+    "_privacy_qa_reanswer": "object",
+    "_quality_qa_compare": "object",
+    "utility_score": "float64",
+    "leakage_mass": "float64",
+    "weighted_leakage_rate": "float64",
+    "any_high_leaked": "bool",
+    "_needs_repair": "object",
+    "_leaked_privacy_items": "object",
+    "_rewritten_text__next": "object",
+    "needs_human_review": "bool"
+   },
+   "rows": [
+    {"id": "c", "text": "Bob lives in Paris.", "_anonymizer_record_id": "c", "_raw_detected_entities": null, "_seed_entities": null, "_tag_notation": null, "_seed_validation_candidates": null, "_seed_tagged_text": null, "_validated_entities": null, "_seed_entities_json": null, "_initial_tagged_text": null, "_validated_seed_entities": null, "_augmented_entities": null, "_merged_entities": null, "_merged_tagged_text": null, "_validation_candidates": null, "_detected_entities": {"entities": [{"id": "first_name_0_3", "value": "Bob", "label": "first_name", "start_position": 0, "end_position": 3, "score": 0.9, "source": "detector"}, {"id": "city_13_18", "value": "Paris", "label": "city", "start_position": 13, "end_position": 18, "score": 0.9, "source": "detector"}]}, "text_with_spans": "<first_name>Bob</first_name> lives in <city>Paris</city>.", "_latent_entities": {"latent_entities": []}, "final_entities": {"entities": [{"id": "first_name_0_3", "value": "Bob", "label": "first_name", "start_position": 0, "end_position": 3, "score": 0.9, "source": "detector"}, {"id": "city_13_18", "value": "Paris", "label": "city", "start_position": 13, "end_position": 18, "score": 0.9, "source": "detector"}]}, "_entities_by_value": {"entities_by_value": [{"value": "Bob", "labels": ["first_name"]}, {"value": "Paris", "labels": ["city"]}]}, "_entity_classification": {"city": "quasi_identifier", "first_name": "direct_identifier"}, "_replacement_map": {"replacements": [{"original": "Bob", "label": "first_name", "synthetic": "Carl"}, {"original": "Paris", "label": "city", "synthetic": "Oslo"}]}, "_replacement_map_source": "llm", "_domain": {"domain": "OTHER", "domain_confidence": 0.9}, "_domain_supplement": "supplement", "_domain_supplement_privacy": "privacy supplement", "_disposition_explicit_entities": null, "_disposition_latent_entities": null, "_raw_sensitivity_disposition": null, "_sensitivity_disposition": {"sensitivity_disposition": []}, "_disposition_coverage": null, "_sensitivity_disposition_block": null, "_meaning_units": null, "_meaning_units_serialized": null, "_quality_qa": {"items": []}, "_privacy_qa": {"items": []}, "_rewrite_disposition_block": null, "_replacement_map_for_prompt": null, "_rewrite_tagged_text": null, "_replacement_application": {"targeted_span_count": 2, "applied_span_count": 2, "skipped_span_count": 0, "skipped_span_label_counts": {}}, "_rewrite_replacement_ready": true, "_rewrite_baseline_text": null, "_full_rewrite": null, "text_rewritten": "Carl lives in Oslo. (repaired)", "_repair_iterations": 1, "_quality_qa_reanswer": {"answers": []}, "_privacy_qa_reanswer": {"answers": []}, "_quality_qa_compare": {"results": []}, "utility_score": 0.9, "leakage_mass": 0.0, "weighted_leakage_rate": 0.0, "any_high_leaked": false, "_needs_repair": false, "_leaked_privacy_items": "leaked items 0", "_rewritten_text__next": "Carl lives in Oslo. (repaired)", "needs_human_review": false}
+   ]
+  },
+  "failed_records": [
+   {"record_id": "b", "step": "entity-detection", "reason": "Record missing"},
+   {"record_id": "d", "step": "latent-entity-detection", "reason": "Record missing"},
+   {"record_id": "a", "step": "rewrite-pipeline", "reason": "Record missing"}
+  ],
+  "outcomes": [
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []}
+  ],
+  "stages": [
+   {"stage": "graph_prepare", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 5, "target_count": 4, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_prepare", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 3, "target_count": 1, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_reconcile", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 3, "target_count": 1, "terminal_counts": {"success": 1}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_protect", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 3, "target_count": 1, "terminal_counts": {"success": 1}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "EntityDetectionWorkflow.run", "status": "completed", "elapsed_sec": "<varies>", "input_row_count": 4, "tag_latent_entities": true, "output_row_count": 2, "failed_record_count": 2, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "LlmReplaceWorkflow.fold", "status": "completed", "elapsed_sec": "<varies>", "consistency": "record", "input_row_count": 2, "entry_count": 4, "records_with_placeholder": 0, "fallback_counts": {}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_reconcile", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 5, "target_count": 4, "terminal_counts": {"failed": 3, "success": 1}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_protect", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 5, "target_count": 4, "terminal_counts": {"failed": 3, "success": 1}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "RewriteWorkflow.run", "status": "completed", "elapsed_sec": "<varies>", "input_row_count": 2, "entity_row_count": 2, "passthrough_row_count": 0, "output_row_count": 1, "failed_record_count": 1, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "Anonymizer._run_internal", "status": "completed", "elapsed_sec": "<varies>", "mode": "rewrite", "strategy": "Rewrite", "input_row_count": 4, "preview_num_records": 4, "output_row_count": 1, "failed_record_count": 3, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"}
+  ],
+  "record_metrics": [
+   {"mode": "rewrite", "strategy": "Rewrite", "row_index": 0, "record_hash": "23e55fe3cebfcd5231fe7a24354acf609a9aee52fe777db1c877dbc7d1cca7a1", "text_length_chars": 19, "text_length_chars_bucket": "1-127", "text_length_tokens": 5, "text_length_tokens_bucket": "1-127", "final_entity_count": 2, "final_entity_label_counts": {"city": 1, "first_name": 1}, "ground_truth_entity_count": null, "ground_truth_entity_label_counts": null, "entity_true_positive_count": null, "entity_false_positive_count": null, "entity_false_negative_count": null, "entity_precision": null, "entity_recall": null, "entity_f1": null, "entity_relaxed_gt_found_count": null, "entity_relaxed_detected_tp_count": null, "entity_relaxed_label_compatible_gt_found_count": null, "entity_relaxed_label_compatible_detected_tp_count": null, "entity_relaxed_precision": null, "entity_relaxed_recall": null, "entity_relaxed_f1": null, "entity_relaxed_label_compatible_precision": null, "entity_relaxed_label_compatible_recall": null, "entity_relaxed_label_compatible_f1": null, "replacement_map_entry_count": 2, "replacement_map_entry_label_counts": {"city": 1, "first_name": 1}, "replacement_duplicate_value_count": 0, "replacement_missing_final_entity_count": 0, "replacement_missing_final_entity_label_counts": {}, "replacement_missing_final_value_count": 0, "replacement_synthetic_original_collision_count": 0, "replacement_synthetic_original_collision_label_counts": {}, "replacement_synthetic_original_collision_value_count": 0, "replacement_targeted_span_count": 2, "replacement_applied_span_count": 2, "replacement_skipped_span_count": 0, "replacement_skipped_span_label_counts": {}, "utility_score": 0.9, "leakage_mass": 0.0, "weighted_leakage_rate": 0.0, "any_high_leaked": false, "needs_human_review": false, "needs_repair": false, "original_value_leak_unique_value_count": 0, "original_value_leak_source_entity_occurrence_count": 0, "original_value_leak_source_entity_occurrence_label_counts": {}, "detected_candidate_count": 0, "validation_chunk_count": 0, "repair_iterations": 1, "llm_calls_estimated_by_stage": {"entity_detection": 2, "latent_entity_detection": 1, "replace_map_generation": 1, "rewrite_pipeline": 5, "rewrite_evaluate": 6, "rewrite_repair": 1, "rewrite_final_judge": 0}, "llm_calls_estimated_total": 16, "schema_version": 2, "record_type": "record", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"}
+  ],
+  "run_record_fields": ["detect", "input_has_data_summary", "input_has_id_column", "input_row_count", "input_source", "input_text_column", "mode", "models", "preview_num_records", "record_type", "replace", "rewrite", "run_tags", "runtime", "schema_version", "source_hash", "strategy"],
+  "workflow_runs": [
+   {"workflow": "entity-detection", "seed_columns": ["id", "__nemo_anonymizer_text_input__", "_anonymizer_record_id"], "seed_rows": 4, "output_rows": 3, "preview_num_records": 4, "inside_activation": true},
+   {"workflow": "latent-entity-detection", "seed_columns": ["id", "__nemo_anonymizer_text_input__", "_anonymizer_record_id", "_raw_detected_entities", "_seed_entities", "_tag_notation", "_seed_validation_candidates", "_seed_tagged_text", "_validated_entities", "_seed_entities_json", "_initial_tagged_text", "_validated_seed_entities", "_augmented_entities", "_merged_entities", "_merged_tagged_text", "_validation_candidates", "_detected_entities", "tagged_text"], "seed_rows": 3, "output_rows": 2, "preview_num_records": 4, "inside_activation": true},
+   {"workflow": "replace-map-generation", "seed_columns": ["id", "__nemo_anonymizer_text_input__", "_anonymizer_record_id", "_raw_detected_entities", "_seed_entities", "_tag_notation", "_seed_validation_candidates", "_seed_tagged_text", "_validated_entities", "_seed_entities_json", "_initial_tagged_text", "_validated_seed_entities", "_augmented_entities", "_merged_entities", "_merged_tagged_text", "_validation_candidates", "_detected_entities", "tagged_text", "_latent_entities", "final_entities", "_entities_by_value", "_anonymizer_row_order", "_entity_classification", "_entity_examples", "_entities_for_replace", "_entities_for_replace_json"], "seed_rows": 2, "output_rows": 2, "preview_num_records": null, "inside_activation": true},
+   {"workflow": "rewrite-pipeline", "seed_columns": ["__nemo_anonymizer_text_input__", "_anonymizer_record_id", "_tag_notation", "tagged_text", "_latent_entities", "final_entities", "_entities_by_value", "_entity_classification", "_replacement_map"], "seed_rows": 2, "output_rows": 1, "preview_num_records": 4, "inside_activation": true},
+   {"workflow": "rewrite-evaluate-0", "seed_columns": ["_anonymizer_record_id", "_quality_qa", "_privacy_qa", "_rewritten_text"], "seed_rows": 1, "output_rows": 1, "preview_num_records": 4, "inside_activation": true},
+   {"workflow": "rewrite-repair-0", "seed_columns": ["__nemo_anonymizer_text_input__", "_anonymizer_record_id", "_privacy_qa", "_rewrite_baseline_text", "_rewritten_text", "_privacy_qa_reanswer", "utility_score", "leakage_mass", "any_high_leaked"], "seed_rows": 1, "output_rows": 1, "preview_num_records": 4, "inside_activation": true},
+   {"workflow": "rewrite-evaluate-1", "seed_columns": ["_anonymizer_record_id", "_quality_qa", "_privacy_qa", "_rewritten_text"], "seed_rows": 1, "output_rows": 1, "preview_num_records": 4, "inside_activation": true}
+  ],
+  "graph_invocations": 2,
+  "consumers": {
+   "display_record": {
+    "chars": 2461,
+    "sha256": "98494f0f48c2452c"
+   },
+   "parquet": {
+    "columns": ["id", "text", "text_rewritten", "utility_score", "leakage_mass", "weighted_leakage_rate", "any_high_leaked", "needs_human_review"],
+    "dtypes": {
+     "id": "object",
+     "text": "object",
+     "text_rewritten": "object",
+     "utility_score": "float64",
+     "leakage_mass": "float64",
+     "weighted_leakage_rate": "float64",
+     "any_high_leaked": "bool",
+     "needs_human_review": "bool"
+    }
+   },
+   "pickle": {
+    "trace_equal": true,
+    "user_equal": true,
+    "outcomes_kept": true
+   },
+   "user_columns_in_trace": true
+  }
+ },
+ "evaluate": {
+  "user_frame": {
+   "columns": ["id", "text", "text_rewritten", "utility_score", "leakage_mass", "weighted_leakage_rate", "any_high_leaked", "needs_human_review", "detection_valid", "detection_invalid_entities", "judge_evaluation", "entity_coverage", "missed_entities"],
+   "dtypes": {
+    "id": "object",
+    "text": "object",
+    "text_rewritten": "object",
+    "utility_score": "float64",
+    "leakage_mass": "float64",
+    "weighted_leakage_rate": "float64",
+    "any_high_leaked": "bool",
+    "needs_human_review": "bool",
+    "detection_valid": "float64",
+    "detection_invalid_entities": "object",
+    "judge_evaluation": "object",
+    "entity_coverage": "object",
+    "missed_entities": "object"
+   },
+   "rows": [
+    {"id": "c", "text": "Bob lives in Paris.", "text_rewritten": "Carl lives in Oslo. (repaired)", "utility_score": 0.9, "leakage_mass": 0.0, "weighted_leakage_rate": 0.0, "any_high_leaked": false, "needs_human_review": false, "detection_valid": 1.0, "detection_invalid_entities": [], "judge_evaluation": {"privacy": {"score": 4, "reasoning": "ok"}, "quality": {"score": 4, "reasoning": "ok"}, "style": {"score": 4, "reasoning": "ok"}}, "entity_coverage": 1.0, "missed_entities": []},
+    {"id": "e", "text": "Eve visits Rome.", "text_rewritten": "Nora visits Turin.", "utility_score": 0.9, "leakage_mass": 0.0, "weighted_leakage_rate": 0.0, "any_high_leaked": false, "needs_human_review": false, "detection_valid": 1.0, "detection_invalid_entities": [], "judge_evaluation": {"privacy": {"score": 4, "reasoning": "ok"}, "quality": {"score": 4, "reasoning": "ok"}, "style": {"score": 4, "reasoning": "ok"}}, "entity_coverage": 1.0, "missed_entities": []}
+   ]
+  },
+  "trace_frame": {
+   "columns": ["id", "text", "_anonymizer_record_id", "_raw_detected_entities", "_seed_entities", "_tag_notation", "_seed_validation_candidates", "_seed_tagged_text", "_validated_entities", "_seed_entities_json", "_initial_tagged_text", "_validated_seed_entities", "_augmented_entities", "_merged_entities", "_merged_tagged_text", "_validation_candidates", "_detected_entities", "text_with_spans", "_latent_entities", "final_entities", "_entities_by_value", "_entity_classification", "_replacement_map", "_replacement_map_source", "_domain", "_domain_supplement", "_domain_supplement_privacy", "_disposition_explicit_entities", "_disposition_latent_entities", "_raw_sensitivity_disposition", "_sensitivity_disposition", "_disposition_coverage", "_sensitivity_disposition_block", "_meaning_units", "_meaning_units_serialized", "_quality_qa", "_privacy_qa", "_rewrite_disposition_block", "_replacement_map_for_prompt", "_rewrite_tagged_text", "_replacement_application", "_rewrite_replacement_ready", "_rewrite_baseline_text", "_full_rewrite", "text_rewritten", "_repair_iterations", "_quality_qa_reanswer", "_privacy_qa_reanswer", "_quality_qa_compare", "utility_score", "leakage_mass", "weighted_leakage_rate", "any_high_leaked", "_needs_repair", "_leaked_privacy_items", "_rewritten_text__next", "needs_human_review", "_entities_for_detection_judge", "_entity_examples_for_detection_judge", "_detection_judge", "detection_valid", "detection_invalid_entities", "judge_evaluation", "_entity_coverage_judge", "entity_coverage", "missed_entities", "_entity_coverage_n_candidates"],
+   "dtypes": {
+    "id": "object",
+    "text": "object",
+    "_anonymizer_record_id": "object",
+    "_raw_detected_entities": "object",
+    "_seed_entities": "object",
+    "_tag_notation": "object",
+    "_seed_validation_candidates": "object",
+    "_seed_tagged_text": "object",
+    "_validated_entities": "object",
+    "_seed_entities_json": "object",
+    "_initial_tagged_text": "object",
+    "_validated_seed_entities": "object",
+    "_augmented_entities": "object",
+    "_merged_entities": "object",
+    "_merged_tagged_text": "object",
+    "_validation_candidates": "object",
+    "_detected_entities": "object",
+    "text_with_spans": "object",
+    "_latent_entities": "object",
+    "final_entities": "object",
+    "_entities_by_value": "object",
+    "_entity_classification": "object",
+    "_replacement_map": "object",
+    "_replacement_map_source": "object",
+    "_domain": "object",
+    "_domain_supplement": "object",
+    "_domain_supplement_privacy": "object",
+    "_disposition_explicit_entities": "object",
+    "_disposition_latent_entities": "object",
+    "_raw_sensitivity_disposition": "object",
+    "_sensitivity_disposition": "object",
+    "_disposition_coverage": "object",
+    "_sensitivity_disposition_block": "object",
+    "_meaning_units": "object",
+    "_meaning_units_serialized": "object",
+    "_quality_qa": "object",
+    "_privacy_qa": "object",
+    "_rewrite_disposition_block": "object",
+    "_replacement_map_for_prompt": "object",
+    "_rewrite_tagged_text": "object",
+    "_replacement_application": "object",
+    "_rewrite_replacement_ready": "object",
+    "_rewrite_baseline_text": "object",
+    "_full_rewrite": "object",
+    "text_rewritten": "object",
+    "_repair_iterations": "int64",
+    "_quality_qa_reanswer": "object",
+    "_privacy_qa_reanswer": "object",
+    "_quality_qa_compare": "object",
+    "utility_score": "float64",
+    "leakage_mass": "float64",
+    "weighted_leakage_rate": "float64",
+    "any_high_leaked": "bool",
+    "_needs_repair": "object",
+    "_leaked_privacy_items": "object",
+    "_rewritten_text__next": "object",
+    "needs_human_review": "bool",
+    "_entities_for_detection_judge": "object",
+    "_entity_examples_for_detection_judge": "object",
+    "_detection_judge": "object",
+    "detection_valid": "float64",
+    "detection_invalid_entities": "object",
+    "judge_evaluation": "object",
+    "_entity_coverage_judge": "object",
+    "entity_coverage": "object",
+    "missed_entities": "object",
+    "_entity_coverage_n_candidates": "object"
+   },
+   "rows": [
+    {"id": "c", "text": "Bob lives in Paris.", "_anonymizer_record_id": "c", "_raw_detected_entities": null, "_seed_entities": null, "_tag_notation": null, "_seed_validation_candidates": null, "_seed_tagged_text": null, "_validated_entities": null, "_seed_entities_json": null, "_initial_tagged_text": null, "_validated_seed_entities": null, "_augmented_entities": null, "_merged_entities": null, "_merged_tagged_text": null, "_validation_candidates": null, "_detected_entities": {"entities": [{"id": "first_name_0_3", "value": "Bob", "label": "first_name", "start_position": 0, "end_position": 3, "score": 0.9, "source": "detector"}, {"id": "city_13_18", "value": "Paris", "label": "city", "start_position": 13, "end_position": 18, "score": 0.9, "source": "detector"}]}, "text_with_spans": "<first_name>Bob</first_name> lives in <city>Paris</city>.", "_latent_entities": {"latent_entities": []}, "final_entities": {"entities": [{"id": "first_name_0_3", "value": "Bob", "label": "first_name", "start_position": 0, "end_position": 3, "score": 0.9, "source": "detector"}, {"id": "city_13_18", "value": "Paris", "label": "city", "start_position": 13, "end_position": 18, "score": 0.9, "source": "detector"}]}, "_entities_by_value": {"entities_by_value": [{"value": "Bob", "labels": ["first_name"]}, {"value": "Paris", "labels": ["city"]}]}, "_entity_classification": {"city": "quasi_identifier", "first_name": "direct_identifier"}, "_replacement_map": {"replacements": [{"original": "Bob", "label": "first_name", "synthetic": "Carl"}, {"original": "Paris", "label": "city", "synthetic": "Oslo"}]}, "_replacement_map_source": "llm", "_domain": {"domain": "OTHER", "domain_confidence": 0.9}, "_domain_supplement": "supplement", "_domain_supplement_privacy": "privacy supplement", "_disposition_explicit_entities": null, "_disposition_latent_entities": null, "_raw_sensitivity_disposition": null, "_sensitivity_disposition": {"sensitivity_disposition": []}, "_disposition_coverage": null, "_sensitivity_disposition_block": null, "_meaning_units": null, "_meaning_units_serialized": null, "_quality_qa": {"items": []}, "_privacy_qa": {"items": []}, "_rewrite_disposition_block": null, "_replacement_map_for_prompt": null, "_rewrite_tagged_text": null, "_replacement_application": {"targeted_span_count": 2, "applied_span_count": 2, "skipped_span_count": 0, "skipped_span_label_counts": {}}, "_rewrite_replacement_ready": true, "_rewrite_baseline_text": null, "_full_rewrite": null, "text_rewritten": "Carl lives in Oslo. (repaired)", "_repair_iterations": 1, "_quality_qa_reanswer": {"answers": []}, "_privacy_qa_reanswer": {"answers": []}, "_quality_qa_compare": {"results": []}, "utility_score": 0.9, "leakage_mass": 0.0, "weighted_leakage_rate": 0.0, "any_high_leaked": false, "_needs_repair": false, "_leaked_privacy_items": "leaked items 0", "_rewritten_text__next": "Carl lives in Oslo. (repaired)", "needs_human_review": false, "_entities_for_detection_judge": [{"value": "Bob", "label": "first_name"}, {"value": "Paris", "label": "city"}], "_entity_examples_for_detection_judge": "{\"city\": \"(e.g. Houston, San Diego, Doha, Lahore)\", \"first_name\": \"(e.g. Michael, Isabella, Carlos, Wei)\"}", "_detection_judge": {"all_valid": true, "invalid_entities": []}, "detection_valid": 1.0, "detection_invalid_entities": [], "judge_evaluation": {"privacy": {"score": 4, "reasoning": "ok"}, "quality": {"score": 4, "reasoning": "ok"}, "style": {"score": 4, "reasoning": "ok"}}, "_entity_coverage_judge": {"candidate_entities": [{"value": "works", "label": "occupation", "reasoning": "a job description"}]}, "entity_coverage": 1.0, "missed_entities": [], "_entity_coverage_n_candidates": 0},
+    {"id": "e", "text": "Eve visits Rome.", "_anonymizer_record_id": "e", "_raw_detected_entities": null, "_seed_entities": null, "_tag_notation": null, "_seed_validation_candidates": null, "_seed_tagged_text": null, "_validated_entities": null, "_seed_entities_json": null, "_initial_tagged_text": null, "_validated_seed_entities": null, "_augmented_entities": null, "_merged_entities": null, "_merged_tagged_text": null, "_validation_candidates": null, "_detected_entities": {"entities": [{"id": "first_name_0_3", "value": "Eve", "label": "first_name", "start_position": 0, "end_position": 3, "score": 0.9, "source": "detector"}, {"id": "city_11_15", "value": "Rome", "label": "city", "start_position": 11, "end_position": 15, "score": 0.9, "source": "detector"}]}, "text_with_spans": "<first_name>Eve</first_name> visits <city>Rome</city>.", "_latent_entities": {"latent_entities": []}, "final_entities": {"entities": [{"id": "first_name_0_3", "value": "Eve", "label": "first_name", "start_position": 0, "end_position": 3, "score": 0.9, "source": "detector"}, {"id": "city_11_15", "value": "Rome", "label": "city", "start_position": 11, "end_position": 15, "score": 0.9, "source": "detector"}]}, "_entities_by_value": {"entities_by_value": [{"value": "Eve", "labels": ["first_name"]}, {"value": "Rome", "labels": ["city"]}]}, "_entity_classification": {"city": "quasi_identifier", "first_name": "direct_identifier"}, "_replacement_map": {"replacements": [{"original": "Eve", "label": "first_name", "synthetic": "Nora"}, {"original": "Rome", "label": "city", "synthetic": "Turin"}]}, "_replacement_map_source": "llm", "_domain": {"domain": "OTHER", "domain_confidence": 0.9}, "_domain_supplement": "supplement", "_domain_supplement_privacy": "privacy supplement", "_disposition_explicit_entities": null, "_disposition_latent_entities": null, "_raw_sensitivity_disposition": null, "_sensitivity_disposition": {"sensitivity_disposition": []}, "_disposition_coverage": null, "_sensitivity_disposition_block": null, "_meaning_units": null, "_meaning_units_serialized": null, "_quality_qa": {"items": []}, "_privacy_qa": {"items": []}, "_rewrite_disposition_block": null, "_replacement_map_for_prompt": null, "_rewrite_tagged_text": null, "_replacement_application": {"targeted_span_count": 2, "applied_span_count": 2, "skipped_span_count": 0, "skipped_span_label_counts": {}}, "_rewrite_replacement_ready": true, "_rewrite_baseline_text": null, "_full_rewrite": null, "text_rewritten": "Nora visits Turin.", "_repair_iterations": 0, "_quality_qa_reanswer": {"answers": []}, "_privacy_qa_reanswer": {"answers": []}, "_quality_qa_compare": {"results": []}, "utility_score": 0.9, "leakage_mass": 0.0, "weighted_leakage_rate": 0.0, "any_high_leaked": false, "_needs_repair": false, "_leaked_privacy_items": {"$": "NaN"}, "_rewritten_text__next": {"$": "NaN"}, "needs_human_review": false, "_entities_for_detection_judge": [{"value": "Eve", "label": "first_name"}, {"value": "Rome", "label": "city"}], "_entity_examples_for_detection_judge": "{\"city\": \"(e.g. Houston, San Diego, Doha, Lahore)\", \"first_name\": \"(e.g. Michael, Isabella, Carlos, Wei)\"}", "_detection_judge": {"all_valid": true, "invalid_entities": []}, "detection_valid": 1.0, "detection_invalid_entities": [], "judge_evaluation": {"privacy": {"score": 4, "reasoning": "ok"}, "quality": {"score": 4, "reasoning": "ok"}, "style": {"score": 4, "reasoning": "ok"}}, "_entity_coverage_judge": {"candidate_entities": []}, "entity_coverage": 1.0, "missed_entities": [], "_entity_coverage_n_candidates": 0}
+   ]
+  },
+  "failed_records": [],
+  "outcomes": null,
+  "stages": [
+   {"stage": "graph_prepare", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 5, "target_count": 2, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_prepare", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 2, "target_count": 1, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_reconcile", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 2, "target_count": 1, "terminal_counts": {"success": 1}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_protect", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 2, "target_count": 1, "terminal_counts": {"success": 1}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_reconcile", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 5, "target_count": 2, "terminal_counts": {"success": 2}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_protect", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 5, "target_count": 2, "terminal_counts": {"success": 2}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"}
+  ],
+  "record_metrics": [],
+  "run_record_fields": [],
+  "workflow_runs": [
+   {"workflow": "replace-detection-judge", "seed_columns": ["id", "__nemo_anonymizer_text_input__", "_anonymizer_record_id", "_raw_detected_entities", "_seed_entities", "_tag_notation", "_seed_validation_candidates", "_seed_tagged_text", "_validated_entities", "_seed_entities_json", "_initial_tagged_text", "_validated_seed_entities", "_augmented_entities", "_merged_entities", "_merged_tagged_text", "_validation_candidates", "_detected_entities", "tagged_text", "_latent_entities", "final_entities", "_entities_by_value", "_entity_classification", "_replacement_map", "_replacement_map_source", "_domain", "_domain_supplement", "_domain_supplement_privacy", "_disposition_explicit_entities", "_disposition_latent_entities", "_raw_sensitivity_disposition", "_sensitivity_disposition", "_disposition_coverage", "_sensitivity_disposition_block", "_meaning_units", "_meaning_units_serialized", "_quality_qa", "_privacy_qa", "_rewrite_disposition_block", "_replacement_map_for_prompt", "_rewrite_tagged_text", "_replacement_application", "_rewrite_replacement_ready", "_rewrite_baseline_text", "_full_rewrite", "_rewritten_text", "_repair_iterations", "_quality_qa_reanswer", "_privacy_qa_reanswer", "_quality_qa_compare", "utility_score", "leakage_mass", "weighted_leakage_rate", "any_high_leaked", "_needs_repair", "_leaked_privacy_items", "_rewritten_text__next", "needs_human_review", "_anonymizer_row_order", "_entities_for_detection_judge", "_entity_examples_for_detection_judge"], "seed_rows": 2, "output_rows": 2, "preview_num_records": null, "inside_activation": true},
+   {"workflow": "rewrite-final-judge", "seed_columns": ["__nemo_anonymizer_text_input__", "_anonymizer_record_id", "_rewritten_text"], "seed_rows": 2, "output_rows": 2, "preview_num_records": null, "inside_activation": true},
+   {"workflow": "entity-coverage-judge", "seed_columns": ["id", "__nemo_anonymizer_text_input__", "_anonymizer_record_id", "_raw_detected_entities", "_seed_entities", "_tag_notation", "_seed_validation_candidates", "_seed_tagged_text", "_validated_entities", "_seed_entities_json", "_initial_tagged_text", "_validated_seed_entities", "_augmented_entities", "_merged_entities", "_merged_tagged_text", "_validation_candidates", "_detected_entities", "tagged_text", "_latent_entities", "final_entities", "_entities_by_value", "_entity_classification", "_replacement_map", "_replacement_map_source", "_domain", "_domain_supplement", "_domain_supplement_privacy", "_disposition_explicit_entities", "_disposition_latent_entities", "_raw_sensitivity_disposition", "_sensitivity_disposition", "_disposition_coverage", "_sensitivity_disposition_block", "_meaning_units", "_meaning_units_serialized", "_quality_qa", "_privacy_qa", "_rewrite_disposition_block", "_replacement_map_for_prompt", "_rewrite_tagged_text", "_rewrite_replacement_ready", "_rewrite_baseline_text", "_full_rewrite", "_rewritten_text", "_repair_iterations", "_quality_qa_reanswer", "_privacy_qa_reanswer", "_quality_qa_compare", "utility_score", "leakage_mass", "weighted_leakage_rate", "any_high_leaked", "_needs_repair", "_leaked_privacy_items", "_rewritten_text__next", "needs_human_review", "_entities_for_detection_judge", "_entity_examples_for_detection_judge", "_detection_judge", "detection_valid", "detection_invalid_entities", "judge_evaluation", "_final_entities_for_coverage_judge", "_anonymizer_row_order"], "seed_rows": 2, "output_rows": 2, "preview_num_records": null, "inside_activation": true}
+  ],
+  "graph_invocations": 2,
+  "consumers": {
+   "display_record": {
+    "chars": 3345,
+    "sha256": "5a5d806a55e5baf6"
+   },
+   "parquet": {
+    "columns": ["id", "text", "text_rewritten", "utility_score", "leakage_mass", "weighted_leakage_rate", "any_high_leaked", "needs_human_review", "detection_valid", "detection_invalid_entities", "judge_evaluation", "entity_coverage", "missed_entities"],
+    "dtypes": {
+     "id": "object",
+     "text": "object",
+     "text_rewritten": "object",
+     "utility_score": "float64",
+     "leakage_mass": "float64",
+     "weighted_leakage_rate": "float64",
+     "any_high_leaked": "bool",
+     "needs_human_review": "bool",
+     "detection_valid": "float64",
+     "detection_invalid_entities": "object",
+     "judge_evaluation": "object",
+     "entity_coverage": "float64",
+     "missed_entities": "object"
+    }
+   },
+   "pickle": {
+    "trace_equal": true,
+    "user_equal": true,
+    "outcomes_kept": true
+   },
+   "user_columns_in_trace": true
+  }
+ }
+}

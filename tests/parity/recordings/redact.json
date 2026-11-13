@@ -1,0 +1,304 @@
+{
+ "run": {
+  "user_frame": {
+   "columns": ["id", "text", "text_with_spans", "final_entities", "text_replaced"],
+   "dtypes": {
+    "id": "object",
+    "text": "object",
+    "text_with_spans": "object",
+    "final_entities": "object",
+    "text_replaced": "object"
+   },
+   "rows": [
+    {"id": "a", "text": "Alice works at Acme.", "text_with_spans": "<first_name>Alice</first_name> works at <organization_name>Acme</organization_name>.", "final_entities": {"entities": [{"id": "first_name_0_5", "value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5, "score": 0.9, "source": "detector"}, {"id": "organization_name_15_19", "value": "Acme", "label": "organization_name", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "text_replaced": "[REDACTED_FIRST_NAME] works at [REDACTED_ORGANIZATION_NAME]."},
+    {"id": "b", "text": "The sky is blue.", "text_with_spans": "The sky is blue.", "final_entities": {"entities": []}, "text_replaced": "The sky is blue."},
+    {"id": "d", "text": "Dora paints in Lyon.", "text_with_spans": "<first_name>Dora</first_name> paints in <city>Lyon</city>.", "final_entities": {"entities": [{"id": "first_name_0_4", "value": "Dora", "label": "first_name", "start_position": 0, "end_position": 4, "score": 0.9, "source": "detector"}, {"id": "city_15_19", "value": "Lyon", "label": "city", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "text_replaced": "[REDACTED_FIRST_NAME] paints in [REDACTED_CITY]."},
+    {"id": "e", "text": "Eve visits Rome.", "text_with_spans": "<first_name>Eve</first_name> visits <city>Rome</city>.", "final_entities": {"entities": [{"id": "first_name_0_3", "value": "Eve", "label": "first_name", "start_position": 0, "end_position": 3, "score": 0.9, "source": "detector"}, {"id": "city_11_15", "value": "Rome", "label": "city", "start_position": 11, "end_position": 15, "score": 0.9, "source": "detector"}]}, "text_replaced": "[REDACTED_FIRST_NAME] visits [REDACTED_CITY]."}
+   ]
+  },
+  "trace_frame": {
+   "columns": ["id", "text", "_anonymizer_record_id", "_raw_detected_entities", "_seed_entities", "_tag_notation", "_seed_validation_candidates", "_seed_tagged_text", "_validated_entities", "_seed_entities_json", "_initial_tagged_text", "_validated_seed_entities", "_augmented_entities", "_merged_entities", "_merged_tagged_text", "_validation_candidates", "_detected_entities", "text_with_spans", "final_entities", "_entities_by_value", "_replacement_map", "text_replaced", "_replacement_application"],
+   "dtypes": {
+    "id": "object",
+    "text": "object",
+    "_anonymizer_record_id": "object",
+    "_raw_detected_entities": "object",
+    "_seed_entities": "object",
+    "_tag_notation": "object",
+    "_seed_validation_candidates": "object",
+    "_seed_tagged_text": "object",
+    "_validated_entities": "object",
+    "_seed_entities_json": "object",
+    "_initial_tagged_text": "object",
+    "_validated_seed_entities": "object",
+    "_augmented_entities": "object",
+    "_merged_entities": "object",
+    "_merged_tagged_text": "object",
+    "_validation_candidates": "object",
+    "_detected_entities": "object",
+    "text_with_spans": "object",
+    "final_entities": "object",
+    "_entities_by_value": "object",
+    "_replacement_map": "object",
+    "text_replaced": "object",
+    "_replacement_application": "object"
+   },
+   "rows": [
+    {"id": "a", "text": "Alice works at Acme.", "_anonymizer_record_id": "a", "_raw_detected_entities": null, "_seed_entities": null, "_tag_notation": null, "_seed_validation_candidates": null, "_seed_tagged_text": null, "_validated_entities": null, "_seed_entities_json": null, "_initial_tagged_text": null, "_validated_seed_entities": null, "_augmented_entities": null, "_merged_entities": null, "_merged_tagged_text": null, "_validation_candidates": null, "_detected_entities": {"entities": [{"id": "first_name_0_5", "value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5, "score": 0.9, "source": "detector"}, {"id": "organization_name_15_19", "value": "Acme", "label": "organization_name", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "text_with_spans": "<first_name>Alice</first_name> works at <organization_name>Acme</organization_name>.", "final_entities": {"entities": [{"id": "first_name_0_5", "value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5, "score": 0.9, "source": "detector"}, {"id": "organization_name_15_19", "value": "Acme", "label": "organization_name", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "_entities_by_value": {"entities_by_value": [{"value": "Acme", "labels": ["organization_name"]}, {"value": "Alice", "labels": ["first_name"]}]}, "_replacement_map": {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "[REDACTED_FIRST_NAME]"}, {"original": "Acme", "label": "organization_name", "synthetic": "[REDACTED_ORGANIZATION_NAME]"}]}, "text_replaced": "[REDACTED_FIRST_NAME] works at [REDACTED_ORGANIZATION_NAME].", "_replacement_application": {"targeted_span_count": 2, "applied_span_count": 2, "skipped_span_count": 0, "skipped_span_label_counts": {}}},
+    {"id": "b", "text": "The sky is blue.", "_anonymizer_record_id": "b", "_raw_detected_entities": null, "_seed_entities": null, "_tag_notation": null, "_seed_validation_candidates": null, "_seed_tagged_text": null, "_validated_entities": null, "_seed_entities_json": null, "_initial_tagged_text": null, "_validated_seed_entities": null, "_augmented_entities": null, "_merged_entities": null, "_merged_tagged_text": null, "_validation_candidates": null, "_detected_entities": {"entities": []}, "text_with_spans": "The sky is blue.", "final_entities": {"entities": []}, "_entities_by_value": {"entities_by_value": []}, "_replacement_map": {"replacements": []}, "text_replaced": "The sky is blue.", "_replacement_application": {"targeted_span_count": 0, "applied_span_count": 0, "skipped_span_count": 0, "skipped_span_label_counts": {}}},
+    {"id": "d", "text": "Dora paints in Lyon.", "_anonymizer_record_id": "d", "_raw_detected_entities": null, "_seed_entities": null, "_tag_notation": null, "_seed_validation_candidates": null, "_seed_tagged_text": null, "_validated_entities": null, "_seed_entities_json": null, "_initial_tagged_text": null, "_validated_seed_entities": null, "_augmented_entities": null, "_merged_entities": null, "_merged_tagged_text": null, "_validation_candidates": null, "_detected_entities": {"entities": [{"id": "first_name_0_4", "value": "Dora", "label": "first_name", "start_position": 0, "end_position": 4, "score": 0.9, "source": "detector"}, {"id": "city_15_19", "value": "Lyon", "label": "city", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "text_with_spans": "<first_name>Dora</first_name> paints in <city>Lyon</city>.", "final_entities": {"entities": [{"id": "first_name_0_4", "value": "Dora", "label": "first_name", "start_position": 0, "end_position": 4, "score": 0.9, "source": "detector"}, {"id": "city_15_19", "value": "Lyon", "label": "city", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "_entities_by_value": {"entities_by_value": [{"value": "Dora", "labels": ["first_name"]}, {"value": "Lyon", "labels": ["city"]}]}, "_replacement_map": {"replacements": [{"original": "Dora", "label": "first_name", "synthetic": "[REDACTED_FIRST_NAME]"}, {"original": "Lyon", "label": "city", "synthetic": "[REDACTED_CITY]"}]}, "text_replaced": "[REDACTED_FIRST_NAME] paints in [REDACTED_CITY].", "_replacement_application": {"targeted_span_count": 2, "applied_span_count": 2, "skipped_span_count": 0, "skipped_span_label_counts": {}}},
+    {"id": "e", "text": "Eve visits Rome.", "_anonymizer_record_id": "e", "_raw_detected_entities": null, "_seed_entities": null, "_tag_notation": null, "_seed_validation_candidates": null, "_seed_tagged_text": null, "_validated_entities": null, "_seed_entities_json": null, "_initial_tagged_text": null, "_validated_seed_entities": null, "_augmented_entities": null, "_merged_entities": null, "_merged_tagged_text": null, "_validation_candidates": null, "_detected_entities": {"entities": [{"id": "first_name_0_3", "value": "Eve", "label": "first_name", "start_position": 0, "end_position": 3, "score": 0.9, "source": "detector"}, {"id": "city_11_15", "value": "Rome", "label": "city", "start_position": 11, "end_position": 15, "score": 0.9, "source": "detector"}]}, "text_with_spans": "<first_name>Eve</first_name> visits <city>Rome</city>.", "final_entities": {"entities": [{"id": "first_name_0_3", "value": "Eve", "label": "first_name", "start_position": 0, "end_position": 3, "score": 0.9, "source": "detector"}, {"id": "city_11_15", "value": "Rome", "label": "city", "start_position": 11, "end_position": 15, "score": 0.9, "source": "detector"}]}, "_entities_by_value": {"entities_by_value": [{"value": "Eve", "labels": ["first_name"]}, {"value": "Rome", "labels": ["city"]}]}, "_replacement_map": {"replacements": [{"original": "Eve", "label": "first_name", "synthetic": "[REDACTED_FIRST_NAME]"}, {"original": "Rome", "label": "city", "synthetic": "[REDACTED_CITY]"}]}, "text_replaced": "[REDACTED_FIRST_NAME] visits [REDACTED_CITY].", "_replacement_application": {"targeted_span_count": 2, "applied_span_count": 2, "skipped_span_count": 0, "skipped_span_label_counts": {}}}
+   ]
+  },
+  "failed_records": [
+   {"record_id": "c", "step": "entity-detection", "reason": "Record missing"}
+  ],
+  "outcomes": [
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []},
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []},
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []},
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []}
+  ],
+  "stages": [
+   {"stage": "graph_prepare", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 3, "target_count": 5, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_prepare", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 2, "target_count": 1, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_reconcile", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 2, "target_count": 1, "terminal_counts": {"success": 1}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_protect", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 2, "target_count": 1, "terminal_counts": {"success": 1}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "EntityDetectionWorkflow.run", "status": "completed", "elapsed_sec": "<varies>", "input_row_count": 5, "tag_latent_entities": false, "output_row_count": 4, "failed_record_count": 1, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_reconcile", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 3, "target_count": 5, "terminal_counts": {"success": 4, "failed": 1}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_protect", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 3, "target_count": 5, "terminal_counts": {"success": 4, "failed": 1}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "ReplacementWorkflow.run", "status": "completed", "elapsed_sec": "<varies>", "strategy": "Redact", "input_row_count": 4, "output_row_count": 4, "failed_record_count": 0, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "Anonymizer._run_internal", "status": "completed", "elapsed_sec": "<varies>", "mode": "replace", "strategy": "Redact", "input_row_count": 5, "preview_num_records": null, "output_row_count": 4, "failed_record_count": 1, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"}
+  ],
+  "record_metrics": [
+   {"mode": "replace", "strategy": "Redact", "row_index": 0, "record_hash": "bde8616d7ff84b9c5fe111666cbda851fb403e70602c05eb5e39ad13083af3c0", "text_length_chars": 20, "text_length_chars_bucket": "1-127", "text_length_tokens": 6, "text_length_tokens_bucket": "1-127", "final_entity_count": 2, "final_entity_label_counts": {"first_name": 1, "organization_name": 1}, "ground_truth_entity_count": null, "ground_truth_entity_label_counts": null, "entity_true_positive_count": null, "entity_false_positive_count": null, "entity_false_negative_count": null, "entity_precision": null, "entity_recall": null, "entity_f1": null, "entity_relaxed_gt_found_count": null, "entity_relaxed_detected_tp_count": null, "entity_relaxed_label_compatible_gt_found_count": null, "entity_relaxed_label_compatible_detected_tp_count": null, "entity_relaxed_precision": null, "entity_relaxed_recall": null, "entity_relaxed_f1": null, "entity_relaxed_label_compatible_precision": null, "entity_relaxed_label_compatible_recall": null, "entity_relaxed_label_compatible_f1": null, "replacement_map_entry_count": 2, "replacement_map_entry_label_counts": {"first_name": 1, "organization_name": 1}, "replacement_duplicate_value_count": 0, "replacement_missing_final_entity_count": 0, "replacement_missing_final_entity_label_counts": {}, "replacement_missing_final_value_count": 0, "replacement_synthetic_original_collision_count": 0, "replacement_synthetic_original_collision_label_counts": {}, "replacement_synthetic_original_collision_value_count": 0, "replacement_targeted_span_count": 2, "replacement_applied_span_count": 2, "replacement_skipped_span_count": 0, "replacement_skipped_span_label_counts": {}, "utility_score": null, "leakage_mass": null, "weighted_leakage_rate": null, "any_high_leaked": null, "needs_human_review": null, "needs_repair": null, "original_value_leak_unique_value_count": 0, "original_value_leak_source_entity_occurrence_count": 0, "original_value_leak_source_entity_occurrence_label_counts": {}, "detected_candidate_count": 0, "validation_chunk_count": 0, "repair_iterations": 0, "llm_calls_estimated_by_stage": {"entity_detection": 2, "replace_map_generation": 0}, "llm_calls_estimated_total": 2, "schema_version": 2, "record_type": "record", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"mode": "replace", "strategy": "Redact", "row_index": 1, "record_hash": "c2a5aa79739f407b995711fda24009f30c157acfd2c1b3c94daddfd1a438c5fd", "text_length_chars": 16, "text_length_chars_bucket": "1-127", "text_length_tokens": 5, "text_length_tokens_bucket": "1-127", "final_entity_count": 0, "final_entity_label_counts": {}, "ground_truth_entity_count": null, "ground_truth_entity_label_counts": null, "entity_true_positive_count": null, "entity_false_positive_count": null, "entity_false_negative_count": null, "entity_precision": null, "entity_recall": null, "entity_f1": null, "entity_relaxed_gt_found_count": null, "entity_relaxed_detected_tp_count": null, "entity_relaxed_label_compatible_gt_found_count": null, "entity_relaxed_label_compatible_detected_tp_count": null, "entity_relaxed_precision": null, "entity_relaxed_recall": null, "entity_relaxed_f1": null, "entity_relaxed_label_compatible_precision": null, "entity_relaxed_label_compatible_recall": null, "entity_relaxed_label_compatible_f1": null, "replacement_map_entry_count": 0, "replacement_map_entry_label_counts": {}, "replacement_duplicate_value_count": 0, "replacement_missing_final_entity_count": 0, "replacement_missing_final_entity_label_counts": {}, "replacement_missing_final_value_count": 0, "replacement_synthetic_original_collision_count": 0, "replacement_synthetic_original_collision_label_counts": {}, "replacement_synthetic_original_collision_value_count": 0, "replacement_targeted_span_count": 0, "replacement_applied_span_count": 0, "replacement_skipped_span_count": 0, "replacement_skipped_span_label_counts": {}, "utility_score": null, "leakage_mass": null, "weighted_leakage_rate": null, "any_high_leaked": null, "needs_human_review": null, "needs_repair": null, "original_value_leak_unique_value_count": 0, "original_value_leak_source_entity_occurrence_count": 0, "original_value_leak_source_entity_occurrence_label_counts": {}, "detected_candidate_count": 0, "validation_chunk_count": 0, "repair_iterations": 0, "llm_calls_estimated_by_stage": {"entity_detection": 2, "replace_map_generation": 0}, "llm_calls_estimated_total": 2, "schema_version": 2, "record_type": "record", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"mode": "replace", "strategy": "Redact", "row_index": 2, "record_hash": "0cf223d8e05f14d63caa77dc9a54f2d654e59095b9a79dedf2e8db85f18d86d6", "text_length_chars": 20, "text_length_chars_bucket": "1-127", "text_length_tokens": 6, "text_length_tokens_bucket": "1-127", "final_entity_count": 2, "final_entity_label_counts": {"city": 1, "first_name": 1}, "ground_truth_entity_count": null, "ground_truth_entity_label_counts": null, "entity_true_positive_count": null, "entity_false_positive_count": null, "entity_false_negative_count": null, "entity_precision": null, "entity_recall": null, "entity_f1": null, "entity_relaxed_gt_found_count": null, "entity_relaxed_detected_tp_count": null, "entity_relaxed_label_compatible_gt_found_count": null, "entity_relaxed_label_compatible_detected_tp_count": null, "entity_relaxed_precision": null, "entity_relaxed_recall": null, "entity_relaxed_f1": null, "entity_relaxed_label_compatible_precision": null, "entity_relaxed_label_compatible_recall": null, "entity_relaxed_label_compatible_f1": null, "replacement_map_entry_count": 2, "replacement_map_entry_label_counts": {"city": 1, "first_name": 1}, "replacement_duplicate_value_count": 0, "replacement_missing_final_entity_count": 0, "replacement_missing_final_entity_label_counts": {}, "replacement_missing_final_value_count": 0, "replacement_synthetic_original_collision_count": 0, "replacement_synthetic_original_collision_label_counts": {}, "replacement_synthetic_original_collision_value_count": 0, "replacement_targeted_span_count": 2, "replacement_applied_span_count": 2, "replacement_skipped_span_count": 0, "replacement_skipped_span_label_counts": {}, "utility_score": null, "leakage_mass": null, "weighted_leakage_rate": null, "any_high_leaked": null, "needs_human_review": null, "needs_repair": null, "original_value_leak_unique_value_count": 0, "original_value_leak_source_entity_occurrence_count": 0, "original_value_leak_source_entity_occurrence_label_counts": {}, "detected_candidate_count": 0, "validation_chunk_count": 0, "repair_iterations": 0, "llm_calls_estimated_by_stage": {"entity_detection": 2, "replace_map_generation": 0}, "llm_calls_estimated_total": 2, "schema_version": 2, "record_type": "record", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"mode": "replace", "strategy": "Redact", "row_index": 3, "record_hash": "b8f1f464ba3dc9e430707c402ab7022fdf47ed635d56f4e35b41ee5f6b8537b7", "text_length_chars": 16, "text_length_chars_bucket": "1-127", "text_length_tokens": 5, "text_length_tokens_bucket": "1-127", "final_entity_count": 2, "final_entity_label_counts": {"city": 1, "first_name": 1}, "ground_truth_entity_count": null, "ground_truth_entity_label_counts": null, "entity_true_positive_count": null, "entity_false_positive_count": null, "entity_false_negative_count": null, "entity_precision": null, "entity_recall": null, "entity_f1": null, "entity_relaxed_gt_found_count": null, "entity_relaxed_detected_tp_count": null, "entity_relaxed_label_compatible_gt_found_count": null, "entity_relaxed_label_compatible_detected_tp_count": null, "entity_relaxed_precision": null, "entity_relaxed_recall": null, "entity_relaxed_f1": null, "entity_relaxed_label_compatible_precision": null, "entity_relaxed_label_compatible_recall": null, "entity_relaxed_label_compatible_f1": null, "replacement_map_entry_count": 2, "replacement_map_entry_label_counts": {"city": 1, "first_name": 1}, "replacement_duplicate_value_count": 0, "replacement_missing_final_entity_count": 0, "replacement_missing_final_entity_label_counts": {}, "replacement_missing_final_value_count": 0, "replacement_synthetic_original_collision_count": 0, "replacement_synthetic_original_collision_label_counts": {}, "replacement_synthetic_original_collision_value_count": 0, "replacement_targeted_span_count": 2, "replacement_applied_span_count": 2, "replacement_skipped_span_count": 0, "replacement_skipped_span_label_counts": {}, "utility_score": null, "leakage_mass": null, "weighted_leakage_rate": null, "any_high_leaked": null, "needs_human_review": null, "needs_repair": null, "original_value_leak_unique_value_count": 0, "original_value_leak_source_entity_occurrence_count": 0, "original_value_leak_source_entity_occurrence_label_counts": {}, "detected_candidate_count": 0, "validation_chunk_count": 0, "repair_iterations": 0, "llm_calls_estimated_by_stage": {"entity_detection": 2, "replace_map_generation": 0}, "llm_calls_estimated_total": 2, "schema_version": 2, "record_type": "record", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"}
+  ],
+  "run_record_fields": ["detect", "input_has_data_summary", "input_has_id_column", "input_row_count", "input_source", "input_text_column", "mode", "models", "preview_num_records", "record_type", "replace", "rewrite", "run_tags", "runtime", "schema_version", "source_hash", "strategy"],
+  "workflow_runs": [
+   {"workflow": "entity-detection", "seed_columns": ["id", "__nemo_anonymizer_text_input__", "_anonymizer_record_id"], "seed_rows": 5, "output_rows": 4, "preview_num_records": null, "inside_activation": true}
+  ],
+  "graph_invocations": 2,
+  "consumers": {
+   "display_record": {
+    "chars": 3087,
+    "sha256": "e7aa44e6c1791797"
+   },
+   "parquet": {
+    "columns": ["id", "text", "text_with_spans", "final_entities", "text_replaced"],
+    "dtypes": {
+     "id": "object",
+     "text": "object",
+     "text_with_spans": "object",
+     "final_entities": "object",
+     "text_replaced": "object"
+    }
+   },
+   "pickle": {
+    "trace_equal": true,
+    "user_equal": true,
+    "outcomes_kept": true
+   },
+   "user_columns_in_trace": true
+  }
+ },
+ "preview": {
+  "user_frame": {
+   "columns": ["id", "text", "text_with_spans", "final_entities", "text_replaced"],
+   "dtypes": {
+    "id": "object",
+    "text": "object",
+    "text_with_spans": "object",
+    "final_entities": "object",
+    "text_replaced": "object"
+   },
+   "rows": [
+    {"id": "a", "text": "Alice works at Acme.", "text_with_spans": "<first_name>Alice</first_name> works at <organization_name>Acme</organization_name>.", "final_entities": {"entities": [{"id": "first_name_0_5", "value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5, "score": 0.9, "source": "detector"}, {"id": "organization_name_15_19", "value": "Acme", "label": "organization_name", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "text_replaced": "[REDACTED_FIRST_NAME] works at [REDACTED_ORGANIZATION_NAME]."},
+    {"id": "b", "text": "The sky is blue.", "text_with_spans": "The sky is blue.", "final_entities": {"entities": []}, "text_replaced": "The sky is blue."},
+    {"id": "d", "text": "Dora paints in Lyon.", "text_with_spans": "<first_name>Dora</first_name> paints in <city>Lyon</city>.", "final_entities": {"entities": [{"id": "first_name_0_4", "value": "Dora", "label": "first_name", "start_position": 0, "end_position": 4, "score": 0.9, "source": "detector"}, {"id": "city_15_19", "value": "Lyon", "label": "city", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "text_replaced": "[REDACTED_FIRST_NAME] paints in [REDACTED_CITY]."}
+   ]
+  },
+  "trace_frame": {
+   "columns": ["id", "text", "_anonymizer_record_id", "_raw_detected_entities", "_seed_entities", "_tag_notation", "_seed_validation_candidates", "_seed_tagged_text", "_validated_entities", "_seed_entities_json", "_initial_tagged_text", "_validated_seed_entities", "_augmented_entities", "_merged_entities", "_merged_tagged_text", "_validation_candidates", "_detected_entities", "text_with_spans", "final_entities", "_entities_by_value", "_replacement_map", "text_replaced", "_replacement_application"],
+   "dtypes": {
+    "id": "object",
+    "text": "object",
+    "_anonymizer_record_id": "object",
+    "_raw_detected_entities": "object",
+    "_seed_entities": "object",
+    "_tag_notation": "object",
+    "_seed_validation_candidates": "object",
+    "_seed_tagged_text": "object",
+    "_validated_entities": "object",
+    "_seed_entities_json": "object",
+    "_initial_tagged_text": "object",
+    "_validated_seed_entities": "object",
+    "_augmented_entities": "object",
+    "_merged_entities": "object",
+    "_merged_tagged_text": "object",
+    "_validation_candidates": "object",
+    "_detected_entities": "object",
+    "text_with_spans": "object",
+    "final_entities": "object",
+    "_entities_by_value": "object",
+    "_replacement_map": "object",
+    "text_replaced": "object",
+    "_replacement_application": "object"
+   },
+   "rows": [
+    {"id": "a", "text": "Alice works at Acme.", "_anonymizer_record_id": "a", "_raw_detected_entities": null, "_seed_entities": null, "_tag_notation": null, "_seed_validation_candidates": null, "_seed_tagged_text": null, "_validated_entities": null, "_seed_entities_json": null, "_initial_tagged_text": null, "_validated_seed_entities": null, "_augmented_entities": null, "_merged_entities": null, "_merged_tagged_text": null, "_validation_candidates": null, "_detected_entities": {"entities": [{"id": "first_name_0_5", "value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5, "score": 0.9, "source": "detector"}, {"id": "organization_name_15_19", "value": "Acme", "label": "organization_name", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "text_with_spans": "<first_name>Alice</first_name> works at <organization_name>Acme</organization_name>.", "final_entities": {"entities": [{"id": "first_name_0_5", "value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5, "score": 0.9, "source": "detector"}, {"id": "organization_name_15_19", "value": "Acme", "label": "organization_name", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "_entities_by_value": {"entities_by_value": [{"value": "Acme", "labels": ["organization_name"]}, {"value": "Alice", "labels": ["first_name"]}]}, "_replacement_map": {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "[REDACTED_FIRST_NAME]"}, {"original": "Acme", "label": "organization_name", "synthetic": "[REDACTED_ORGANIZATION_NAME]"}]}, "text_replaced": "[REDACTED_FIRST_NAME] works at [REDACTED_ORGANIZATION_NAME].", "_replacement_application": {"targeted_span_count": 2, "applied_span_count": 2, "skipped_span_count": 0, "skipped_span_label_counts": {}}},
+    {"id": "b", "text": "The sky is blue.", "_anonymizer_record_id": "b", "_raw_detected_entities": null, "_seed_entities": null, "_tag_notation": null, "_seed_validation_candidates": null, "_seed_tagged_text": null, "_validated_entities": null, "_seed_entities_json": null, "_initial_tagged_text": null, "_validated_seed_entities": null, "_augmented_entities": null, "_merged_entities": null, "_merged_tagged_text": null, "_validation_candidates": null, "_detected_entities": {"entities": []}, "text_with_spans": "The sky is blue.", "final_entities": {"entities": []}, "_entities_by_value": {"entities_by_value": []}, "_replacement_map": {"replacements": []}, "text_replaced": "The sky is blue.", "_replacement_application": {"targeted_span_count": 0, "applied_span_count": 0, "skipped_span_count": 0, "skipped_span_label_counts": {}}},
+    {"id": "d", "text": "Dora paints in Lyon.", "_anonymizer_record_id": "d", "_raw_detected_entities": null, "_seed_entities": null, "_tag_notation": null, "_seed_validation_candidates": null, "_seed_tagged_text": null, "_validated_entities": null, "_seed_entities_json": null, "_initial_tagged_text": null, "_validated_seed_entities": null, "_augmented_entities": null, "_merged_entities": null, "_merged_tagged_text": null, "_validation_candidates": null, "_detected_entities": {"entities": [{"id": "first_name_0_4", "value": "Dora", "label": "first_name", "start_position": 0, "end_position": 4, "score": 0.9, "source": "detector"}, {"id": "city_15_19", "value": "Lyon", "label": "city", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "text_with_spans": "<first_name>Dora</first_name> paints in <city>Lyon</city>.", "final_entities": {"entities": [{"id": "first_name_0_4", "value": "Dora", "label": "first_name", "start_position": 0, "end_position": 4, "score": 0.9, "source": "detector"}, {"id": "city_15_19", "value": "Lyon", "label": "city", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "_entities_by_value": {"entities_by_value": [{"value": "Dora", "labels": ["first_name"]}, {"value": "Lyon", "labels": ["city"]}]}, "_replacement_map": {"replacements": [{"original": "Dora", "label": "first_name", "synthetic": "[REDACTED_FIRST_NAME]"}, {"original": "Lyon", "label": "city", "synthetic": "[REDACTED_CITY]"}]}, "text_replaced": "[REDACTED_FIRST_NAME] paints in [REDACTED_CITY].", "_replacement_application": {"targeted_span_count": 2, "applied_span_count": 2, "skipped_span_count": 0, "skipped_span_label_counts": {}}}
+   ]
+  },
+  "failed_records": [
+   {"record_id": "c", "step": "entity-detection", "reason": "Record missing"}
+  ],
+  "outcomes": [
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []},
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []},
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []}
+  ],
+  "stages": [
+   {"stage": "graph_prepare", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 3, "target_count": 4, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_prepare", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 2, "target_count": 1, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_reconcile", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 2, "target_count": 1, "terminal_counts": {"success": 1}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_protect", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 2, "target_count": 1, "terminal_counts": {"success": 1}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "EntityDetectionWorkflow.run", "status": "completed", "elapsed_sec": "<varies>", "input_row_count": 4, "tag_latent_entities": false, "output_row_count": 3, "failed_record_count": 1, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_reconcile", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 3, "target_count": 4, "terminal_counts": {"success": 3, "failed": 1}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_protect", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 3, "target_count": 4, "terminal_counts": {"success": 3, "failed": 1}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "ReplacementWorkflow.run", "status": "completed", "elapsed_sec": "<varies>", "strategy": "Redact", "input_row_count": 3, "output_row_count": 3, "failed_record_count": 0, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "Anonymizer._run_internal", "status": "completed", "elapsed_sec": "<varies>", "mode": "replace", "strategy": "Redact", "input_row_count": 4, "preview_num_records": 4, "output_row_count": 3, "failed_record_count": 1, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"}
+  ],
+  "record_metrics": [
+   {"mode": "replace", "strategy": "Redact", "row_index": 0, "record_hash": "bde8616d7ff84b9c5fe111666cbda851fb403e70602c05eb5e39ad13083af3c0", "text_length_chars": 20, "text_length_chars_bucket": "1-127", "text_length_tokens": 6, "text_length_tokens_bucket": "1-127", "final_entity_count": 2, "final_entity_label_counts": {"first_name": 1, "organization_name": 1}, "ground_truth_entity_count": null, "ground_truth_entity_label_counts": null, "entity_true_positive_count": null, "entity_false_positive_count": null, "entity_false_negative_count": null, "entity_precision": null, "entity_recall": null, "entity_f1": null, "entity_relaxed_gt_found_count": null, "entity_relaxed_detected_tp_count": null, "entity_relaxed_label_compatible_gt_found_count": null, "entity_relaxed_label_compatible_detected_tp_count": null, "entity_relaxed_precision": null, "entity_relaxed_recall": null, "entity_relaxed_f1": null, "entity_relaxed_label_compatible_precision": null, "entity_relaxed_label_compatible_recall": null, "entity_relaxed_label_compatible_f1": null, "replacement_map_entry_count": 2, "replacement_map_entry_label_counts": {"first_name": 1, "organization_name": 1}, "replacement_duplicate_value_count": 0, "replacement_missing_final_entity_count": 0, "replacement_missing_final_entity_label_counts": {}, "replacement_missing_final_value_count": 0, "replacement_synthetic_original_collision_count": 0, "replacement_synthetic_original_collision_label_counts": {}, "replacement_synthetic_original_collision_value_count": 0, "replacement_targeted_span_count": 2, "replacement_applied_span_count": 2, "replacement_skipped_span_count": 0, "replacement_skipped_span_label_counts": {}, "utility_score": null, "leakage_mass": null, "weighted_leakage_rate": null, "any_high_leaked": null, "needs_human_review": null, "needs_repair": null, "original_value_leak_unique_value_count": 0, "original_value_leak_source_entity_occurrence_count": 0, "original_value_leak_source_entity_occurrence_label_counts": {}, "detected_candidate_count": 0, "validation_chunk_count": 0, "repair_iterations": 0, "llm_calls_estimated_by_stage": {"entity_detection": 2, "replace_map_generation": 0}, "llm_calls_estimated_total": 2, "schema_version": 2, "record_type": "record", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"mode": "replace", "strategy": "Redact", "row_index": 1, "record_hash": "c2a5aa79739f407b995711fda24009f30c157acfd2c1b3c94daddfd1a438c5fd", "text_length_chars": 16, "text_length_chars_bucket": "1-127", "text_length_tokens": 5, "text_length_tokens_bucket": "1-127", "final_entity_count": 0, "final_entity_label_counts": {}, "ground_truth_entity_count": null, "ground_truth_entity_label_counts": null, "entity_true_positive_count": null, "entity_false_positive_count": null, "entity_false_negative_count": null, "entity_precision": null, "entity_recall": null, "entity_f1": null, "entity_relaxed_gt_found_count": null, "entity_relaxed_detected_tp_count": null, "entity_relaxed_label_compatible_gt_found_count": null, "entity_relaxed_label_compatible_detected_tp_count": null, "entity_relaxed_precision": null, "entity_relaxed_recall": null, "entity_relaxed_f1": null, "entity_relaxed_label_compatible_precision": null, "entity_relaxed_label_compatible_recall": null, "entity_relaxed_label_compatible_f1": null, "replacement_map_entry_count": 0, "replacement_map_entry_label_counts": {}, "replacement_duplicate_value_count": 0, "replacement_missing_final_entity_count": 0, "replacement_missing_final_entity_label_counts": {}, "replacement_missing_final_value_count": 0, "replacement_synthetic_original_collision_count": 0, "replacement_synthetic_original_collision_label_counts": {}, "replacement_synthetic_original_collision_value_count": 0, "replacement_targeted_span_count": 0, "replacement_applied_span_count": 0, "replacement_skipped_span_count": 0, "replacement_skipped_span_label_counts": {}, "utility_score": null, "leakage_mass": null, "weighted_leakage_rate": null, "any_high_leaked": null, "needs_human_review": null, "needs_repair": null, "original_value_leak_unique_value_count": 0, "original_value_leak_source_entity_occurrence_count": 0, "original_value_leak_source_entity_occurrence_label_counts": {}, "detected_candidate_count": 0, "validation_chunk_count": 0, "repair_iterations": 0, "llm_calls_estimated_by_stage": {"entity_detection": 2, "replace_map_generation": 0}, "llm_calls_estimated_total": 2, "schema_version": 2, "record_type": "record", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"mode": "replace", "strategy": "Redact", "row_index": 2, "record_hash": "0cf223d8e05f14d63caa77dc9a54f2d654e59095b9a79dedf2e8db85f18d86d6", "text_length_chars": 20, "text_length_chars_bucket": "1-127", "text_length_tokens": 6, "text_length_tokens_bucket": "1-127", "final_entity_count": 2, "final_entity_label_counts": {"city": 1, "first_name": 1}, "ground_truth_entity_count": null, "ground_truth_entity_label_counts": null, "entity_true_positive_count": null, "entity_false_positive_count": null, "entity_false_negative_count": null, "entity_precision": null, "entity_recall": null, "entity_f1": null, "entity_relaxed_gt_found_count": null, "entity_relaxed_detected_tp_count": null, "entity_relaxed_label_compatible_gt_found_count": null, "entity_relaxed_label_compatible_detected_tp_count": null, "entity_relaxed_precision": null, "entity_relaxed_recall": null, "entity_relaxed_f1": null, "entity_relaxed_label_compatible_precision": null, "entity_relaxed_label_compatible_recall": null, "entity_relaxed_label_compatible_f1": null, "replacement_map_entry_count": 2, "replacement_map_entry_label_counts": {"city": 1, "first_name": 1}, "replacement_duplicate_value_count": 0, "replacement_missing_final_entity_count": 0, "replacement_missing_final_entity_label_counts": {}, "replacement_missing_final_value_count": 0, "replacement_synthetic_original_collision_count": 0, "replacement_synthetic_original_collision_label_counts": {}, "replacement_synthetic_original_collision_value_count": 0, "replacement_targeted_span_count": 2, "replacement_applied_span_count": 2, "replacement_skipped_span_count": 0, "replacement_skipped_span_label_counts": {}, "utility_score": null, "leakage_mass": null, "weighted_leakage_rate": null, "any_high_leaked": null, "needs_human_review": null, "needs_repair": null, "original_value_leak_unique_value_count": 0, "original_value_leak_source_entity_occurrence_count": 0, "original_value_leak_source_entity_occurrence_label_counts": {}, "detected_candidate_count": 0, "validation_chunk_count": 0, "repair_iterations": 0, "llm_calls_estimated_by_stage": {"entity_detection": 2, "replace_map_generation": 0}, "llm_calls_estimated_total": 2, "schema_version": 2, "record_type": "record", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"}
+  ],
+  "run_record_fields": ["detect", "input_has_data_summary", "input_has_id_column", "input_row_count", "input_source", "input_text_column", "mode", "models", "preview_num_records", "record_type", "replace", "rewrite", "run_tags", "runtime", "schema_version", "source_hash", "strategy"],
+  "workflow_runs": [
+   {"workflow": "entity-detection", "seed_columns": ["id", "__nemo_anonymizer_text_input__", "_anonymizer_record_id"], "seed_rows": 4, "output_rows": 3, "preview_num_records": 4, "inside_activation": true}
+  ],
+  "graph_invocations": 2,
+  "consumers": {
+   "display_record": {
+    "chars": 3087,
+    "sha256": "e7aa44e6c1791797"
+   },
+   "parquet": {
+    "columns": ["id", "text", "text_with_spans", "final_entities", "text_replaced"],
+    "dtypes": {
+     "id": "object",
+     "text": "object",
+     "text_with_spans": "object",
+     "final_entities": "object",
+     "text_replaced": "object"
+    }
+   },
+   "pickle": {
+    "trace_equal": true,
+    "user_equal": true,
+    "outcomes_kept": true
+   },
+   "user_columns_in_trace": true
+  }
+ },
+ "evaluate": {
+  "user_frame": {
+   "columns": ["id", "text", "text_with_spans", "final_entities", "text_replaced", "entity_coverage", "missed_entities"],
+   "dtypes": {
+    "id": "object",
+    "text": "object",
+    "text_with_spans": "object",
+    "final_entities": "object",
+    "text_replaced": "object",
+    "entity_coverage": "float64",
+    "missed_entities": "object"
+   },
+   "rows": [
+    {"id": "a", "text": "Alice works at Acme.", "text_with_spans": "<first_name>Alice</first_name> works at <organization_name>Acme</organization_name>.", "final_entities": {"entities": [{"id": "first_name_0_5", "value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5, "score": 0.9, "source": "detector"}, {"id": "organization_name_15_19", "value": "Acme", "label": "organization_name", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "text_replaced": "[REDACTED_FIRST_NAME] works at [REDACTED_ORGANIZATION_NAME].", "entity_coverage": 1.0, "missed_entities": []},
+    {"id": "b", "text": "The sky is blue.", "text_with_spans": "The sky is blue.", "final_entities": {"entities": []}, "text_replaced": "The sky is blue.", "entity_coverage": 1.0, "missed_entities": []},
+    {"id": "d", "text": "Dora paints in Lyon.", "text_with_spans": "<first_name>Dora</first_name> paints in <city>Lyon</city>.", "final_entities": {"entities": [{"id": "first_name_0_4", "value": "Dora", "label": "first_name", "start_position": 0, "end_position": 4, "score": 0.9, "source": "detector"}, {"id": "city_15_19", "value": "Lyon", "label": "city", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "text_replaced": "[REDACTED_FIRST_NAME] paints in [REDACTED_CITY].", "entity_coverage": 1.0, "missed_entities": []},
+    {"id": "e", "text": "Eve visits Rome.", "text_with_spans": "<first_name>Eve</first_name> visits <city>Rome</city>.", "final_entities": {"entities": [{"id": "first_name_0_3", "value": "Eve", "label": "first_name", "start_position": 0, "end_position": 3, "score": 0.9, "source": "detector"}, {"id": "city_11_15", "value": "Rome", "label": "city", "start_position": 11, "end_position": 15, "score": 0.9, "source": "detector"}]}, "text_replaced": "[REDACTED_FIRST_NAME] visits [REDACTED_CITY].", "entity_coverage": 1.0, "missed_entities": []}
+   ]
+  },
+  "trace_frame": {
+   "columns": ["id", "text", "_anonymizer_record_id", "_raw_detected_entities", "_seed_entities", "_tag_notation", "_seed_validation_candidates", "_seed_tagged_text", "_validated_entities", "_seed_entities_json", "_initial_tagged_text", "_validated_seed_entities", "_augmented_entities", "_merged_entities", "_merged_tagged_text", "_validation_candidates", "_detected_entities", "text_with_spans", "final_entities", "_entities_by_value", "_replacement_map", "text_replaced", "_replacement_application", "_final_entities_for_coverage_judge", "_entity_coverage_judge", "entity_coverage", "missed_entities", "_entity_coverage_n_candidates"],
+   "dtypes": {
+    "id": "object",
+    "text": "object",
+    "_anonymizer_record_id": "object",
+    "_raw_detected_entities": "object",
+    "_seed_entities": "object",
+    "_tag_notation": "object",
+    "_seed_validation_candidates": "object",
+    "_seed_tagged_text": "object",
+    "_validated_entities": "object",
+    "_seed_entities_json": "object",
+    "_initial_tagged_text": "object",
+    "_validated_seed_entities": "object",
+    "_augmented_entities": "object",
+    "_merged_entities": "object",
+    "_merged_tagged_text": "object",
+    "_validation_candidates": "object",
+    "_detected_entities": "object",
+    "text_with_spans": "object",
+    "final_entities": "object",
+    "_entities_by_value": "object",
+    "_replacement_map": "object",
+    "text_replaced": "object",
+    "_replacement_application": "object",
+    "_final_entities_for_coverage_judge": "object",
+    "_entity_coverage_judge": "object",
+    "entity_coverage": "float64",
+    "missed_entities": "object",
+    "_entity_coverage_n_candidates": "int64"
+   },
+   "rows": [
+    {"id": "a", "text": "Alice works at Acme.", "_anonymizer_record_id": "a", "_raw_detected_entities": null, "_seed_entities": null, "_tag_notation": null, "_seed_validation_candidates": null, "_seed_tagged_text": null, "_validated_entities": null, "_seed_entities_json": null, "_initial_tagged_text": null, "_validated_seed_entities": null, "_augmented_entities": null, "_merged_entities": null, "_merged_tagged_text": null, "_validation_candidates": null, "_detected_entities": {"entities": [{"id": "first_name_0_5", "value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5, "score": 0.9, "source": "detector"}, {"id": "organization_name_15_19", "value": "Acme", "label": "organization_name", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "text_with_spans": "<first_name>Alice</first_name> works at <organization_name>Acme</organization_name>.", "final_entities": {"entities": [{"id": "first_name_0_5", "value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5, "score": 0.9, "source": "detector"}, {"id": "organization_name_15_19", "value": "Acme", "label": "organization_name", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "_entities_by_value": {"entities_by_value": [{"value": "Acme", "labels": ["organization_name"]}, {"value": "Alice", "labels": ["first_name"]}]}, "_replacement_map": {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "[REDACTED_FIRST_NAME]"}, {"original": "Acme", "label": "organization_name", "synthetic": "[REDACTED_ORGANIZATION_NAME]"}]}, "text_replaced": "[REDACTED_FIRST_NAME] works at [REDACTED_ORGANIZATION_NAME].", "_replacement_application": {"targeted_span_count": 2, "applied_span_count": 2, "skipped_span_count": 0, "skipped_span_label_counts": {}}, "_final_entities_for_coverage_judge": [{"value": "Acme"}, {"value": "Alice"}], "_entity_coverage_judge": {"candidate_entities": []}, "entity_coverage": 1.0, "missed_entities": [], "_entity_coverage_n_candidates": 0},
+    {"id": "b", "text": "The sky is blue.", "_anonymizer_record_id": "b", "_raw_detected_entities": null, "_seed_entities": null, "_tag_notation": null, "_seed_validation_candidates": null, "_seed_tagged_text": null, "_validated_entities": null, "_seed_entities_json": null, "_initial_tagged_text": null, "_validated_seed_entities": null, "_augmented_entities": null, "_merged_entities": null, "_merged_tagged_text": null, "_validation_candidates": null, "_detected_entities": {"entities": []}, "text_with_spans": "The sky is blue.", "final_entities": {"entities": []}, "_entities_by_value": {"entities_by_value": []}, "_replacement_map": {"replacements": []}, "text_replaced": "The sky is blue.", "_replacement_application": {"targeted_span_count": 0, "applied_span_count": 0, "skipped_span_count": 0, "skipped_span_label_counts": {}}, "_final_entities_for_coverage_judge": [], "_entity_coverage_judge": {"candidate_entities": []}, "entity_coverage": 1.0, "missed_entities": [], "_entity_coverage_n_candidates": 0},
+    {"id": "d", "text": "Dora paints in Lyon.", "_anonymizer_record_id": "d", "_raw_detected_entities": null, "_seed_entities": null, "_tag_notation": null, "_seed_validation_candidates": null, "_seed_tagged_text": null, "_validated_entities": null, "_seed_entities_json": null, "_initial_tagged_text": null, "_validated_seed_entities": null, "_augmented_entities": null, "_merged_entities": null, "_merged_tagged_text": null, "_validation_candidates": null, "_detected_entities": {"entities": [{"id": "first_name_0_4", "value": "Dora", "label": "first_name", "start_position": 0, "end_position": 4, "score": 0.9, "source": "detector"}, {"id": "city_15_19", "value": "Lyon", "label": "city", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "text_with_spans": "<first_name>Dora</first_name> paints in <city>Lyon</city>.", "final_entities": {"entities": [{"id": "first_name_0_4", "value": "Dora", "label": "first_name", "start_position": 0, "end_position": 4, "score": 0.9, "source": "detector"}, {"id": "city_15_19", "value": "Lyon", "label": "city", "start_position": 15, "end_position": 19, "score": 0.9, "source": "detector"}]}, "_entities_by_value": {"entities_by_value": [{"value": "Dora", "labels": ["first_name"]}, {"value": "Lyon", "labels": ["city"]}]}, "_replacement_map": {"replacements": [{"original": "Dora", "label": "first_name", "synthetic": "[REDACTED_FIRST_NAME]"}, {"original": "Lyon", "label": "city", "synthetic": "[REDACTED_CITY]"}]}, "text_replaced": "[REDACTED_FIRST_NAME] paints in [REDACTED_CITY].", "_replacement_application": {"targeted_span_count": 2, "applied_span_count": 2, "skipped_span_count": 0, "skipped_span_label_counts": {}}, "_final_entities_for_coverage_judge": [{"value": "Dora"}, {"value": "Lyon"}], "_entity_coverage_judge": {"candidate_entities": []}, "entity_coverage": 1.0, "missed_entities": [], "_entity_coverage_n_candidates": 0},
+    {"id": "e", "text": "Eve visits Rome.", "_anonymizer_record_id": "e", "_raw_detected_entities": null, "_seed_entities": null, "_tag_notation": null, "_seed_validation_candidates": null, "_seed_tagged_text": null, "_validated_entities": null, "_seed_entities_json": null, "_initial_tagged_text": null, "_validated_seed_entities": null, "_augmented_entities": null, "_merged_entities": null, "_merged_tagged_text": null, "_validation_candidates": null, "_detected_entities": {"entities": [{"id": "first_name_0_3", "value": "Eve", "label": "first_name", "start_position": 0, "end_position": 3, "score": 0.9, "source": "detector"}, {"id": "city_11_15", "value": "Rome", "label": "city", "start_position": 11, "end_position": 15, "score": 0.9, "source": "detector"}]}, "text_with_spans": "<first_name>Eve</first_name> visits <city>Rome</city>.", "final_entities": {"entities": [{"id": "first_name_0_3", "value": "Eve", "label": "first_name", "start_position": 0, "end_position": 3, "score": 0.9, "source": "detector"}, {"id": "city_11_15", "value": "Rome", "label": "city", "start_position": 11, "end_position": 15, "score": 0.9, "source": "detector"}]}, "_entities_by_value": {"entities_by_value": [{"value": "Eve", "labels": ["first_name"]}, {"value": "Rome", "labels": ["city"]}]}, "_replacement_map": {"replacements": [{"original": "Eve", "label": "first_name", "synthetic": "[REDACTED_FIRST_NAME]"}, {"original": "Rome", "label": "city", "synthetic": "[REDACTED_CITY]"}]}, "text_replaced": "[REDACTED_FIRST_NAME] visits [REDACTED_CITY].", "_replacement_application": {"targeted_span_count": 2, "applied_span_count": 2, "skipped_span_count": 0, "skipped_span_label_counts": {}}, "_final_entities_for_coverage_judge": [{"value": "Eve"}, {"value": "Rome"}], "_entity_coverage_judge": {"candidate_entities": []}, "entity_coverage": 1.0, "missed_entities": [], "_entity_coverage_n_candidates": 0}
+   ]
+  },
+  "failed_records": [],
+  "outcomes": null,
+  "stages": [
+   {"stage": "graph_prepare", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 2, "target_count": 4, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_reconcile", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 2, "target_count": 4, "terminal_counts": {"success": 4}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
+   {"stage": "graph_protect", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 2, "target_count": 4, "terminal_counts": {"success": 4}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"}
+  ],
+  "record_metrics": [],
+  "run_record_fields": [],
+  "workflow_runs": [
+   {"workflow": "replace-judges", "seed_columns": ["id", "__nemo_anonymizer_text_input__", "_anonymizer_record_id", "_raw_detected_entities", "_seed_entities", "_tag_notation", "_seed_validation_candidates", "_seed_tagged_text", "_validated_entities", "_seed_entities_json", "_initial_tagged_text", "_validated_seed_entities", "_augmented_entities", "_merged_entities", "_merged_tagged_text", "_validation_candidates", "_detected_entities", "tagged_text", "final_entities", "_entities_by_value", "_replacement_map", "__nemo_anonymizer_text_output__", "_final_entities_for_coverage_judge"], "seed_rows": 4, "output_rows": 4, "preview_num_records": null, "inside_activation": true}
+  ],
+  "graph_invocations": 1,
+  "consumers": {
+   "display_record": {
+    "chars": 3448,
+    "sha256": "0f12fc1362d4ccbc"
+   },
+   "parquet": {
+    "columns": ["id", "text", "text_with_spans", "final_entities", "text_replaced", "entity_coverage", "missed_entities"],
+    "dtypes": {
+     "id": "object",
+     "text": "object",
+     "text_with_spans": "object",
+     "final_entities": "object",
+     "text_replaced": "object",
+     "entity_coverage": "float64",
+     "missed_entities": "object"
+    }
+   },
+   "pickle": {
+    "trace_equal": true,
+    "user_equal": true,
+    "outcomes_kept": true
+   },
+   "user_columns_in_trace": true
+  }
+ }
+}
