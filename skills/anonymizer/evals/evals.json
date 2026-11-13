@@ -53,13 +53,13 @@
     "expected_skill": "anonymizer",
     "should_trigger": true,
     "expected_script": null,
-    "ground_truth": "The agent loads the anonymizer skill and explains the self-hosted GLiNER path: use tools/inference_service.py from a source checkout with the independent tools/inference-service-runtime uv project to compile the pinned tools/inference_service_profiles/nvidia-gliner.toml vLLM Factory profile and launch its managed plan, add an OpenAI-compatible provider at the plan endpoint (normally http://localhost:8001/v1), point the gliner-pii-detector/entity_detector alias at provider local-gliner, retain the health check supported by the adapter, and keep model_configs as a complete model pool copied from defaults rather than a partial overlay.",
+    "ground_truth": "The agent loads the anonymizer skill and explains the self-hosted GLiNER2 path: for local development use native_runtime(device=\"auto\") as a context manager and session.create_anonymizer(); on a Linux/NVIDIA GPU host from a source checkout, compile and launch the pinned tools/inference_service_profiles/gliner2-native.toml profile with tools/inference_service.py; for an already-managed endpoint (normally http://127.0.0.1:8001/v1) pass its URL, served model, and API-key environment variable through create_anonymizer(gliner=GlinerEndpoint(...)), which routes the gliner-pii-detector/entity_detector alias to that provider, skips the generic health check, and preserves the rest of the model pool; a hand-written model_configs must remain a complete model pool copied from defaults rather than a partial overlay.",
     "expected_behavior": [
       "The agent read skills/anonymizer/SKILL.md before answering",
-      "The answer says the compiler and adapter come from a source checkout and require the independent tools/inference-service-runtime uv project",
+      "The answer offers native_runtime for local development and the source-checkout tools/inference_service.py tool with the gliner2-native profile for GPU hosts",
       "The answer includes the localhost OpenAI-compatible endpoint",
       "The answer routes entity_detector through the gliner-pii-detector alias using a local provider",
-      "The answer identifies the pinned external vLLM Factory integration and keeps the supported health check enabled",
+      "The answer uses GlinerEndpoint for an already-managed endpoint and does not claim the tool or GlinerEndpoint stops an external service",
       "The answer warns that model_configs must include the full default model pool",
       "The answer cites the self-hosting GLiNER docs with the published Anonymizer docs fallback"
     ]
