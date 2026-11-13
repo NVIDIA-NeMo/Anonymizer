@@ -26,8 +26,9 @@ class _DisplayMixin:
     def outcome(self, row: int) -> TargetOutcome:
         """The protection outcome of output row ``row``: its ``qualification`` and the ``reasons`` behind it.
 
-        ``qualification`` is ``"met"`` when every required check passed for the row, ``"not_met"`` when one
-        failed (its reasons name the check), and ``"not_assessed"`` when a check could not decide.
+        ``qualification`` is ``"met"`` when every required check passed for the row, ``"not_met"`` when the
+        row did not finish or a required check failed, could not decide (a ``could_not_assess`` reason) or gave
+        no assessment, and ``"not_assessed"`` only when no check is required.
 
         Raises:
             IndexError: ``row`` is not an output row, or this result carries no outcomes (an ``evaluate()``,
