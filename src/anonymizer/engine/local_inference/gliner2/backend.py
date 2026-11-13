@@ -6,14 +6,44 @@ from __future__ import annotations
 
 import bisect
 import logging
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
+from operator import attrgetter
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple, Protocol, cast, get_args
 
-SUPPORTED_DEVICES = ("auto", "cuda", "mps", "cpu")
-SUPPORTED_DTYPES = ("auto", "float32", "bfloat16")
-SUPPORTED_ATTENTION = ("auto", "standard", "disentangled_flash")
+try:
+    from .contract import (  # noqa: TID252 - direct-script fallback keeps server dependencies isolated
+        Attention,
+        AttentionChoice,
+        AttentionRequest,
+        DetectedEntity,
+        Device,
+        DeviceRequest,
+        Dtype,
+        DtypeRequest,
+        Label,
+        OverlapPolicy,
+        Span,
+    )
+except ImportError:  # Direct execution inside the isolated server environment.
+    from contract import (  # ty: ignore[unresolved-import] -- direct-script import path
+        Attention,
+        AttentionChoice,
+        AttentionRequest,
+        DetectedEntity,
+        Device,
+        DeviceRequest,
+        Dtype,
+        DtypeRequest,
+        Label,
+        OverlapPolicy,
+        Span,
+    )
+
+SUPPORTED_DEVICES = get_args(DeviceRequest)
+SUPPORTED_DTYPES = get_args(DtypeRequest)
+SUPPORTED_ATTENTION = get_args(AttentionRequest)
 DTYPE_ENV = "ANONYMIZER_LOCAL_GLINER2_DTYPE"
 ATTENTION_ENV = "ANONYMIZER_LOCAL_GLINER2_ATTENTION"
 DEFAULT_INFERENCE_BATCH_SIZE = 32
@@ -22,57 +52,78 @@ DEFAULT_OVERLAP = 32
 MODEL_ID = "fastino/gliner2-privacy-filter-PII-multi"
 MODEL_REVISION = "59894c087cb2923b01f337d4ee72f6ff84d5bdd6"
 
-_DTYPE_ALIASES = {"fp32": "float32", "bf16": "bfloat16"}
+_DTYPE_ALIASES: Mapping[str, str] = {"fp32": "float32", "bf16": "bfloat16"}
 _WARMUP_TEXT = "Alice Smith lives in Paris."
 _WARMUP_LABELS = ["first_name", "city"]
 
 logger = logging.getLogger(__name__)
 
 
+class _WordSplitter(Protocol):
+    def __call__(self, text: str, lower: bool, /) -> Iterable[tuple[str, int, int]]: ...
+
+
+class _Processor(Protocol):
+    @property
+    def word_splitter(self) -> _WordSplitter: ...
+
+
+class GLiNER2Like(Protocol):
+    """The part of the GLiNER2 model this module uses."""
+
+    @property
+    def processor(self) -> _Processor: ...
+
+    def batch_extract_entities(self, texts: list[str], labels: list[str], **options: object) -> Sequence[object]: ...
+
+
 @dataclass(frozen=True)
 class LoadedModel:
-    """A loaded GLiNER2 model and the precision/attention it actually runs with."""
+    """A loaded GLiNER2 model and the device/precision/attention it actually runs with."""
 
-    model: Any
-    dtype: str
-    attention: str
+    model: GLiNER2Like
+    device: Device
+    dtype: Dtype
+    attention: Attention
 
 
-def resolve_device(requested: str) -> str:
+def resolve_device(requested: str) -> Device:
     """Resolve and validate a native inference device."""
     import torch
 
     normalized = requested.strip().lower()
     if normalized not in SUPPORTED_DEVICES:
         raise ValueError(f"Unsupported GLiNER2 device {requested!r}; expected one of {SUPPORTED_DEVICES!r}.")
-    if normalized == "auto":
+    device = cast(DeviceRequest, normalized)
+    if device == "auto":
         if torch.cuda.is_available():
             return "cuda"
         if torch.backends.mps.is_available():
             return "mps"
         return "cpu"
-    if normalized == "cuda" and not torch.cuda.is_available():
+    if device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError(
             "CUDA was requested for local GLiNER2, but it is unavailable. "
             "In Colab, select Runtime > Change runtime type > GPU and retry."
         )
-    if normalized == "mps" and not torch.backends.mps.is_available():
+    if device == "mps" and not torch.backends.mps.is_available():
         raise RuntimeError("MPS was requested for local GLiNER2, but it is unavailable on this machine.")
-    return normalized
+    return device
 
 
-def resolve_dtype(requested: str, device: str) -> str:
+def resolve_dtype(requested: str, device: Device) -> Dtype:
     """Resolve the inference precision: bfloat16 on CUDA, float32 elsewhere."""
     normalized = requested.strip().lower()
     normalized = _DTYPE_ALIASES.get(normalized, normalized)
     if normalized not in SUPPORTED_DTYPES:
         raise ValueError(f"Unsupported GLiNER2 dtype {requested!r}; expected one of {SUPPORTED_DTYPES!r}.")
-    if normalized == "auto":
+    dtype = cast(DtypeRequest, normalized)
+    if dtype == "auto":
         return "bfloat16" if device == "cuda" else "float32"
-    return normalized
+    return dtype
 
 
-def resolve_attention(requested: str, device: str) -> tuple[str, bool]:
+def resolve_attention(requested: str, device: Device) -> AttentionChoice:
     """Resolve the attention implementation and whether it was explicitly requested.
 
     The automatic choice is DisentangledFlash on CUDA and standard attention elsewhere.
@@ -80,12 +131,13 @@ def resolve_attention(requested: str, device: str) -> tuple[str, bool]:
     normalized = requested.strip().lower()
     if normalized not in SUPPORTED_ATTENTION:
         raise ValueError(f"Unsupported GLiNER2 attention {requested!r}; expected one of {SUPPORTED_ATTENTION!r}.")
-    if normalized == "auto":
-        return ("disentangled_flash" if device == "cuda" else "standard"), False
-    return normalized, True
+    attention = cast(AttentionRequest, normalized)
+    if attention == "auto":
+        return AttentionChoice("disentangled_flash" if device == "cuda" else "standard", explicit=False)
+    return AttentionChoice(attention, explicit=True)
 
 
-def load_model(device: str, *, dtype: str = "auto", attention: str = "auto") -> LoadedModel:
+def load_model(device: Device, *, dtype: str = "auto", attention: str = "auto") -> LoadedModel:
     """Download the pinned checkpoint and load it on ``device`` with the resolved precision and attention.
 
     An explicitly requested DisentangledFlash that cannot be enabled raises. The automatic CUDA
@@ -114,10 +166,10 @@ def load_model(device: str, *, dtype: str = "auto", attention: str = "auto") -> 
             )
             model = _load_weights(snapshot, device, resolved_dtype)
             resolved_attention = "standard"
-    return LoadedModel(model=model, dtype=resolved_dtype, attention=resolved_attention)
+    return LoadedModel(model=model, device=device, dtype=resolved_dtype, attention=resolved_attention)
 
 
-def _load_weights(snapshot: Path, device: str, dtype: str) -> Any:
+def _load_weights(snapshot: Path, device: Device, dtype: Dtype) -> Any:
     import torch
     from gliner2 import GLiNER2
 
@@ -128,44 +180,52 @@ def _load_weights(snapshot: Path, device: str, dtype: str) -> Any:
     return model
 
 
-def _warm_up(model: Any) -> None:
+def _warm_up(model: GLiNER2Like) -> None:
     """Run one tiny extraction so kernel compilation failures surface at load time."""
     model.batch_extract_entities([_WARMUP_TEXT], _WARMUP_LABELS, batch_size=1, threshold=0.5)
 
 
-def overlap_policy(flat_ner: bool) -> str:
+def overlap_policy(flat_ner: bool) -> OverlapPolicy:
     """Translate the existing server flag to GLiNER2 overlap semantics."""
     return "disallow" if flat_ner else "longest"
 
 
-def flatten_result(result: object) -> list[dict[str, Any]]:
-    """Convert GLiNER2's label-keyed result into Anonymizer entity dictionaries."""
+def flatten_result(result: object) -> list[DetectedEntity]:
+    """Convert GLiNER2's label-keyed result into entities in chunk coordinates."""
     if not isinstance(result, dict):
         raise ValueError(f"Unexpected GLiNER2 result type: {type(result)!r}")
     entities_by_label = result.get("entities", {})
     if not isinstance(entities_by_label, dict):
         raise ValueError("Unexpected GLiNER2 result: 'entities' must be a mapping.")
 
-    flattened: list[dict[str, Any]] = []
+    flattened: list[DetectedEntity] = []
     for label, values in entities_by_label.items():
         if not isinstance(values, list):
             raise ValueError(f"Unexpected GLiNER2 values for label {label!r}: expected a list.")
         for value in values:
             if not isinstance(value, dict):
                 raise ValueError(f"Unexpected GLiNER2 entity for label {label!r}: {value!r}")
-            entity = {
-                "text": str(value["text"]),
-                "label": str(label),
-                "start": int(value["start"]),
-                "end": int(value["end"]),
-                "score": float(value["confidence"]),
-            }
-            flattened.append(entity)
+            flattened.append(
+                DetectedEntity(
+                    span=Span(int(value["start"]), int(value["end"])),
+                    label=Label(str(label)),
+                    text=str(value["text"]),
+                    score=float(value["confidence"]),
+                )
+            )
     return flattened
 
 
+class Chunk(NamedTuple):
+    """A word window of one input text, with its character offset in that text."""
+
+    text_index: int
+    offset: int
+    text: str
+
+
 def detect_entities_for_texts(
-    model: Any,
+    model: GLiNER2Like,
     texts: list[str],
     labels: list[str],
     *,
@@ -174,7 +234,7 @@ def detect_entities_for_texts(
     overlap: int,
     flat_ner: bool,
     inference_batch_size: int,
-) -> list[list[dict[str, Any]]]:
+) -> list[list[DetectedEntity]]:
     """Detect entities in overlapping native word windows with source-safe spans."""
     if not labels:
         return [[] for _ in texts]
@@ -182,34 +242,32 @@ def detect_entities_for_texts(
     if inference_batch_size < 1:
         raise ValueError("inference_batch_size must be >= 1")
 
-    chunk_records: list[tuple[int, int, str]] = []
-    for text_index, source_text in enumerate(texts):
-        for chunk, offset in _create_text_chunks(source_text, chunk_length, overlap, model.processor.word_splitter):
-            chunk_records.append((text_index, offset, chunk))
-    results: list[list[dict[str, Any]]] = [[] for _ in texts]
-    if not chunk_records:
+    chunks = [
+        chunk
+        for text_index, source_text in enumerate(texts)
+        for chunk in _create_text_chunks(text_index, source_text, chunk_length, overlap, model.processor.word_splitter)
+    ]
+    results: list[list[DetectedEntity]] = [[] for _ in texts]
+    if not chunks:
         return results
 
+    policy = overlap_policy(flat_ner)
     raw_results = model.batch_extract_entities(
-        [chunk for _, _, chunk in chunk_records],
+        [chunk.text for chunk in chunks],
         labels,
         batch_size=inference_batch_size,
         threshold=threshold,
         include_confidence=True,
         include_spans=True,
-        overlap_policy=overlap_policy(flat_ner),
+        overlap_policy=policy,
     )
-    if not isinstance(raw_results, list) or len(raw_results) != len(chunk_records):
+    if not isinstance(raw_results, list) or len(raw_results) != len(chunks):
         raise ValueError("Unexpected GLiNER2 batch result shape.")
-    for (text_index, offset, chunk), raw_result in zip(chunk_records, raw_results, strict=True):
+    for chunk, raw_result in zip(chunks, raw_results, strict=True):
         for raw_entity in flatten_result(raw_result):
-            entity = _ground_chunk_entity(raw_entity, chunk)
-            if entity is None:
-                continue
-            entity["start"] += offset
-            entity["end"] += offset
-            results[text_index].append(entity)
-    policy = overlap_policy(flat_ner)
+            entity = _ground_chunk_entity(raw_entity, chunk.text)
+            if entity is not None:
+                results[chunk.text_index].append(entity.shifted(chunk.offset))
     return [_resolve_document_overlaps(entities, policy) for entities in results]
 
 
@@ -223,140 +281,90 @@ def _validate_chunk_params(chunk_length: int, overlap: int) -> None:
 
 
 def _create_text_chunks(
+    text_index: int,
     text: str,
     chunk_length: int,
     overlap: int,
-    word_splitter: Callable[[str, bool], Iterable[tuple[str, int, int]]],
-) -> list[tuple[str, int]]:
+    word_splitter: _WordSplitter,
+) -> list[Chunk]:
     """Window the model's native word boundaries without changing source coordinates."""
     words = [(start, end) for _, start, end in word_splitter(text, False)]
-    chunks: list[tuple[str, int]] = []
+    chunks: list[Chunk] = []
     for first in range(0, len(words), chunk_length - overlap):
         last = min(first + chunk_length, len(words))
         start, end = words[first][0], words[last - 1][1]
-        chunks.append((text[start:end], start))
+        chunks.append(Chunk(text_index, start, text[start:end]))
         if last == len(words):
             break
     return chunks
 
 
-def _ground_chunk_entity(entity: dict[str, Any], chunk: str) -> dict[str, Any] | None:
+def _ground_chunk_entity(entity: DetectedEntity, chunk: str) -> DetectedEntity | None:
     """Remove the pinned GLiNER2 implementation's single synthetic terminal period."""
-    start, end = int(entity["start"]), int(entity["end"])
-    value = str(entity["text"])
+    start, end = entity.span
     invalid_span = f"GLiNER2 returned inconsistent offsets [{start}, {end}) for a chunk of length {len(chunk)}"
-    if not value.strip():
+    if not entity.text.strip():
         raise ValueError(invalid_span)
-    if 0 <= start < end <= len(chunk) and value == chunk[start:end]:
+    if 0 <= start < end <= len(chunk) and entity.text == chunk[start:end]:
         return entity
     appended = bool(chunk) and not chunk.endswith((".", "!", "?"))
-    if appended and 0 <= start <= len(chunk) and end == len(chunk) + 1 and value == chunk[start:] + ".":
+    if appended and 0 <= start <= len(chunk) and end == len(chunk) + 1 and entity.text == chunk[start:] + ".":
         if start == len(chunk):
             return None
-        entity["text"] = chunk[start:]
-        entity["end"] = len(chunk)
-        return entity
+        return replace(entity, span=Span(start, len(chunk)), text=chunk[start:])
     raise ValueError(invalid_span)
 
 
-def _resolve_document_overlaps(
-    entities: list[dict[str, Any]],
-    policy: str,
-) -> list[dict[str, Any]]:
+def _keep_outermost(candidates: Sequence[DetectedEntity]) -> list[DetectedEntity]:
+    """Drop every entity whose span lies strictly inside another candidate's span."""
+    return [e for e in candidates if not any(other.span.strictly_contains(e.span) for other in candidates)]
+
+
+def _best_disjoint(candidates: Sequence[DetectedEntity]) -> list[DetectedEntity]:
+    """Keep the entities on the span set of maximum total score, with every label on each chosen span."""
+    representatives: dict[Span, DetectedEntity] = {}
+    for entity in candidates:
+        representatives.setdefault(entity.span, entity)
+    chosen = {entity.span for entity in _maximum_score_non_overlapping(list(representatives.values()))}
+    return [e for e in candidates if e.span in chosen]
+
+
+Resolver = Callable[[Sequence[DetectedEntity]], list[DetectedEntity]]
+_RESOLVERS: Mapping[OverlapPolicy, Resolver] = {"longest": _keep_outermost, "disallow": _best_disjoint}
+
+
+def _resolve_document_overlaps(entities: Sequence[DetectedEntity], policy: OverlapPolicy) -> list[DetectedEntity]:
     """Apply GLiNER2 overlap semantics again after document-offset remapping."""
-    ranked = sorted(
-        enumerate(entities),
-        key=lambda row: (
-            -float(row[1]["score"]),
-            int(row[1]["start"]),
-            int(row[1]["end"]),
-            row[0],
-        ),
-    )
-    distinct: list[tuple[int, dict[str, Any]]] = []
-    seen_entities: set[tuple[int, int, str]] = set()
-    for row in ranked:
-        entity_key = (int(row[1]["start"]), int(row[1]["end"]), str(row[1]["label"]))
-        if entity_key not in seen_entities:
-            seen_entities.add(entity_key)
-            distinct.append(row)
-
-    if policy == "longest":
-        selected = [
-            row
-            for row in distinct
-            if not any(
-                int(other[1]["start"]) <= int(row[1]["start"])
-                and int(row[1]["end"]) <= int(other[1]["end"])
-                and (int(other[1]["start"]) < int(row[1]["start"]) or int(row[1]["end"]) < int(other[1]["end"]))
-                for other in distinct
-            )
-        ]
-    elif policy == "disallow":
-        representatives: dict[tuple[int, int], tuple[int, dict[str, Any]]] = {}
-        for row in distinct:
-            boundaries = (int(row[1]["start"]), int(row[1]["end"]))
-            representatives.setdefault(boundaries, row)
-        selected_boundaries = {
-            (int(entity["start"]), int(entity["end"]))
-            for _, entity in _maximum_score_non_overlapping(list(representatives.values()))
-        }
-        selected = [row for row in distinct if (int(row[1]["start"]), int(row[1]["end"])) in selected_boundaries]
-    else:  # pragma: no cover - overlap_policy() has a closed result set
-        raise ValueError(f"Unsupported overlap policy: {policy!r}")
-
-    return sorted(
-        (entity for _, entity in selected),
-        key=lambda entity: (int(entity["start"]), int(entity["end"]), str(entity["label"])),
-    )
+    distinct: list[DetectedEntity] = []
+    seen: set[tuple[Span, Label]] = set()
+    for entity in sorted(entities, key=attrgetter("rank")):
+        if (entity.span, entity.label) not in seen:
+            seen.add((entity.span, entity.label))
+            distinct.append(entity)
+    return sorted(_RESOLVERS[policy](distinct), key=lambda e: (*e.span, e.label))
 
 
-def _maximum_score_non_overlapping(
-    ranked: list[tuple[int, dict[str, Any]]],
-) -> list[tuple[int, dict[str, Any]]]:
+class Selection(NamedTuple):
+    """A set of disjoint entities and its total score."""
+
+    score: float
+    picks: tuple[DetectedEntity, ...]
+
+    def with_pick(self, entity: DetectedEntity) -> Selection:
+        return Selection(self.score + entity.score, (*self.picks, entity))
+
+    def order(self) -> tuple[float, int, tuple[tuple[float, int, int], ...]]:
+        """Preference key, smallest first: higher score, then more picks, then better-ranked picks."""
+        return (-self.score, -len(self.picks), tuple(sorted(e.rank for e in self.picks)))
+
+
+def _maximum_score_non_overlapping(candidates: Sequence[DetectedEntity]) -> list[DetectedEntity]:
     """Return the maximum-total-score disjoint span set."""
-    by_end = sorted(
-        ranked,
-        key=lambda row: (
-            int(row[1]["end"]),
-            int(row[1]["start"]),
-            -float(row[1]["score"]),
-            row[0],
-        ),
-    )
-    ends = [int(entity["end"]) for _, entity in by_end]
-    predecessors = [
-        bisect.bisect_right(ends, int(entity["start"]), 0, index) - 1 for index, (_, entity) in enumerate(by_end)
-    ]
-    best: list[tuple[float, tuple[int, ...]]] = [(0.0, ())]
-
-    def rank_selection(selection: tuple[int, ...]) -> tuple[tuple[float, int, int, int], ...]:
-        return tuple(
-            sorted(
-                (
-                    -float(by_end[index][1]["score"]),
-                    int(by_end[index][1]["start"]),
-                    int(by_end[index][1]["end"]),
-                    by_end[index][0],
-                )
-                for index in selection
-            )
-        )
-
-    for index, (_, entity) in enumerate(by_end):
-        previous_score, previous_selection = best[predecessors[index] + 1]
-        with_entity = (previous_score + float(entity["score"]), previous_selection + (index,))
-        without_entity = best[index]
-        if (
-            with_entity[0] > without_entity[0]
-            or (with_entity[0] == without_entity[0] and len(with_entity[1]) > len(without_entity[1]))
-            or (
-                with_entity[0] == without_entity[0]
-                and len(with_entity[1]) == len(without_entity[1])
-                and rank_selection(with_entity[1]) < rank_selection(without_entity[1])
-            )
-        ):
-            best.append(with_entity)
-        else:
-            best.append(without_entity)
-    return [by_end[index] for index in best[-1][1]]
+    by_end = sorted(candidates, key=lambda e: (e.span.end, e.span.start, -e.score))
+    ends = [e.span.end for e in by_end]
+    best = [Selection(0.0, ())]
+    for index, entity in enumerate(by_end):
+        predecessor = bisect.bisect_right(ends, entity.span.start, 0, index) - 1
+        # min() keeps the earlier argument on ties, so skipping the entity wins unless taking it is strictly better.
+        best.append(min(best[index], best[predecessor + 1].with_pick(entity), key=Selection.order))
+    return list(best[-1].picks)

@@ -4,27 +4,42 @@
 from __future__ import annotations
 
 import json
+import random
 import re
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from anonymizer.engine.detection.postprocess import parse_raw_entities
 from anonymizer.engine.local_inference.gliner2 import backend
 from anonymizer.engine.local_inference.gliner2.backend import (
+    _best_disjoint,
+    _keep_outermost,
+    _maximum_score_non_overlapping,
     _resolve_document_overlaps,
     detect_entities_for_texts,
     flatten_result,
     overlap_policy,
 )
+from anonymizer.engine.local_inference.gliner2.contract import DetectedEntity, Device, Label, OverlapPolicy, Span
 
 
 def _split_words(text: str, lower: bool = True) -> Iterator[tuple[str, int, int]]:
     for match in re.finditer(r"\S+", text):
         yield match.group().lower() if lower else match.group(), match.start(), match.end()
+
+
+def _wire(entity: DetectedEntity) -> dict[str, Any]:
+    return {
+        "text": entity.text,
+        "label": entity.label,
+        "start": entity.span.start,
+        "end": entity.span.end,
+        "score": entity.score,
+    }
 
 
 class _FakeModel:
@@ -37,7 +52,7 @@ class _FakeModel:
         self,
         texts: list[str],
         labels: list[str],
-        **kwargs: Any,
+        **kwargs: object,
     ) -> list[dict[str, Any]]:
         self.calls.append((texts, labels, kwargs))
         return self.results
@@ -53,7 +68,9 @@ def test_flatten_result_converts_label_keyed_entities() -> None:
             }
         }
     )
-    assert result == [{"text": "Alice", "label": "first_name", "start": 0, "end": 5, "score": 0.91}]
+    assert [_wire(entity) for entity in result] == [
+        {"text": "Alice", "label": "first_name", "start": 0, "end": 5, "score": 0.91}
+    ]
 
 
 def test_overlap_policy_preserves_existing_flat_flag_contract() -> None:
@@ -61,8 +78,8 @@ def test_overlap_policy_preserves_existing_flat_flag_contract() -> None:
     assert overlap_policy(False) == "longest"
 
 
-def _entity(text: str, start: int, end: int, score: float = 0.8) -> dict[str, Any]:
-    return {"text": text, "label": "pii", "start": start, "end": end, "score": score}
+def _entity(text: str, start: int, end: int, score: float = 0.8, label: str = "pii") -> DetectedEntity:
+    return DetectedEntity(span=Span(start, end), label=Label(label), text=text, score=score)
 
 
 def test_longest_overlap_contract_handles_disjoint_nested_crossing_and_same_span() -> None:
@@ -88,9 +105,9 @@ def test_disallow_overlap_contract_uses_maximum_total_score() -> None:
 
 
 @pytest.mark.parametrize("policy", ["longest", "disallow"])
-def test_overlap_contract_retains_different_labels_for_the_same_span(policy: str) -> None:
+def test_overlap_contract_retains_different_labels_for_the_same_span(policy: OverlapPolicy) -> None:
     name = _entity("Alice", 0, 5, 0.9)
-    identifier = {**_entity("Alice", 0, 5, 0.8), "label": "identifier"}
+    identifier = _entity("Alice", 0, 5, 0.8, label="identifier")
 
     assert _resolve_document_overlaps([name, identifier], policy) == [identifier, name]
 
@@ -100,6 +117,43 @@ def test_disallow_equal_score_tie_uses_confidence_start_end_ranking() -> None:
     inner = _entity("inner", 5, 8, 0.8)
 
     assert _resolve_document_overlaps([inner, outer], "disallow") == [outer]
+
+
+def _brute_force_best(candidates: list[DetectedEntity]) -> set[DetectedEntity]:
+    """Maximum total score, then most picks, then smallest sorted rank: the documented preference order."""
+    best: tuple[float, int, tuple[tuple[float, int, int], ...]] | None = None
+    best_picks: set[DetectedEntity] = set()
+    for mask in range(1 << len(candidates)):
+        picks = [candidate for index, candidate in enumerate(candidates) if mask >> index & 1]
+        spans = sorted(pick.span for pick in picks)
+        if any(left.end > right.start for left, right in zip(spans, spans[1:], strict=False)):
+            continue
+        key = (-sum(pick.score for pick in picks), -len(picks), tuple(sorted(pick.rank for pick in picks)))
+        if best is None or key < best:
+            best, best_picks = key, set(picks)
+    return best_picks
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_maximum_score_selection_matches_brute_force_including_ties(seed: int) -> None:
+    rng = random.Random(seed)
+    boundaries = {
+        (start, start + rng.randint(1, 6)) for start in (rng.randint(0, 14) for _ in range(rng.randint(0, 9)))
+    }
+    # Scores are multiples of 1/8 so float sums are exact and ties are common.
+    candidates = [
+        DetectedEntity(Span(start, end), Label("pii"), "x" * (end - start), rng.choice([0.25, 0.5, 0.5, 0.75, 1.0]))
+        for start, end in sorted(boundaries)
+    ]
+    assert set(_maximum_score_non_overlapping(candidates)) == _brute_force_best(candidates)
+
+
+def test_keep_outermost_and_best_disjoint_are_independent_policies() -> None:
+    outer = _entity("outer", 0, 10, 0.5)
+    left = _entity("left", 0, 5, 0.4)
+    right = _entity("right", 5, 10, 0.4)
+    assert _keep_outermost([outer, left, right]) == [outer]
+    assert _best_disjoint([outer, left, right]) == [left, right]
 
 
 def test_detect_entities_remaps_and_deduplicates_overlapping_word_chunks() -> None:
@@ -119,7 +173,9 @@ def test_detect_entities_remaps_and_deduplicates_overlapping_word_chunks() -> No
         flat_ner=False,
         inference_batch_size=2,
     )
-    assert result == [[{"text": "Alice", "label": "name", "start": 5, "end": 10, "score": 0.9}]]
+    assert [[_wire(e) for e in entities] for entities in result] == [
+        [{"text": "Alice", "label": "name", "start": 5, "end": 10, "score": 0.9}]
+    ]
     assert model.calls[0][0] == ["xxxx Alice", "Alice yyyy"]
     assert model.calls[0][2]["include_spans"] is True
     assert model.calls[0][2]["include_confidence"] is True
@@ -168,8 +224,9 @@ def test_synthetic_suffix_is_removed_without_losing_the_source_entity(
         flat_ner=False,
         inference_batch_size=1,
     )[0]
-    assert result == [{"text": value, "label": label, "start": start, "end": len(text), "score": 0.9}]
-    parsed = parse_raw_entities(raw_response=json.dumps({"entities": result}), text=text)
+    wire = [_wire(entity) for entity in result]
+    assert wire == [{"text": value, "label": label, "start": start, "end": len(text), "score": 0.9}]
+    parsed = parse_raw_entities(raw_response=json.dumps({"entities": wire}), text=text)
     assert [(entity.value, entity.start_position, entity.end_position) for entity in parsed] == [
         (value, start, len(text))
     ]
@@ -194,8 +251,10 @@ def test_boundary_punctuation_does_not_consume_the_next_source_character() -> No
         inference_batch_size=2,
     )[0]
     assert model.calls[0][0] == ["Ask May", "May today"]
-    assert result == [{"text": "May", "label": "first_name", "start": 4, "end": 7, "score": 0.9}]
-    assert text[result[0]["start"] : result[0]["end"]] == result[0]["text"]
+    assert [_wire(entity) for entity in result] == [
+        {"text": "May", "label": "first_name", "start": 4, "end": 7, "score": 0.9}
+    ]
+    assert text[result[0].span.start : result[0].span.end] == result[0].text
 
 
 def test_synthetic_only_prediction_does_not_remove_valid_entities() -> None:
@@ -221,7 +280,7 @@ def test_synthetic_only_prediction_does_not_remove_valid_entities() -> None:
         flat_ner=False,
         inference_batch_size=1,
     )[0]
-    assert [entity["text"] for entity in result] == ["May"]
+    assert [entity.text for entity in result] == ["May"]
 
 
 def test_word_windows_preserve_unicode_whitespace_and_document_coordinates() -> None:
@@ -244,8 +303,8 @@ def test_word_windows_preserve_unicode_whitespace_and_document_coordinates() -> 
         inference_batch_size=3,
     )[0]
     assert model.calls[0][0] == ["İpek\t\nvisits", "visits José", "José  today"]
-    assert [(e["text"], e["start"], e["end"]) for e in result] == [("İpek", 2, 6), ("José", 15, 19)]
-    assert all(text[e["start"] : e["end"]] == e["text"] for e in result)
+    assert [(e.text, *e.span) for e in result] == [("İpek", 2, 6), ("José", 15, 19)]
+    assert all(text[e.span.start : e.span.end] == e.text for e in result)
 
 
 @pytest.mark.parametrize("text", ["", " \t\n "])
@@ -345,7 +404,7 @@ def test_batch_word_windows_keep_document_offsets_separate() -> None:
         flat_ner=False,
         inference_batch_size=2,
     )
-    assert [(row[0]["text"], row[0]["start"], row[0]["end"]) for row in result] == [("May", 4, 7), ("June", 5, 9)]
+    assert [(row[0].text, *row[0].span) for row in result] == [("May", 4, 7), ("June", 5, 9)]
 
 
 @pytest.mark.parametrize(
@@ -358,7 +417,7 @@ def test_batch_word_windows_keep_document_offsets_separate() -> None:
         ("bf16", "cpu", "bfloat16"),
     ],
 )
-def test_resolve_dtype_defaults_to_bf16_on_cuda_only(requested: str, device: str, expected: str) -> None:
+def test_resolve_dtype_defaults_to_bf16_on_cuda_only(requested: str, device: Device, expected: str) -> None:
     assert backend.resolve_dtype(requested, device) == expected
 
 
@@ -373,7 +432,7 @@ def test_resolve_dtype_defaults_to_bf16_on_cuda_only(requested: str, device: str
     ],
 )
 def test_resolve_attention_defaults_to_flash_on_cuda_only(
-    requested: str, device: str, expected: tuple[str, bool]
+    requested: str, device: Device, expected: tuple[str, bool]
 ) -> None:
     assert backend.resolve_attention(requested, device) == expected
 
@@ -418,7 +477,7 @@ def test_cuda_default_loads_bf16_with_flash(monkeypatch: pytest.MonkeyPatch) -> 
     loads = _patch_loading(monkeypatch, flash_error=None)
     loaded = backend.load_model("cuda")
     assert (loaded.dtype, loaded.attention) == ("bfloat16", "disentangled_flash")
-    assert loaded.model.flash_enabled
+    assert cast(_LoadableModel, loaded.model).flash_enabled
     assert loads == ["bfloat16"]
 
 
@@ -442,5 +501,5 @@ def test_cpu_default_is_float32_standard_attention(monkeypatch: pytest.MonkeyPat
     loads = _patch_loading(monkeypatch, flash_error=None)
     loaded = backend.load_model("cpu")
     assert (loaded.dtype, loaded.attention) == ("float32", "standard")
-    assert not loaded.model.flash_enabled
+    assert not cast(_LoadableModel, loaded.model).flash_enabled
     assert loads == ["float32"]

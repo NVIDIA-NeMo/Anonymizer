@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 import uvicorn
@@ -33,10 +34,13 @@ try:
         DTYPE_ENV,
         MODEL_ID,
         MODEL_REVISION,
+        GLiNER2Like,
+        LoadedModel,
         detect_entities_for_texts,
         load_model,
         resolve_device,
     )
+    from .contract import DetectedEntity  # noqa: TID252 - direct-script fallback
 except ImportError:  # Direct execution inside the isolated server environment.
     from backend import (  # ty: ignore[unresolved-import] -- direct-script import path
         ATTENTION_ENV,
@@ -46,10 +50,13 @@ except ImportError:  # Direct execution inside the isolated server environment.
         DTYPE_ENV,
         MODEL_ID,
         MODEL_REVISION,
+        GLiNER2Like,
+        LoadedModel,
         detect_entities_for_texts,
         load_model,
         resolve_device,
     )
+    from contract import DetectedEntity  # ty: ignore[unresolved-import] -- direct-script import path
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8001
@@ -64,10 +71,7 @@ LAUNCH_OWNERSHIP_PROOF_FIELD = "launch_token_sha256"
 
 logger = logging.getLogger("anonymizer-local-gliner2")
 
-model: Any | None = None
-selected_device = "cpu"
-selected_dtype = "float32"
-selected_attention = "standard"
+loaded: LoadedModel | None = None
 
 
 @dataclass(frozen=True)
@@ -88,7 +92,7 @@ class DetectJob:
 
     text: str
     params: DetectParams
-    future: asyncio.Future[list[dict[str, Any]]]
+    future: asyncio.Future[list[DetectedEntity]]
 
 
 class BatchDetector:
@@ -101,8 +105,8 @@ class BatchDetector:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gliner2-infer")
         self._worker_task: asyncio.Task[None] | None = None
 
-    def start(self) -> None:
-        self._worker_task = asyncio.create_task(self._worker())
+    def start(self, model: GLiNER2Like) -> None:
+        self._worker_task = asyncio.create_task(self._worker(model))
 
     async def stop(self) -> None:
         if self._worker_task is None:
@@ -112,13 +116,13 @@ class BatchDetector:
         self._executor.shutdown(wait=True)
         self._worker_task = None
 
-    async def detect(self, text: str, params: DetectParams) -> list[dict[str, Any]]:
+    async def detect(self, text: str, params: DetectParams) -> list[DetectedEntity]:
         loop = asyncio.get_running_loop()
-        future: asyncio.Future[list[dict[str, Any]]] = loop.create_future()
+        future: asyncio.Future[list[DetectedEntity]] = loop.create_future()
         await self._queue.put(DetectJob(text=text, params=params, future=future))
         return await future
 
-    async def _worker(self) -> None:
+    async def _worker(self, model: GLiNER2Like) -> None:
         while True:
             first = await self._queue.get()
             if first is None:
@@ -137,9 +141,9 @@ class BatchDetector:
                     await self._queue.put(None)
                     break
                 jobs.append(job)
-            await self._dispatch(jobs)
+            await self._dispatch(jobs, model)
 
-    async def _dispatch(self, jobs: list[DetectJob]) -> None:
+    async def _dispatch(self, jobs: list[DetectJob], model: GLiNER2Like) -> None:
         grouped: dict[DetectParams, list[DetectJob]] = {}
         for job in jobs:
             grouped.setdefault(job.params, []).append(job)
@@ -148,15 +152,16 @@ class BatchDetector:
             try:
                 results = await loop.run_in_executor(
                     self._executor,
-                    lambda p=params, g=group: detect_entities_for_texts(
+                    partial(
+                        detect_entities_for_texts,
                         model,
-                        [job.text for job in g],
-                        list(p.labels),
-                        threshold=p.threshold,
-                        chunk_length=p.chunk_length,
-                        overlap=p.overlap,
-                        flat_ner=p.flat_ner,
-                        inference_batch_size=p.inference_batch_size,
+                        [job.text for job in group],
+                        list(params.labels),
+                        threshold=params.threshold,
+                        chunk_length=params.chunk_length,
+                        overlap=params.overlap,
+                        flat_ner=params.flat_ner,
+                        inference_batch_size=params.inference_batch_size,
                     ),
                 )
             except Exception as exc:
@@ -175,22 +180,21 @@ detector = BatchDetector()
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Load the model and own the batching worker for the server lifespan."""
-    global model, selected_device, selected_dtype, selected_attention
-    selected_device = resolve_device(os.getenv(DEVICE_ENV, "auto"))
-    logger.info("Loading %s at revision %s on %s", MODEL_ID, MODEL_REVISION, selected_device)
+    global loaded
+    device = resolve_device(os.getenv(DEVICE_ENV, "auto"))
+    logger.info("Loading %s at revision %s on %s", MODEL_ID, MODEL_REVISION, device)
     loaded = await asyncio.to_thread(
         load_model,
-        selected_device,
+        device,
         dtype=os.getenv(DTYPE_ENV, "auto"),
         attention=os.getenv(ATTENTION_ENV, "auto"),
     )
-    model, selected_dtype, selected_attention = loaded.model, loaded.dtype, loaded.attention
-    detector.start()
+    detector.start(loaded.model)
     logger.info(
         "Local GLiNER2 is ready: device=%s dtype=%s attention=%s",
-        selected_device,
-        selected_dtype,
-        selected_attention,
+        loaded.device,
+        loaded.dtype,
+        loaded.attention,
     )
     try:
         yield
@@ -216,6 +220,8 @@ def launch_ownership(request: Request) -> JSONResponse:
 def list_models(request: Request) -> dict[str, Any]:
     """Return readiness and immutable checkpoint identity."""
     _authorize(request)
+    if loaded is None:
+        raise HTTPException(status_code=503, detail="GLiNER2 is not loaded")
     return {
         "object": "list",
         "data": [
@@ -223,9 +229,9 @@ def list_models(request: Request) -> dict[str, Any]:
                 "id": MODEL_ID,
                 "object": "model",
                 "revision": MODEL_REVISION,
-                "device": selected_device,
-                "dtype": selected_dtype,
-                "attention": selected_attention,
+                "device": loaded.device,
+                "dtype": loaded.dtype,
+                "attention": loaded.attention,
             }
         ],
     }
@@ -235,7 +241,7 @@ def list_models(request: Request) -> dict[str, Any]:
 async def chat_completions(request: Request) -> dict[str, Any]:
     """Run GLiNER2 through the detector chat-completion contract."""
     _authorize(request)
-    if model is None:
+    if loaded is None:
         raise HTTPException(status_code=503, detail="GLiNER2 is not loaded")
     body = await request.json()
     text = _extract_text(body.get("messages", []))
@@ -252,7 +258,7 @@ async def chat_completions(request: Request) -> dict[str, Any]:
         entities = await detector.detect(text, params)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    content = json.dumps({"entities": entities})
+    content = json.dumps({"entities": [_wire_entity(entity) for entity in entities]})
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
         "object": "chat.completion",
@@ -266,6 +272,16 @@ async def chat_completions(request: Request) -> dict[str, Any]:
             }
         ],
         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }
+
+
+def _wire_entity(entity: DetectedEntity) -> dict[str, Any]:
+    return {
+        "text": entity.text,
+        "label": entity.label,
+        "start": entity.span.start,
+        "end": entity.span.end,
+        "score": entity.score,
     }
 
 

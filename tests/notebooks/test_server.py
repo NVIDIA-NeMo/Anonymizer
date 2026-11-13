@@ -10,12 +10,23 @@ import json
 import os
 import socket
 import sys
+from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from anonymizer.engine.local_inference.gliner2 import MODEL_ID, MODEL_REVISION, server
+from anonymizer.engine.local_inference.gliner2.backend import LoadedModel
+from anonymizer.engine.local_inference.gliner2.contract import DetectedEntity, Label, Span
+
+
+def _entity(text: str, label: str = "pii", score: float = 0.9) -> DetectedEntity:
+    return DetectedEntity(span=Span(0, len(text)), label=Label(label), text=text, score=score)
+
+
+def _loaded() -> LoadedModel:
+    return LoadedModel(model=cast(Any, object()), device="cpu", dtype="float32", attention="standard")
 
 
 def test_main_serves_an_inherited_listener(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -56,10 +67,10 @@ def test_dispatch_skips_cancelled_future_without_affecting_live_job() -> None:
             server.DetectJob(text="cancelled", params=params, future=cancelled),
             server.DetectJob(text="live", params=params, future=live),
         ]
-        expected = [[{"text": "Alice"}], [{"text": "Bob"}]]
+        expected = [[_entity("Alice")], [_entity("Bob")]]
 
         with patch.object(server, "detect_entities_for_texts", return_value=expected):
-            await detector._dispatch(jobs)
+            await detector._dispatch(jobs, cast(Any, object()))
 
         assert cancelled.cancelled()
         assert live.result() == expected[1]
@@ -72,7 +83,7 @@ def test_models_requires_token_and_reports_checkpoint_identity(monkeypatch: pyte
     monkeypatch.setenv(server.TOKEN_ENV, "secret")
     client = TestClient(server.app, raise_server_exceptions=False)
     unauthorized = client.get("/v1/models")
-    with patch.object(server, "model", object()):
+    with patch.object(server, "loaded", _loaded()):
         authorized = client.get("/v1/models", headers={"Authorization": "Bearer secret"})
     assert unauthorized.status_code == 401
     assert authorized.status_code == 200
@@ -89,9 +100,9 @@ def test_chat_completion_returns_anonymizer_entity_contract(
     monkeypatch: pytest.MonkeyPatch, chunk_options: dict[str, int], expected_window: tuple[int, int]
 ) -> None:
     monkeypatch.setenv(server.TOKEN_ENV, "secret")
-    entities = [{"text": "Alice", "label": "first_name", "start": 0, "end": 5, "score": 0.9}]
+    entities = [_entity("Alice", label="first_name", score=0.9)]
     with (
-        patch.object(server, "model", object()),
+        patch.object(server, "loaded", _loaded()),
         patch.object(server.detector, "detect", AsyncMock(return_value=entities)) as detect,
     ):
         client = TestClient(server.app, raise_server_exceptions=False)
@@ -107,7 +118,7 @@ def test_chat_completion_returns_anonymizer_entity_contract(
         )
     assert response.status_code == 200
     content = json.loads(response.json()["choices"][0]["message"]["content"])
-    assert content == {"entities": entities}
+    assert content == {"entities": [{"text": "Alice", "label": "first_name", "start": 0, "end": 5, "score": 0.9}]}
     assert detect.await_args is not None
     params = detect.await_args.args[1]
     assert (params.chunk_length, params.overlap) == expected_window
