@@ -3028,11 +3028,16 @@
 <p>Instead of replacing individual entities, rewrite mode transforms the entire text to produce a privacy-safe version that reduces both explicit identifiers and implicit, inferable signals that could lead to re-identification. While overall meaning is preserved where possible, rewrite mode intentionally modifies or removes details when needed to eliminate latent entities and break inference pathways.</p>
 <hr />
 <h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
-<p><a href="../detection/">Detection</a> runs first (same as <a href="../replace/">Replace mode</a>, plus latent entity detection for context-inferable information). This includes identifying signals that may not be explicitly tagged but can be deduced from combinations of details (e.g., location inferred from contextual cues). The text is then classified by domain, and each entity or attribute is assigned a sensitivity disposition based on contextual risk, recognizing that quasi-identifiers can emerge from any aspect of the text. </p>
+<p><a href="../detection/">Detection</a> runs first (same as <a href="../replace/">Replace mode</a>, plus latent entity detection for context-inferable information). This includes identifying signals that may not be explicitly tagged but can be deduced from combinations of details (e.g., location inferred from contextual cues). The text is then classified by domain, and each entity or attribute is assigned a sensitivity disposition based on contextual risk, recognizing that quasi-identifiers can emerge from any aspect of the text.</p>
 <p>The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. Any records that failed to meet standards are tagged for human review.</p>
 <hr />
 <h2 id="key-concepts">Key concepts<a class="headerlink" href="#key-concepts" title="Permanent link">&para;</a></h2>
-<p><strong>Sensitivity</strong> measures the intrinsic re-identification damage an entity causes if it appears in the output — independently of what else is retained. It is not the protection decision itself; rather, it feeds the downstream leakage scoring system.</p>
+<p><strong>Sensitivity</strong> measures an entity’s privacy risk in the context of the document, considering the information retained alongside it. In normal mode, entities rated <code>low</code> use <code>leave_as_is</code>, while entities rated <code>medium</code> or <code>high</code> receive protection. With <code>strict_entity_protection=True</code>, every entity receives protection, including entities rated <code>low</code>; protection alone does not raise their sensitivity. Sensitivity also feeds downstream leakage scoring.</p>
+<p>If the model incorrectly selects <code>leave_as_is</code>, the decision is corrected after the entity's
+category is known. Direct identifiers become <code>high</code> / <code>replace</code>, regardless of the model's
+initial sensitivity. Other high entities use <code>replace</code>, medium entities use <code>generalize</code>,
+and low entities are retained in normal mode or generalized in strict mode.</p>
+<p>The prompt requests a <code>low_sensitivity_reason</code> for every low rating, whether the entity is protected or retained. A missing or blank reason does not fail the record or change its sensitivity or protection method. The reason explains the original information’s limited linkage or recognition risk; a planned edit does not justify a low rating.</p>
 <table>
 <thead>
 <tr>
@@ -3213,6 +3218,7 @@ config = AnonymizerConfig(
 <p>Leakage mass is a confidence-weighted sum of leaked entities, where each entity's weight reflects its sensitivity (high=1.0, medium=0.6, low=0.3).
 A leakage mass of 1.0 roughly equals one high-sensitivity entity leaked at full confidence.</p>
 </blockquote>
+<p>Privacy questions are generated only for entities assigned a protective method. Entities assigned <code>leave_as_is</code> receive no privacy question and do not contribute to leakage mass. A protected low-sensitivity entity does receive a question: if the judge answers yes with confidence 0.8, it contributes <code>0.3 × 0.8 = 0.24</code>.</p>
 <pre class="highlight"><code class="language-python">config = AnonymizerConfig(
     rewrite=Rewrite(
         risk_tolerance="minimal",
@@ -3220,7 +3226,8 @@ A leakage mass of 1.0 roughly equals one high-sensitivity entity leaked at full 
     )
 )</code></pre>
 <h3 id="strict-entity-protection">Strict entity protection<a class="headerlink" href="#strict-entity-protection" title="Permanent link">&para;</a></h3>
-<p>By default, some entities — particularly quasi-identifiers judged to be low-risk in context — may be left unchanged. Setting <code>strict_entity_protection=True</code> overrides this: every detected entity is forced into an active protection method, and no entity can be left as-is.</p>
+<p>By default, some entities — particularly quasi-identifiers judged to be low-risk in context — may be left unchanged. Setting <code>strict_entity_protection=True</code> overrides this: every detected entity is forced into an active protection method, and no entity can be left as-is. Sensitivity can still be <code>low</code>, <code>medium</code>, or <code>high</code>; strict mode does not promote a low rating merely because the entity must be protected.</p>
+<p><code>strict_entity_protection</code> controls which entities require protection. <code>risk_tolerance</code> controls repair and human-review decisions after evaluation. Enabling strict protection does not change the preset thresholds.</p>
 <pre class="highlight"><code class="language-python">config = AnonymizerConfig(
     rewrite=Rewrite(
         strict_entity_protection=True,
@@ -3316,7 +3323,7 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()</code></pre
 <li>Lower <code>risk_tolerance</code> (e.g. <code>minimal</code>) to trigger more aggressive repair.</li>
 <li>Enable <code>strict_entity_protection=True</code> to ensure no detected entity is left unchanged in the output regardless of risk.</li>
 </ul>
-<p><strong>Last resort:</strong> Manually edit or exclude records that resist automated repair — some text is inherently difficult to rewrite without losing utility or leaking identifiers, and requires your judgement as the expert. </p>
+<p><strong>Last resort:</strong> Manually edit or exclude records that resist automated repair — some text is inherently difficult to rewrite without losing utility or leaking identifiers, and requires your judgement as the expert.</p>
 <hr />
 <h2 id="model-roles">Model roles<a class="headerlink" href="#model-roles" title="Permanent link">&para;</a></h2>
 <p>Rewrite uses multiple LLM roles. All default to models in the <a href="../models/">default config</a>:</p>
@@ -3333,6 +3340,11 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()</code></pre
 <td><code>domain_classifier</code></td>
 <td><code>gpt-oss-120b</code></td>
 <td>Classifies text domain.</td>
+</tr>
+<tr>
+<td><code>entity_classifier</code></td>
+<td>Uses <code>disposition_analyzer</code> unless explicitly selected</td>
+<td>Classifies custom explicit entity labels as direct or quasi-identifiers. Default labels are classified locally.</td>
 </tr>
 <tr>
 <td><code>disposition_analyzer</code></td>
@@ -3366,6 +3378,15 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()</code></pre
 </tr>
 </tbody>
 </table>
+<p>The entity-classification LLM classifies the dataset's detected custom labels together once,
+then reuses the categories across all records. Default labels are resolved locally without
+an LLM call. An explicit <code>disposition_analyzer</code> override also supplies the classifier unless
+you select <code>entity_classifier</code> explicitly; unrelated overrides preserve the bundled default.</p>
+<p>Every requested custom label must have a classification. Conflicting categories for the
+same label are rejected; identical duplicate classifications are accepted. Invalid responses
+receive one correction attempt with validation feedback. If that attempt is also invalid,
+the shared classification step fails the run instead of continuing to sensitivity disposition
+with incomplete or contradictory classifications.</p>
 <hr />
 <h2 id="evaluating-rewrite-output">Evaluating rewrite output<a class="headerlink" href="#evaluating-rewrite-output" title="Permanent link">&para;</a></h2>
 <p>After running rewrite, you can score detection recall and the holistic rewrite quality using LLM-as-judge evaluation. See <a href="../evaluation/">Evaluation</a> for details on the always-on entity coverage judge, the three rewrite quality rubrics (privacy, quality, style), the opt-in detection judge, and how to call <code>Anonymizer.evaluate()</code>.</p>

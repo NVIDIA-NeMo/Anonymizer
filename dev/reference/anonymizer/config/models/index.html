@@ -3034,7 +3034,7 @@
    (anonymizer.config.models.RewriteModelSelection)" href="#anonymizer.config.models.RewriteModelSelection">RewriteModelSelection</a></code></td>
             <td>
               <div class="doc-md-description">
-                <p>Model aliases for the rewrite pipeline.</p>
+                <p>Model aliases for rewrite; an omitted entity classifier reuses the disposition analyzer.</p>
               </div>
             </td>
           </tr>
@@ -3321,7 +3321,7 @@ def normalize_entity_validator(cls, value: Any) -&gt; list[str]:
             <p class="doc doc-class-bases">
               Bases: <code><span title="pydantic.BaseModel">BaseModel</span></code></p>
 
-        <p>Model aliases for the rewrite pipeline.</p>
+        <p>Model aliases for rewrite; an omitted entity classifier reuses the disposition analyzer.</p>
 
     
 
@@ -3333,6 +3333,10 @@ def normalize_entity_validator(cls, value: Any) -&gt; list[str]:
             </li>
             <li>
               <code><span title="anonymizer.config.models.RewriteModelSelection.disposition_analyzer">disposition_analyzer</span></code>
+                (<code><span title="str">str</span></code>)
+            </li>
+            <li>
+              <code><span title="anonymizer.config.models.RewriteModelSelection.entity_classifier">entity_classifier</span></code>
                 (<code><span title="str">str</span></code>)
             </li>
             <li>

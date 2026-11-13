@@ -3089,6 +3089,14 @@ model_configs:
 <p>You can pass <code>model_configs</code> as either a YAML file path or a YAML string.</p>
 <p>Reasoning models need a larger <code>max_tokens</code> than non-reasoning ones because hidden reasoning spends the budget before the answer is written; the bundled configs use 8192-16384. Raise <code>inference_parameters.max_tokens</code> for an alias when dropped rows' <code>failed_records</code> reason names <code>max_tokens</code>. A larger budget also takes longer to generate: the bundled configs pair it with <code>timeout: 300</code> (seconds). Without <code>inference_parameters.timeout</code>, a request times out after 60 seconds, and dropped rows' reason says the request <code>timed out</code>.</p>
 <p>Roles you don't override keep their default alias selections, but those aliases must still exist in your <code>model_configs</code> pool.</p>
+<p>The rewrite role <code>entity_classifier</code> is an exception: when omitted, it uses your effective
+<code>disposition_analyzer</code> selection. It classifies custom explicit entity labels as direct or
+quasi-identifiers; records containing only default labels skip this LLM call. To select a
+separate classifier, add both aliases to your model pool and configure:</p>
+<pre class="highlight"><code class="language-yaml">selected_models:
+  rewrite:
+    disposition_analyzer: my-rewrite-model
+    entity_classifier: my-classification-model</code></pre>
 <div class="admonition tip">
 <p class="admonition-title">Validate your config</p>
 <p>Use <a href="../../reference/anonymizer/interface/anonymizer/"><code>anonymizer.validate_config(config)</code></a> (or <a href="../../reference/anonymizer/interface/cli/main/"><code>anonymizer validate</code></a> from the CLI) after changing model configs to catch alias mismatches before processing data.</p>
