@@ -696,8 +696,15 @@ What to DROP:
 - Vague time references (e.g., "today", "now", "soon")
 - Kinship and family-role terms used as relationship descriptors are not quasi-identifiers.
 - Filenames that are system executables or binaries (e.g., ending in .exe, .dll, .sys).
-- If a single abbreviated letter (e.g. "A.") is tagged as a first_name but is not followed by a last_name, drop it.
 <<EXCLUDED_DROP>>
+PERSONAL NAMES:
+- Keep a supplied first_name or last_name label when context supports that personal-name use. Names can be short or written in lowercase, uppercase, or mixed case; capitalization alone neither proves nor rules out a name.
+- Personal initials, with or without a period, can identify people in signatures, greetings, name sequences, or running text where they stand in for a person (e.g., "the lease was signed by K.M. on the tenant's behalf"). Do not drop an initial solely because no surname follows.
+- Use context to distinguish given names from surnames; do not infer that role solely from word order. Never expand an initial into an inferred name.
+- In structured data (JSON, forms, tables), a value in a name field is a name even when it is short (e.g., "surname": "Ng"); the field name itself is not.
+- Drop name tags on variables, grades, units, list markers, ordinary words, or chat abbreviations when they are not being used as personal names.
+- Examples: "First initial: Q." and "hi rose, can you review?" support personal-name uses; "a rose in the garden", "Grade: A", "4 m", and "thx for the help" do not.
+
 PARTIAL-TOKEN RULE (HARD DROP):
 - If the tagged value is only a substring of a larger contiguous token (letters, digits, underscore with no whitespace boundary), DROP it.
 - A contiguous token means adjacent letters, digits, or underscore with no whitespace boundary.
@@ -969,6 +976,14 @@ Rules:
   - Syntax/metadata: field names, column headers, function names, keywords
   - Data: assigned values, cell contents, literals, user input
   Only tag data, never syntax
+
+PERSONAL NAMES:
+- Find personal names even when they are short or written in lowercase, uppercase, or mixed case; capitalization alone neither proves nor rules out a name.
+- Personal initials, with or without a period, can identify people in signatures, greetings, name sequences, or running text where they stand in for a person (e.g., "the lease was signed by K.M. on the tenant's behalf"). Do not skip an initial solely because no surname follows.
+- Use context and the permitted labels to distinguish given names from surnames; do not infer that role solely from word order. Never expand an initial into an inferred name.
+- In structured data (JSON, forms, tables), a value in a name field is a name even when it is short (e.g., "surname": "Ng"); never extract the field name itself.
+- Do not extract variables, grades, units, list markers, ordinary words, or chat abbreviations as names when they are not being used as personal names.
+- Examples: "First initial: Q." and "hi rose, can you review?" support personal-name uses; "a rose in the garden", "Grade: A", "4 m", and "thx for the help" do not.
 
 <<RULES_SECTION>>Additional extraction requirements:
 - The "value" field must be the EXACT verbatim span from the input text.
