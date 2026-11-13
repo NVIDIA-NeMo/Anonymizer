@@ -17,7 +17,7 @@ import cyclopts
 from pydantic import BaseModel, ValidationError
 
 from inference_service_compiler.compiler import compile_spec, load_plan
-from inference_service_compiler.errors import InferenceServiceError
+from inference_service_compiler.errors import InferenceServiceError, RuntimeEffectError
 from inference_service_compiler.models import ConnectionInfo, LaunchReceipt, RunPlan
 from inference_service_compiler.profiles import load_profile
 from inference_service_compiler.runtime import (
@@ -42,8 +42,8 @@ def command_errors(function: Callable[P, R]) -> Callable[P, R]:
         try:
             return function(*args, **kwargs)
         except (InferenceServiceError, OSError, TOMLDecodeError, UnicodeDecodeError, ValidationError) as exc:
-            diagnostic = getattr(exc, "diagnostic", None)
-            sys.stderr.write(f"error: {diagnostic.model_dump_json() if diagnostic is not None else exc}\n")
+            detail = exc.diagnostic.model_dump_json() if isinstance(exc, RuntimeEffectError) else str(exc)
+            sys.stderr.write(f"error: {detail}\n")
             raise SystemExit(125) from exc
 
     return wrapped
@@ -64,7 +64,7 @@ def compile_plan(
 @command_errors
 def validate(*, plan: Path) -> None:
     """Validate the plan in its serving interpreter without starting a server."""
-    parsed = load_plan(plan.read_text(encoding="utf-8"))
+    parsed = _read_plan(plan)
     validate_plan(parsed)
 
 
@@ -72,7 +72,7 @@ def validate(*, plan: Path) -> None:
 @command_errors
 def connection(*, plan: Path, output: Path | None = None) -> None:
     """Emit non-secret client connection inputs from a compiled plan."""
-    parsed = load_plan(plan.read_text(encoding="utf-8"))
+    parsed = _read_plan(plan)
     write_json(
         ConnectionInfo(url=parsed.base_url, model=parsed.served_model_name, api_key_env=parsed.spec.api_key_env),
         output,
@@ -89,7 +89,7 @@ def launch(
 ) -> None:
     """Launch a compiled plan and record its observed handle and readiness."""
     _validate_output_destination(output)
-    parsed = load_plan(plan.read_text(encoding="utf-8"))
+    parsed = _read_plan(plan)
     receipt = launch_plan(parsed, secret_values=_secret_values(parsed), log_directory=log_directory)
     try:
         write_json(receipt, output)
@@ -105,7 +105,7 @@ def launch(
 @command_errors
 def probe(*, plan: Path) -> None:
     """Check that the plan's endpoint serves its model and answers a backend task request."""
-    parsed = load_plan(plan.read_text(encoding="utf-8"))
+    parsed = _read_plan(plan)
     probe_endpoint(parsed, secret_values=_secret_values(parsed))
 
 
@@ -113,7 +113,7 @@ def probe(*, plan: Path) -> None:
 @command_errors
 def status_command(*, receipt: Path, output: Path | None = None) -> None:
     """Record the current state observed for a launch receipt handle."""
-    launch_receipt = LaunchReceipt.model_validate_json(receipt.read_text(encoding="utf-8"))
+    launch_receipt = _read_receipt(receipt)
     write_json(status_run(launch_receipt), output)
 
 
@@ -121,8 +121,16 @@ def status_command(*, receipt: Path, output: Path | None = None) -> None:
 @command_errors
 def stop(*, receipt: Path, output: Path | None = None) -> None:
     """Stop and clean up the process group recorded by a launch receipt."""
-    launch_receipt = LaunchReceipt.model_validate_json(receipt.read_text(encoding="utf-8"))
+    launch_receipt = _read_receipt(receipt)
     write_json(stop_run(launch_receipt), output)
+
+
+def _read_plan(path: Path) -> RunPlan:
+    return load_plan(path.read_text(encoding="utf-8"))
+
+
+def _read_receipt(path: Path) -> LaunchReceipt:
+    return LaunchReceipt.model_validate_json(path.read_text(encoding="utf-8"))
 
 
 def _secret_values(plan: RunPlan) -> dict[str, str]:

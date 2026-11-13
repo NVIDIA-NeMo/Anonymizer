@@ -12,10 +12,18 @@ import os
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import NamedTuple
 
 from inference_service_compiler import vllm_compat
 from inference_service_compiler.launch_ownership import LAUNCH_OWNERSHIP_MIDDLEWARE
 from inference_service_compiler.models import OptionValue, ServiceSpec, VllmBackend
+
+
+class ChildLaunch(NamedTuple):
+    """The serving child's own arguments."""
+
+    spec: ServiceSpec
+    validate_only: bool
 
 
 def option_tokens(options: Mapping[str, OptionValue]) -> list[str]:
@@ -53,7 +61,7 @@ def serve_arguments(spec: ServiceSpec) -> list[str]:
     return [*tokens, *option_tokens(backend.options)]
 
 
-def parse_launch_spec(argv: Sequence[str]) -> tuple[ServiceSpec, bool]:
+def parse_launch_spec(argv: Sequence[str]) -> ChildLaunch:
     """Parse the child's own arguments: the launch spec and whether to stop after validation."""
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--launch-spec-json", required=True)
@@ -61,7 +69,7 @@ def parse_launch_spec(argv: Sequence[str]) -> tuple[ServiceSpec, bool]:
     options = parser.parse_args(argv)
     spec = ServiceSpec.model_validate_json(options.launch_spec_json)
     _vllm_backend(spec)
-    return spec, options.validate
+    return ChildLaunch(spec=spec, validate_only=options.validate)
 
 
 def run_server(argv: Sequence[str]) -> None:
@@ -73,9 +81,8 @@ def run_server(argv: Sequence[str]) -> None:
     if validate_only:
         return
     # vLLM 0.33 JIT-compiles FlashInfer kernels (sampling, for example) for many models, not only Mamba.
-    configure_flashinfer_toolchain(
-        required=str(_vllm_backend(spec).options.get("mamba-backend", "")).lower() == "flashinfer"
-    )
+    mamba_backend = str(_vllm_backend(spec).options.get("mamba-backend", ""))
+    configure_flashinfer_toolchain(required=mamba_backend.lower() == "flashinfer")
     vllm_compat.run_api_server(arguments)
 
 
