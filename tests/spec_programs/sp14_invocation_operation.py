@@ -299,7 +299,7 @@ def program() -> list[dict[str, str]]:
 
         r = run(g, Operation("call", call, requests=Requests.exact(1)))
         total, entries = observed(r)
-        return total == "unknown" and entries == [1, 1, None], f"requests={total}, entries={entries}"
+        return total == "lower 2" and entries == [1, 1, None], f"requests={total}, entries={entries}"
 
     c.guard("E14.16", partial_reporting)
 

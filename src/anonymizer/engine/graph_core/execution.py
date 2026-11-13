@@ -47,10 +47,10 @@ _SEAL_KEY = secrets.token_bytes(32)
 
 @dataclass(frozen=True)
 class Count:
-    """A count that is known exactly, known as an upper bound, or explicitly unknown (never confused with 0)."""
+    """A count that is known exactly, as an upper or lower bound, or explicitly unknown (never confused with 0)."""
 
     value: int | None
-    bound: str = "exact"  # exact | upper | unknown
+    bound: str = "exact"  # exact | upper | lower | unknown
 
     def __str__(self) -> str:
         return "unknown" if self.value is None else f"{self.bound} {self.value}"
@@ -89,7 +89,8 @@ def prepare(
     """Validate everything before effects and compile an immutable plan. No callback runs here.
 
     ``capabilities`` names the operation implementations admitted for this invocation (default: the workflow's);
-    ``request_budget`` selects a hard external-request budget.
+    ``request_budget`` rejects the workflow here when its planned external-request count is unknown, opaque or
+    above the budget; it is not enforced while the workflow runs.
     """
     with _measure("graph_prepare", operation_count=None, target_count=len(graph.targets)) as m:
         prepared = _prepare(graph, workflow, limits, capabilities, request_budget)
@@ -422,9 +423,11 @@ class ProtectionResult:
         dispatched = {e.node for e in self.state.entries}
         silent = all(p.workflow.flatten()[i][1].requests.bound == "none" for i in dispatched)
         zero_or_unknown = Count(0 if silent else None, "exact" if silent else "unknown")
-        binding = Count(sum(r.status != "not_started" for r in self.retrievals))
-        total = binding if silent else Count(None, "unknown")
+        retrieved = sum(r.status != "not_started" for r in self.retrievals)
+        binding = Count(retrieved)
         requests, seen = self._observed_requests()
+        # Context retrievals plus the requests steps reported; only as exact as the reports are complete.
+        total = requests if requests.value is None else Count(retrieved + seen, requests.bound)
         plan = p.planned_requests.value
         budget = (
             "unknown"
@@ -432,7 +435,7 @@ class ProtectionResult:
             else "exceeded"
             if seen > plan
             else "within"
-            if requests.value is not None
+            if requests.bound == "exact"
             else "unknown"
         )
         return InspectionSummary(
@@ -455,18 +458,21 @@ class ProtectionResult:
         )
 
     def _observed_requests(self) -> tuple[Count, int]:
-        """Exact total when every dispatched step declared ``none`` or reported (an invocation step once), else
-        unknown; and the reported sum, a lower bound when the total is unknown."""
+        """The reported sum: exact when every dispatched step declared ``none`` or reported (an invocation step
+        once), a lower bound when only some reported, unknown when none did; and the sum itself."""
         ops = self.prepared.workflow.flatten()
-        total, covered = 0, True
+        total, covered, reported = 0, True, False
         for node in {e.node for e in self.state.entries}:
             entries = [e for e in self.state.entries if e.node == node]
             reports = [e.observed_requests for e in entries if e.observed_requests is not None]
             total += sum(reports)
+            reported = reported or bool(reports)
             _, op = ops[node]
             needed = 1 if op.scope == "phase_scoped" else len(entries)
             covered = covered and (op.requests.bound == "none" or len(reports) >= needed)
-        return (Count(total) if covered else Count(None, "unknown")), total
+        if covered:
+            return Count(total), total
+        return (Count(total, "lower") if reported else Count(None, "unknown")), total
 
     def _final(self, target: Datum) -> Any:
         """The final candidate: the last text operation's own output; earlier text is never substituted."""
