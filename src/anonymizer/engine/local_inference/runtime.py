@@ -29,6 +29,10 @@ import httpx
 
 from anonymizer.engine.local_inference.gliner2 import MODEL_ID, MODEL_REVISION
 from anonymizer.engine.local_inference.gliner2.contract import (
+    ATTENTION_ENV,
+    DEVICE_ENV,
+    DTYPE_ENV,
+    TOKEN_ENV,
     AttentionRequest,
     DeviceRequest,
     DtypeRequest,
@@ -36,17 +40,13 @@ from anonymizer.engine.local_inference.gliner2.contract import (
     ModelList,
 )
 
-LOCAL_TOKEN_ENV = "ANONYMIZER_LOCAL_GLINER2_TOKEN"
+LOCAL_TOKEN_ENV = TOKEN_ENV
 
 logger = logging.getLogger(__name__)
 
-_DEVICE_ENV = "ANONYMIZER_LOCAL_GLINER2_DEVICE"
-_DTYPE_ENV = "ANONYMIZER_LOCAL_GLINER2_DTYPE"
-_ATTENTION_ENV = "ANONYMIZER_LOCAL_GLINER2_ATTENTION"
 _STARTUP_TIMEOUT_SECONDS = 300.0
 _SHUTDOWN_TIMEOUT_SECONDS = 10.0
 _MAX_PORT_ATTEMPTS = 3
-_CHILD_SECRET_ALLOWLIST = {LOCAL_TOKEN_ENV, "HF_TOKEN"}
 _SERVER_REQUIREMENTS = (
     "gliner2[local,disentangled-flash]==2.1.0",
     "fastapi>=0.115,<1",
@@ -232,8 +232,7 @@ class _RuntimeRegistry:
             )
             return runtime
         self.restore_token()
-        if runtime is None or last_error is None:
-            raise RuntimeError("Unable to start the local GLiNER2 runtime.")
+        assert runtime is not None  # _MAX_PORT_ATTEMPTS >= 1, and only a failed readiness wait reaches here
         raise RuntimeError(f"Unable to start the local GLiNER2 runtime.\n{runtime.log.text()}") from last_error
 
     def set_token(self, token: str) -> None:
@@ -282,12 +281,12 @@ def _start_runtime(request: NativeRequest) -> _LocalRuntime:
     _registry.set_token(token)
     child_environment = _child_environment()
     child_environment[LOCAL_TOKEN_ENV] = token
-    child_environment[_DEVICE_ENV] = request.device
+    child_environment[DEVICE_ENV] = request.device
     # An explicit request overrides the inherited variable; "auto" leaves it in effect.
     if request.dtype != "auto":
-        child_environment[_DTYPE_ENV] = request.dtype
+        child_environment[DTYPE_ENV] = request.dtype
     if request.attention != "auto":
-        child_environment[_ATTENTION_ENV] = request.attention
+        child_environment[ATTENTION_ENV] = request.attention
     existing_python_path = child_environment.get("PYTHONPATH")
     child_environment["PYTHONPATH"] = os.pathsep.join(filter(None, (str(server_packages), existing_python_path)))
     command = [
@@ -322,17 +321,14 @@ def _start_runtime(request: NativeRequest) -> _LocalRuntime:
 
 
 def _looks_sensitive(name: str) -> bool:
-    upper = name.upper()
-    return upper.endswith(("_API_KEY", "_ACCESS_TOKEN", "_AUTH_TOKEN", "_PASSWORD", "_SECRET")) or upper in {
-        "HF_TOKEN",
-    }
+    return name.upper().endswith(("_API_KEY", "_ACCESS_TOKEN", "_AUTH_TOKEN", "_PASSWORD", "_SECRET"))
 
 
 def _child_environment() -> dict[str, str]:
     """Return a scrubbed environment containing credentials required by the child."""
     environment = os.environ.copy()
     for name in list(environment):
-        if name not in _CHILD_SECRET_ALLOWLIST and _looks_sensitive(name):
+        if _looks_sensitive(name):
             environment.pop(name)
     return environment
 

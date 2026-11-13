@@ -23,7 +23,7 @@ def test_isolated_server_environment_requires_gliner2_local_and_flash_extras() -
 
 @pytest.mark.parametrize(
     "name",
-    ["NVIDIA_API_KEY", "HF_TOKEN", "SERVICE_ACCESS_TOKEN", "DB_PASSWORD", "CLIENT_SECRET"],
+    ["NVIDIA_API_KEY", "SERVICE_ACCESS_TOKEN", "DB_PASSWORD", "CLIENT_SECRET"],
 )
 def test_child_environment_secret_names_are_recognized(name: str) -> None:
     assert _runtime._looks_sensitive(name)
@@ -264,7 +264,10 @@ def test_start_failure_restores_credentials(monkeypatch: pytest.MonkeyPatch) -> 
         _runtime._registry.set_token("temporary")
         raise OSError("startup failed")
 
-    with patch.object(_runtime, "_start_runtime", side_effect=fail_start), pytest.raises(OSError, match="startup"):
+    with (
+        patch.object(_runtime, "_start_runtime", side_effect=fail_start),
+        pytest.raises(OSError, match="startup"),
+    ):
         with _runtime.runtime_context("cpu"):
             pass
     assert _runtime.os.environ[_runtime.LOCAL_TOKEN_ENV] == "original"
@@ -282,7 +285,10 @@ def test_exit_cleanup_stops_runtime_with_active_context(monkeypatch: pytest.Monk
         _runtime._registry.set_token(candidate.token)
         return candidate
 
-    with patch.object(_runtime, "_start_runtime", side_effect=start), patch.object(_runtime, "_wait_until_ready"):
+    with (
+        patch.object(_runtime, "_start_runtime", side_effect=start),
+        patch.object(_runtime, "_wait_until_ready"),
+    ):
         with _runtime.runtime_context("cpu"):
             _runtime._registry.shutdown()
             process.terminate.assert_called_once()
@@ -430,7 +436,13 @@ def test_serve_entry_prepares_only_or_execs_the_server(
 def test_installer_uses_uv_when_the_environment_has_no_pip(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_runtime.importlib.util, "find_spec", lambda name: None)
     monkeypatch.setattr(_runtime.shutil, "which", lambda name: "/bin/uv" if name == "uv" else None)
-    assert _runtime._installer_command() == ["/bin/uv", "pip", "install", "--python", _runtime.sys.executable]
+    assert _runtime._installer_command() == [
+        "/bin/uv",
+        "pip",
+        "install",
+        "--python",
+        _runtime.sys.executable,
+    ]
     monkeypatch.setattr(_runtime.shutil, "which", lambda name: None)
     with pytest.raises(RuntimeError, match="pip in this environment or uv on PATH"):
         _runtime._installer_command()
@@ -513,9 +525,9 @@ def test_start_runtime_gives_an_explicit_dtype_precedence_over_the_environment(
 ) -> None:
     _runtime.stop_local_runtime()
     if inherited is None:
-        monkeypatch.delenv(_runtime._DTYPE_ENV, raising=False)
+        monkeypatch.delenv(_runtime.DTYPE_ENV, raising=False)
     else:
-        monkeypatch.setenv(_runtime._DTYPE_ENV, inherited)
+        monkeypatch.setenv(_runtime.DTYPE_ENV, inherited)
     listener = _runtime._reserve_listener()
     process = Mock(stdout=None)
     with (
@@ -524,7 +536,7 @@ def test_start_runtime_gives_an_explicit_dtype_precedence_over_the_environment(
         patch("anonymizer.engine.local_inference.runtime.subprocess.Popen", return_value=process) as popen,
     ):
         runtime = _runtime._start_runtime(NativeRequest("cpu", requested))
-    assert popen.call_args.kwargs["env"].get(_runtime._DTYPE_ENV) == expected
+    assert popen.call_args.kwargs["env"].get(_runtime.DTYPE_ENV) == expected
     assert runtime.request.dtype == requested
     _runtime._registry.restore_token()
 
@@ -546,9 +558,9 @@ def test_start_runtime_gives_an_explicit_attention_precedence_over_the_environme
 ) -> None:
     _runtime.stop_local_runtime()
     if inherited is None:
-        monkeypatch.delenv(_runtime._ATTENTION_ENV, raising=False)
+        monkeypatch.delenv(_runtime.ATTENTION_ENV, raising=False)
     else:
-        monkeypatch.setenv(_runtime._ATTENTION_ENV, inherited)
+        monkeypatch.setenv(_runtime.ATTENTION_ENV, inherited)
     listener = _runtime._reserve_listener()
     with (
         patch("anonymizer.engine.local_inference.runtime._ensure_server_environment", return_value=tmp_path),
@@ -556,6 +568,6 @@ def test_start_runtime_gives_an_explicit_attention_precedence_over_the_environme
         patch("anonymizer.engine.local_inference.runtime.subprocess.Popen", return_value=Mock(stdout=None)) as popen,
     ):
         runtime = _runtime._start_runtime(NativeRequest("cpu", "auto", requested))
-    assert popen.call_args.kwargs["env"].get(_runtime._ATTENTION_ENV) == expected
+    assert popen.call_args.kwargs["env"].get(_runtime.ATTENTION_ENV) == expected
     assert runtime.request.attention == requested
     _runtime._registry.restore_token()

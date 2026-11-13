@@ -41,6 +41,7 @@ from inference_service_compiler.models import (
     StopReceipt,
 )
 from inference_service_compiler.procfs import (
+    EXITED_STATES,
     carries_launch_token,
     live_group_members,
     read_process_start_marker,
@@ -170,7 +171,7 @@ def wait_for_readiness(
             )
         try:
             if launch_token is not None:
-                _probe_launch_ownership(plan, launch_token, secret_values)
+                _probe_launch_ownership(plan, launch_token, secret_values or {})
             probe_endpoint(plan, secret_values=secret_values)
             return
         except RuntimeEffectError as exc:
@@ -192,7 +193,7 @@ def is_handle_running(handle: LocalProcessHandle) -> bool:
             handle,
             f"PID {handle.pid} now has start marker {current_marker!r}, expected {handle.start_marker!r}",
         )
-    if read_process_state(handle.pid) == "Z":
+    if read_process_state(handle.pid) in EXITED_STATES:
         return False
     try:
         current_process_group_id = os.getpgid(handle.pid)
@@ -239,12 +240,7 @@ def group_ownership(handle: LocalProcessHandle) -> GroupOwnership:
 
 
 def _looks_sensitive(name: str) -> bool:
-    """Whether ``name`` ends with a secret suffix (``_API_KEY``, ``_PASSWORD``, ...).
-
-    This tool cannot import ``anonymizer`` (it ships without it), so it repeats the suffix list of
-    ``anonymizer.engine.local_inference.runtime``. That module also scrubs ``HF_TOKEN`` and then allowlists it;
-    here ``HF_TOKEN`` has no secret suffix and so stays, because the served model may need it to download weights.
-    """
+    """Same suffix list as `anonymizer.engine.local_inference.runtime`; `HF_TOKEN` has no secret suffix and stays."""
     return name.upper().endswith(_SECRET_SUFFIXES)
 
 
@@ -299,11 +295,11 @@ def _parse_models(payload: object) -> tuple[str, ...]:
 def _probe_launch_ownership(
     plan: RunPlan,
     launch_token: str,
-    secret_values: Mapping[str, str] | None = None,
+    secret_values: Mapping[str, str],
 ) -> None:
     """Require a proof that the responding server inherited this launch's token."""
     host, port = plan.endpoint
-    headers = _probe_headers(plan, secret_values or {})
+    headers = _probe_headers(plan, secret_values)
     headers[LAUNCH_OWNERSHIP_HEADER] = launch_token
     try:
         response = httpx.get(f"http://{host}:{port}{LAUNCH_OWNERSHIP_PATH}", headers=headers, timeout=10)
@@ -448,7 +444,7 @@ def _process_identity_mismatch(handle: LocalProcessHandle, detail: str) -> Runti
     )
 
 
-def _ownership_unverified(handle: LocalProcessHandle, *, signaled: bool = False) -> RuntimeEffectError:
+def _ownership_unverified(handle: LocalProcessHandle, *, signaled: bool) -> RuntimeEffectError:
     already = "; SIGTERM was already sent to the group" if signaled else ""
     return RuntimeEffectError.of(
         "process-group-ownership-unverified",

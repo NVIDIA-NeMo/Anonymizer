@@ -12,8 +12,6 @@ from data_designer.config.models import ModelProvider
 from anonymizer.engine.ndd.model_loader import parse_model_providers
 from anonymizer.interface.factory import GLINER_PROVIDER_NAME
 
-LOCAL_TOKEN_ENV = "ANONYMIZER_LOCAL_GLINER2_TOKEN"
-
 
 def required_api_key_environment_variables(
     model_providers: list[ModelProvider] | str | Path | None = None,

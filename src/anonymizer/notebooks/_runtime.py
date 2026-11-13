@@ -5,9 +5,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
-from anonymizer.engine.local_inference.runtime import run_development_server, stop_local_runtime
+from anonymizer.engine.local_inference.gliner2.contract import DeviceRequest
+from anonymizer.engine.local_inference.runtime import stop_local_runtime
 from anonymizer.interface.factory import NativeGliner
 from anonymizer.interface.factory import create_anonymizer as create_public_anonymizer
 
@@ -21,7 +22,7 @@ def create_anonymizer(
     *,
     model_configs: str | Path | None = None,
     model_providers: list[ModelProvider] | str | Path | None = None,
-    gliner_device: Literal["auto", "cpu", "cuda", "mps"] = "auto",
+    gliner_device: DeviceRequest = "auto",
 ) -> Anonymizer:
     """Construct a client using the native singleton."""
     return create_public_anonymizer(
@@ -31,4 +32,4 @@ def create_anonymizer(
     )
 
 
-__all__ = ["create_anonymizer", "run_development_server", "stop_local_runtime"]
+__all__ = ["create_anonymizer", "stop_local_runtime"]

@@ -27,8 +27,6 @@ from pydantic import ValidationError
 
 try:
     from .backend import (  # noqa: TID252 - direct-script fallback keeps server dependencies isolated
-        ATTENTION_ENV,
-        DTYPE_ENV,
         MODEL_ID,
         MODEL_REVISION,
         GLiNER2Like,
@@ -38,6 +36,10 @@ try:
         resolve_device,
     )
     from .contract import (  # noqa: TID252 - direct-script fallback
+        ATTENTION_ENV,
+        DEVICE_ENV,
+        DTYPE_ENV,
+        TOKEN_ENV,
         ChatChoice,
         ChatMessage,
         DetectedEntity,
@@ -49,8 +51,6 @@ try:
     )
 except ImportError:  # Direct execution inside the isolated server environment.
     from backend import (  # ty: ignore[unresolved-import] -- direct-script import path
-        ATTENTION_ENV,
-        DTYPE_ENV,
         MODEL_ID,
         MODEL_REVISION,
         GLiNER2Like,
@@ -60,6 +60,10 @@ except ImportError:  # Direct execution inside the isolated server environment.
         resolve_device,
     )
     from contract import (  # ty: ignore[unresolved-import] -- direct-script import path
+        ATTENTION_ENV,
+        DEVICE_ENV,
+        DTYPE_ENV,
+        TOKEN_ENV,
         ChatChoice,
         ChatMessage,
         DetectedEntity,
@@ -72,8 +76,6 @@ except ImportError:  # Direct execution inside the isolated server environment.
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8001
-TOKEN_ENV = "ANONYMIZER_LOCAL_GLINER2_TOKEN"
-DEVICE_ENV = "ANONYMIZER_LOCAL_GLINER2_DEVICE"
 # Launch-ownership contract shared with tools/inference_service_compiler; keep these strings in sync.
 LAUNCH_TOKEN_ENVIRONMENT_VARIABLE = "ANONYMIZER_INFERENCE_LAUNCH_TOKEN"
 LAUNCH_OWNERSHIP_HEADER = "X-Anonymizer-Launch-Token"
@@ -283,9 +285,9 @@ def _authorize(request: Request) -> None:
 
 
 def main() -> None:
-    """Run the lightweight native/development server."""
+    """Run the native server."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    parser = argparse.ArgumentParser(description="Notebook/development GLiNER2 server for Anonymizer.")
+    parser = argparse.ArgumentParser(description="Native GLiNER2 server for Anonymizer.")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--fd", type=int, default=None, help=argparse.SUPPRESS)

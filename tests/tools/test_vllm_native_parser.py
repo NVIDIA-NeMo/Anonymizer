@@ -44,8 +44,13 @@ def test_option_values_render_as_argv_tokens() -> None:
     ]
 
 
+def serve_arguments(service: models.ServiceSpec) -> list[str]:
+    assert isinstance(service.backend, models.VllmBackend)
+    return vllm_runtime.serve_arguments(service, service.backend)
+
+
 def test_serve_arguments_put_tool_owned_options_before_profile_options() -> None:
-    arguments = vllm_runtime.serve_arguments(
+    arguments = serve_arguments(
         spec(served_model_name="alias", options={"max-model-len": 2048}, probe_extra_body={"reasoning_effort": "low"})
     )
     assert arguments == [
@@ -62,7 +67,7 @@ def test_serve_arguments_put_tool_owned_options_before_profile_options() -> None
 
 
 def test_lora_adapter_is_served_under_its_name() -> None:
-    arguments = vllm_runtime.serve_arguments(spec(model="base", adapter={"path": "/a", "name": "p"}))
+    arguments = serve_arguments(spec(model="base", adapter={"path": "/a", "name": "p"}))
     assert arguments[arguments.index("--enable-lora") + 1 :][:2] == ["--lora-modules", "p=/a"]
 
 
@@ -76,7 +81,7 @@ def test_tokens_parse_exactly_under_an_argparse_parser_without_abbreviations() -
     parser.add_argument("--middleware", action="append", default=[])
     parser.add_argument("--enable-prefix-caching", action=argparse.BooleanOptionalAction)
     parsed = parser.parse_args(
-        vllm_runtime.serve_arguments(
+        serve_arguments(
             spec(served_model_name="alias", options={"max-model-len": 2048, "enable-prefix-caching": False})
         )
     )
@@ -113,7 +118,7 @@ def test_validate_mode_parses_and_validates_without_serving() -> None:
         mock.patch.object(vllm_runtime, "expose_interpreter_tools"),
     ):
         vllm_runtime.run_server([*plan.argv[2:], "--validate"])
-        parser.parse_args.assert_called_once_with(vllm_runtime.serve_arguments(plan.spec))
+        parser.parse_args.assert_called_once_with(serve_arguments(plan.spec))
         validate.assert_called_once_with(parser.parse_args.return_value)
         serve.assert_not_called()
         flashinfer.assert_not_called()

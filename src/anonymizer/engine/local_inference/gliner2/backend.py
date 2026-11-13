@@ -10,10 +10,11 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from operator import attrgetter
 from pathlib import Path
-from typing import Any, NamedTuple, Protocol, cast, get_args
+from typing import NamedTuple, Protocol, cast, get_args
 
 try:
     from .contract import (  # noqa: TID252 - direct-script fallback keeps server dependencies isolated
+        ATTENTION_ENV,
         Attention,
         AttentionRequest,
         DetectedEntity,
@@ -27,6 +28,7 @@ try:
     )
 except ImportError:  # Direct execution inside the isolated server environment.
     from contract import (  # ty: ignore[unresolved-import] -- direct-script import path
+        ATTENTION_ENV,
         Attention,
         AttentionRequest,
         DetectedEntity,
@@ -42,8 +44,6 @@ except ImportError:  # Direct execution inside the isolated server environment.
 SUPPORTED_DEVICES = get_args(DeviceRequest)
 SUPPORTED_DTYPES = get_args(DtypeRequest)
 SUPPORTED_ATTENTION = get_args(AttentionRequest)
-DTYPE_ENV = "ANONYMIZER_LOCAL_GLINER2_DTYPE"
-ATTENTION_ENV = "ANONYMIZER_LOCAL_GLINER2_ATTENTION"
 MODEL_ID = "fastino/gliner2-privacy-filter-PII-multi"
 MODEL_REVISION = "59894c087cb2923b01f337d4ee72f6ff84d5bdd6"
 
@@ -70,6 +70,12 @@ class GLiNER2Like(Protocol):
     def processor(self) -> _Processor: ...
 
     def batch_extract_entities(self, texts: list[str], labels: list[str], **options: object) -> Sequence[object]: ...
+
+
+class _LoadableGLiNER2(GLiNER2Like, Protocol):
+    """A freshly loaded model, which can also switch to DisentangledFlash attention."""
+
+    def enable_disentangled_flash(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -159,7 +165,7 @@ def load_model(device: Device, *, dtype: str = "auto", attention: str = "auto") 
     return LoadedModel(model=model, device=device, dtype=resolved_dtype, attention=resolved_attention)
 
 
-def _load_weights(snapshot: Path, device: Device, dtype: Dtype) -> Any:
+def _load_weights(snapshot: Path, device: Device, dtype: Dtype) -> _LoadableGLiNER2:
     import torch
     from gliner2 import GLiNER2
 
@@ -176,7 +182,7 @@ def _warm_up(model: GLiNER2Like) -> None:
 
 
 def overlap_policy(flat_ner: bool) -> OverlapPolicy:
-    """Translate the existing server flag to GLiNER2 overlap semantics."""
+    """Map `flat_ner` to GLiNER2's overlap policy."""
     return "disallow" if flat_ner else "longest"
 
 

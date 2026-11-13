@@ -9,14 +9,17 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from data_designer.config.models import ChatCompletionInferenceParams, ModelConfig, ModelProvider
 from pydantic import BaseModel, ConfigDict, Field
 
+from anonymizer.engine.local_inference.gliner2 import MODEL_ID
 from anonymizer.engine.local_inference.gliner2.contract import (
     DEFAULT_CHUNK_LENGTH,
     DEFAULT_OVERLAP,
+    TOKEN_ENV,
     AttentionRequest,
     DeviceRequest,
     DtypeRequest,
@@ -33,7 +36,9 @@ if TYPE_CHECKING:
 GLINER_MODEL_ALIAS = "anonymizer-gliner-detector"
 GLINER_PROVIDER_NAME = "anonymizer-gliner-endpoint"
 # Word windowing the native server applies to every detection request this client sends.
-NATIVE_DETECTION_DEFAULTS = {"chunk_length": DEFAULT_CHUNK_LENGTH, "overlap": DEFAULT_OVERLAP}
+NATIVE_DETECTION_DEFAULTS: Mapping[str, int] = MappingProxyType(
+    {"chunk_length": DEFAULT_CHUNK_LENGTH, "overlap": DEFAULT_OVERLAP}
+)
 
 
 class NativeGliner(BaseModel):
@@ -55,13 +60,10 @@ class GlinerEndpoint(BaseModel):
     model: str = Field(min_length=1)
     api_key_env: str | None = Field(min_length=1)
 
-    @classmethod
-    def for_native(cls, runtime: _LocalRuntime) -> GlinerEndpoint:
-        """The endpoint of a library-managed native runtime."""
-        from anonymizer.engine.local_inference.gliner2 import MODEL_ID
-        from anonymizer.engine.local_inference.runtime import LOCAL_TOKEN_ENV
 
-        return cls(url=runtime.endpoint, model=MODEL_ID, api_key_env=LOCAL_TOKEN_ENV)
+def _native_endpoint(runtime: _LocalRuntime) -> GlinerEndpoint:
+    """The endpoint of a library-managed native runtime."""
+    return GlinerEndpoint(url=runtime.endpoint, model=MODEL_ID, api_key_env=TOKEN_ENV)
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +96,7 @@ def create_anonymizer(
 
             with singleton_runtime(gliner.device, gliner.dtype, gliner.attention) as runtime:
                 return _create_endpoint_anonymizer(
-                    endpoint=GlinerEndpoint.for_native(runtime),
+                    endpoint=_native_endpoint(runtime),
                     parsed=parsed,
                     providers=providers,
                     artifact_path=artifact_path,
@@ -176,7 +178,7 @@ def native_runtime(
 
     request = NativeGliner(device=device, dtype=dtype, attention=attention)
     with runtime_context(request.device, request.dtype, request.attention) as runtime:
-        yield NativeRuntimeSession(endpoint=GlinerEndpoint.for_native(runtime))
+        yield NativeRuntimeSession(endpoint=_native_endpoint(runtime))
 
 
 def _parse_gliner_model_inputs(
@@ -199,7 +201,7 @@ def _build_gliner_model_configuration(
     parsed: ParsedModelConfigs,
     providers: list[ModelProvider],
     endpoint: GlinerEndpoint,
-    extra_body: Mapping[str, int] | None = None,
+    extra_body: Mapping[str, int] | None,
 ) -> _AnonymizerModelConfiguration:
     """Inject one detector while preserving all unrelated caller configuration."""
     detector = ModelConfig(

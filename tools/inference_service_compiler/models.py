@@ -84,6 +84,8 @@ class VllmBackend(FrozenModel):
                 raise ValueError(f"vLLM option {key!r} must be a lowercase kebab-case flag name")
             if key.startswith("no-"):
                 raise ValueError(f"vLLM option {key!r}: set {key.removeprefix('no-')!r} to false instead")
+            if key in {"api-key", "hf-token"}:
+                raise ValueError(f"vLLM option {key!r} is a credential; profiles cannot carry credentials")
             if key in VLLM_OWNED_OPTIONS:
                 raise ValueError(f"vLLM option {key!r} is derived from the profile's model and endpoint fields")
             if value == []:

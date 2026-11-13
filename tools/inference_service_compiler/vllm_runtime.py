@@ -48,9 +48,8 @@ def option_tokens(options: Mapping[str, OptionValue]) -> list[str]:
     return tokens
 
 
-def serve_arguments(spec: ServiceSpec) -> list[str]:
+def serve_arguments(spec: ServiceSpec, backend: VllmBackend) -> list[str]:
     """Return the complete vLLM argv for a vLLM spec, tool-owned options first."""
-    backend = _vllm_backend(spec)
     tokens = [f"--model={backend.model}", f"--host={spec.host}", f"--port={spec.port}"]
     if backend.revision is not None:
         tokens += [f"--revision={backend.revision}", f"--tokenizer-revision={backend.revision}"]
@@ -76,7 +75,7 @@ def run_server(argv: Sequence[str]) -> None:
     """Validate the launch spec with vLLM's parser, then run the server unless ``--validate``."""
     launch = parse_launch_spec(argv)
     expose_interpreter_tools()
-    arguments = vllm_compat.make_serve_parser().parse_args(serve_arguments(launch.spec))
+    arguments = vllm_compat.make_serve_parser().parse_args(serve_arguments(launch.spec, launch.backend))
     vllm_compat.validate_serve_arguments(arguments)
     if launch.validate_only:
         return
