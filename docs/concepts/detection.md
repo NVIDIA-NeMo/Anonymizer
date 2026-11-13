@@ -95,11 +95,18 @@ Each validator call includes the full resolved label/example pairs. Lowering `va
 
 `entity_validator` can be a single alias (the default) or a list of aliases — a **pool**. When multiple aliases are configured, each chunk in a row is dispatched to the next alias in round-robin order, which lets you work around per-alias rate limits by spreading requests across equivalent endpoints.
 
-Pools also act as **failover**. If a chunk's assigned alias can't complete the call (an unrecoverable rate limit, a 5xx that didn't clear on retry, a malformed response), the same chunk is automatically retried against the other aliases in your pool before the row is given up on. A chunk only fails once every alias in the pool has failed for it. This is a cheap way to harden validation against any one endpoint having a bad day, on top of the load-spreading role.
+Pools also act as **failover**. If a chunk's assigned alias can't complete the call (an unrecoverable rate limit, a 5xx that didn't clear on retry, a malformed response), the same chunk is automatically retried against the other aliases in your pool before the row is given up on. A request fails once every alias in the pool has failed for it. Parsed responses are also checked for complete, usable decisions as described below. This is a cheap way to harden validation against any one endpoint having a bad day, on top of the load-spreading role.
 
 #### What happens when a row can't be validated
 
-If validation can't get a complete answer for a row — every alias in the pool has failed on at least one of that row's chunks — the row is **dropped from the output** rather than passed through with some entities unvalidated. This is deliberate: the alternative would be writing the original text back out with those entities still un-scrubbed, which is an undesired outcome.
+If validation can't get a complete answer for a row — a chunk exhausts either its model pool or its completeness retry budget — the row is **dropped from the output** rather than passed through with some entities unvalidated. This is deliberate: the alternative would be writing the original text back out with those entities still un-scrubbed, which is an undesired outcome.
+
+Validation also checks that every candidate in each chunk receives a usable decision.
+Missing or null decisions and reclassifications with empty, sentinel (`none`/`null`),
+excluded, or out-of-scope labels are retried up to two additional times. Each retry
+requests only unresolved candidates with the original source context; accepted decisions
+are preserved. If validation remains incomplete, the record fails explicitly rather
+than retaining unvalidated candidates. Empty proposed labels are valid for `keep` and `drop`.
 
 Dropped rows show up on `result.failed_records` with `step="entity-detection"`, so you can tell which inputs didn't make it through by comparing input IDs against output IDs and reprocess those on a follow-up pass.
 

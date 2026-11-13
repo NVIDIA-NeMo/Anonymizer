@@ -105,6 +105,8 @@ class ChunkedValidationConfig(SingleColumnConfig):
     single_chunk_full_text: bool = True
     prompt_template: str = Field(repr=False)
     system_prompt: str | None = Field(default=None, repr=False)
+    allowed_entity_labels: list[str] | None = None
+    excluded_entity_labels: list[str] = Field(default_factory=list)
 
     @staticmethod
     def get_column_emoji() -> str:
