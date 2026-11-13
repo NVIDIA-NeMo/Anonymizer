@@ -225,7 +225,9 @@ class Anonymizer:
                 applied to the Anonymizer-managed or caller-supplied DataDesigner
                 instance. Use this for DataDesigner execution knobs such as
                 ``buffer_size`` and ``max_in_flight_tasks``.
-            detection_workflow: Custom detection workflow (advanced/testing). Methods
+            detection_workflow: Custom detection workflow (advanced/testing). Methods must
+                accept the v1 detection options, including ``builtin_regexes`` and
+                ``regex_rules``. Methods
                 without an ``entity_label_examples`` keyword remain supported when no
                 examples are configured; configuring examples raises ``InvalidConfigError``
                 if the method does not accept them.

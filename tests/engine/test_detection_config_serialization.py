@@ -40,6 +40,7 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     COL_VALIDATION_DECISIONS,
     DEFAULT_ENTITY_LABELS,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import NddAdapter
@@ -76,7 +77,7 @@ def test_regex_constrained_augmentation_retains_async_only_entrypoint() -> None:
         enabled=False,
         regex_constrained_entity_labels=["url"],
     )
-    assert COL_ADMITTED_CANDIDATES in config.required_columns
+    assert config.required_columns == [RECORD_ID_COLUMN, COL_TEXT, COL_ADMITTED_CANDIDATES]
     generator = AugmentationGenerator(config, resource_provider=Mock())
     with pytest.raises(NotImplementedError, match="async-only; use agenerate"):
         generator.generate({COL_TEXT: "url:https://example.org/private"})
