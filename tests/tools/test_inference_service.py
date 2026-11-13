@@ -153,7 +153,7 @@ def test_spec_rejects_privileged_ports_and_unknown_backends() -> None:
 def test_compile_command_writes_a_verified_plan(tmp_path: Path) -> None:
     output = tmp_path / "plan.json"
     with pytest.raises(SystemExit) as exc_info:
-        cli.app(["compile", "--profile", str(PROFILES / "vllm-local.toml"), "--output", str(output)])
+        cli.app(["compile", "--profile", str(PROFILES / "vllm-local-test.toml"), "--output", str(output)])
     assert exc_info.value.code == 0
     assert compiler.load_plan(output.read_text(encoding="utf-8")).served_model_name == "anonymizer-local"
 

@@ -25,7 +25,7 @@ Eleven profiles ship in `tools/inference_service_profiles/`:
 | Profile | Endpoint model name | Role and hardware guidance |
 | --- | --- | --- |
 | `gliner2-native.toml` | `fastino/gliner2-privacy-filter-PII-multi` | Multilingual PII detector served by Anonymizer's native GLiNER2 server |
-| `vllm-local.toml` | `anonymizer-local` | TinyLlama lifecycle smoke test |
+| `vllm-local-test.toml` | `anonymizer-local` | TinyLlama lifecycle smoke test |
 | `gemma-4-12b-it.toml` | `gemma-4-12b-it-local` | Instruction-tuned Gemma 4 generation; requires an NVIDIA GPU with at least 40 GB of memory |
 | `gpt-oss-20b.toml` | `gpt-oss-20b-local` | Compact GPT-OSS generation |
 | `gpt-oss-120b.toml` | `gpt-oss-120b-local` | GPT-OSS generation on a dedicated 80 GB GPU |
