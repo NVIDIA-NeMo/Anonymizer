@@ -42,6 +42,7 @@ from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
+    COL_LEGACY_FINAL_ENTITIES,
     COL_MISSED_ENTITIES,
     COL_NEEDS_HUMAN_REVIEW,
     COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
@@ -212,6 +213,17 @@ def _build_legacy_finalization_config(detect: Detect) -> DetectionTransformConfi
         excluded_entity_labels=list(detect.excluded_entity_labels or []),
         ignored_entity_values=sorted(DEFAULT_IGNORED_ENTITY_VALUES.union(detect.ignored_entity_values)),
     )
+
+
+def _append_legacy_finalization(builder: DataDesignerConfigBuilder, detect: Detect) -> None:
+    config = _build_legacy_finalization_config(detect)
+    if any(column.name == COL_FINAL_ENTITIES for column in builder.get_column_configs()):
+        # Preserve custom filtering before applying the configured ignored values.
+        existing = builder.get_column_config(COL_FINAL_ENTITIES)
+        builder.delete_column(COL_FINAL_ENTITIES)
+        builder.add_column(**existing.model_copy(update={"name": COL_LEGACY_FINAL_ENTITIES}).model_dump())
+        config.entity_source_column = COL_LEGACY_FINAL_ENTITIES
+    builder.add_column(**config.model_dump())
 
 
 def _finalize_legacy_detection_result(result: EntityDetectionResult, detect: Detect) -> EntityDetectionResult:
@@ -451,7 +463,7 @@ class Anonymizer:
             data_summary=data.data_summary,
         )
         if not _accepts_keyword(self._detection_workflow.build_detection_config, "ignored_entity_values"):
-            builder.add_column(**_build_legacy_finalization_config(config.detect).model_dump())
+            _append_legacy_finalization(builder, config.detect)
         return builder
 
     def export_detection_builder_for_seed(
@@ -499,7 +511,7 @@ class Anonymizer:
             num_jobs=num_jobs,
         )
         if not _accepts_keyword(self._detection_workflow.build_detection_builder_for_seed, "ignored_entity_values"):
-            builder.add_column(**_build_legacy_finalization_config(config.detect).model_dump())
+            _append_legacy_finalization(builder, config.detect)
         return builder
 
     def preview(

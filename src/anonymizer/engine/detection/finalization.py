@@ -40,15 +40,17 @@ def materialize_final_entity_output(
     allowed_labels: set[str] | None,
     excluded_entity_labels: set[str] | None,
     ignored_entity_values: frozenset[str],
+    entity_source_column: str = COL_DETECTED_ENTITIES,
+    output_column: str = COL_FINAL_ENTITIES,
 ) -> dict[str, Any]:
     """Publish filtered entities and matching public span tags from pre-filter detections."""
-    row[COL_FINAL_ENTITIES] = materialize_final_entities(
-        row[COL_DETECTED_ENTITIES],
+    row[output_column] = materialize_final_entities(
+        row[entity_source_column],
         allowed_labels=allowed_labels,
         excluded_entity_labels=excluded_entity_labels,
         ignored_entity_values=ignored_entity_values,
     )
-    row[COL_TAGGED_TEXT] = build_final_tagged_text(row[COL_TEXT], row[COL_FINAL_ENTITIES])
+    row[COL_TAGGED_TEXT] = build_final_tagged_text(row[COL_TEXT], row[output_column])
     return row
 
 

@@ -72,6 +72,7 @@ COL_ENTITIES_FOR_REPLACE_JSON = "_entities_for_replace_json"
 COL_LATENT_ENTITIES = "_latent_entities"
 
 # Final output
+COL_LEGACY_FINAL_ENTITIES = "_legacy_final_entities"
 COL_FINAL_ENTITIES = "final_entities"
 
 # Replace evaluation: detection-validity judge (opt-in internal feature; default off)

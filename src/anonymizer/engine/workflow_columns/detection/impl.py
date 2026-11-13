@@ -49,6 +49,8 @@ class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformCo
         if operation == DetectionTransformOperation.MATERIALIZE_FINAL_ENTITIES:
             return materialize_final_entity_output(
                 data,
+                entity_source_column=self.config.entity_source_column,
+                output_column=self.config.name,
                 allowed_labels=(
                     set(self.config.allowed_entity_labels) if self.config.allowed_entity_labels is not None else None
                 ),

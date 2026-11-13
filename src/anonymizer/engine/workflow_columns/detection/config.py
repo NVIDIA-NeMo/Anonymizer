@@ -90,6 +90,7 @@ class DetectionTransformConfig(SingleColumnConfig):
     allowed_entity_labels: list[str] | None = None
     detection_result_id: str = SEED_DETECTION_RESULT_ID
     source_instance: str = "gliner"
+    entity_source_column: str = COL_DETECTED_ENTITIES
     ignored_entity_values: list[str] = Field(default_factory=list, repr=False)
 
     _REQUIRED_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
@@ -148,6 +149,8 @@ class DetectionTransformConfig(SingleColumnConfig):
 
     @property
     def required_columns(self) -> list[str]:
+        if self.operation == DetectionTransformOperation.MATERIALIZE_FINAL_ENTITIES:
+            return [COL_TEXT, self.entity_source_column]
         return self._REQUIRED_COLUMNS[DetectionTransformOperation(self.operation)]
 
     @property

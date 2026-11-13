@@ -37,6 +37,7 @@ from anonymizer.engine.constants import (
     COL_ENTITY_COVERAGE,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
+    COL_LEGACY_FINAL_ENTITIES,
     COL_MISSED_ENTITIES,
     COL_NEEDS_HUMAN_REVIEW,
     COL_REPLACED_TEXT,
@@ -281,6 +282,8 @@ class _Replay040DetectionWorkflow:
         self.calls: list[str] = []
         self.config_sentinel = Mock(name="config_sentinel")
         self.builder_sentinel = Mock(name="builder_sentinel")
+        self.config_sentinel.get_column_configs.return_value = []
+        self.builder_sentinel.get_column_configs.return_value = []
 
     def run(
         self,
@@ -1611,6 +1614,55 @@ def test_legacy_export_appends_serializable_ignore_filter(
     )
     assert row[COL_FINAL_ENTITIES] == {"entities": []}
     assert row[COL_TAGGED_TEXT] == "Example Corp"
+
+
+@pytest.mark.parametrize("mode", ["export_detection_config", "export_detection_builder_for_seed"])
+@pytest.mark.parametrize("local_mode", ["run", "preview"])
+def test_legacy_export_preserves_custom_finalization(
+    stub_input: AnonymizerInput, tmp_path: Path, mode: str, local_mode: str
+) -> None:
+    text = "Alice paid with Visa."
+    alice = {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}
+    visa = {"value": "Visa", "label": "credit_debit_card", "start_position": 16, "end_position": 20}
+    raw = {"entities": [alice, visa]}
+    custom_final = {"entities": [visa]}
+    frame = pd.DataFrame({COL_TEXT: [text], COL_DETECTED_ENTITIES: [raw], COL_FINAL_ENTITIES: [custom_final]})
+    detector = _Replay040DetectionWorkflow(EntityDetectionResult(dataframe=frame, failed_records=[]))
+    builder = DataDesignerConfigBuilder()
+    builder.add_column(
+        **DetectionTransformConfig(
+            name=COL_FINAL_ENTITIES,
+            operation=DetectionTransformOperation.MATERIALIZE_FINAL_ENTITIES,
+            allowed_entity_labels=["credit_debit_card"],
+        ).model_dump()
+    )
+    detector.config_sentinel = cast(Mock, builder)
+    detector.builder_sentinel = cast(Mock, builder)
+    anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, detector))
+    config = AnonymizerConfig(replace=Redact())
+    local = getattr(anonymizer, local_mode)(config=config, data=stub_input)
+    if mode == "export_detection_config":
+        exported = anonymizer.export_detection_config(
+            config=config, data=stub_input, seed_path=tmp_path / "seed.parquet"
+        )
+    else:
+        exported = anonymizer.export_detection_builder_for_seed(config=config, seed_path=tmp_path / "seed.parquet")
+    payload = exported.get_builder_config().to_json()
+    assert payload is not None
+    restored = DataDesignerConfigBuilder.from_config(payload)
+    original = restored.get_column_config(COL_LEGACY_FINAL_ENTITIES)
+    final = restored.get_column_config(COL_FINAL_ENTITIES)
+    assert isinstance(original, DetectionTransformConfig)
+    assert isinstance(final, DetectionTransformConfig)
+    assert final.required_columns == [COL_TEXT, COL_LEGACY_FINAL_ENTITIES]
+    row = DetectionTransformGenerator(original, resource_provider=Mock()).generate(
+        {COL_TEXT: text, COL_DETECTED_ENTITIES: raw}
+    )
+    assert [entity["value"] for entity in row[COL_LEGACY_FINAL_ENTITIES]["entities"]] == ["Visa"]
+    row = DetectionTransformGenerator(final, resource_provider=Mock()).generate(row)
+    assert row[COL_FINAL_ENTITIES] == local.dataframe[COL_FINAL_ENTITIES].iloc[0] == {"entities": []}
+    assert row[COL_DETECTED_ENTITIES] == raw
+    assert row[COL_TAGGED_TEXT] == local.dataframe["text_with_spans"].iloc[0] == text
 
 
 def test_legacy_finalization_preserves_existing_final_scope(stub_input: AnonymizerInput) -> None:
