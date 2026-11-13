@@ -131,7 +131,8 @@ print(f"Columns: {list(trace_df.columns)}")
 # ## 🎯 Detected entities
 #
 # - Final entity list after validation. Each entity has `value`, `label`,
-#   positions, `score`, and `source` (detector / augmenter / name_split / propagation).
+#   positions, `score`, and representative `source` (detector / augmenter / fallback).
+#   A missing native score is published as `0.0`, not a confidence estimate.
 
 # %%
 row_idx = 0
@@ -165,9 +166,11 @@ for label, count in label_counts.most_common():
 # - Where each entity came from in the pipeline:
 #     - `detector` -- GLiNER NER
 #     - `augmenter` -- LLM-added (missed by GLiNER)
-#     - `validator` -- LLM decision step over detector-seed entities (keep/reclass/drop); does not emit a separate source value
-#     - `name_split` -- derived from splitting full names
-#     - `propagation` -- expanded from validated entities to all text occurrences
+#     - `fallback` -- exact observed span retained without explicit model acceptance
+# - Validation keeps, reclassifies, or drops detector observations; it is not a separate source.
+# - Names are not split into parts, and accepted values are not propagated to other occurrences.
+# - The representative source does not list every accepted origin; inspect internal trace
+#   candidates when you need full provenance.
 
 # %%
 source_counts = Counter()

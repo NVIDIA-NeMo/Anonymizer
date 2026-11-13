@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -20,6 +22,8 @@ from data_designer.config.models import ModelConfig
 from data_designer.config.run_config import RunConfig
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
+from data_designer.engine.column_generators.generators.custom import CustomColumnGenerator
+from data_designer.engine.observability import RuntimeCorrelation, runtime_correlation_provider
 from data_designer.interface.data_designer import DataDesigner
 
 import anonymizer.measurement as measurement
@@ -34,7 +38,9 @@ from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
+    COL_AUGMENTED_ENTITIES,
     COL_FINAL_ENTITIES,
+    COL_INITIAL_TAGGED_TEXT,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
@@ -43,15 +49,20 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
     COL_REWRITTEN_TEXT,
+    COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
+    COL_TAG_NOTATION,
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter, WorkflowRunResult
+from anonymizer.engine.ndd.adapter import NddAdapter, WorkflowRunResult, _extract_workflow_model_aliases
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
+from anonymizer.engine.workflow_columns.detection.config import AugmentationConfig, ChunkedValidationConfig
+from anonymizer.engine.workflow_columns.detection.impl import AugmentationGenerator
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import (
@@ -963,6 +974,14 @@ class _TraceModelFacade:
         messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
         return self.completion(messages).message.content
 
+    async def agenerate(self, prompt: str, **_kwargs: Any) -> str:
+        messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+        return (await self.acompletion(messages)).message.content
+
+    async def acompletion(self, messages: list[dict[str, Any]]) -> SimpleNamespace:
+        await asyncio.sleep(0)
+        return _TraceModelFacade.completion(self, messages)
+
     def completion(self, _messages: list[dict[str, Any]]) -> SimpleNamespace:
         return SimpleNamespace(
             message=SimpleNamespace(content="custom response secret", reasoning_content="scratch", tool_calls=[]),
@@ -987,16 +1006,16 @@ class _CustomTraceDataDesigner:
         return self.resource_provider
 
     def preview(self, config_builder: object, *, num_records: int) -> SimpleNamespace:
-        resource_provider = self._create_resource_provider()
-        model = resource_provider.model_registry.get_model(model_alias="alias")
+        self._create_resource_provider()
+        return asyncio.run(self._preview(config_builder, num_records=num_records))
+
+    async def _preview(self, config_builder: object, *, num_records: int) -> SimpleNamespace:
+        resource_provider = self.resource_provider
         output = self.input_df.iloc[:num_records].copy()
         for column in cast(Any, config_builder).get_column_configs():
+            generator = CustomColumnGenerator(column, resource_provider=cast(Any, resource_provider))
             for row_index, row in output.iterrows():
-                generated = column.generator_function(
-                    row.to_dict(),
-                    generator_params=None,
-                    models={"alias": model},
-                )
+                generated = await generator.agenerate(row.to_dict())
                 for key, value in generated.items():
                     output.loc[row_index, key] = value
         return SimpleNamespace(dataset=output)
@@ -1027,7 +1046,204 @@ class _TaskTraceDataDesigner:
         return SimpleNamespace(dataset=self.input_df.iloc[:num_records].copy(), task_traces=self.task_traces)
 
 
-def _custom_trace_column(name: str, *, prompt: str, value: str) -> CustomColumnConfig:
+class _AugmentationTraceFacade(_TraceModelFacade):
+    model_provider = SimpleNamespace(endpoint="http://provider/v1", provider_type="openai")
+    request_timeout = 1.0
+
+    def __init__(self, replies: list[str | Exception]) -> None:
+        self.replies = iter(replies)
+
+    def completion(self, _messages: list[dict[str, Any]]) -> SimpleNamespace:
+        reply = next(self.replies)
+        if isinstance(reply, Exception):
+            raise reply
+        response = super().completion(_messages)
+        response.message.content = reply
+        return response
+
+    async def acompletion(self, messages: list[dict[str, Any]]) -> SimpleNamespace:
+        # Do not call completion(): the async trace must be recorded only once.
+        reply = next(self.replies)
+        if isinstance(reply, Exception):
+            raise reply
+        response = super().completion(messages)
+        response.message.content = reply
+        return response
+
+    def generate(self, prompt: str, *, parser: Callable[[str], Any] | None = None, **kwargs: Any) -> Any:
+        response = self.completion([{"role": "user", "content": prompt}])
+        return (parser(response.message.content), []) if parser else response.message.content
+
+    async def agenerate(self, prompt: str, *, parser: Callable[[str], Any] | None = None, **kwargs: Any) -> Any:
+        response = await self.acompletion([{"role": "user", "content": prompt}])
+        return (parser(response.message.content), []) if parser else response.message.content
+
+
+class _PluginTraceDataDesigner(_CustomTraceDataDesigner):
+    def preview(self, config_builder: object, *, num_records: int) -> SimpleNamespace:
+        provider = self._create_resource_provider()
+        output = self.input_df.iloc[:num_records].copy()
+        for column in cast(Any, config_builder).get_column_configs():
+            for row_index, row in output.iterrows():
+                token = runtime_correlation_provider.set(
+                    RuntimeCorrelation(
+                        run_id="plugin-trace-test",
+                        row_group=0,
+                        task_column=column.name,
+                        task_type="cell",
+                        scheduling_group_kind=None,
+                        scheduling_group_identity_hash=None,
+                        task_execution_id=None,
+                    )
+                )
+                try:
+                    if isinstance(column, AugmentationConfig):
+                        generator = AugmentationGenerator(column, resource_provider=cast(Any, provider))
+                        generated = asyncio.run(generator.agenerate(row.to_dict()))
+                    else:
+                        generated = column.generator_function(
+                            row.to_dict(),
+                            generator_params=None,
+                            models={"alias": provider.model_registry.get_model(model_alias="alias")},
+                        )
+                    for key, value in generated.items():
+                        if key not in output:
+                            output[key] = pd.Series(index=output.index, dtype=object)
+                        output.at[row_index, key] = value
+                finally:
+                    runtime_correlation_provider.reset(token)
+        return SimpleNamespace(dataset=output)
+
+
+@pytest.mark.parametrize("trace_mode", ["none", "last_message", "all_messages"])
+@pytest.mark.parametrize("scenario", ["success", "correction", "transport_error", "parse_error"])
+def test_ndd_adapter_traces_augmentation_plugin_calls(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    trace_mode: str,
+    scenario: str,
+) -> None:
+    good = {
+        "value": "Alice",
+        "context_before": "",
+        "context_after": " works at Acme",
+        "label": "first_name",
+        "reason": "name",
+    }
+    valid_reply = json.dumps({"entities": [good]})
+    correction_reply = json.dumps({"entities": [{**good, "context_before": "wrong private context"}]})
+    scenario_replies: dict[str, list[str | Exception]] = {
+        "success": [valid_reply],
+        "correction": [correction_reply, valid_reply],
+        "transport_error": [RuntimeError("private transport detail")],
+        "parse_error": ["invalid private response"],
+    }
+    replies = scenario_replies[scenario]
+    failing = scenario in {"transport_error", "parse_error"}
+    if not failing:
+        replies.append("custom response secret")
+    facade = _AugmentationTraceFacade(replies)
+    input_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            RECORD_ID_COLUMN: ["record-a"],
+            COL_INITIAL_TAGGED_TEXT: ["Alice works at Acme"],
+            COL_SEED_ENTITIES_JSON: ["[]"],
+            COL_TAG_NOTATION: ["xml"],
+            "text": ["Alice works at Acme"],
+        }
+    )
+    designer = _PluginTraceDataDesigner(input_df, facade=facade)
+    adapter = NddAdapter(data_designer=cast(DataDesigner, designer))
+    trace_path = tmp_path / "trace.jsonl"
+    measurement_path = tmp_path / "measurement.jsonl"
+    columns: list[ColumnConfigT] = [
+        cast(
+            ColumnConfigT,
+            AugmentationConfig(
+                name=COL_AUGMENTED_ENTITIES,
+                model_alias="alias",
+                prompt_template="private prompt: {{ " + COL_TEXT + " }}",
+            ),
+        ),
+        _custom_trace_column("quality_check", prompt="quality prompt secret", value="ok"),
+    ]
+    with configured_measurement_session(
+        MeasurementConfig(
+            output_path=measurement_path,
+            dd_trace=cast(Any, trace_mode),
+            dd_trace_path=trace_path,
+        )
+    ):
+        if failing:
+            with pytest.raises(AnonymizerWorkflowError, match="Workflow failed"):
+                _run_entity_detection_preview(adapter, input_df, columns)
+        else:
+            result = _run_entity_detection_preview(adapter, input_df, columns)
+            assert result.dataframe[COL_AUGMENTED_ENTITIES].iloc[0]["entities"][0]["value"] == "Alice"
+
+    if trace_mode == "none":
+        assert not trace_path.exists()
+    else:
+        traces = [json.loads(line) for line in trace_path.read_text().splitlines()]
+        augmentation = [x for x in traces if x["column_name"] == COL_AUGMENTED_ENTITIES]
+        assert len(augmentation) == (2 if scenario == "correction" else 1)
+        assert len(traces) == len(augmentation) + (0 if failing else 1)
+        assert all(x["trace_source"] == "anonymizer_private_model_facade" for x in augmentation)
+        assert all(x["is_async"] for x in augmentation)
+        assert augmentation[0]["status"] == ("error" if scenario == "transport_error" else "completed")
+        assert "private prompt" in json.dumps(augmentation[0]["messages"])
+        if scenario == "correction":
+            assert "wrong private context" in json.dumps(augmentation[1]["messages"])
+        if scenario == "parse_error":
+            assert augmentation[0]["response"]["content"] == "invalid private response"
+
+    serialized_measurements = measurement_path.read_text()
+    if trace_mode != "none":
+        coverage = next(
+            event
+            for event in map(json.loads, serialized_measurements.splitlines())
+            if event["record_type"] == "dd_trace_coverage"
+        )
+        assert coverage["private_trace_column_names"] == [COL_AUGMENTED_ENTITIES, "quality_check"]
+        assert coverage["unsupported_column_count"] == 0
+    for private in ["private prompt", "wrong private context", "invalid private response", "custom response secret"]:
+        assert private not in serialized_measurements
+        assert private not in caplog.text
+    assert facade.completion == _AugmentationTraceFacade.completion.__get__(facade)
+    assert facade.acompletion == _AugmentationTraceFacade.acompletion.__get__(facade)
+
+
+def test_augmentation_plugin_requires_async_entrypoint() -> None:
+    generator = AugmentationGenerator(
+        AugmentationConfig(name=COL_AUGMENTED_ENTITIES, model_alias="alias", prompt_template="prompt"),
+        resource_provider=cast(Any, SimpleNamespace()),
+    )
+    with pytest.raises(NotImplementedError, match="async-only; use agenerate"):
+        generator.generate({})
+
+
+def test_ndd_adapter_discovers_plugin_model_aliases() -> None:
+    columns: list[ColumnConfigT] = [
+        cast(
+            ColumnConfigT,
+            ChunkedValidationConfig(
+                name="validation",
+                pool=["validator-a", "validator-b"],
+                prompt_template="prompt",
+                max_entities_per_call=100,
+                excerpt_window_chars=500,
+            ),
+        ),
+        cast(
+            ColumnConfigT,
+            AugmentationConfig(name=COL_AUGMENTED_ENTITIES, model_alias="augmenter", prompt_template="prompt"),
+        ),
+    ]
+    assert _extract_workflow_model_aliases(columns) == ["validator-a", "validator-b", "augmenter"]
+
+
+def _custom_trace_column(name: str, *, prompt: str, value: str, async_column: bool = False) -> CustomColumnConfig:
     @custom_column_generator(required_columns=["text"], model_aliases=["alias"])
     def generator(
         row: dict[str, Any],
@@ -1036,9 +1252,19 @@ def _custom_trace_column(name: str, *, prompt: str, value: str) -> CustomColumnC
     ) -> dict[str, str]:
         _ = row, generator_params
         models["alias"].generate(prompt)
-        return {name: value}
+        return {**row, name: value}
 
-    return CustomColumnConfig(name=name, generator_function=generator)
+    @custom_column_generator(required_columns=["text"], model_aliases=["alias"])
+    async def async_generator(
+        row: dict[str, Any],
+        generator_params: Any,
+        models: dict[str, Any],
+    ) -> dict[str, str]:
+        _ = row, generator_params
+        await models["alias"].agenerate(prompt)
+        return {**row, name: value}
+
+    return CustomColumnConfig(name=name, generator_function=async_generator if async_column else generator)
 
 
 def _local_custom_column(name: str, *, value: str) -> CustomColumnConfig:
@@ -1049,14 +1275,16 @@ def _local_custom_column(name: str, *, value: str) -> CustomColumnConfig:
         models: dict[str, Any],
     ) -> dict[str, str]:
         _ = row, generator_params, models
-        return {name: value}
+        return {**row, name: value}
 
     return CustomColumnConfig(name=name, generator_function=generator)
 
 
+@pytest.mark.parametrize("async_columns", [False, True])
 def test_ndd_adapter_writes_custom_column_private_model_facade_dd_trace(
     tmp_path: Path,
     trace_input_df: pd.DataFrame,
+    async_columns: bool,
 ) -> None:
     adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner(trace_input_df)))
     trace_path = tmp_path / "trace.jsonl"
@@ -1070,13 +1298,18 @@ def test_ndd_adapter_writes_custom_column_private_model_facade_dd_trace(
             adapter,
             trace_input_df,
             [
-                _custom_trace_column("raw_detected", prompt="raw prompt secret", value="[]"),
-                _custom_trace_column("quality_check", prompt="quality prompt secret", value="ok"),
+                _custom_trace_column(
+                    "raw_detected", prompt="raw prompt secret", value="[]", async_column=async_columns
+                ),
+                _custom_trace_column(
+                    "quality_check", prompt="quality prompt secret", value="ok", async_column=async_columns
+                ),
             ],
         )
 
     traces = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
     traces_by_column = {trace["column_name"]: trace for trace in traces}
+    assert len(traces) == 2
     assert set(traces_by_column) == {"raw_detected", "quality_check"}
 
     raw_trace = traces_by_column["raw_detected"]
@@ -1088,6 +1321,7 @@ def test_ndd_adapter_writes_custom_column_private_model_facade_dd_trace(
     assert raw_trace["model_provider_name"] == "provider"
     assert raw_trace["model_provider_endpoint"] == "http://provider/v1"
     assert raw_trace["status"] == "completed"
+    assert raw_trace["is_async"] is async_columns
     assert raw_trace["messages"] == [{"role": "user", "content": [{"type": "text", "text": "raw prompt secret"}]}]
     assert raw_trace["response"]["content"] == "custom response secret"
     assert raw_trace["response"]["reasoning_content"] == "scratch"

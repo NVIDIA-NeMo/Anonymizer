@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -28,6 +29,7 @@ from anonymizer.engine.constants import (
     COL_NEEDS_REPAIR,
     COL_REPAIR_ITERATIONS,
     COL_REPLACEMENT_APPLICATION,
+    COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
     COL_REWRITTEN_TEXT_NEXT,
@@ -36,8 +38,9 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.engine.rewrite.combined_rewrite_workflow import (
     CombinedRewriteGraph,
     CombinedRewriteWorkflow,
@@ -150,7 +153,9 @@ def test_graph_unrolls_conditional_repairs(
         assert previous.needs_repair in condition.columns
 
 
+@pytest.mark.parametrize("replacement_ready", [True, False])
 def test_finalizer_selects_last_executed_iteration(
+    replacement_ready: bool,
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
@@ -162,6 +167,7 @@ def test_finalizer_selects_last_executed_iteration(
     )
     initial, repaired, skipped = graph.evaluation_states
     row = {
+        COL_REWRITE_REPLACEMENT_READY: replacement_ready,
         initial.rewritten_text: "Initial rewrite",
         initial.quality_reanswer: {"answers": []},
         initial.privacy_reanswer: {"answers": []},
@@ -194,7 +200,37 @@ def test_finalizer_selects_last_executed_iteration(
     assert result[COL_ANY_HIGH_LEAKED] is False
     assert result[COL_NEEDS_REPAIR] is False
     assert result[COL_REPAIR_ITERATIONS] == 1
-    assert result[COL_NEEDS_HUMAN_REVIEW] is False
+    assert result[COL_NEEDS_HUMAN_REVIEW] is (not replacement_ready)
+
+
+@pytest.mark.parametrize(("leakage_mass", "expected"), [(0.1, False), (np.nan, True), (None, True)])
+def test_finalizer_flags_unavailable_leakage(
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+    leakage_mass: float | None,
+    expected: bool,
+) -> None:
+    graph = CombinedRewriteWorkflow(adapter=Mock()).build_graph(
+        selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(max_repair_iterations=0),
+    )
+    (state,) = graph.evaluation_states
+    row = {
+        COL_REWRITE_REPLACEMENT_READY: True,
+        state.rewritten_text: "Rewrite",
+        state.utility_score: 0.9,
+        state.leakage_mass: leakage_mass,
+        state.any_high_leaked: False,
+        state.needs_repair: False,
+    }
+    finalizer = graph.columns[-1]
+    assert isinstance(finalizer, CustomColumnConfig)
+
+    result = finalizer.generator_function(row, finalizer.generator_params)
+
+    assert result[COL_NEEDS_HUMAN_REVIEW] is expected
 
 
 def test_combined_graph_preserves_malformed_rewrite_handling(
@@ -215,10 +251,12 @@ def test_combined_graph_preserves_malformed_rewrite_handling(
     assert result[COL_REWRITTEN_TEXT_INITIAL] is None
 
 
+@pytest.mark.parametrize("replacement_ready", [True, False])
 def test_conditional_repairs_execute_independently_per_row(
     tmp_path: Path,
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
+    replacement_ready: bool,
 ) -> None:
     data_designer = DataDesigner(artifact_path=tmp_path / "artifacts", auto_configure_logging=False)
     adapter = NddAdapter(data_designer)
@@ -233,7 +271,7 @@ def test_conditional_repairs_execute_independently_per_row(
 
     with measurement_session(collector):
         result = adapter.run_workflow(
-            pd.DataFrame({_REPAIRS_NEEDED: [0, 1, 2, 3]}),
+            pd.DataFrame({_REPAIRS_NEEDED: [0, 1, 2, 3], COL_REWRITE_REPLACEMENT_READY: replacement_ready}),
             model_configs=[],
             columns=columns,
             workflow_name="rewrite-combined",
@@ -249,7 +287,7 @@ def test_conditional_repairs_execute_independently_per_row(
     ]
     assert result.dataframe[COL_REPAIR_ITERATIONS].tolist() == [0, 1, 2, 2]
     assert result.dataframe[COL_NEEDS_REPAIR].tolist() == [False, False, False, True]
-    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False, False, False, True]
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [not replacement_ready] * 3 + [True]
     workflow_records = [record for record in collector.records if record["record_type"] == "ndd_workflow"]
     assert len(workflow_records) == 1
     assert workflow_records[0]["workflow_name"] == "rewrite-combined"
@@ -400,18 +438,23 @@ def test_run_reports_combined_failure_and_drops_only_failed_entity_row(
 
 
 def test_combined_and_legacy_paths_return_equivalent_repaired_result(
+    tmp_path: Path,
     stub_model_configs: list[ModelConfig],
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
+    """Both paths keep the second repair's text when the first repair still fails evaluation."""
+    evaluation = EvaluationCriteria(max_repair_iterations=2)
     dataframe = pd.DataFrame(
         {
             COL_TEXT: ["Alice works at Acme"],
             COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
+            COL_REWRITE_REPLACEMENT_READY: [True],
+            _REPAIRS_NEEDED: [2],
         }
     )
     pipeline = dataframe.copy()
-    pipeline[COL_REWRITTEN_TEXT] = "Initial rewrite"
+    pipeline[COL_REWRITTEN_TEXT] = "rewrite-0"
     evaluation_before = pd.DataFrame(
         {
             COL_NEEDS_REPAIR: [True],
@@ -421,11 +464,10 @@ def test_combined_and_legacy_paths_return_equivalent_repaired_result(
             COL_ANY_HIGH_LEAKED: [True],
         }
     )
-    repair = pd.DataFrame({COL_REWRITTEN_TEXT_NEXT: ["Repaired rewrite"]})
     evaluation_after = pd.DataFrame(
         {
             COL_NEEDS_REPAIR: [False],
-            COL_UTILITY_SCORE: [0.9],
+            COL_UTILITY_SCORE: [1.0],
             COL_LEAKAGE_MASS: [0.0],
             COL_WEIGHTED_LEAKAGE_RATE: [0.0],
             COL_ANY_HIGH_LEAKED: [False],
@@ -435,7 +477,9 @@ def test_combined_and_legacy_paths_return_equivalent_repaired_result(
     legacy_adapter.run_workflow.side_effect = [
         WorkflowRunResult(dataframe=pipeline, failed_records=[]),
         WorkflowRunResult(dataframe=evaluation_before, failed_records=[]),
-        WorkflowRunResult(dataframe=repair, failed_records=[]),
+        WorkflowRunResult(dataframe=pd.DataFrame({COL_REWRITTEN_TEXT_NEXT: ["rewrite-1"]}), failed_records=[]),
+        WorkflowRunResult(dataframe=evaluation_before.copy(), failed_records=[]),
+        WorkflowRunResult(dataframe=pd.DataFrame({COL_REWRITTEN_TEXT_NEXT: ["rewrite-2"]}), failed_records=[]),
         WorkflowRunResult(dataframe=evaluation_after, failed_records=[]),
     ]
     with patch(_REPLACE_PATCH) as replace_workflow:
@@ -449,32 +493,32 @@ def test_combined_and_legacy_paths_return_equivalent_repaired_result(
             selected_models=stub_rewrite_model_selection,
             replace_model_selection=stub_replace_model_selection,
             privacy_goal=_PRIVACY_GOAL,
-            evaluation=EvaluationCriteria(max_repair_iterations=2),
+            evaluation=evaluation,
         )
 
-    combined_output = dataframe.copy()
-    combined_output[COL_REWRITTEN_TEXT] = "Repaired rewrite"
-    combined_output[COL_UTILITY_SCORE] = 0.9
-    combined_output[COL_LEAKAGE_MASS] = 0.0
-    combined_output[COL_WEIGHTED_LEAKAGE_RATE] = 0.0
-    combined_output[COL_ANY_HIGH_LEAKED] = False
-    combined_output[COL_NEEDS_REPAIR] = False
-    combined_output[COL_REPAIR_ITERATIONS] = 1
-    combined_output[COL_NEEDS_HUMAN_REVIEW] = False
-    combined_adapter = Mock()
-    combined_adapter.run_workflow.return_value = WorkflowRunResult(
-        dataframe=combined_output,
-        failed_records=[],
-    )
-    combined_result = CombinedRewriteWorkflow(adapter=combined_adapter).run(
-        dataframe,
-        model_configs=stub_model_configs,
+    # The combined side runs the real graph finalizer through the real adapter, with deterministic
+    # evaluate/repair columns whose repair N writes "rewrite-{N + 1}".
+    combined_adapter = NddAdapter(DataDesigner(artifact_path=tmp_path / "artifacts", auto_configure_logging=False))
+    combined_workflow = CombinedRewriteWorkflow(adapter=combined_adapter)
+    graph = combined_workflow.build_graph(
         selected_models=stub_rewrite_model_selection,
         replace_model_selection=stub_replace_model_selection,
         privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=2),
+        evaluation=evaluation,
     )
+    deterministic_graph = dataclasses.replace(graph, columns=_deterministic_columns(graph))
+    with patch.object(combined_workflow, "build_graph", return_value=deterministic_graph):
+        combined_result = combined_workflow.run(
+            dataframe,
+            model_configs=[],
+            selected_models=stub_rewrite_model_selection,
+            replace_model_selection=stub_replace_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=evaluation,
+        )
 
+    assert legacy_result.dataframe[COL_REWRITTEN_TEXT].tolist() == ["rewrite-2"]
+    assert combined_result.dataframe[COL_REWRITTEN_TEXT].tolist() == ["rewrite-2"]
     output_columns = [
         COL_REWRITTEN_TEXT,
         COL_UTILITY_SCORE,
@@ -518,7 +562,7 @@ def test_conditional_graph_handles_larger_mixed_batches(
     )
 
     result = adapter.run_workflow(
-        pd.DataFrame({_REPAIRS_NEEDED: repairs_needed}),
+        pd.DataFrame({_REPAIRS_NEEDED: repairs_needed, COL_REWRITE_REPLACEMENT_READY: True}),
         model_configs=[],
         columns=_deterministic_columns(graph),
         workflow_name="rewrite-combined-scale-test",

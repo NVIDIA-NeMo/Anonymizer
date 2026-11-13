@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import concurrent.futures
 from collections.abc import Callable
 from typing import Any
 
@@ -14,107 +12,50 @@ from data_designer.engine.column_generators.generators.base import (
     ColumnGeneratorWithModelRegistry,
 )
 
+from anonymizer.engine.detection.augmentation import augment_row_async
 from anonymizer.engine.detection.chunked_validation import (
     ChunkedValidationParams,
-    chunked_validate_row,
     chunked_validate_row_async,
 )
 from anonymizer.engine.detection.custom_columns import (
-    apply_validation_and_finalize,
+    admit_validation_decisions,
     apply_validation_to_seed_entities,
-    enrich_validation_decisions,
+    finalize_entities,
     merge_and_build_candidates,
     parse_detected_entities,
+    prepare_detector_source,
     prepare_validation_inputs,
 )
 from anonymizer.engine.workflow_columns.detection.config import (
+    AugmentationConfig,
     ChunkedValidationConfig,
     DetectionTransformConfig,
     DetectionTransformOperation,
 )
 
 _TRANSFORMS: dict[DetectionTransformOperation, Callable[[dict[str, Any]], dict[str, Any]]] = {
-    DetectionTransformOperation.PARSE_DETECTED_ENTITIES: parse_detected_entities,
+    DetectionTransformOperation.PREPARE_DETECTOR_SOURCE: prepare_detector_source,
     DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: prepare_validation_inputs,
-    DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: enrich_validation_decisions,
     DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: apply_validation_to_seed_entities,
     DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES: merge_and_build_candidates,
-    DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE: apply_validation_and_finalize,
+    DetectionTransformOperation.FINALIZE_ENTITIES: finalize_entities,
 }
-
-
-_BRIDGE_TIMEOUT_FLOOR_S = 60.0
-
-
-def _compute_bridge_timeout(
-    request_timeout: float,
-    max_correction_steps: int,
-    max_conversation_restarts: int = 0,
-) -> float:
-    attempts = (1 + max_conversation_restarts) * (1 + max_correction_steps)
-    return max(_BRIDGE_TIMEOUT_FLOOR_S, attempts * request_timeout * 1.5)
-
-
-class _AsyncBridgedModelFacade:
-    def __init__(self, facade: Any) -> None:
-        self._facade = facade
-
-    def generate(self, *args: Any, **kwargs: Any) -> tuple[Any, list]:
-        from data_designer.engine.models.clients.errors import SyncClientUnavailableError
-
-        try:
-            return self._facade.generate(*args, **kwargs)
-        except SyncClientUnavailableError:
-            pass
-
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            pass
-        else:
-            raise RuntimeError("model.generate() cannot be bridged from the running event loop.")
-
-        from data_designer.engine.dataset_builders.utils.async_concurrency import ensure_async_engine_loop
-
-        timeout_override = kwargs.get("timeout")
-        request_timeout = float(timeout_override) if timeout_override is not None else self._facade.request_timeout
-        bridge_timeout = _compute_bridge_timeout(
-            request_timeout=request_timeout,
-            max_correction_steps=int(kwargs.get("max_correction_steps", 0) or 0),
-            max_conversation_restarts=int(kwargs.get("max_conversation_restarts", 0) or 0),
-        )
-        loop = ensure_async_engine_loop()
-        future = asyncio.run_coroutine_threadsafe(self._facade.agenerate(*args, **kwargs), loop)
-        try:
-            return future.result(timeout=bridge_timeout)
-        except concurrent.futures.TimeoutError as exc:
-            future.cancel()
-            from data_designer.engine.models.errors import ModelTimeoutError
-
-            raise ModelTimeoutError(f"model.generate() bridge timed out after {bridge_timeout:.0f}s") from exc
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._facade, name)
 
 
 class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformConfig]):
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:
         operation = DetectionTransformOperation(self.config.operation)
-        if operation == DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES:
-            return apply_validation_to_seed_entities(
+        if operation == DetectionTransformOperation.PARSE_DETECTED_ENTITIES:
+            return parse_detected_entities(
                 data,
-                excluded_entity_labels=self.config.excluded_entity_labels,
+                detection_result_id=self.config.detection_result_id,
+                source_instance=self.config.source_instance,
             )
-        if operation == DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES:
-            return merge_and_build_candidates(
+        if operation == DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS:
+            return admit_validation_decisions(
                 data,
-                excluded_entity_labels=self.config.excluded_entity_labels,
-            )
-        if operation == DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE:
-            return apply_validation_and_finalize(
-                data,
-                excluded_entity_labels=self.config.excluded_entity_labels,
                 allowed_entity_labels=self.config.allowed_entity_labels,
+                excluded_entity_labels=self.config.excluded_entity_labels,
             )
         return _TRANSFORMS[operation](data)
 
@@ -130,19 +71,43 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
             max_entities_per_call=self.config.max_entities_per_call,
             excerpt_window_chars=self.config.excerpt_window_chars,
             max_parallel_chunks=self.config.max_parallel_chunks or _derive_max_parallel_chunks(models),
+            max_conversation_restarts=self.resource_provider.run_config.max_conversation_restarts,
+            max_correction_steps=self.resource_provider.run_config.max_conversation_correction_steps,
             single_chunk_full_text=self.config.single_chunk_full_text,
             prompt_template=self.config.prompt_template,
             system_prompt=self.config.system_prompt,
+            allowed_entity_labels=self.config.allowed_entity_labels,
+            excluded_entity_labels=self.config.excluded_entity_labels,
         )
 
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
-        raw_models = {alias: self.get_model(alias) for alias in self.config.pool}
-        models = {alias: _AsyncBridgedModelFacade(model) for alias, model in raw_models.items()}
-        return chunked_validate_row(data, self._params(raw_models), models)
+        raise NotImplementedError("ChunkedValidationGenerator is async-only; use agenerate().")
 
     async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         models = {alias: self.get_model(alias) for alias in self.config.pool}
         return await chunked_validate_row_async(data, self._params(models), models)
+
+
+class AugmentationGenerator(ColumnGeneratorWithModelRegistry[AugmentationConfig]):
+    """Generate and ground augmenter output before publishing the column."""
+
+    @staticmethod
+    def get_generation_strategy() -> GenerationStrategy:
+        return GenerationStrategy.CELL_BY_CELL
+
+    def generate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
+        raise NotImplementedError("AugmentationGenerator is async-only; use agenerate().")
+
+    async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
+        return await augment_row_async(
+            row=data,
+            prompt_template=self.config.prompt_template,
+            model_alias=self.config.model_alias,
+            facade=self.get_model(self.config.model_alias),
+            allowed_entity_labels=self.config.allowed_entity_labels,
+            excluded_entity_labels=self.config.excluded_entity_labels,
+            system_prompt=self.config.system_prompt,
+        )
 
 
 def _derive_max_parallel_chunks(models: dict[str, Any]) -> int:

@@ -21,7 +21,7 @@ Most fixes start with one of these.
 
 ### Did the run actually complete cleanly?
 
-Before debugging quality, confirm the run wasn't degraded by infra problems. Anonymizer never silently drops rows — every dropped record appears on `result.failed_records` with full provenance:
+Before debugging quality, confirm the run wasn't degraded by infra problems. Anonymizer logs a WARNING with the number of failed records, and every dropped record appears on `result.failed_records` with its step and reason:
 
 ```python
 for fr in result.failed_records:
@@ -32,11 +32,14 @@ Common patterns and what they mean:
 
 | `reason` substring | Likely cause | Action |
 |---|---|---|
-| `Record missing from workflow output` at `step="detection"` | Validator pool exhausted on at least one chunk for this row — usually rate limiting (429s) burning through the AIMD throttler's retry budget | **Model/provider config issue, not strategy.** See [Rate limits / dropped rows](#rate-limits-dropped-rows) below |
-| `Record missing from workflow output` at `step="replace-map-generation"` or `step="rewrite-*"` | Same as above but for the replace/rewrite stage | Same fix |
-| `Output is missing required tracking column` | Internal — file an issue | — |
+| `max_tokens` | The model used its whole output budget, often on hidden reasoning, before finishing the answer | Raise `inference_parameters.max_tokens` for that alias in `models.yaml`. See [Models](concepts/models.md) |
+| `timed out` | Requests took longer than the alias's timeout, which is 60 seconds when `inference_parameters.timeout` is not set; large `max_tokens` budgets on reasoning models often need longer | Set `inference_parameters.timeout` for that alias in `models.yaml` (the bundled configs use 300). If the reason says local request admission timed out, the request was never sent: lower `max_parallel_requests` instead. See [Models](concepts/models.md) |
+| `no error was recorded for this row` | The row never completed and left no error of its own, while other rows failed; `most common:` names their most frequent cause | Investigate the named most-common cause first as a run-level hint; it does not establish why this particular row is missing. Only if rows still go missing, check the shutdown error rate in `data_designer_run_config` |
+| `does not match the source span` | The GLiNER server returned entity offsets that are inconsistent with the text | Restart the self-hosted GLiNER server from a current Anonymizer release (see the [self-hosting guide](concepts/self-hosting-gliner.md)); servers started from older code can return offsets that do not match the text |
+| `Record missing from workflow output` with no other cause, at `step="entity-detection"`, `step="replace-map-generation"` or `step="rewrite-*"` | Often rate limiting (429s) exhausting the retry budget of the model pool | See [Rate limits / dropped rows](#rate-limits-dropped-rows) below |
+| `Output is missing required tracking column` | Internal; file an issue | None |
 
-If `failed_records` is non-empty, **fix that first.** Strategy/prompt knobs (`risk_tolerance`, `protect`, `gliner_threshold`) won't help — those rows didn't fail because of bad output, they failed because the model never returned an output at all.
+If `failed_records` is non-empty, **fix that first.** Strategy/prompt knobs (`risk_tolerance`, `protect`, `gliner_threshold`) won't help: those rows didn't fail because of bad output, they failed because the workflow never produced a usable output for them.
 
 ### Rate limits / dropped rows
 
@@ -45,8 +48,8 @@ GLiNER candidate set → chunked into validator calls → each call dispatched t
 
 Fix in this order:
 
-1. **If failures are at `step="detection"`, add aliases to the validator pool** in `models.yaml`. The validator is the only role that supports a pool — set `entity_validator` to a list of aliases and chunked validation will round-robin across them, giving you failover when one provider rate-limits. Every other role (detector, augmenter, rewriter, evaluator, etc.) is a single alias.
-2. **Lower `validation_max_entities_per_call`** (default `100`) on `Detect` if individual validator requests exceed a context or per-request token limit. This creates more calls, each of which repeats the full resolved label/example section, so it can increase total tokens and is not necessarily helpful for a tokens-per-minute limit.
+1. **If failures are at `step="entity-detection"`, add aliases to the validator pool** in `models.yaml`. The validator is the only role that supports a pool — set `entity_validator` to a list of aliases and chunked validation will round-robin across them, giving you failover when one provider rate-limits. Every other role (detector, augmenter, rewriter, evaluator, etc.) is a single alias.
+2. **Lower `validation_max_entities_per_call`** (default `100`) on `Detect` if individual validator requests exceed a context or per-request token limit. This is a batching target: an overlapping group larger than the target stays intact in one request and emits a warning. Smaller batches create more calls, each repeating the full resolved label/example section, so they can increase total tokens and may not help with a tokens-per-minute limit.
 3. **Switch the heavy alias to a different `provider`** in `providers.yaml`. If you're hammering one tenant's quota, moving to a second deployment of the same model helps more than tuning batch sizes. This is the only lever for non-validator stages (rewrite, evaluate, etc.) since they don't have pools.
 4. **Re-run on just the failed records** — filter the input dataframe to those `record_id`s and call `anonymizer.run` again. Failures are usually transient.
 
@@ -79,7 +82,7 @@ Key columns:
 | `utility_score` | 0–1 quality preservation score |
 | `weighted_leakage_rate` | Leakage normalized by maximum possible leakage |
 | `any_high_leaked` | Whether any high-sensitivity entity leaked through |
-| `needs_human_review` | Crossed the configured threshold |
+| `needs_human_review` | Crossed the configured threshold, or (after `evaluate()`) the coverage judge reported missed entities |
 | `judge_evaluation` | Final-judge qualitative comments |
 
 ### Re-run with `Annotate` to see detection output
@@ -128,6 +131,10 @@ Try in order:
 
 Verify by re-running `preview` with `Annotate` and confirming the entity now appears tagged.
 
+Repeated text is handled occurrence by occurrence. A detected `John Smith` does not automatically create a separate `John` finding elsewhere, and accepting one `May` does not accept every `May`. Inspect the missed occurrence's source context rather than assuming that value propagation or name splitting will fill it in. A grounded augmenter suggestion may match more than one occurrence only when its exact surrounding context also matches.
+
+For augmentation misses, inspect `_augmentation_attempts` in `result.trace_dataframe`. Grounding failures receive one targeted correction attempt; still-ungrounded suggestions are dropped while valid suggestions and existing admitted detections are retained. Check `result.failed_records` separately for delivery or schema failures; a failed record is not a successful output with a missed entity.
+
 ### Too many false-positive entities
 
 Symptoms: detected entities include obvious common words, dates that aren't dates, etc.
@@ -136,7 +143,7 @@ Symptoms: detected entities include obvious common words, dates that aren't date
    ```python
    Detect(excluded_entity_labels=["occupation", "age"])
    ```
-2. **Raise `gliner_threshold`** to `0.5`. The augmenter will pick up real misses, so this rarely costs recall.
+2. **Raise `gliner_threshold`** to `0.5`. This can reduce false positives but also remove real detections; the augmenter may recover misses, but recovery is not guaranteed. Compare annotated previews before and after the change.
 3. **Lower `validation_excerpt_window_chars`** (default `500`) if context-driven validation is being misled by far-away sentences. Smaller per-chunk prompts trade context for precision.
 4. **Sanity-check the validator with an `Annotate` preview.** A flaky validator (or a misconfigured alias) returns "keep" on almost everything, which presents as recall going way up — easiest spotted by eyeballing the entity list on a handful of rows.
 

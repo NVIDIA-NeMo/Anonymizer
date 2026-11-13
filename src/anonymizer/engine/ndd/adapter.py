@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import logging
 import re
 import tempfile
 import time
 import uuid
+from collections import Counter
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -17,7 +19,7 @@ from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 from threading import Lock, RLock
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
@@ -30,6 +32,7 @@ from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
 from anonymizer.engine.constants import RECORD_ID_COLUMN
+from anonymizer.engine.ndd.storage import prepare_json_storage_column, prepare_json_storage_seed
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
 
@@ -39,6 +42,73 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("anonymizer.ndd")
 
+# DataDesigner records the cause of a failed task only while task tracing is on.
+# Tracing keeps one small record per task attempt for the whole run, so this
+# switch turns it off for every run when memory at very large row counts matters.
+TRACE_TASKS_BY_DEFAULT = True
+
+_MISSING_RECORD_REASON = "Record missing from workflow output"
+_UNTRACED_REASON = (
+    f"{_MISSING_RECORD_REASON}: not completed: no error was recorded for this row; other rows in the run failed"
+)
+_MAX_REASON_CHARS = 500
+_CAUSE_LINE = re.compile(r"^\s*\|\s*Cause:\s*(.+)", re.MULTILINE)
+_SOLUTION_LINE = re.compile(r"^\s*\|\s*Solution:\s*(.+)", re.MULTILINE)
+# Task traces retain only strings. Exception text can impersonate even a complete classified error,
+# so these markers select fixed summaries; captured cause/solution text is never returned to users.
+_SAFE_FAILURE_SUMMARIES = {
+    r"The API key provided for model .+ was found to be invalid or expired while .+": (
+        "The API key is invalid or expired; Verify the model provider's API key"
+    ),
+    r"You have exceeded the rate limit for model .+ while .+": "Model rate limit exceeded; Wait and try again",
+    r"The request to model .+ timed out while .+": (
+        "The model request timed out; Check your connection or increase inference_parameters.timeout"
+    ),
+    r"Local request admission for model .+ timed out while .+": (
+        "Local request admission timed out; The provider request was not sent. "
+        "Reduce concurrency or tune max_parallel_requests and RunConfig.max_in_flight_tasks"
+    ),
+    r"The specified model .+ could not be found while .+": (
+        "The model could not be found; Check the model name and provider configuration"
+    ),
+    r"Your API key was found to lack the necessary permissions to use model .+ while .+": (
+        "The API key lacks model permissions; Check the model provider's API key"
+    ),
+    r"One or more of the parameters you provided were found to be unsupported by model .+ while .+": (
+        "The model does not support the request parameters; Check the model provider's documentation"
+    ),
+    r"Model provider .+ rejected the request for model .+ with HTTP status .+ while .+": (
+        "The model provider rejected the request; Check the model name, credentials, configuration and quota"
+    ),
+    r"Model provider .+ reported insufficient credits or quota for model .+ while .+": (
+        "The model provider reported insufficient credits or quota; Add credits or increase quota"
+    ),
+    r"The input data for model .+ was found to exceed its supported context width while .+": (
+        "The input data exceeds the model's supported context width; Reduce input or completion length"
+    ),
+    r"The request for model .+ was found to be malformed or missing required parameters while .+": (
+        "The request was malformed or missing required parameters; Check the model's request parameters"
+    ),
+    r"Connection to model .+ hosted on model provider .+ failed while .+": (
+        "Connection to the model failed; Check your network, proxy and firewall settings"
+    ),
+    r"An unexpected error occurred while .+": "An unexpected error occurred; Review the stack trace for more details",
+    r"An unexpected API error occurred with model .+ while .+": (
+        "An unexpected API error occurred; Try again or check with the model provider"
+    ),
+    r"Model .+ is currently experiencing internal server issues while .+": (
+        "The model provider is experiencing internal server issues; Try again later"
+    ),
+    r"Model .+ is not a multimodal model, but it looks like you are trying to provide multimodal context while .+": (
+        "The model does not support multimodal context; Check the request parameters"
+    ),
+    r"The request to model .+ failed despite correct request format while .+": (
+        "The model could not process the request; Try again later"
+    ),
+}
+# Anonymizer's own failure text, safe to show because it carries only offsets.
+_KNOWN_FAILURE = re.compile(r"Detector entity text does not match the source span at offsets \[\d+, \d+\)")
+
 _TRACEABLE_LLM_COLUMN_TYPES = (LLMTextColumnConfig, LLMStructuredColumnConfig)
 _MODEL_TRACE_COLUMN: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_column", default=None)
 _MODEL_TRACE_PURPOSE: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_purpose", default=None)
@@ -47,8 +117,8 @@ _MODEL_TRACE_PURPOSE: ContextVar[str | None] = ContextVar("anonymizer_dd_model_t
 def _normalize_column_for_data_designer(column: ColumnConfigT) -> ColumnConfigT:
     """Convert marked private config subclasses to DataDesigner's registered types."""
     if getattr(type(column), "_normalize_for_data_designer", False):
-        return LLMStructuredColumnConfig.model_validate(column.model_dump())
-    return column
+        column = LLMStructuredColumnConfig.model_validate(column.model_dump())
+    return prepare_json_storage_column(column)
 
 
 @dataclass(frozen=True)
@@ -124,7 +194,9 @@ class _DDMessageTracePlan:
                 continue
 
             if _column_has_private_facade_model_calls(column):
-                configured_columns.append(_custom_column_with_trace_context(column))
+                configured_columns.append(
+                    _custom_column_with_trace_context(column) if isinstance(column, CustomColumnConfig) else column
+                )
                 private_columns.append(_PrivateFacadeTraceColumn(column_name=column.name))
                 continue
 
@@ -333,6 +405,9 @@ class NddAdapter:
         This is the engine boundary for *executing* DataDesigner workflows.
         Engine sub-workflows declare column configs and call this method;
         they do not call `DataDesigner.create()` or `.preview()` directly.
+        Registered nested engine columns use DD JSON storage at seed and
+        artifact boundaries; callers continue to receive logical dict/list
+        values. Existing field-level storage metadata is preserved.
 
         Args:
             df: Input DataFrame.
@@ -374,19 +449,20 @@ class NddAdapter:
 
         with tempfile.TemporaryDirectory(prefix=f"anonymizer_{workflow_name}_") as tmp_dir:
             seed_path = str(Path(tmp_dir) / "seed.parquet")
-            seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, seed_path)
-
-            config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
-            config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
-            for column in columns:
-                # DataDesigner resolves built-in generators by exact config
-                # type. A private subclass can keep sensitive prompt fields
-                # out of reprs in our workflow specs, then become the
-                # registered built-in config at the execution boundary.
-                config_builder.add_column(_normalize_column_for_data_designer(column))
-
             task_traces: list[_TaskTrace] = []
             try:
+                workflow_input_df = prepare_json_storage_seed(workflow_input_df)
+                seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, seed_path)
+
+                config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
+                config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
+                for column in columns:
+                    # DataDesigner resolves built-in generators by exact config
+                    # type. A private subclass can keep sensitive prompt fields
+                    # out of reprs in our workflow specs, then become the
+                    # registered built-in config at the execution boundary.
+                    config_builder.add_column(_normalize_column_for_data_designer(column))
+
                 with self._run_lock, usage_probe, _temporary_dd_task_trace(self._data_designer, collector=collector):
                     if preview_num_records is None:
                         run_results = self._data_designer.create(
@@ -462,6 +538,8 @@ class NddAdapter:
                 else workflow_input_df
             ),
             output_df=output_df,
+            task_traces=task_traces,
+            buffer_size=record_count if preview_num_records is not None else _run_buffer_size(self._data_designer),
         )
         _success_model_usage = usage_probe.model_usage()
         with self._run_lock:
@@ -508,7 +586,11 @@ class NddAdapter:
             The assembled ``DataDesignerConfigBuilder`` (seed dataset + columns added).
         """
         workflow_input_df = self._attach_record_ids(df=df)
-        seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, str(seed_path))
+        try:
+            workflow_input_df = prepare_json_storage_seed(workflow_input_df)
+            seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, str(seed_path))
+        except Exception as exc:
+            raise AnonymizerWorkflowError(f"Workflow seed preparation failed: {exc}") from exc
         config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
         config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
         for column in columns:
@@ -574,6 +656,8 @@ class NddAdapter:
         workflow_name: str,
         input_df: pd.DataFrame,
         output_df: pd.DataFrame,
+        task_traces: list[_TaskTrace] | None = None,
+        buffer_size: int | None = None,
     ) -> list[FailedRecord]:
         if RECORD_ID_COLUMN not in input_df.columns:
             logger.warning(
@@ -620,23 +704,97 @@ class NddAdapter:
                 for record_id in input_df[RECORD_ID_COLUMN].astype(str).tolist()
             ]
 
-        input_ids = set(input_df[RECORD_ID_COLUMN].astype(str).tolist())
+        ordered_ids = input_df[RECORD_ID_COLUMN].astype(str).tolist()
         output_ids = set(output_df[RECORD_ID_COLUMN].astype(str).tolist())
-        missing_ids = sorted(input_ids - output_ids)
+        missing_ids = sorted(set(ordered_ids) - output_ids)
+        reasons = _failure_reasons_by_record(
+            record_ids=ordered_ids,
+            task_traces=task_traces or [],
+            buffer_size=buffer_size or len(ordered_ids),
+        )
+        untraced = [record_id for record_id in missing_ids if record_id not in reasons]
+        if untraced:
+            default_reason = _untraced_reason(list(reasons.values())) if reasons else _MISSING_RECORD_REASON
+            reasons.update(dict.fromkeys(untraced, default_reason))
         return [
-            FailedRecord(
-                record_id=record_id,
-                step=workflow_name,
-                reason="Record missing from workflow output",
-            )
+            FailedRecord(record_id=record_id, step=workflow_name, reason=reasons[record_id])
             for record_id in missing_ids
         ]
+
+
+def _untraced_reason(reasons: list[str]) -> str:
+    """Describe a row dropped without a trace by the most common classified cause among the other rows."""
+    causes = [reason.removeprefix(f"{_MISSING_RECORD_REASON}: ") for reason in reasons]
+    return f"{_UNTRACED_REASON} (most common: {Counter(causes).most_common(1)[0][0]})"
+
+
+def _run_buffer_size(data_designer: DataDesigner) -> int | None:
+    buffer_size = getattr(getattr(data_designer, "run_config", None), "buffer_size", None)
+    return buffer_size if isinstance(buffer_size, int) else None
+
+
+def _failure_reasons_by_record(
+    *,
+    record_ids: list[str],
+    task_traces: list[_TaskTrace],
+    buffer_size: int,
+) -> dict[str, str]:
+    """Map each record to the reason of its earliest failed column, leaving out columns that later recovered."""
+    errors: dict[int, dict[object, _TaskTrace]] = {}
+    for trace in task_traces:
+        status = _trace_attr(trace, "status")
+        row_group = _trace_attr(trace, "row_group")
+        row_index = _trace_attr(trace, "row_index")
+        if status not in ("error", "ok") or not isinstance(row_group, int):
+            continue
+        start = row_group * buffer_size
+        positions = (
+            range(start, min(start + buffer_size, len(record_ids))) if row_index is None else [start + row_index]
+        )
+        column = _trace_attr(trace, "column")
+        for position in positions:
+            if status == "error":
+                errors.setdefault(position, {})[column] = trace
+            else:
+                errors.get(position, {}).pop(column, None)
+    return {
+        record_ids[position]: _failure_reason(next(iter(by_column.values())))
+        for position, by_column in errors.items()
+        if by_column and position < len(record_ids)
+    }
+
+
+def _failure_reason(trace: _TaskTrace) -> str:
+    """Classify untrusted trace text into fixed diagnostics, never echoing the underlying exception message."""
+    prefix = f"{_MISSING_RECORD_REASON}: {_trace_attr(trace, 'column')}: "
+    error = str(_trace_attr(trace, "error") or "")
+    cause_match = _CAUSE_LINE.search(error)
+    if cause_match is None:
+        known = _KNOWN_FAILURE.search(error)
+        return f"{prefix}{known.group(0) if known else 'generation failed'}"
+    solution_match = _SOLUTION_LINE.search(error)
+    reason = prefix + _summarize_failure(cause_match.group(1), solution_match.group(1) if solution_match else "")
+    return reason if len(reason) <= _MAX_REASON_CHARS else f"{reason[: _MAX_REASON_CHARS - 3]}..."
+
+
+def _summarize_failure(cause: str, solution: str) -> str:
+    if re.fullmatch(r"The model output from .+ could not be parsed into the requested format while .+", cause):
+        summary = "The model output could not be parsed into the requested format"
+        if solution.startswith("The response appears to have been cut off because the model context window"):
+            return f"{summary}; Reduce input or schema size, or use a model with a larger context window"
+        if solution.startswith("The response appears to have been cut off because it reached max_tokens"):
+            return f"{summary}; Increase inference_parameters.max_tokens in the model config"
+        return f"{summary}; Simplify or modify the output schema and try again"
+    for pattern, summary in _SAFE_FAILURE_SUMMARIES.items():
+        if re.fullmatch(pattern, cause):
+            return summary
+    return "generation failed"
 
 
 def _extract_workflow_model_aliases(columns: list[ColumnConfigT]) -> list[str]:
     aliases: list[str] = []
     for column in columns:
-        aliases.extend(_as_alias_list(getattr(column, "model_alias", None)))
+        aliases.extend(_as_alias_list(column.get_model_aliases()))
         generator = getattr(column, "generator_function", None)
         metadata = getattr(generator, "custom_column_metadata", None)
         if isinstance(metadata, dict):
@@ -741,9 +899,8 @@ class _DataDesignerUsageProbe:
             self._patch_model_facade(facade)
             return facade
 
-        # Temporary private DataDesigner shim: CustomColumnConfig receives
-        # ModelFacade objects directly and DD does not yet expose a public
-        # model-call event sink for those calls.
+        # Custom and plugin columns receive ModelFacade objects directly;
+        # DataDesigner has no public model-call event sink for those calls.
         setattr(model_registry, "get_model", wrapped_get_model)
         self._model_registry_patches.append((model_registry, get_model))
 
@@ -1035,7 +1192,7 @@ def _model_trace_usage(response: Any) -> Any:
 
 @contextmanager
 def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | None) -> Iterator[None]:
-    if collector is None or not collector.dd_task_trace_enabled:
+    if not TRACE_TASKS_BY_DEFAULT and (collector is None or not collector.dd_task_trace_enabled):
         yield
         return
 
@@ -1077,20 +1234,32 @@ def _task_traces_from_result(result: Any) -> list[_TaskTrace]:
 def _custom_column_with_trace_context(column: CustomColumnConfig) -> ColumnConfigT:
     generator = column.generator_function
 
-    @wraps(generator)
-    def traced_generator(*args: Any, **kwargs: Any) -> Any:
-        token = _MODEL_TRACE_COLUMN.set(column.name)
-        try:
-            return generator(*args, **kwargs)
-        finally:
-            _MODEL_TRACE_COLUMN.reset(token)
+    if inspect.iscoroutinefunction(inspect.unwrap(generator)):
+
+        @wraps(generator)
+        async def traced_generator(*args: Any, **kwargs: Any) -> Any:
+            token = _MODEL_TRACE_COLUMN.set(column.name)
+            try:
+                return await generator(*args, **kwargs)
+            finally:
+                _MODEL_TRACE_COLUMN.reset(token)
+
+    else:
+
+        @wraps(generator)
+        def traced_generator(*args: Any, **kwargs: Any) -> Any:
+            token = _MODEL_TRACE_COLUMN.set(column.name)
+            try:
+                return generator(*args, **kwargs)
+            finally:
+                _MODEL_TRACE_COLUMN.reset(token)
 
     setattr(traced_generator, "custom_column_metadata", getattr(generator, "custom_column_metadata", {}))
     return cast(ColumnConfigT, column.model_copy(update={"generator_function": traced_generator}))
 
 
-def _column_has_private_facade_model_calls(column: ColumnConfigT) -> TypeGuard[CustomColumnConfig]:
-    return isinstance(column, CustomColumnConfig) and bool(_extract_workflow_model_aliases([column]))
+def _column_has_private_facade_model_calls(column: ColumnConfigT) -> bool:
+    return bool(_extract_workflow_model_aliases([column]))
 
 
 def _column_type_name(column: ColumnConfigT) -> str:

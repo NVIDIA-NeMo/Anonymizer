@@ -12,7 +12,6 @@ from typing import Any
 
 import pytest
 
-from anonymizer.engine.detection.postprocess import parse_raw_entities
 from anonymizer.notebooks.local_inference.gliner2.backend import (
     _prepare_transformers_v4_snapshot,
     _resolve_document_overlaps,
@@ -88,9 +87,9 @@ def test_pinned_snapshot_dereferences_hugging_face_cache_symlinks(tmp_path: Path
     assert (prepared / "model.safetensors").read_bytes() == b"weights"
 
 
-def test_overlap_policy_preserves_existing_flat_flag_contract() -> None:
+def test_overlap_policy_retains_alternatives_when_not_flat() -> None:
     assert overlap_policy(True) == "disallow"
-    assert overlap_policy(False) == "longest"
+    assert overlap_policy(False) == "allow"
 
 
 def _entity(text: str, start: int, end: int, score: float = 0.8) -> dict[str, Any]:
@@ -112,6 +111,81 @@ def test_longest_overlap_contract_handles_disjoint_nested_crossing_and_same_span
     ]
 
 
+def test_allow_overlap_contract_keeps_nested_crossing_and_same_span_alternatives() -> None:
+    outer = _entity("Alice Johnson", 0, 13, 0.9)
+    inner = {**_entity("Alice", 0, 5, 0.6), "label": "first_name"}
+    crossing = _entity("Johnson calls", 6, 19, 0.7)
+    duplicate = {**inner, "score": 0.5}
+    assert _resolve_document_overlaps([outer, inner, crossing, duplicate], "allow") == [inner, outer, crossing]
+
+
+@pytest.mark.parametrize(
+    ("original", "native"),
+    [
+        ("user_name", "username"),
+        ("state", "state_or_region"),
+        ("postcode", "postal_code"),
+        ("bank_routing_number", "routing_number"),
+        ("credit_debit_card", "payment_card"),
+    ],
+)
+def test_inference_labels_are_mapped_and_restored(original: str, native: str) -> None:
+    model = _FakeModel([{"entities": {native: [{"text": "synthetic", "start": 0, "end": 9, "confidence": 0.8}]}}])
+    result = detect_entities_for_texts(
+        model,
+        ["synthetic"],
+        [original, "occupation"],
+        threshold=0.3,
+        chunk_length=128,
+        overlap=32,
+        flat_ner=False,
+        inference_batch_size=1,
+    )
+    assert model.calls[0][1] == [native, "occupation"]
+    assert result[0][0]["label"] == original
+
+
+def test_alias_collisions_restore_each_requested_label_without_duplicate_inference() -> None:
+    model = _FakeModel([{"entities": {"username": [{"text": "synthetic", "start": 0, "end": 9, "confidence": 0.8}]}}])
+    result = detect_entities_for_texts(
+        model,
+        ["synthetic"],
+        ["user_name", "username", "user_name"],
+        threshold=0.3,
+        chunk_length=128,
+        overlap=32,
+        flat_ner=False,
+        inference_batch_size=1,
+    )
+    assert model.calls[0][1] == ["username"]
+    assert [entity["label"] for entity in result[0]] == ["user_name", "username"]
+
+
+def test_inference_and_document_merge_keep_nested_candidates() -> None:
+    model = _FakeModel(
+        [
+            {
+                "entities": {
+                    "first_name": [{"text": "Alice", "start": 0, "end": 5, "confidence": 0.7}],
+                    "full_name": [{"text": "Alice Johnson", "start": 0, "end": 13, "confidence": 0.9}],
+                }
+            }
+        ]
+    )
+    result = detect_entities_for_texts(
+        model,
+        ["Alice Johnson"],
+        ["first_name", "full_name"],
+        threshold=0.3,
+        chunk_length=128,
+        overlap=32,
+        flat_ner=False,
+        inference_batch_size=1,
+    )
+    assert model.calls[0][2]["overlap_policy"] == "allow"
+    assert [entity["text"] for entity in result[0]] == ["Alice", "Alice Johnson"]
+
+
 def test_disallow_overlap_contract_uses_maximum_total_score() -> None:
     outer = _entity("outer", 0, 10, 0.9)
     left = _entity("left", 0, 5, 0.6)
@@ -119,7 +193,7 @@ def test_disallow_overlap_contract_uses_maximum_total_score() -> None:
     assert _resolve_document_overlaps([outer, left, right], "disallow") == [left, right]
 
 
-@pytest.mark.parametrize("policy", ["longest", "disallow"])
+@pytest.mark.parametrize("policy", ["allow", "longest", "disallow"])
 def test_overlap_contract_retains_different_labels_for_the_same_span(policy: str) -> None:
     name = _entity("Alice", 0, 5, 0.9)
     identifier = {**_entity("Alice", 0, 5, 0.8), "label": "identifier"}
@@ -155,7 +229,7 @@ def test_detect_entities_remaps_and_deduplicates_overlapping_word_chunks() -> No
     assert model.calls[0][0] == ["xxxx Alice", "Alice yyyy"]
     assert model.calls[0][2]["include_spans"] is True
     assert model.calls[0][2]["include_confidence"] is True
-    assert model.calls[0][2]["overlap_policy"] == "longest"
+    assert model.calls[0][2]["overlap_policy"] == "allow"
 
 
 @pytest.mark.parametrize(
@@ -201,10 +275,6 @@ def test_synthetic_suffix_is_removed_without_losing_the_source_entity(
         inference_batch_size=1,
     )[0]
     assert result == [{"text": value, "label": label, "start": start, "end": len(text), "score": 0.9}]
-    parsed = parse_raw_entities(raw_response=json.dumps({"entities": result}), text=text)
-    assert [(entity.value, entity.start_position, entity.end_position) for entity in parsed] == [
-        (value, start, len(text))
-    ]
 
 
 def test_boundary_punctuation_does_not_consume_the_next_source_character() -> None:
