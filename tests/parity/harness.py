@@ -136,6 +136,11 @@ class Case:
     repairs: str | None = None  # text marker of the row whose first evaluation asks for repair
     heals: bool = True  # whether that row passes after one repair; if not, repair runs out
     missed: str | None = None  # text marker of the row the coverage judge reports an entity for
+    # The entity the coverage judge reports for that row. It must occur literally in the row and be absent from the
+    # detected entities, or the judge's postprocessing filters it out or counts it as covered.
+    missed_entity: dict[str, str] = field(
+        default_factory=lambda: {"value": "works", "label": "occupation", "reasoning": "a job description"}
+    )
 
 
 CASES = [
@@ -154,8 +159,10 @@ CASES = [
         lambda: AnonymizerConfig(rewrite=Rewrite(max_repair_iterations=2)),
         EvaluateConfig(compute_detection_validity=True),
         drops={"entity-detection": "sky", "latent-entity-detection": "Dora", "rewrite-pipeline": "Alice"},
+        lexicon={value: label for value, label in LEXICON.items() if value != "Paris"},
         repairs="Bob",
         missed="Bob",
+        missed_entity={"value": "Paris", "label": "city", "reasoning": "a place of residence"},
     ),
     Case(
         "rewrite_combined",
@@ -301,7 +308,7 @@ class Script:
         if workflow in ("replace-judges", "replace-detection-judge", "entity-coverage-judge"):
             payloads = {raw: [dict(payload)] * len(rows) for raw, payload in _JUDGE_PAYLOADS.items()}
             payloads["_entity_coverage_judge"] = [
-                {"candidate_entities": [{"value": "works", "label": "occupation", "reasoning": "a job description"}]}
+                {"candidate_entities": [dict(case.missed_entity)]}
                 if case.missed and case.missed in text
                 else {"candidate_entities": []}
                 for text in texts
@@ -511,6 +518,9 @@ def regenerate() -> None:
 
 
 def _leaves(value: Any, path: str = "") -> dict[str, Any]:
+    """Every scalar by its path; an empty mapping or list is a leaf itself, so its type and presence compare too."""
+    if isinstance(value, (dict, list)) and not value:
+        return {path: value}
     if isinstance(value, dict):
         return {k: v for key, item in value.items() for k, v in _leaves(item, f"{path}.{key}" if path else key).items()}
     if isinstance(value, list):

@@ -36,3 +36,33 @@ def test_every_run_happens_inside_an_activation_and_results_stay_consumable(
         assert consumers["user_columns_in_trace"], f"{call}: user columns are not a subset of the trace columns"
         assert all(consumers["pickle"].values()), f"{call}: pickling the result changed it: {consumers['pickle']}"
         assert consumers["parquet"]["columns"] == observed["user_frame"]["columns"], f"{call}: Parquet columns differ"
+
+
+@pytest.mark.parametrize("case", [case for case in CASES if case.missed], ids=lambda case: case.name)
+def test_scripted_coverage_miss_reaches_the_evaluated_result(case: Case, fresh_recordings: dict[str, dict]) -> None:
+    rows = [r for r in fresh_recordings[case.name]["evaluate"]["user_frame"]["rows"] if case.missed in r["text"]]
+    assert len(rows) == 1, f"expected one evaluated row containing {case.missed!r}"
+    missed = [entity["value"] for entity in rows[0]["missed_entities"]]
+    assert missed == [case.missed_entity["value"]], f"coverage judge miss did not survive: {rows[0]['missed_entities']}"
+    assert rows[0]["entity_coverage"] < 1.0
+
+
+@pytest.mark.parametrize(
+    ("recorded", "fresh"),
+    [
+        ({"missed_entities": []}, {"missed_entities": {}}),
+        ({"missed_entities": {}}, {"missed_entities": []}),
+        ({"final_entities": {"entities": []}}, {"final_entities": {}}),
+        ({"final_entities": {}}, {"final_entities": {"entities": []}}),
+        ({"rows": [[]]}, {"rows": []}),
+        ([], {}),
+    ],
+    ids=["list-to-dict", "dict-to-list", "empty-list-removed", "empty-list-added", "nested-empty-removed", "root"],
+)
+def test_differences_reports_empty_container_changes(recorded: object, fresh: object) -> None:
+    assert differences(recorded, fresh)
+
+
+def test_differences_is_empty_for_equal_values_with_empty_containers() -> None:
+    value = {"a": [], "b": {}, "c": [{"d": [], "e": 1}], "f": None}
+    assert differences(value, json.loads(json.dumps(value))) == []
