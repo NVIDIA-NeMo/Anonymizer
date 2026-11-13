@@ -1,13 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Reproduce process-group ID reuse inside a fresh PID namespace and try a stale stop.
+"""Reproduce process-group ID reuse inside a fresh PID namespace and observe ``stop``.
 
 Run as PID 1 of ``unshare --pid --fork --mount-proc`` with the tools directory on
-``PYTHONPATH``. Prints one JSON object describing what the stale receipt did.
+``PYTHONPATH``, passing a scratch directory and a scenario:
+
+- ``stale``: the recorded group exits and its ID is reused before ``status`` and ``stop``.
+- ``escalation``: ``stop`` sends SIGTERM, and the ID is reused before it would escalate.
+
+Prints one JSON object describing what the receipt did.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
@@ -16,6 +22,7 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest import mock
 
 from inference_service_compiler import compiler, launch_ownership, models, runtime
 
@@ -57,8 +64,21 @@ def is_live(pid: int) -> bool:
     return state not in {"Z", "X"}
 
 
+def reuse_group_id(scratch: Path, owned_pid: int) -> tuple[int, list[int]]:
+    """Kill the recorded group and start an unrelated, token-less group under its ID."""
+    try:
+        os.killpg(owned_pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    reap_all()
+    Path("/proc/sys/kernel/ns_last_pid").write_text(str(owned_pid - 1))
+    foreign, foreign_workers = start_group(scratch, "foreign", token=None, leader_exits=True)
+    foreign.wait()
+    return foreign.pid, foreign_workers
+
+
 def main() -> None:
-    scratch = Path(sys.argv[1])
+    scratch, scenario = Path(sys.argv[1]), sys.argv[2]
     token = "owned-launch-token"
     owned, _ = start_group(scratch, "owned", token=token, leader_exits=False)
     owned_pid = models.Pid(owned.pid)
@@ -74,16 +94,36 @@ def main() -> None:
     spec = models.ServiceSpec.model_validate({"backend": {"kind": "vllm", "model": "openai/gpt-oss-20b"}, "port": 8000})
     receipt = models.LaunchReceipt(plan=compiler.compile_spec(spec), launched_at=datetime.now(UTC), handle=handle)
 
-    os.killpg(owned_pid, signal.SIGKILL)
-    reap_all()
-    Path("/proc/sys/kernel/ns_last_pid").write_text(str(owned_pid - 1))
-    foreign, foreign_workers = start_group(scratch, "foreign", token=None, leader_exits=True)
-    foreign.wait()
-    foreign_pid = foreign.pid
+    result: dict[str, object] = {"recorded_pgid": owned_pid}
+    foreign_workers: list[int] = []
+    wait_group_gone = runtime._wait_group_gone
 
-    result: dict[str, object] = {"recorded_pgid": owned_pid, "foreign_pgid": foreign_pid}
+    def reuse() -> None:
+        result["foreign_pgid"], workers = reuse_group_id(scratch, owned_pid)
+        foreign_workers.extend(workers)
+
+    def reuse_during_grace_period(process_group_id: models.ProcessGroupId, deadline: float) -> bool:
+        if "foreign_pgid" in result:
+            return wait_group_gone(process_group_id, deadline)
+        reuse()
+        return False
+
+    if scenario == "stale":
+        reuse()
+        reuse_hook: contextlib.AbstractContextManager[object] = contextlib.nullcontext()
+    else:
+        reuse_hook = mock.patch.object(runtime, "_wait_group_gone", side_effect=reuse_during_grace_period)
+    with reuse_hook:
+        observe_stop(receipt, scenario, foreign_workers, result)
+    print(json.dumps(result))
+
+
+def observe_stop(
+    receipt: models.LaunchReceipt, scenario: str, foreign_workers: list[int], result: dict[str, object]
+) -> None:
     try:
-        result["status"] = runtime.status_run(receipt).state
+        if scenario == "stale":
+            result["status"] = runtime.status_run(receipt).state
         try:
             stopped = runtime.stop_run(receipt)
             result["stop"] = {"outcome": stopped.outcome, "cleanup_complete": stopped.cleanup_complete}
@@ -97,7 +137,6 @@ def main() -> None:
             except ProcessLookupError:
                 pass
         reap_all()
-    print(json.dumps(result))
 
 
 if __name__ == "__main__":

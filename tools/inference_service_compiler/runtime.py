@@ -401,29 +401,32 @@ def _cleanup_on_failure(handle: LocalProcessHandle, timeout_seconds: float) -> I
 
 
 def _stop_group(handle: LocalProcessHandle, timeout_seconds: float) -> _StopResult:
-    """Stop the recorded group if it is provably this launch's; refuse to signal one that is not."""
-    match group_ownership(handle):
-        case "unverified":
-            raise _ownership_unverified(handle)
-        case "absent":
-            return _StopResult(outcome="already-stopped", cleanup_complete=True)
-        case "owned":
-            return _signal_group(handle.process_group_id, timeout_seconds)
+    """Send SIGTERM, then SIGKILL after ``timeout_seconds``, proving ownership before each signal.
 
-
-def _signal_group(process_group_id: ProcessGroupId, timeout_seconds: float) -> _StopResult:
-    """Send SIGTERM, then SIGKILL after ``timeout_seconds``, and wait for the group to disappear."""
+    The group can exit during the SIGTERM grace period and an unrelated group can take its PGID,
+    so escalation rechecks ownership instead of trusting the first check. Each check and its
+    ``killpg`` are still not atomic.
+    """
     phases: tuple[tuple[signal.Signals, float, StopOutcome], ...] = (
         (signal.SIGTERM, timeout_seconds, "terminated"),
         (signal.SIGKILL, _KILL_GRACE_SECONDS, "forced"),
     )
+    previous_outcome: StopOutcome = "already-stopped"
     for signal_to_send, wait_seconds, outcome in phases:
+        match group_ownership(handle):
+            case "unverified":
+                raise _ownership_unverified(handle, signaled=previous_outcome != "already-stopped")
+            case "absent":
+                return _StopResult(outcome=previous_outcome, cleanup_complete=True)
+            case "owned":
+                pass
         try:
-            os.killpg(process_group_id, signal_to_send)
+            os.killpg(handle.process_group_id, signal_to_send)
         except ProcessLookupError:
             return _StopResult(outcome=outcome, cleanup_complete=True)
-        if _wait_group_gone(process_group_id, time.monotonic() + wait_seconds):
+        if _wait_group_gone(handle.process_group_id, time.monotonic() + wait_seconds):
             return _StopResult(outcome=outcome, cleanup_complete=True)
+        previous_outcome = outcome
     return _StopResult(outcome="forced", cleanup_complete=False)
 
 
@@ -443,11 +446,12 @@ def _process_identity_mismatch(handle: LocalProcessHandle, detail: str) -> Runti
     )
 
 
-def _ownership_unverified(handle: LocalProcessHandle) -> RuntimeEffectError:
+def _ownership_unverified(handle: LocalProcessHandle, *, signaled: bool = False) -> RuntimeEffectError:
+    already = "; SIGTERM was already sent to the group" if signaled else ""
     return RuntimeEffectError.of(
         "process-group-ownership-unverified",
         f"refusing to signal process group {handle.process_group_id}: its leader {handle.label} is gone "
-        "and a surviving member does not carry this launch's token",
+        f"and a surviving member does not carry this launch's token{already}",
         known_effects=(handle.label,),
         cleanup_complete=False,
     )

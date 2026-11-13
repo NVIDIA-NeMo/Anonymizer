@@ -329,6 +329,42 @@ def test_status_and_stop_reject_a_reused_pid_without_signaling(monkeypatch: pyte
     killpg.assert_not_called()
 
 
+def test_stop_rechecks_ownership_before_escalating_to_sigkill() -> None:
+    plan = compiler.compile_spec(generation())
+    handle = models.LocalProcessHandle(
+        launch_token_sha256=TOKEN_SHA256, pid=4242, start_marker="100", stdout_path="out", stderr_path="err"
+    )
+    # The group survives SIGTERM, then its PGID passes to a group without the launch token.
+    with (
+        mock.patch.object(runtime, "group_ownership", side_effect=["owned", "unverified"]),
+        mock.patch.object(runtime, "live_group_members", return_value=(models.Pid(5000),)),
+        mock.patch.object(runtime.os, "killpg") as killpg,
+        pytest.raises(runtime.RuntimeEffectError) as exc_info,
+    ):
+        runtime.stop_run(launch_receipt(plan, handle))
+
+    killpg.assert_called_once_with(4242, signal.SIGTERM)
+    assert exc_info.value.diagnostic.code == "process-group-ownership-unverified"
+    assert exc_info.value.diagnostic.cleanup_complete is False
+    assert "SIGTERM was already sent" in exc_info.value.diagnostic.message
+
+
+def test_stop_reports_termination_when_the_group_exits_before_escalation() -> None:
+    plan = compiler.compile_spec(generation())
+    handle = models.LocalProcessHandle(
+        launch_token_sha256=TOKEN_SHA256, pid=4242, start_marker="100", stdout_path="out", stderr_path="err"
+    )
+    with (
+        mock.patch.object(runtime, "group_ownership", side_effect=["owned", "absent"]),
+        mock.patch.object(runtime, "live_group_members", return_value=(models.Pid(5000),)),
+        mock.patch.object(runtime.os, "killpg") as killpg,
+    ):
+        receipt = runtime.stop_run(launch_receipt(plan, handle))
+
+    killpg.assert_called_once_with(4242, signal.SIGTERM)
+    assert (receipt.outcome, receipt.cleanup_complete) == ("terminated", True)
+
+
 def test_stop_rejects_a_mismatched_process_group_without_signaling() -> None:
     plan = compiler.compile_spec(generation())
     handle = models.LocalProcessHandle(
@@ -937,8 +973,12 @@ def test_group_holding_only_an_unreaped_leader_counts_as_stopped(start_group: St
     not hasattr(os, "geteuid") or os.geteuid() != 0 or shutil.which("unshare") is None,
     reason="needs root and unshare to force PID reuse in a private PID namespace",
 )
-def test_stale_receipt_does_not_signal_a_new_session_that_reused_the_group_id(tmp_path: Path) -> None:
-    """Regression: once a group fully exits its ID can go to an unrelated session."""
+@pytest.mark.parametrize("scenario", ["stale", "escalation"])
+def test_stop_does_not_signal_a_new_session_that_reused_the_group_id(tmp_path: Path, scenario: str) -> None:
+    """Regression: once a group fully exits its ID can go to an unrelated session.
+
+    ``stale`` reuses the ID before ``stop``; ``escalation`` reuses it after SIGTERM, before SIGKILL.
+    """
     environment = os.environ | {"PYTHONPATH": str(TOOLS)}
     result = subprocess.run(
         [
@@ -949,6 +989,7 @@ def test_stale_receipt_does_not_signal_a_new_session_that_reused_the_group_id(tm
             sys.executable,
             str(FIXTURES / "pid_reuse_probe.py"),
             str(tmp_path),
+            scenario,
         ],
         env=environment,
         capture_output=True,
@@ -959,7 +1000,8 @@ def test_stale_receipt_does_not_signal_a_new_session_that_reused_the_group_id(tm
     observed = json.loads(result.stdout)
 
     assert observed["foreign_pgid"] == observed["recorded_pgid"]
-    assert observed["status"] == "ownership-unverified"
+    if scenario == "stale":
+        assert observed["status"] == "ownership-unverified"
     assert observed["stop"] == {"code": "process-group-ownership-unverified", "cleanup_complete": False}
     assert observed["foreign_workers_alive"] is True
 
