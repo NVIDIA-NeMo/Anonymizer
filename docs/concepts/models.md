@@ -155,6 +155,18 @@ Reasoning models need a larger `max_tokens` than non-reasoning ones because hidd
 
 Roles you don't override keep their default alias selections, but those aliases must still exist in your `model_configs` pool.
 
+The rewrite role `entity_classifier` is an exception: when omitted, it uses your effective
+`disposition_analyzer` selection. It classifies custom explicit entity labels as direct or
+quasi-identifiers; records containing only default labels skip this LLM call. To select a
+separate classifier, add both aliases to your model pool and configure:
+
+```yaml
+selected_models:
+  rewrite:
+    disposition_analyzer: my-rewrite-model
+    entity_classifier: my-classification-model
+```
+
 !!! tip "Validate your config"
 
     Use [`anonymizer.validate_config(config)`](../reference/anonymizer/interface/anonymizer.md) (or [`anonymizer validate`](../reference/anonymizer/interface/cli/main.md) from the CLI) after changing model configs to catch alias mismatches before processing data.

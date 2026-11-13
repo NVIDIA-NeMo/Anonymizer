@@ -33,9 +33,41 @@ from anonymizer.engine.ndd.model_loader import (
     validate_model_alias_references,
     validate_model_configs_reference_providers,
 )
+from anonymizer.engine.schemas.rewrite import RawSensitivityDispositionSchema, StrictRawSensitivityDispositionSchema
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import InvalidConfigError
-from tests.skills.stub_endpoint import StubEndpoint
+from tests.skills.stub_endpoint import StubEndpoint, _structured_payload
+
+
+@pytest.mark.parametrize("schema", [RawSensitivityDispositionSchema, StrictRawSensitivityDispositionSchema])
+@pytest.mark.parametrize("include_latent", [False, True])
+def test_disposition_stub_uses_numbered_inventory_only(
+    schema: type[RawSensitivityDispositionSchema], include_latent: bool
+) -> None:
+    text = """Alice Smith, Bob Jones, and Paris appear here as unrelated prompt examples.
+<input>
+Tagged document: Alice Smith visited Paris.
+Explicit entities with stable IDs, labels, and values:
+{"id": 1, "label": "custom_name", "value": "Not in the stub vocabulary"}
+{"id": 2, "label": "custom_alias", "value": "Not in the stub vocabulary"}
+Categories for explicit entities:
+{}
+Latent entities with stable IDs, values, and supporting evidence:
+{"id": 3, "label": "relationship", "value": "parent"}
+</input>"""
+    if not include_latent:
+        text = text.replace('{"id": 3, "label": "relationship", "value": "parent"}', "(none)")
+    payload = _structured_payload(schema.model_json_schema(), text)
+    decisions = schema.model_validate(payload).sensitivity_disposition
+    assert [entry.id for entry in decisions] == ([1, 2, 3] if include_latent else [1, 2])
+    assert [entry.protection_method_suggestion for entry in decisions] == (
+        ["replace", "replace", "suppress_inference"] if include_latent else ["replace", "replace"]
+    )
+    assert all(
+        set(entry) == {"id", "sensitivity", "protection_method_suggestion", "low_sensitivity_reason"}
+        for entry in payload["sensitivity_disposition"]
+    )
+
 
 SKILL_MD = Path(
     os.environ.get("ANONYMIZER_SKILL_MD") or Path(__file__).resolve().parents[2] / "skills/anonymizer/SKILL.md"
