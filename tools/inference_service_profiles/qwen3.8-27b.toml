@@ -5,11 +5,9 @@ shutdown_timeout_seconds = 60
 
 [backend]
 kind = "vllm"
-served_model_name = "qwen3.8-27b"
-
-[backend.model]
-model_id = "Qwen/Qwen3.8-27B"
+model = "Qwen/Qwen3.8-27B"
 revision = "37561816e66b5b9153b1b64c10968c18c1e6f4a0"
+served_model_name = "qwen3.8-27b"
 
 [backend.options]
 reasoning-parser = "qwen3"

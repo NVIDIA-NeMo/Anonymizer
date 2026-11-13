@@ -5,11 +5,9 @@ shutdown_timeout_seconds = 60
 
 [backend]
 kind = "vllm"
-served_model_name = "gpt-oss-20b"
-
-[backend.model]
-model_id = "openai/gpt-oss-20b"
+model = "openai/gpt-oss-20b"
 revision = "6cee5e81ee83917806bbde320786a8fb61efebee"
+served_model_name = "gpt-oss-20b"
 
 [backend.options]
 reasoning-parser = "openai_gptoss"

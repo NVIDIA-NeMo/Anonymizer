@@ -71,9 +71,7 @@ def main() -> None:
         stdout_path="stdout.log",
         stderr_path="stderr.log",
     )
-    spec = models.ServiceSpec.model_validate(
-        {"backend": {"kind": "vllm", "model": {"model_id": "openai/gpt-oss-20b"}}, "port": 8000}
-    )
+    spec = models.ServiceSpec.model_validate({"backend": {"kind": "vllm", "model": "openai/gpt-oss-20b"}, "port": 8000})
     receipt = models.LaunchReceipt(plan=compiler.compile_spec(spec), launched_at=datetime.now(UTC), handle=handle)
 
     os.killpg(owned_pid, signal.SIGKILL)

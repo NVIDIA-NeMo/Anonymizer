@@ -5,11 +5,9 @@ shutdown_timeout_seconds = 60
 
 [backend]
 kind = "vllm"
-served_model_name = "gemma-4-26b-a4b-it"
-
-[backend.model]
-model_id = "google/gemma-4-26B-A4B-it"
+model = "google/gemma-4-26B-A4B-it"
 revision = "4d7ae4984b7db7de8f8457170b3f1a419ee76d52"
+served_model_name = "gemma-4-26b-a4b-it"
 
 [backend.options]
 reasoning-parser = "gemma4"

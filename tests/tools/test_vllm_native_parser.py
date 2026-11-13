@@ -14,7 +14,7 @@ from inference_service_compiler import compiler, launch_ownership, models, vllm_
 
 def spec(**backend: object) -> models.ServiceSpec:
     return models.ServiceSpec.model_validate(
-        {"backend": {"kind": "vllm", "model": {"model_id": "org/model", "revision": "pin"}} | backend, "port": 8123}
+        {"backend": {"kind": "vllm", "model": "org/model", "revision": "pin"} | backend, "port": 8123}
     )
 
 
@@ -62,7 +62,7 @@ def test_serve_arguments_put_tool_owned_options_before_profile_options() -> None
 
 
 def test_lora_adapter_is_served_under_its_name() -> None:
-    arguments = vllm_runtime.serve_arguments(spec(model={"model_id": "base", "adapter": {"path": "/a", "name": "p"}}))
+    arguments = vllm_runtime.serve_arguments(spec(model="base", adapter={"path": "/a", "name": "p"}))
     assert arguments[arguments.index("--enable-lora") + 1 :][:2] == ["--lora-modules", "p=/a"]
 
 

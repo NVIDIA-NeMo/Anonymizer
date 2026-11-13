@@ -42,8 +42,7 @@ TOKEN_SHA256 = "0" * 64
 def generation(*, backend: dict[str, object] | None = None, **fields: object) -> models.ServiceSpec:
     return models.ServiceSpec.model_validate(
         {
-            "backend": {"kind": "vllm", "model": {"model_id": "openai/gpt-oss-20b", "revision": "abc"}}
-            | (backend or {}),
+            "backend": {"kind": "vllm", "model": "openai/gpt-oss-20b", "revision": "abc"} | (backend or {}),
             "port": 8000,
             "startup_timeout_seconds": 3,
             "shutdown_timeout_seconds": 0.01,
@@ -120,7 +119,7 @@ def test_gliner2_plan_runs_the_native_server_through_its_isolated_environment() 
 
 
 def test_served_model_name_prefers_the_lora_adapter() -> None:
-    spec = generation(backend={"model": {"model_id": "base", "adapter": {"path": "/a", "name": "privacy"}}})
+    spec = generation(backend={"model": "base", "adapter": {"path": "/a", "name": "privacy"}})
     assert compiler.compile_spec(spec).served_model_name == "privacy"
 
 
@@ -701,7 +700,7 @@ def test_real_cli_compile_validate_connection_and_tampered_plan(tmp_path: Path) 
     profile = tmp_path / "profile.toml"
     profile.write_text(
         f'python_executable = "{sys.executable}"\nport = 8123\n'
-        '[backend]\nkind = "vllm"\n[backend.model]\nmodel_id = "model"\n'
+        '[backend]\nkind = "vllm"\nmodel = "model"\n'
         "[backend.options]\nenable-prefix-caching = false\n"
     )
     plan_path = tmp_path / "plan.json"
@@ -740,7 +739,7 @@ def test_real_cli_authenticated_lifecycle(tmp_path: Path) -> None:
     profile.write_text(
         f'python_executable = "{serving / "bin/python"}"\napi_key_env = "LOCAL_KEY"\n'
         f"port = {port}\nstartup_timeout_seconds = 10\nshutdown_timeout_seconds = 0.1\n"
-        '[backend]\nkind = "vllm"\n[backend.model]\nmodel_id = "openai/gpt-oss-20b"\n'
+        '[backend]\nkind = "vllm"\nmodel = "openai/gpt-oss-20b"\n'
     )
     plan, receipt = tmp_path / "plan.json", tmp_path / "receipt.json"
     env = os.environ | {"LOCAL_KEY": "private-secret", "PYTHONPATH": "/foreign", "VIRTUAL_ENV": "/foreign"}

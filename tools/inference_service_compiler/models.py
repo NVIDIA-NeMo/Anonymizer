@@ -61,19 +61,15 @@ class LoraAdapter(FrozenModel):
     name: str = Field(min_length=1)
 
 
-class HuggingFaceModel(FrozenModel):
-    """A Hugging Face model identifier and optional immutable revision."""
-
-    model_id: str = Field(min_length=1)
-    revision: str | None = Field(default=None, min_length=1)
-    adapter: LoraAdapter | None = None
-
-
 class VllmBackend(FrozenModel):
     """vLLM's OpenAI-compatible server for a generation model."""
 
     kind: Literal["vllm"] = "vllm"
-    model: HuggingFaceModel
+    model: str = Field(min_length=1)
+    """Hugging Face model ID."""
+    revision: str | None = Field(default=None, min_length=1)
+    """Immutable model revision, also used for the tokenizer."""
+    adapter: LoraAdapter | None = None
     served_model_name: str | None = Field(default=None, min_length=1)
     options: dict[str, OptionValue] = Field(default_factory=dict)
     """vLLM serve options by their long flag name without dashes, e.g. ``max-model-len``."""
@@ -97,9 +93,9 @@ class VllmBackend(FrozenModel):
     @property
     def model_name(self) -> str:
         """Return the model ID that the endpoint serves."""
-        if self.model.adapter is not None:
-            return self.model.adapter.name
-        return self.served_model_name or self.model.model_id
+        if self.adapter is not None:
+            return self.adapter.name
+        return self.served_model_name or self.model
 
 
 class Gliner2Backend(FrozenModel):

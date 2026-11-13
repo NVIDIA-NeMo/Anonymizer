@@ -49,14 +49,13 @@ def option_tokens(options: Mapping[str, OptionValue]) -> list[str]:
 def serve_arguments(spec: ServiceSpec) -> list[str]:
     """Return the complete vLLM argv for a vLLM spec, tool-owned options first."""
     backend = _vllm_backend(spec)
-    model = backend.model
-    tokens = [f"--model={model.model_id}", f"--host={spec.host}", f"--port={spec.port}"]
-    if model.revision is not None:
-        tokens += [f"--revision={model.revision}", f"--tokenizer-revision={model.revision}"]
+    tokens = [f"--model={backend.model}", f"--host={spec.host}", f"--port={spec.port}"]
+    if backend.revision is not None:
+        tokens += [f"--revision={backend.revision}", f"--tokenizer-revision={backend.revision}"]
     if backend.served_model_name is not None:
         tokens += ["--served-model-name", backend.served_model_name]
-    if model.adapter is not None:
-        tokens += ["--enable-lora", "--lora-modules", f"{model.adapter.name}={model.adapter.path}"]
+    if backend.adapter is not None:
+        tokens += ["--enable-lora", "--lora-modules", f"{backend.adapter.name}={backend.adapter.path}"]
     tokens.append(f"--middleware={LAUNCH_OWNERSHIP_MIDDLEWARE}")
     return [*tokens, *option_tokens(backend.options)]
 

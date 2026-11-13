@@ -117,9 +117,9 @@ A v3 profile sets the endpoint at the top level and the serving backend in
 - Top level: `schema_version = "inference-service.spec/v3"`, `port` (1024 or
   higher), optional `host` (default `127.0.0.1`), `python_executable`,
   `api_key_env`, `startup_timeout_seconds`, and `shutdown_timeout_seconds`.
-- `[backend]` with `kind = "vllm"`: `served_model_name`, `[backend.model]`
-  (model ID, pinned revision, optional LoRA adapter), `[backend.options]`, and
-  `[backend.probe_extra_body]`.
+- `[backend]` with `kind = "vllm"`: `model` (Hugging Face model ID), `revision`
+  (pinned commit), `served_model_name`, optional `[backend.adapter]` (LoRA
+  `path` and `name`), `[backend.options]`, and `[backend.probe_extra_body]`.
 - `[backend]` with `kind = "gliner2"`: `device` (`auto`, `cuda`, `mps`, or `cpu`).
 
 `[backend.options]` supplies vLLM serve options by their long flag names, such

@@ -5,11 +5,9 @@ shutdown_timeout_seconds = 60
 
 [backend]
 kind = "vllm"
-served_model_name = "qwen3-30b-a3b-instruct"
-
-[backend.model]
-model_id = "Qwen/Qwen3-30B-A3B-Instruct-2507"
+model = "Qwen/Qwen3-30B-A3B-Instruct-2507"
 revision = "0d7cf23991f47feeb3a57ecb4c9cee8ea4a17bfe"
+served_model_name = "qwen3-30b-a3b-instruct"
 
 [backend.options]
 gpu-memory-utilization = 0.90
