@@ -24,7 +24,7 @@ from anonymizer.engine.local_inference.gliner2.backend import (
     flatten_result,
     overlap_policy,
 )
-from anonymizer.engine.local_inference.gliner2.contract import DetectedEntity, Label, OverlapPolicy, Span
+from anonymizer.engine.local_inference.gliner2.contract import DetectedEntity, Device, Label, OverlapPolicy, Span
 
 
 def _split_words(text: str, lower: bool = True) -> Iterator[tuple[str, int, int]]:
@@ -73,7 +73,7 @@ def test_flatten_result_converts_label_keyed_entities() -> None:
     ]
 
 
-def test_overlap_policy_preserves_existing_flat_flag_contract() -> None:
+def test_flat_ner_maps_to_disallow_overlap_policy() -> None:
     assert overlap_policy(True) == "disallow"
     assert overlap_policy(False) == "longest"
 
@@ -462,9 +462,10 @@ def _patch_loading(monkeypatch: pytest.MonkeyPatch, flash_error: Exception | Non
     return loads
 
 
-def test_cuda_default_loads_float32_with_standard_attention(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("device", ["cuda", "cpu"])
+def test_default_loads_float32_with_standard_attention(monkeypatch: pytest.MonkeyPatch, device: Device) -> None:
     loads = _patch_loading(monkeypatch, flash_error=None)
-    loaded = backend.load_model("cuda")
+    loaded = backend.load_model(device)
     assert (loaded.dtype, loaded.attention) == ("float32", "standard")
     assert not cast(_LoadableModel, loaded.model).flash_enabled
     assert loads == ["float32"]
@@ -488,11 +489,3 @@ def test_flash_that_cannot_load_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_loading(monkeypatch, flash_error=ImportError("no disentangled_flash"))
     with pytest.raises(RuntimeError, match=backend.ATTENTION_ENV):
         backend.load_model("cuda", attention="disentangled_flash")
-
-
-def test_cpu_default_is_float32_standard_attention(monkeypatch: pytest.MonkeyPatch) -> None:
-    loads = _patch_loading(monkeypatch, flash_error=None)
-    loaded = backend.load_model("cpu")
-    assert (loaded.dtype, loaded.attention) == ("float32", "standard")
-    assert not cast(_LoadableModel, loaded.model).flash_enabled
-    assert loads == ["float32"]

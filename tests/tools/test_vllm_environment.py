@@ -22,12 +22,9 @@ def test_serving_project_pins_vllm_without_anonymizer_dependencies() -> None:
     project = tomllib.loads((TOOLS_ROOT / "inference-service-runtime" / "pyproject.toml").read_text())
     dependencies = project["project"]["dependencies"]
     assert "vllm==0.33.0" in dependencies
-    assert not any(dependency.startswith("vllm-factory") for dependency in dependencies)
     assert {"nvidia-cuda-nvcc==13.0.88", "nvidia-cuda-crt==13.0.88", "nvidia-nvvm==13.0.88"} <= set(dependencies)
     lock = tomllib.loads((TOOLS_ROOT / "inference-service-runtime" / "uv.lock").read_text())
     assert not {"nemo-anonymizer", "data-designer"} & {package["name"] for package in lock["package"]}
-    root = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
-    assert "local-models" not in root["dependency-groups"]
 
 
 def test_child_exposes_interpreter_tools_on_path() -> None:

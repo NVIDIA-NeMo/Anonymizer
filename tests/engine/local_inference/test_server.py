@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import importlib
 import json
 import os
 import socket
@@ -166,26 +165,22 @@ def test_default_inference_batch_size_is_32() -> None:
 
 
 def test_launch_ownership_constants_match_the_managed_tool_contract() -> None:
+    from inference_service_compiler import backends, launch_ownership, models
+
     assert server.LAUNCH_TOKEN_ENVIRONMENT_VARIABLE == "ANONYMIZER_INFERENCE_LAUNCH_TOKEN"
     assert server.LAUNCH_OWNERSHIP_HEADER == "X-Anonymizer-Launch-Token"
     assert server.LAUNCH_OWNERSHIP_PATH == "/_anonymizer/launch-ownership"
     assert server.LAUNCH_OWNERSHIP_PROOF_FIELD == "launch_token_sha256"
-    tool = None
-    for name in ("inference_service_compiler.launch_ownership", "inference_service_compiler.lifecycle"):
-        try:
-            tool = importlib.import_module(name)
-        except ModuleNotFoundError:
-            continue
-        if hasattr(tool, "LAUNCH_OWNERSHIP_PATH"):
-            break
-    assert tool is not None, "managed-tool launch-ownership module not found"
     for constant in (
         "LAUNCH_TOKEN_ENVIRONMENT_VARIABLE",
         "LAUNCH_OWNERSHIP_HEADER",
         "LAUNCH_OWNERSHIP_PATH",
         "LAUNCH_OWNERSHIP_PROOF_FIELD",
     ):
-        assert getattr(server, constant) == getattr(tool, constant), constant
+        assert getattr(server, constant) == getattr(launch_ownership, constant), constant
+    assert models.GLINER2_MODEL_ID == MODEL_ID
+    assert backends.GLINER2_TOKEN_ENV == server.TOKEN_ENV
+    assert backends.GLINER2_DEVICE_ENV == server.DEVICE_ENV
 
 
 def test_launch_ownership_proves_the_inherited_token(monkeypatch: pytest.MonkeyPatch) -> None:
