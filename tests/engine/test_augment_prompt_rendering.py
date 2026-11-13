@@ -57,6 +57,31 @@ def test_missing_data_summary_is_omitted() -> None:
     assert "Data summary: legal filings" in _get_augment_prompt(data_summary="legal filings", labels=["city"])
 
 
+def _validation_example_decisions(labels: list[str], excluded: list[str]) -> dict[str, dict[str, str]]:
+    prompt = _get_validation_prompt(data_summary=None, labels=labels, excluded_entity_labels=excluded)
+    output = next(line for line in prompt.splitlines() if line.startswith('Output: {"decisions"'))
+    return {item["id"]: item for item in json.loads(output.removeprefix("Output: "))["decisions"]}
+
+
+@pytest.mark.parametrize(
+    ("labels", "excluded"),
+    [
+        (["first_name", "age", "city", "state"], ["age", "city"]),
+        (["first_name", "state"], []),
+        (["email"], []),
+    ],
+)
+def test_validator_example_never_keeps_or_reclasses_to_unpermitted_labels(
+    labels: list[str], excluded: list[str]
+) -> None:
+    permitted = set(labels) - set(excluded)
+    decisions = _validation_example_decisions(labels, excluded)
+
+    assert all(d["proposed_label"] in permitted for d in decisions.values() if d["decision"] == "reclass")
+    assert decisions["c3"]["decision"] == ("keep" if "age" in permitted else "drop")
+    assert decisions["c4"]["decision"] == ("reclass" if "city" in permitted else "drop")
+
+
 @pytest.mark.parametrize("strict", [False, True])
 def test_augment_prompt_has_no_unfilled_placeholders(strict: bool) -> None:
     prompt = _get_augment_prompt(data_summary=None, labels=["first_name"], strict_labels=strict)

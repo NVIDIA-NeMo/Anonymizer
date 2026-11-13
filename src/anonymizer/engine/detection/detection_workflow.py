@@ -757,7 +757,7 @@ Input text: My ((SENSITIVE:first_name|name)) is ((SENSITIVE:first_name|Amy)), ((
 Input text: My <<SENSITIVE:first_name>>name<</SENSITIVE:first_name>> is <<SENSITIVE:first_name>>Amy<</SENSITIVE:first_name>>, <<SENSITIVE:age>>35<</SENSITIVE:age>> in <<SENSITIVE:NAGROUP_g1>>San Diego<</SENSITIVE:NAGROUP_g1>>, <<SENSITIVE:state>>California<</SENSITIVE:state>>.
 {%- endif -%}
 Template: {"decisions": [{"id": "c1", "conflict_group_id": null, "value": "name", "label": "first_name", "start_position": 3, "end_position": 7, "decision": null, "proposed_label": null, "reason": null}, {"id": "c2", "conflict_group_id": null, "value": "Amy", "label": "first_name", "start_position": 11, "end_position": 14, "decision": null, "proposed_label": null, "reason": null}, {"id": "c3", "conflict_group_id": null, "value": "35", "label": "age", "start_position": 16, "end_position": 18, "decision": null, "proposed_label": null, "reason": null}, {"id": "c4", "conflict_group_id": "g1", "value": "San Diego", "label": "country", "start_position": 22, "end_position": 31, "decision": null, "proposed_label": null, "reason": null}, {"id": "c5", "conflict_group_id": "g1", "value": "Diego", "label": "first_name", "start_position": 26, "end_position": 31, "decision": null, "proposed_label": null, "reason": null}, {"id": "c6", "conflict_group_id": null, "value": "California", "label": "state", "start_position": 33, "end_position": 43, "decision": null, "proposed_label": null, "reason": null}]}
-Output: {"decisions": [{"id": "c1", "decision": "drop", "proposed_label": "", "reason": "placeholder not actual name"}, {"id": "c2", "decision": "keep", "proposed_label": "", "reason": "real first name"}, {"id": "c3", "decision": "keep", "proposed_label": "", "reason": "age quasi-identifier"}, {"id": "c4", "decision": "reclass", "proposed_label": "city", "reason": "city not country"}, {"id": "c5", "decision": "drop", "proposed_label": "", "reason": "part of the city name, not a person"}, {"id": "c6", "decision": "keep", "proposed_label": "", "reason": "state quasi-identifier"}]}
+Output: <<VALIDATION_EXAMPLE_OUTPUT>>
 
 ---
 Input text: <<TAGGED_TEXT>>
@@ -791,6 +791,7 @@ Template: <<VALIDATION_SKELETON>>
         prompt,
         {
             "<<EXCLUDED_DROP>>": excluded_drop,
+            "<<VALIDATION_EXAMPLE_OUTPUT>>": _validation_example_output(labels=labels, excluded=set(excluded)),
             "<<TAG_NOTATION>>": COL_TAG_NOTATION,
             "<<TAGGED_TEXT>>": _jinja(VALIDATION_EXCERPT_VAR),
             "<<VALIDATION_SKELETON>>": _jinja(COL_VALIDATION_SKELETON),
@@ -802,6 +803,31 @@ Template: <<VALIDATION_SKELETON>>
             "<<DATA_SUMMARY>>": context_section,
         },
     )
+
+
+# Validator worked example: (id, label the decision depends on, decision, proposed_label, reason).
+_VALIDATION_EXAMPLE_DECISIONS: tuple[tuple[str, str | None, str, str, str], ...] = (
+    ("c1", None, "drop", "", "placeholder not actual name"),
+    ("c2", "first_name", "keep", "", "real first name"),
+    ("c3", "age", "keep", "", "age quasi-identifier"),
+    ("c4", "city", "reclass", "city", "city not country"),
+    ("c5", None, "drop", "", "part of the city name, not a person"),
+    ("c6", "state", "keep", "", "state quasi-identifier"),
+)
+
+
+def _validation_example_output(*, labels: list[str], excluded: set[str]) -> str:
+    """Example decisions that never keep or reclass to a label the prompt does not permit."""
+    permitted = set(labels) - excluded
+    decisions = []
+    for decision_id, needs, decision, proposed, reason in _VALIDATION_EXAMPLE_DECISIONS:
+        if needs is not None and needs not in permitted:
+            decision, proposed, reason = "drop", "", f"{needs} is not an allowed label here"
+        decisions.append({"id": decision_id, "decision": decision, "proposed_label": proposed, "reason": reason})
+    output = json.dumps({"decisions": decisions}, ensure_ascii=False)
+    if all(item["decision"] == "drop" for item in decisions):
+        return f"{output}\n(None of these labels is allowed here, so every candidate is dropped.)"
+    return output
 
 
 _AUGMENT_EXAMPLE_TEXT = "Jane Doe lives in Santa Clara. She works full-time."
