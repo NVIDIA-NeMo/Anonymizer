@@ -37,7 +37,7 @@ def test_native_factory_uses_inputs_validated_before_runtime_acquisition(
     provider_path.write_text(
         json.dumps({"providers": [{"name": "custom", "endpoint": "https://example.test/v1", "api_key": "KEY"}]})
     )
-    runtime = controller._LocalRuntime(Mock(), "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
+    runtime = controller._LocalRuntime(Mock(), "http://127.0.0.1:1234/v1", "cpu", "auto", "token")
 
     @contextmanager
     def acquire(device: str, dtype: str) -> Iterator[controller._LocalRuntime]:
@@ -230,7 +230,7 @@ def test_native_factory_preserves_word_chunk_defaults(tmp_path: Path, monkeypatc
         process=Mock(),
         endpoint="http://127.0.0.1:1234/v1",
         requested_device="cpu",
-        selected_device="cpu",
+        requested_dtype="auto",
         token="token",
     )
     from contextlib import nullcontext
@@ -261,7 +261,7 @@ def test_session_builds_real_client_and_preserves_configuration(tmp_path: Path) 
 
     process = Mock()
     process.poll.return_value = None
-    candidate = controller._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
+    candidate = controller._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "auto", "token")
     provider = ModelProvider(name="custom", endpoint="https://example.test/v1", api_key="CUSTOM_KEY")
     source = json.dumps({"model_configs": [{"alias": "custom-llm", "model": "test/llm", "provider": "custom"}]})
     run_config = anonymizer.RunConfig(buffer_size=123)
@@ -295,10 +295,10 @@ def test_session_cleans_up_when_client_construction_fails(monkeypatch: pytest.Mo
     monkeypatch.setenv(controller.LOCAL_TOKEN_ENV, "original")
     process = Mock()
     process.poll.return_value = None
-    candidate = controller._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
+    candidate = controller._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "auto", "token")
 
     def start(_: str, __: str = "auto") -> controller._LocalRuntime:
-        controller._set_token_environment("token")
+        controller._registry.set_token("token")
         return candidate
 
     with (
@@ -327,7 +327,7 @@ def test_native_dtype_reaches_the_runtime_for_both_construction_paths(monkeypatc
 
     from anonymizer.engine.local_inference import runtime as _runtime
 
-    runtime = _runtime._LocalRuntime(Mock(), "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
+    runtime = _runtime._LocalRuntime(Mock(), "http://127.0.0.1:1234/v1", "cpu", "auto", "token")
     requests: list[tuple[str, str]] = []
 
     def acquire(device: str, dtype: str) -> object:

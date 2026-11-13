@@ -9,12 +9,12 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from data_designer.config.models import ModelProvider
 from pydantic import BaseModel, ConfigDict, Field
 
-from anonymizer.engine.local_inference.gliner2.contract import DtypeRequest
+from anonymizer.engine.local_inference.gliner2.contract import DeviceRequest, DtypeRequest
 from anonymizer.engine.ndd.model_loader import parse_model_configs, parse_model_providers
 
 if TYPE_CHECKING:
@@ -32,7 +32,7 @@ class NativeGliner(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
+    device: DeviceRequest = "auto"
     dtype: DtypeRequest = "auto"
 
 
@@ -148,9 +148,7 @@ class NativeRuntimeSession:
 
 
 @contextmanager
-def native_runtime(
-    *, device: Literal["auto", "cpu", "cuda", "mps"] = "auto", dtype: DtypeRequest = "auto"
-) -> Iterator[NativeRuntimeSession]:
+def native_runtime(*, device: DeviceRequest = "auto", dtype: DtypeRequest = "auto") -> Iterator[NativeRuntimeSession]:
     """Run native GLiNER for the duration of a client session.
 
     An existing singleton is borrowed and remains running after exit. Nested

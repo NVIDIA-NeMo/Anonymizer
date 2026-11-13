@@ -13,7 +13,7 @@ import httpx
 import pytest
 
 from anonymizer.engine.local_inference import runtime as _runtime
-from anonymizer.engine.local_inference.gliner2.contract import DtypeRequest
+from anonymizer.engine.local_inference.gliner2.contract import DeviceRequest, DtypeRequest
 
 
 def test_isolated_server_environment_requires_gliner2_local_and_flash_extras() -> None:
@@ -70,7 +70,7 @@ def test_start_runtime_passes_reserved_listener_to_child(tmp_path: Path) -> None
     assert popen.call_args.kwargs["pass_fds"] == (listener_fd,)
     assert listener.fileno() == -1
     assert runtime.endpoint.startswith("http://127.0.0.1:")
-    _runtime._restore_token_environment()
+    _runtime._registry.restore_token()
 
 
 def test_stop_local_runtime_is_idempotent() -> None:
@@ -81,18 +81,18 @@ def test_stop_local_runtime_is_idempotent() -> None:
 def test_stop_restores_token_when_process_remains_after_kill(monkeypatch: pytest.MonkeyPatch) -> None:
     _runtime.stop_local_runtime()
     monkeypatch.delenv(_runtime.LOCAL_TOKEN_ENV, raising=False)
-    _runtime._set_token_environment("generated-token")
+    _runtime._registry.set_token("generated-token")
     process = Mock()
     process.poll.return_value = None
     process.wait.side_effect = [
         subprocess.TimeoutExpired(cmd="gliner2", timeout=10.0),
         subprocess.TimeoutExpired(cmd="gliner2", timeout=10.0),
     ]
-    _runtime._runtime = _runtime._LocalRuntime(
+    _runtime._registry.runtime = _runtime._LocalRuntime(
         process=process,
         endpoint="http://127.0.0.1:1234/v1",
         requested_device="auto",
-        selected_device="starting",
+        requested_dtype="auto",
         token="generated-token",
     )
 
@@ -101,24 +101,19 @@ def test_stop_restores_token_when_process_remains_after_kill(monkeypatch: pytest
     process.terminate.assert_called_once_with()
     process.kill.assert_called_once_with()
     assert _runtime.LOCAL_TOKEN_ENV not in _runtime.os.environ
-    assert _runtime._runtime is None
+    assert _runtime._registry.runtime is None
 
 
 def test_failed_runtime_joins_log_reader_before_tail_is_read() -> None:
     process = Mock()
     process.poll.return_value = 0
     log_thread = Mock()
-    runtime = _runtime._LocalRuntime(
-        process=process,
-        endpoint="http://127.0.0.1:1234/v1",
-        requested_device="auto",
-        selected_device="starting",
-        token="generated-token",
-        log_thread=log_thread,
-    )
+    log = _runtime._LogTail()
+    log._thread = log_thread
+    runtime = _runtime._LocalRuntime(process, "http://127.0.0.1:1234/v1", "auto", "auto", "generated-token", log)
 
-    _runtime._stop_failed_runtime(runtime)
-    tail = _runtime._format_log_tail(runtime)
+    _runtime._stop_process(runtime, timeout=2.0)
+    tail = runtime.log.text()
 
     assert log_thread.join.call_count == 2
     log_thread.join.assert_called_with(timeout=1.0)
@@ -129,9 +124,9 @@ def test_repeated_token_assignment_restores_original_absence(monkeypatch: pytest
     _runtime.stop_local_runtime()
     monkeypatch.delenv(_runtime.LOCAL_TOKEN_ENV, raising=False)
 
-    _runtime._set_token_environment("first-generated-token")
-    _runtime._set_token_environment("replacement-generated-token")
-    _runtime._restore_token_environment()
+    _runtime._registry.set_token("first-generated-token")
+    _runtime._registry.set_token("replacement-generated-token")
+    _runtime._registry.restore_token()
 
     assert _runtime.LOCAL_TOKEN_ENV not in _runtime.os.environ
 
@@ -145,12 +140,12 @@ def test_interrupted_startup_stops_candidate_and_restores_token(monkeypatch: pyt
         process=process,
         endpoint="http://127.0.0.1:1234/v1",
         requested_device="auto",
-        selected_device="starting",
+        requested_dtype="auto",
         token="generated-token",
     )
 
     def start_runtime(_: str, __: str = "auto") -> _runtime._LocalRuntime:
-        _runtime._set_token_environment(candidate.token)
+        _runtime._registry.set_token(candidate.token)
         return candidate
 
     with (
@@ -158,12 +153,12 @@ def test_interrupted_startup_stops_candidate_and_restores_token(monkeypatch: pyt
         patch("anonymizer.engine.local_inference.runtime._wait_until_ready", side_effect=KeyboardInterrupt),
         pytest.raises(KeyboardInterrupt),
     ):
-        _runtime._ensure_runtime("auto")
+        _runtime._registry.ensure("auto", "auto")
 
     process.terminate.assert_called_once_with()
     process.wait.assert_called_once_with(timeout=2.0)
     assert _runtime.LOCAL_TOKEN_ENV not in _runtime.os.environ
-    assert _runtime._runtime is None
+    assert _runtime._registry.runtime is None
 
 
 def _model_card_response(**changes: str) -> httpx.Response:
@@ -185,7 +180,7 @@ def _starting_runtime() -> _runtime._LocalRuntime:
         process=Mock(),
         endpoint="http://127.0.0.1:1234/v1",
         requested_device="auto",
-        selected_device="starting",
+        requested_dtype="auto",
         token="secret",
     )
 
@@ -221,10 +216,10 @@ def test_scoped_runtime_owns_process_until_last_context(monkeypatch: pytest.Monk
     monkeypatch.setenv(_runtime.LOCAL_TOKEN_ENV, "original")
     process = Mock()
     process.poll.return_value = None
-    candidate = _runtime._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
+    candidate = _runtime._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "auto", "token")
 
     def start(_: str, __: str = "auto") -> _runtime._LocalRuntime:
-        _runtime._set_token_environment(candidate.token)
+        _runtime._registry.set_token(candidate.token)
         return candidate
 
     with (
@@ -249,8 +244,8 @@ def test_scoped_runtime_borrows_existing_singleton() -> None:
     _runtime.stop_local_runtime()
     process = Mock()
     process.poll.return_value = None
-    candidate = _runtime._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
-    _runtime._runtime = candidate
+    candidate = _runtime._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "auto", "token")
+    _runtime._registry.runtime = candidate
     try:
         with patch.object(_runtime, "_verify_readiness"):
             with _runtime.runtime_context("cpu") as runtime:
@@ -268,14 +263,14 @@ def test_start_failure_restores_credentials(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv(_runtime.LOCAL_TOKEN_ENV, "original")
 
     def fail_start(_: str, __: str = "auto") -> _runtime._LocalRuntime:
-        _runtime._set_token_environment("temporary")
+        _runtime._registry.set_token("temporary")
         raise OSError("startup failed")
 
     with patch.object(_runtime, "_start_runtime", side_effect=fail_start), pytest.raises(OSError, match="startup"):
         with _runtime.runtime_context("cpu"):
             pass
     assert _runtime.os.environ[_runtime.LOCAL_TOKEN_ENV] == "original"
-    assert _runtime._runtime is None
+    assert _runtime._registry.runtime is None
 
 
 def test_exit_cleanup_stops_runtime_with_active_context(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -283,18 +278,18 @@ def test_exit_cleanup_stops_runtime_with_active_context(monkeypatch: pytest.Monk
     monkeypatch.setenv(_runtime.LOCAL_TOKEN_ENV, "original")
     process = Mock()
     process.poll.return_value = None
-    candidate = _runtime._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
+    candidate = _runtime._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "auto", "token")
 
     def start(_: str, __: str = "auto") -> _runtime._LocalRuntime:
-        _runtime._set_token_environment(candidate.token)
+        _runtime._registry.set_token(candidate.token)
         return candidate
 
     with patch.object(_runtime, "_start_runtime", side_effect=start), patch.object(_runtime, "_wait_until_ready"):
         with _runtime.runtime_context("cpu"):
-            _runtime._shutdown_runtime()
+            _runtime._registry.shutdown()
             process.terminate.assert_called_once()
             assert _runtime.os.environ[_runtime.LOCAL_TOKEN_ENV] == "original"
-            assert _runtime._runtime is None
+            assert _runtime._registry.runtime is None
     process.terminate.assert_called_once()
 
 
@@ -309,13 +304,13 @@ def test_dead_runtime_is_not_replaced_during_active_context(
     for process in processes:
         process.poll.return_value = None
     candidates = [
-        _runtime._LocalRuntime(processes[0], "http://127.0.0.1:1111/v1", "cpu", "cpu", "first"),
-        _runtime._LocalRuntime(processes[1], "http://127.0.0.1:2222/v1", "cpu", "cpu", "second"),
+        _runtime._LocalRuntime(processes[0], "http://127.0.0.1:1111/v1", "cpu", "auto", "first"),
+        _runtime._LocalRuntime(processes[1], "http://127.0.0.1:2222/v1", "cpu", "auto", "second"),
     ]
 
     def start(_: str, __: str = "auto") -> _runtime._LocalRuntime:
         candidate = candidates[start_mock.call_count - 1]
-        _runtime._set_token_environment(candidate.token)
+        _runtime._registry.set_token(candidate.token)
         return candidate
 
     try:
@@ -339,12 +334,12 @@ def test_dead_runtime_is_not_replaced_during_active_context(
                 assert error is not None
                 assert "context" in str(error)
                 assert start_mock.call_count == 1
-                assert _runtime._runtime is outer is candidates[0]
+                assert _runtime._registry.runtime is outer is candidates[0]
                 assert _runtime.os.environ[_runtime.LOCAL_TOKEN_ENV] == "first"
-                assert _runtime._context_count == 1
-                assert _runtime._context_owned is not borrowed
-            assert _runtime._context_count == 0
-            assert not _runtime._context_owned
+                assert _runtime._registry.context_count == 1
+                assert _runtime._registry.context_owned is not borrowed
+            assert _runtime._registry.context_count == 0
+            assert not _runtime._registry.context_owned
             with _runtime.runtime_context("cpu") as fresh:
                 assert fresh is candidates[1]
                 assert start_mock.call_count == 2
@@ -359,9 +354,9 @@ def test_child_exit_during_nested_acquisition_never_replaces_runtime(alive_obser
     _runtime.stop_local_runtime()
     process = Mock()
     process.poll.return_value = None
-    existing = _runtime._LocalRuntime(process, "http://127.0.0.1:1111/v1", "cpu", "cpu", "old")
-    replacement = _runtime._LocalRuntime(Mock(), "http://127.0.0.1:2222/v1", "cpu", "cpu", "new")
-    _runtime._runtime = existing
+    existing = _runtime._LocalRuntime(process, "http://127.0.0.1:1111/v1", "cpu", "auto", "old")
+    replacement = _runtime._LocalRuntime(Mock(), "http://127.0.0.1:2222/v1", "cpu", "auto", "new")
+    _runtime._registry.runtime = existing
     try:
         with (
             patch.object(_runtime, "_verify_readiness"),
@@ -387,29 +382,29 @@ def test_replacement_during_first_acquisition_is_owned_and_stopped(monkeypatch: 
     old_process, new_process = Mock(), Mock()
     old_process.poll.return_value = None
     new_process.poll.return_value = None
-    old = _runtime._LocalRuntime(old_process, "http://127.0.0.1:1111/v1", "cpu", "cpu", "old")
-    new = _runtime._LocalRuntime(new_process, "http://127.0.0.1:2222/v1", "cpu", "cpu", "new")
-    _runtime._runtime = old
-    ensure_runtime = _runtime._ensure_runtime
+    old = _runtime._LocalRuntime(old_process, "http://127.0.0.1:1111/v1", "cpu", "auto", "old")
+    new = _runtime._LocalRuntime(new_process, "http://127.0.0.1:2222/v1", "cpu", "auto", "new")
+    _runtime._registry.runtime = old
+    ensure_runtime = _runtime._registry.ensure
 
-    def acquire_after_exit(device: str, dtype: DtypeRequest = "auto") -> _runtime._LocalRuntime:
+    def acquire_after_exit(device: DeviceRequest, dtype: DtypeRequest = "auto") -> _runtime._LocalRuntime:
         old_process.poll.return_value = 1
         return ensure_runtime(device, dtype)
 
     def start(_: str, __: str = "auto") -> _runtime._LocalRuntime:
-        _runtime._set_token_environment(new.token)
+        _runtime._registry.set_token(new.token)
         return new
 
     try:
         with (
-            patch.object(_runtime, "_ensure_runtime", side_effect=acquire_after_exit),
+            patch.object(_runtime._registry, "ensure", side_effect=acquire_after_exit),
             patch.object(_runtime, "_start_runtime", side_effect=start),
             patch.object(_runtime, "_wait_until_ready"),
         ):
             with _runtime.runtime_context("cpu") as runtime:
                 assert runtime is new
             new_process.terminate.assert_called_once()
-            assert _runtime._runtime is None
+            assert _runtime._registry.runtime is None
             assert _runtime.os.environ[_runtime.LOCAL_TOKEN_ENV] == "original"
     finally:
         _runtime.stop_local_runtime()
@@ -446,13 +441,13 @@ def test_installer_uses_uv_when_the_environment_has_no_pip(monkeypatch: pytest.M
 def _running_runtime(dtype: DtypeRequest) -> _runtime._LocalRuntime:
     process = Mock()
     process.poll.return_value = None
-    return _runtime._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "cpu", "token", requested_dtype=dtype)
+    return _runtime._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", dtype, "token")
 
 
 def test_a_different_dtype_is_not_served_by_a_running_runtime() -> None:
     _runtime.stop_local_runtime()
     running = _running_runtime("bfloat16")
-    _runtime._runtime = running
+    _runtime._registry.runtime = running
     try:
         with patch.object(_runtime, "_verify_readiness"):
             with _runtime.runtime_context("cpu", "bfloat16") as borrowed:
@@ -464,14 +459,14 @@ def test_a_different_dtype_is_not_served_by_a_running_runtime() -> None:
             with _runtime.runtime_context("cpu", "float32"):
                 pass
     finally:
-        _runtime._runtime = None
+        _runtime._registry.runtime = None
 
 
 def test_a_different_dtype_replaces_an_idle_singleton() -> None:
     _runtime.stop_local_runtime()
     old = _running_runtime("bfloat16")
     new = _running_runtime("float32")
-    _runtime._runtime = old
+    _runtime._registry.runtime = old
     try:
         with (
             patch.object(_runtime, "_start_runtime", return_value=new) as start,
@@ -482,7 +477,7 @@ def test_a_different_dtype_replaces_an_idle_singleton() -> None:
         start.assert_called_once_with("cpu", "float32")
         cast(Mock, old.process).terminate.assert_called_once()
     finally:
-        _runtime._runtime = None
+        _runtime._registry.runtime = None
 
 
 @pytest.mark.parametrize(
@@ -511,4 +506,4 @@ def test_start_runtime_gives_an_explicit_dtype_precedence_over_the_environment(
         runtime = _runtime._start_runtime("cpu", requested)
     assert popen.call_args.kwargs["env"].get(_runtime._DTYPE_ENV) == expected
     assert runtime.requested_dtype == requested
-    _runtime._restore_token_environment()
+    _runtime._registry.restore_token()

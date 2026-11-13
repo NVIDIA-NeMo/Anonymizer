@@ -20,7 +20,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO
@@ -28,7 +28,7 @@ from typing import IO
 import httpx
 
 from anonymizer.engine.local_inference.gliner2 import MODEL_ID, MODEL_REVISION
-from anonymizer.engine.local_inference.gliner2.contract import DtypeRequest, ModelCard, ModelList
+from anonymizer.engine.local_inference.gliner2.contract import DeviceRequest, DtypeRequest, ModelCard, ModelList
 
 LOCAL_TOKEN_ENV = "ANONYMIZER_LOCAL_GLINER2_TOKEN"
 
@@ -50,154 +50,228 @@ _SERVER_REQUIREMENTS = (
 )
 
 
-@dataclass
+class _LogTail:
+    """The last lines of the child's combined output, read by a daemon thread."""
+
+    def __init__(self) -> None:
+        self._lines: deque[str] = deque(maxlen=200)
+        self._thread: threading.Thread | None = None
+
+    def follow(self, stream: IO[str] | None) -> None:
+        self._thread = threading.Thread(target=self._read, args=(stream,), name="gliner2-log-reader", daemon=True)
+        self._thread.start()
+
+    def _read(self, stream: IO[str] | None) -> None:
+        if stream is None:
+            return
+        for line in stream:
+            self._lines.append(line.rstrip())
+
+    def join(self) -> None:
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(timeout=1.0)
+
+    def text(self) -> str:
+        self.join()
+        return "\n".join(self._lines) or "No child-process output was captured."
+
+
+@dataclass(frozen=True)
 class _LocalRuntime:
     process: subprocess.Popen[str]
     endpoint: str
-    requested_device: str
-    selected_device: str
+    requested_device: DeviceRequest
+    requested_dtype: DtypeRequest
     token: str
-    requested_dtype: DtypeRequest = "auto"
-    log_lines: deque[str] = field(default_factory=lambda: deque(maxlen=200))
-    log_thread: threading.Thread | None = None
+    log: _LogTail = field(default_factory=_LogTail)
+
+    def differs(self, requested_device: DeviceRequest, requested_dtype: DtypeRequest) -> bool:
+        """Whether this runtime was started for a different (device, dtype) request."""
+        return (self.requested_device, self.requested_dtype) != (requested_device, requested_dtype)
 
 
-_runtime: _LocalRuntime | None = None
-_runtime_lock = threading.RLock()
-_previous_token: str | None = None
-_token_environment_captured = False
-_context_count = 0
-_context_owned = False
+@dataclass(frozen=True)
+class _SavedVariable:
+    """An environment variable's value before this module overwrote it."""
+
+    name: str
+    previous: str | None
+
+    @classmethod
+    def capture(cls, name: str) -> _SavedVariable:
+        return cls(name, os.environ.get(name))
+
+    def restore(self) -> None:
+        if self.previous is None:
+            os.environ.pop(self.name, None)
+        else:
+            os.environ[self.name] = self.previous
 
 
-@contextmanager
-def singleton_runtime(requested_device: str, requested_dtype: DtypeRequest = "auto") -> Iterator[_LocalRuntime]:
+class _RuntimeRegistry:
+    """The one native runtime of this process, how many contexts hold it, and the saved token variable."""
+
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.runtime: _LocalRuntime | None = None
+        self.context_count = 0
+        self.context_owned = False
+        self._saved_token: _SavedVariable | None = None
+
+    @contextmanager
+    def singleton(self, requested_device: DeviceRequest, requested_dtype: DtypeRequest) -> Iterator[_LocalRuntime]:
+        """Get the persistent singleton, respecting an active scoped runtime."""
+        with self.lock:
+            if self.context_count and self.context_owned:
+                raise RuntimeError("Use the native runtime session to construct clients inside its context.")
+            yield self.ensure(requested_device, requested_dtype)
+
+    @contextmanager
+    def borrow(self, requested_device: DeviceRequest, requested_dtype: DtypeRequest) -> Iterator[_LocalRuntime]:
+        """Borrow a singleton or own a runtime until the last nested context exits."""
+        with self.lock:
+            previous = self.runtime
+            if (
+                not self.context_count
+                and previous is not None
+                and previous.differs(requested_device, requested_dtype)
+                and previous.process.poll() is None
+            ):
+                raise RuntimeError("Cannot borrow a native runtime with a different device or precision.")
+            runtime = self.ensure(requested_device, requested_dtype)
+            if self.context_count == 0:
+                self.context_owned = runtime is not previous
+            self.context_count += 1
+        try:
+            yield runtime
+        finally:
+            with self.lock:
+                self.context_count -= 1
+                if self.context_count == 0 and self.context_owned:
+                    self.context_owned = False
+                    self.stop()
+
+    def stop(self) -> None:
+        """Stop the owned child process; repeated calls are safe."""
+        with self.lock:
+            if self.context_count:
+                raise RuntimeError("Cannot stop a native runtime while a context is active.")
+            self.shutdown()
+
+    def shutdown(self) -> None:
+        """Stop the process even if an active context survives interpreter shutdown."""
+        with self.lock:
+            runtime, self.runtime = self.runtime, None
+            try:
+                if runtime is not None:
+                    _stop_process(runtime, timeout=_SHUTDOWN_TIMEOUT_SECONDS)
+            finally:
+                self.restore_token()
+
+    def ensure(self, requested_device: DeviceRequest, requested_dtype: DtypeRequest) -> _LocalRuntime:
+        """Reuse the running runtime, or replace it, or start one."""
+        runtime = self.runtime
+        if self.context_count:
+            if (
+                runtime is None
+                or runtime.process.poll() is not None
+                or runtime.differs(requested_device, requested_dtype)
+            ):
+                raise RuntimeError(
+                    "Cannot replace a native runtime while a context is active, including after the process exits."
+                )
+            _verify_readiness(runtime)
+            return runtime
+        if runtime is not None and runtime.process.poll() is None:
+            if not runtime.differs(requested_device, requested_dtype):
+                _verify_readiness(runtime)
+                return runtime
+            logger.warning(
+                "Replacing the native GLiNER2 runtime (%s/%s -> %s/%s); previously returned Anonymizer instances "
+                "are no longer supported.",
+                runtime.requested_device,
+                runtime.requested_dtype,
+                requested_device,
+                requested_dtype,
+            )
+            self.stop()
+        elif runtime is not None:
+            self.runtime = None
+        self.runtime = self._start_ready(requested_device, requested_dtype)
+        return self.runtime
+
+    def _start_ready(self, requested_device: DeviceRequest, requested_dtype: DtypeRequest) -> _LocalRuntime:
+        """Start a child, retrying on a new port when it does not become ready."""
+        last_error: Exception | None = None
+        runtime: _LocalRuntime | None = None
+        for _ in range(_MAX_PORT_ATTEMPTS):
+            try:
+                runtime = _start_runtime(requested_device, requested_dtype)
+            except BaseException:
+                self.restore_token()
+                raise
+            try:
+                card = _wait_until_ready(runtime)
+            except (KeyboardInterrupt, SystemExit):
+                try:
+                    _stop_process(runtime, timeout=2.0)
+                finally:
+                    self.restore_token()
+                raise
+            except Exception as exc:
+                last_error = exc
+                _stop_process(runtime, timeout=2.0)
+                continue
+            print(
+                f"GLiNER2 ready: model={MODEL_ID} revision={MODEL_REVISION} "
+                f"device={card.device} endpoint={runtime.endpoint}"
+            )
+            return runtime
+        self.restore_token()
+        if runtime is None or last_error is None:
+            raise RuntimeError("Unable to start the local GLiNER2 runtime.")
+        raise RuntimeError(f"Unable to start the local GLiNER2 runtime.\n{runtime.log.text()}") from last_error
+
+    def set_token(self, token: str) -> None:
+        """Expose ``token`` to this process, remembering the original value once."""
+        if self._saved_token is None:
+            self._saved_token = _SavedVariable.capture(LOCAL_TOKEN_ENV)
+        os.environ[LOCAL_TOKEN_ENV] = token
+
+    def restore_token(self) -> None:
+        if self._saved_token is not None:
+            self._saved_token.restore()
+            self._saved_token = None
+
+
+_registry = _RuntimeRegistry()
+
+
+def singleton_runtime(
+    requested_device: DeviceRequest, requested_dtype: DtypeRequest = "auto"
+) -> AbstractContextManager[_LocalRuntime]:
     """Get the persistent singleton, respecting an active scoped runtime."""
-    with _runtime_lock:
-        if _context_count and _context_owned:
-            raise RuntimeError("Use the native runtime session to construct clients inside its context.")
-        yield _ensure_runtime(requested_device, requested_dtype)
+    return _registry.singleton(requested_device, requested_dtype)
 
 
-@contextmanager
-def runtime_context(requested_device: str, requested_dtype: DtypeRequest = "auto") -> Iterator[_LocalRuntime]:
+def runtime_context(
+    requested_device: DeviceRequest, requested_dtype: DtypeRequest = "auto"
+) -> AbstractContextManager[_LocalRuntime]:
     """Borrow a singleton or own a runtime until the last nested context exits."""
-    global _context_count, _context_owned
-    with _runtime_lock:
-        previous = _runtime
-        if (
-            not _context_count
-            and previous is not None
-            and _differs(previous, requested_device, requested_dtype)
-            and previous.process.poll() is None
-        ):
-            raise RuntimeError("Cannot borrow a native runtime with a different device or precision.")
-        runtime = _ensure_runtime(requested_device, requested_dtype)
-        if _context_count == 0:
-            _context_owned = runtime is not previous
-        _context_count += 1
-    try:
-        yield runtime
-    finally:
-        with _runtime_lock:
-            _context_count -= 1
-            if _context_count == 0 and _context_owned:
-                _context_owned = False
-                stop_local_runtime()
+    return _registry.borrow(requested_device, requested_dtype)
 
 
 def stop_local_runtime() -> None:
     """Stop the owned child process; repeated calls are safe."""
-    with _runtime_lock:
-        if _context_count:
-            raise RuntimeError("Cannot stop a native runtime while a context is active.")
-        _shutdown_runtime()
+    _registry.stop()
 
 
-def _shutdown_runtime() -> None:
-    """Stop the process even if an active context survives interpreter shutdown."""
-    global _runtime
-    with _runtime_lock:
-        runtime = _runtime
-        _runtime = None
-        try:
-            if runtime is not None:
-                _stop_process(runtime, timeout=_SHUTDOWN_TIMEOUT_SECONDS)
-        finally:
-            _restore_token_environment()
-
-
-def _differs(runtime: _LocalRuntime, requested_device: str, requested_dtype: DtypeRequest) -> bool:
-    """Whether ``runtime`` was started for a different (device, dtype) request."""
-    return (runtime.requested_device, runtime.requested_dtype) != (requested_device, requested_dtype)
-
-
-def _ensure_runtime(requested_device: str, requested_dtype: DtypeRequest = "auto") -> _LocalRuntime:
-    global _runtime
-    if _context_count:
-        if (
-            _runtime is None
-            or _runtime.process.poll() is not None
-            or _differs(_runtime, requested_device, requested_dtype)
-        ):
-            raise RuntimeError(
-                "Cannot replace a native runtime while a context is active, including after the process exits."
-            )
-        _verify_readiness(_runtime)
-        return _runtime
-    if _runtime is not None and _runtime.process.poll() is None:
-        if not _differs(_runtime, requested_device, requested_dtype):
-            _verify_readiness(_runtime)
-            return _runtime
-        logger.warning(
-            "Replacing the native GLiNER2 runtime (%s/%s -> %s/%s); previously returned Anonymizer instances "
-            "are no longer supported.",
-            _runtime.requested_device,
-            _runtime.requested_dtype,
-            requested_device,
-            requested_dtype,
-        )
-        stop_local_runtime()
-    elif _runtime is not None:
-        _runtime = None
-
-    last_error: Exception | None = None
-    for _ in range(_MAX_PORT_ATTEMPTS):
-        try:
-            runtime = _start_runtime(requested_device, requested_dtype)
-        except BaseException:
-            _restore_token_environment()
-            raise
-        try:
-            _wait_until_ready(runtime)
-        except (KeyboardInterrupt, SystemExit):
-            try:
-                _stop_failed_runtime(runtime)
-            finally:
-                _restore_token_environment()
-            raise
-        except Exception as exc:
-            last_error = exc
-            _stop_failed_runtime(runtime)
-            continue
-        _runtime = runtime
-        print(
-            f"GLiNER2 ready: model={MODEL_ID} revision={MODEL_REVISION} "
-            f"device={runtime.selected_device} endpoint={runtime.endpoint}"
-        )
-        return runtime
-    if last_error is None:
-        raise RuntimeError("Unable to start the local GLiNER2 runtime.")
-    _restore_token_environment()
-    raise RuntimeError(f"Unable to start the local GLiNER2 runtime.\n{_format_log_tail(runtime)}") from last_error
-
-
-def _start_runtime(requested_device: str, requested_dtype: DtypeRequest = "auto") -> _LocalRuntime:
+def _start_runtime(requested_device: DeviceRequest, requested_dtype: DtypeRequest = "auto") -> _LocalRuntime:
     server_packages = _ensure_server_environment()
     listener = _reserve_listener()
     port = int(listener.getsockname()[1])
     token = secrets.token_urlsafe(32)
-    _set_token_environment(token)
+    _registry.set_token(token)
     child_environment = _child_environment()
     child_environment[LOCAL_TOKEN_ENV] = token
     child_environment[_DEVICE_ENV] = requested_device
@@ -222,7 +296,7 @@ def _start_runtime(requested_device: str, requested_dtype: DtypeRequest = "auto"
             pass_fds=(listener.fileno(),),
         )
     except Exception:
-        _restore_token_environment()
+        _registry.restore_token()
         raise
     finally:
         listener.close()
@@ -231,16 +305,9 @@ def _start_runtime(requested_device: str, requested_dtype: DtypeRequest = "auto"
         endpoint=f"http://127.0.0.1:{port}/v1",
         requested_device=requested_device,
         requested_dtype=requested_dtype,
-        selected_device="starting",
         token=token,
     )
-    runtime.log_thread = threading.Thread(
-        target=_capture_output,
-        args=(process.stdout, runtime.log_lines),
-        name="gliner2-log-reader",
-        daemon=True,
-    )
-    runtime.log_thread.start()
+    runtime.log.follow(process.stdout)
     return runtime
 
 
@@ -316,32 +383,24 @@ def run_development_server() -> None:
     os.execve(sys.executable, command, environment)
 
 
-def _capture_output(stream: IO[str] | None, lines: deque[str]) -> None:
-    if stream is None:
-        return
-    for line in stream:
-        lines.append(line.rstrip())
-
-
-def _wait_until_ready(runtime: _LocalRuntime) -> None:
+def _wait_until_ready(runtime: _LocalRuntime) -> ModelCard:
     deadline = time.monotonic() + _STARTUP_TIMEOUT_SECONDS
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         if runtime.process.poll() is not None:
-            raise RuntimeError(f"Local GLiNER2 exited during startup.\n{_format_log_tail(runtime)}")
+            raise RuntimeError(f"Local GLiNER2 exited during startup.\n{runtime.log.text()}")
         try:
             card = _read_model_card(runtime)
         except (httpx.HTTPError, ValueError) as exc:
             last_error = exc
             time.sleep(0.25)
             continue
-        runtime.selected_device = card.device
-        return
-    raise RuntimeError(f"Timed out waiting for local GLiNER2.\n{_format_log_tail(runtime)}") from last_error
+        return card
+    raise RuntimeError(f"Timed out waiting for local GLiNER2.\n{runtime.log.text()}") from last_error
 
 
 def _verify_readiness(runtime: _LocalRuntime) -> None:
-    runtime.selected_device = _read_model_card(runtime).device
+    _read_model_card(runtime)
 
 
 def _read_model_card(runtime: _LocalRuntime) -> ModelCard:
@@ -372,10 +431,6 @@ def _reserve_listener() -> socket.socket:
     return listener
 
 
-def _stop_failed_runtime(runtime: _LocalRuntime) -> None:
-    _stop_process(runtime, timeout=2.0)
-
-
 def _stop_process(runtime: _LocalRuntime, *, timeout: float) -> None:
     """Stop a child without allowing a stuck wait to block cleanup."""
     if runtime.process.poll() is None:
@@ -388,37 +443,7 @@ def _stop_process(runtime: _LocalRuntime, *, timeout: float) -> None:
                 runtime.process.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 logger.warning("Local GLiNER2 did not exit within %.1f seconds after being killed.", timeout)
-    _join_log_thread(runtime)
+    runtime.log.join()
 
 
-def _join_log_thread(runtime: _LocalRuntime) -> None:
-    if runtime.log_thread is not None and runtime.log_thread is not threading.current_thread():
-        runtime.log_thread.join(timeout=1.0)
-
-
-def _format_log_tail(runtime: _LocalRuntime) -> str:
-    _join_log_thread(runtime)
-    return "\n".join(runtime.log_lines) or "No child-process output was captured."
-
-
-def _restore_token_environment() -> None:
-    global _previous_token, _token_environment_captured
-    if not _token_environment_captured:
-        return
-    if _previous_token is None:
-        os.environ.pop(LOCAL_TOKEN_ENV, None)
-    else:
-        os.environ[LOCAL_TOKEN_ENV] = _previous_token
-    _previous_token = None
-    _token_environment_captured = False
-
-
-def _set_token_environment(token: str) -> None:
-    global _previous_token, _token_environment_captured
-    if not _token_environment_captured:
-        _previous_token = os.environ.get(LOCAL_TOKEN_ENV)
-        _token_environment_captured = True
-    os.environ[LOCAL_TOKEN_ENV] = token
-
-
-atexit.register(_shutdown_runtime)
+atexit.register(_registry.shutdown)
