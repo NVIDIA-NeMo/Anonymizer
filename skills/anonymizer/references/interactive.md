@@ -31,7 +31,7 @@ Iterative design with the user. Do not disengage from the loop until the user sa
 5. **Build** — Write the Python script to the current directory using the Output Template in `SKILL.md`. Name the file after the dataset (e.g. `anonymize_clinical_notes.py`).
 
 6. **Preview** — Run `python <script>.py` (no flags = preview 5 rows).
-   - **First check `failed_records`.** If non-empty, STOP iterating on strategy. The script's failure-first guard already exits non-zero. Read "Did the run actually complete cleanly?" and "Rate limits / dropped rows" in [`docs/troubleshooting.md`](../../../docs/troubleshooting.md) or the [published troubleshooting guide](https://nvidia-nemo.github.io/Anonymizer/dev/troubleshooting/). Fix the infra issue, then re-preview.
+   - **First check `failed_records`.** If non-empty, inspect each failure's `step` and `reason` before quality tuning. The script's failure-first guard already exits non-zero. Failures can indicate model/provider/infra issues or invalid or incomplete substitution maps. Read "Did the run actually complete cleanly?" in [`docs/troubleshooting.md`](../../../docs/troubleshooting.md) or the [published troubleshooting guide](https://nvidia-nemo.github.io/Anonymizer/dev/troubleshooting/), diagnose the reported failure, then re-preview before a full run.
    - For Rewrite, read the leakage / utility summary the script prints. For Replace, eyeball the output rows directly.
    - For deeper inspection: the script saves `preview.parquet` (the user-facing columns) and `preview_trace.pkl` (the trace dataframe, a superset of those columns). Load the trace with `pd.read_pickle("preview_trace.pkl")` to inspect per-entity validation decisions, sensitivity dispositions, and other trace columns.
 

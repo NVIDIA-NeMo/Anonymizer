@@ -111,7 +111,7 @@ class ReplacementWorkflow:
             elif isinstance(replace_method, Substitute):
                 if self._llm_workflow is None:
                     raise ValueError("Substitute requires an llm_workflow, but none was provided.")
-                map_result = self._llm_workflow.generate_map_only(
+                map_result = self._llm_workflow.generate_validated_maps(
                     dataframe,
                     model_configs=model_configs,
                     selected_models=selected_models,

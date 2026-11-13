@@ -13,6 +13,10 @@ Instead of replacing individual entities, rewrite mode transforms the entire tex
 
 The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. Any records that failed to meet standards are tagged for human review.
 
+!!! note "Replacement-map validation"
+
+    Rewrite's generated replacement maps share the [Substitute schema rules](replace.md#substitute): synthetic values must contain at least one non-whitespace character, while valid one-character values remain allowed. DataDesigner's existing whole-response schema retries apply to map generation. The single missing-pair retry and Unicode-space reconciliation described for Substitute do not apply to Rewrite; its handling of omitted mappings remains unchanged.
+
 ---
 
 ## Key concepts

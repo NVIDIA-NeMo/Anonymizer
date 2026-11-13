@@ -3,7 +3,7 @@
 
 # Replace
 
-Replace mode replaces each [detected entity](detection.md) with an alternative token. Anonymizer provides four strategies. 
+Replace mode replaces each [detected entity](detection.md) with an alternative token. Anonymizer provides four strategies.
 
 ---
 
@@ -21,6 +21,48 @@ Replace mode replaces each [detected entity](detection.md) with an alternative t
 ## Substitute
 
 Replaces entities with LLM-generated synthetic values that are contextually plausible. This is the only replacement strategy that requires an LLM call.
+
+Synthetic values must contain at least one non-whitespace character. Schema
+validation rejects empty strings and values made entirely of spaces, tabs,
+newlines, or Unicode whitespace. Valid one-character substitutes, such as an
+initial or a single-digit age, remain allowed. Valid values are preserved as
+generated, including any surrounding whitespace. This shared schema rule also
+applies to the replacement maps generated for rewrite mode.
+
+After schema validation and filtering, Anonymizer checks that every unique
+requested `(entity value, label)` pair has a mapping. If mappings are missing,
+it retries only the missing pairs once, retaining the accepted substitutions.
+A record whose map is complete is returned; a record still missing mappings
+after the retry is excluded from successful output and reported in
+`failed_records`. Other complete records continue normally. Repeated occurrences
+of the same pair need only one mapping, and records without entities need no
+replacement-generator call.
+
+Before discarding a mapping, Substitute can reconcile a copied original that
+differs only in no-break spaces (`U+00A0`), thin spaces (`U+2009`), narrow no-break
+spaces (`U+202F`), or ASCII spaces. The label must match exactly and the comparison
+must identify exactly one pair in the original requested inventory. Exact
+mappings take precedence. The mapping's original is restored from that inventory;
+the source text, span offsets, and synthetic value stay unchanged. This comparison
+does not strip or collapse whitespace or change other characters. Ambiguous or
+unmatched entries remain missing and follow the retry/failure flow above.
+
+This completeness retry applies to schema-valid responses. DataDesigner already
+retries schema-invalid responses, validating the record's entire mapping response
+on each attempt. Its default is up to five conversation restarts after the initial
+attempt, controlled by `max_conversation_restarts` in the `RunConfig` passed as
+`Anonymizer(data_designer_run_config=...)`. These schema retries also apply to the
+missing-pair generation call. The one completeness retry therefore does not mean
+a maximum of two LLM requests. Valid entries from a schema-rejected response are
+not retained for a targeted per-entry retry.
+
+If the completeness retry fails validation after DataDesigner's recovery attempts,
+or its workflow fails, the affected records are reported as failed while complete
+records are retained. Initial generation retains the existing failure handling:
+dropped records appear in `failed_records`, but a failure of the entire initial
+workflow can raise `AnonymizerWorkflowError`. Completeness checks exact pairs;
+it does not guarantee the semantic quality of a generated substitute or validate
+span offsets.
 
 ```python
 from anonymizer import AnonymizerConfig, Substitute
