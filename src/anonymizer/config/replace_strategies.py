@@ -48,6 +48,18 @@ class Substitute(ReplaceMethodBase):
     instructions: str | None = Field(
         default=None, description="Additional instructions for the LLM replacement generator."
     )
+    consistency: Literal["record", "run"] = Field(
+        default="record",
+        description=(
+            "'record' gives each value (with its case and whitespace variants) one substitute within its record;"
+            " two different values of a record can get the same substitute. 'run' gives each value one substitute"
+            " across the whole run, and two different values never share one. A substitute equal to a real value"
+            " of the record is replaced by [SUBSTITUTE_<LABEL>_<n>]; in 'run', so is a substitute another value"
+            " already uses. A mention can still get a different substitute where the shared one would clash with"
+            " another value, or another value's substitute, in the same record; in 'record' this happens only to"
+            " case or whitespace variants."
+        ),
+    )
 
 
 class Redact(ReplaceMethodBase):
@@ -55,7 +67,7 @@ class Redact(ReplaceMethodBase):
 
     kind: Literal["redact"] = "redact"
     format_template: str = Field(
-        default="[REDACTED_{label}]", description="Template with optional {label} placeholder."
+        default="[REDACTED_{label}]", description="Nonempty redaction template with optional {label} placeholder."
     )
     normalize_label: bool = Field(default=True, description="Uppercase and clean label before substitution.")
 
@@ -67,7 +79,20 @@ class Redact(ReplaceMethodBase):
             required_fields=set(),
             allowed_fields={"label"},
         )
+        # Nested format specs depend on the actual label; validate their render below.
+        if not any(spec and "{" in spec for _, _, spec, _ in Formatter().parse(value)):
+            try:
+                rendered = value.format(label="label")
+            except (ValueError, IndexError, KeyError) as exc:
+                raise ValueError(f"Invalid redaction template {value!r}: {exc}") from exc
+            cls._require_nonempty(rendered, value)
         return value
+
+    @staticmethod
+    def _require_nonempty(rendered: str, template: str) -> str:
+        if rendered == "":
+            raise ValueError(f"Redaction template {template!r} must produce a nonempty replacement")
+        return rendered
 
     def replace(self, text: str, label: str) -> str:
         """Apply the redaction template to a single entity occurrence.
@@ -77,11 +102,12 @@ class Redact(ReplaceMethodBase):
             label: Entity label (e.g. ``"first_name"``).
         """
         normalized_label = _format_label_for_redaction(label) if self.normalize_label else label
-        return self._render_template(
+        rendered = self._render_template(
             template=self.format_template,
             text=text,
             label=normalized_label,
         )
+        return self._require_nonempty(rendered, self.format_template)
 
 
 class Annotate(ReplaceMethodBase):

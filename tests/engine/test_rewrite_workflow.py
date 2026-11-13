@@ -16,6 +16,7 @@ from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.models import ModelConfig
 from data_designer.interface.data_designer import DataDesigner
 
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
 from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelection
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 from anonymizer.engine.constants import (
@@ -24,6 +25,7 @@ from anonymizer.engine.constants import (
     COL_DETECTION_VALID,
     COL_DOMAIN,
     COL_ENTITIES_BY_VALUE,
+    COL_ENTITY_CLASSIFICATION,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
     COL_LEAKED_PRIVACY_ITEMS,
@@ -38,13 +40,22 @@ from anonymizer.engine.constants import (
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
+    COL_SENSITIVITY_DISPOSITION,
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
+from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.engine.rewrite.repair import RepairWorkflow
-from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow, _detection_valid_fraction, _join_new_columns
+from anonymizer.engine.rewrite.rewrite_workflow import (
+    RewriteWorkflow,
+    _detection_valid_fraction,
+    _join_new_columns,
+)
+from anonymizer.interface.anonymizer import Anonymizer
+from anonymizer.interface.errors import AnonymizerWorkflowError
 
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
 
@@ -58,6 +69,13 @@ _PRIVACY_GOAL = PrivacyGoal(
 )
 
 _EVALUATION = EvaluationCriteria()
+
+
+def _positional(dataframe: pd.DataFrame, failed_records: list) -> WorkflowRunResult:
+    """An adapter result that reports one source position per returned row, in input order."""
+    return WorkflowRunResult(
+        dataframe=dataframe, failed_records=failed_records, source_positions=tuple(range(len(dataframe)))
+    )
 
 
 def test_join_new_columns_preserves_surviving_target_order() -> None:
@@ -189,14 +207,16 @@ def _standard_side_effect(
     The final-judge no longer runs inside run() — it only runs via evaluate().
     """
     return [
-        WorkflowRunResult(dataframe=pipeline_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
+        _positional(dataframe=pipeline_df, failed_records=[]),
+        _positional(dataframe=eval_df, failed_records=[]),
     ]
 
 
 def _mock_replace(mock_cls: Mock, replace_df: pd.DataFrame) -> None:
     """Configure a patched LlmReplaceWorkflow class to return replace_df."""
-    mock_cls.return_value.generate_map_only.return_value = Mock(dataframe=replace_df, failed_records=[])
+    mock_cls.return_value.generate_map_only.return_value = Mock(
+        dataframe=replace_df, failed_records=[], source_positions=tuple(range(len(replace_df)))
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -374,13 +394,14 @@ def test_failed_records_accumulated_across_steps(
 
     adapter = Mock()
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=stub_pipeline_df, failed_records=[failed_pipeline]),
-        WorkflowRunResult(dataframe=stub_eval_df, failed_records=[failed_eval]),
+        _positional(dataframe=stub_pipeline_df, failed_records=[failed_pipeline]),
+        _positional(dataframe=stub_eval_df, failed_records=[failed_eval]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
         mock_replace_cls.return_value.generate_map_only.return_value = Mock(
             dataframe=stub_replace_df,
+            source_positions=tuple(range(len(stub_replace_df))),
             failed_records=[FailedRecord(record_id="d", step="replace-map-generation", reason="timeout")],
         )
         wf = RewriteWorkflow(adapter=adapter)
@@ -426,6 +447,45 @@ def test_judge_failure_does_not_propagate(
 
     assert len(result.dataframe) == 1
     assert result.dataframe[COL_JUDGE_EVALUATION].iloc[0] is None
+
+
+@pytest.mark.parametrize("cancel_at", ["before-first-stage", "between-stages"])
+def test_evaluate_in_cancelled_frame_raises_and_skips_later_stages(
+    stub_model_configs: list[ModelConfig],
+    stub_evaluate_model_selection,
+    stub_eval_df: pd.DataFrame,
+    cancel_at: str,
+) -> None:
+    token = CancelToken()
+    adapter = Mock()
+    wf = RewriteWorkflow(adapter=adapter)
+    wf._detection_judge_wf = Mock()
+
+    def detection_judge(*args, **kwargs) -> Mock:
+        token.cancel()
+        det_df = stub_eval_df.copy()
+        det_df[COL_DETECTION_VALID] = True
+        det_df[COL_DETECTION_INVALID_ENTITIES] = [[]]
+        return Mock(dataframe=det_df, failed_records=[], source_positions=None)
+
+    wf._detection_judge_wf.evaluate.side_effect = detection_judge
+    if cancel_at == "before-first-stage":
+        token.cancel()
+
+    with pytest.raises(AnonymizerWorkflowError):
+        run_in_frame(
+            wf.evaluate,
+            stub_eval_df,
+            model_configs=stub_model_configs,
+            selected_models=stub_evaluate_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            compute_detection_validity=True,
+            token=token,
+        )
+
+    # Before the first stage neither judge runs; between stages only the detection judge ran.
+    assert wf._detection_judge_wf.evaluate.call_count == (0 if cancel_at == "before-first-stage" else 1)
+    adapter.run_workflow.assert_not_called()
 
 
 def test_judge_partial_row_loss_preserves_all_rows(
@@ -510,6 +570,7 @@ def test_detection_judge_partial_row_loss_preserves_all_rows(
     wf._detection_judge_wf.evaluate.return_value = Mock(
         dataframe=det_df,
         failed_records=[FailedRecord(record_id="rec-1", step="rewrite-detection-judge", reason="timeout")],
+        source_positions=None,
     )
     adapter.run_workflow.return_value = WorkflowRunResult(dataframe=judge_df, failed_records=[])
 
@@ -594,17 +655,17 @@ def test_repair_loop_runs_up_to_max_iterations(
 
     adapter.run_workflow.side_effect = [
         # pipeline (domain + disposition + QA + rewrite)
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
         # evaluate-0 -> needs repair
-        WorkflowRunResult(dataframe=eval_needs_repair, failed_records=[]),
+        _positional(dataframe=eval_needs_repair, failed_records=[]),
         # repair-0
-        WorkflowRunResult(dataframe=repaired_df, failed_records=[]),
+        _positional(dataframe=repaired_df, failed_records=[]),
         # evaluate-1 -> still needs repair
-        WorkflowRunResult(dataframe=eval_needs_repair, failed_records=[]),
+        _positional(dataframe=eval_needs_repair, failed_records=[]),
         # repair-1
-        WorkflowRunResult(dataframe=repaired_df, failed_records=[]),
+        _positional(dataframe=repaired_df, failed_records=[]),
         # evaluate-final (after loop exhaustion)
-        WorkflowRunResult(dataframe=eval_needs_repair, failed_records=[]),
+        _positional(dataframe=eval_needs_repair, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -821,7 +882,7 @@ def _deterministic_evaluation(row: dict[str, Any]) -> dict[str, Any]:
     row[COL_PRIVACY_QA_REANSWER] = {"answers": []}
     row[COL_QUALITY_QA_COMPARE] = {"per_item": []}
     row[COL_UTILITY_SCORE] = 0.9
-    row[COL_LEAKAGE_MASS] = 2.0 if needs_repair else 0.0
+    row[COL_LEAKAGE_MASS] = 3.0 if needs_repair else 0.0
     row[COL_WEIGHTED_LEAKAGE_RATE] = 0.0
     row[COL_ANY_HIGH_LEAKED] = False
     row[COL_NEEDS_REPAIR] = needs_repair
@@ -835,9 +896,10 @@ def _deterministic_repair(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-def test_repair_loop_through_real_adapter_keeps_each_repair(
+def test_repair_loop_through_run_returns_each_rows_last_repair(
     tmp_path: Path,
     stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
     adapter = NddAdapter(DataDesigner(artifact_path=tmp_path / "artifacts", auto_configure_logging=False))
     workflow = RewriteWorkflow(adapter)
@@ -861,29 +923,37 @@ def test_repair_loop_through_real_adapter_keeps_each_repair(
             ]
         )
     )
-    dataframe = pd.DataFrame(
+    # The input frame already carries the pipeline outputs, so the model-backed pre-loop steps do nothing.
+    workflow._replacement_map = Mock(return_value=None)
+    workflow._pipeline = Mock(return_value=None)
+    entities = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
+    df = pd.DataFrame(
         {
             RECORD_ID_COLUMN: ["twice", "exhausted"],
             COL_TEXT: ["Alice works at Acme", "Bob works at Beta"],
+            COL_ENTITIES_BY_VALUE: [entities, entities],
             COL_REWRITTEN_TEXT: ["twice-0", "exhausted-0"],
             COL_PRIVACY_QA: [dict(_PRIVACY_QA), dict(_PRIVACY_QA)],
             _REPAIRS_NEEDED: [2, 5],
         }
     )
 
-    result, failed = workflow._run_evaluate_repair_loop(
-        dataframe,
+    result = workflow.run(
+        df,
         model_configs=[],
         selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
         privacy_goal=_PRIVACY_GOAL,
         evaluation=EvaluationCriteria(max_repair_iterations=3),
-        preview_num_records=None,
     )
 
-    assert failed == []
-    assert _by_id(result, COL_REWRITTEN_TEXT) == {"twice": "twice-2", "exhausted": "exhausted-3"}
-    assert _by_id(result, COL_REPAIR_ITERATIONS) == {"twice": 2, "exhausted": 3}
-    assert _by_id(result, COL_PRIVACY_QA) == {"twice": _PRIVACY_QA, "exhausted": _PRIVACY_QA}
+    out = result.dataframe
+    assert result.failed_records == []
+    assert _by_id(out, COL_REWRITTEN_TEXT) == {"twice": "twice-2", "exhausted": "exhausted-3"}
+    assert _by_id(out, COL_REPAIR_ITERATIONS) == {"twice": 2, "exhausted": 3}
+    assert _by_id(out, COL_LEAKAGE_MASS) == {"twice": 0.0, "exhausted": 3.0}
+    assert {k: bool(v) for k, v in _by_id(out, COL_NEEDS_HUMAN_REVIEW).items()} == {"twice": False, "exhausted": True}
+    assert _by_id(out, COL_PRIVACY_QA) == {"twice": _PRIVACY_QA, "exhausted": _PRIVACY_QA}
 
 
 def test_replacement_unavailable_can_be_repaired(
@@ -916,10 +986,10 @@ def test_replacement_unavailable_can_be_repaired(
     replace_df["_replacement_map"] = [{"replacements": []}]
     adapter = Mock()
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pipeline_df, failed_records=[]),
-        WorkflowRunResult(dataframe=initial_eval, failed_records=[]),
-        WorkflowRunResult(dataframe=repaired, failed_records=[]),
-        WorkflowRunResult(dataframe=passing_eval, failed_records=[]),
+        _positional(dataframe=pipeline_df, failed_records=[]),
+        _positional(dataframe=initial_eval, failed_records=[]),
+        _positional(dataframe=repaired, failed_records=[]),
+        _positional(dataframe=passing_eval, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -985,10 +1055,10 @@ def test_only_failing_rows_sent_to_repair(
     replace_df["_replacement_map"] = [{"replacements": []}, {"replacements": []}]
 
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
-        WorkflowRunResult(dataframe=repaired_row, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_after_repair, failed_records=[]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=eval_df, failed_records=[]),
+        _positional(dataframe=repaired_row, failed_records=[]),
+        _positional(dataframe=eval_after_repair, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1048,10 +1118,10 @@ def test_repair_iterations_tracked_per_row(
     replace_df["_replacement_map"] = [{"replacements": []}]
 
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_needs_repair, failed_records=[]),
-        WorkflowRunResult(dataframe=repaired_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_pass, failed_records=[]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=eval_needs_repair, failed_records=[]),
+        _positional(dataframe=repaired_df, failed_records=[]),
+        _positional(dataframe=eval_pass, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1135,8 +1205,8 @@ def test_evaluate_dropping_rows_degrades_gracefully(
     eval_failed = FailedRecord(record_id="rec-1", step="rewrite-evaluate-0", reason="LLM timeout")
 
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[eval_failed]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=eval_df, failed_records=[eval_failed]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1200,13 +1270,13 @@ def test_repair_dropping_rows_degrades_gracefully(
     replace_df["_replacement_map"] = [{"replacements": []}, {"replacements": []}]
 
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
         # initial evaluate
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
+        _positional(dataframe=eval_df, failed_records=[]),
         # repair (drops rec-1)
-        WorkflowRunResult(dataframe=repaired_df, failed_records=[repair_failed]),
+        _positional(dataframe=repaired_df, failed_records=[repair_failed]),
         # re-evaluate
-        WorkflowRunResult(dataframe=eval_after, failed_records=[]),
+        _positional(dataframe=eval_after, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1262,8 +1332,8 @@ def test_passthrough_rows_get_defaults(
     replace_df["_replacement_map"] = [{"replacements": []}]
 
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=eval_df, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1290,6 +1360,51 @@ def test_passthrough_rows_get_defaults(
 # ---------------------------------------------------------------------------
 # Tests: evaluate() — happy path and column presence
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("positions", [(1, 0), None], ids=["explicit-positions", "unreported"])
+def test_rewrite_pipeline_rows_join_by_declared_correspondence(
+    positions: tuple[int, ...] | None,
+    stub_model_configs: list[ModelConfig],
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """Pipeline rows returned in reverse join to their own records, or fail as ``uncorrelated_output``."""
+    stub_entities = {"entities_by_value": [{"value": "Ann", "labels": ["first_name"]}]}
+    dataframe = pd.DataFrame({COL_TEXT: ["Ann called", "Bob called"], COL_ENTITIES_BY_VALUE: [stub_entities] * 2})
+
+    def run_workflow(df: pd.DataFrame, *, workflow_name: str, **_: object) -> WorkflowRunResult:
+        out = df.drop(columns=[RECORD_ID_COLUMN], errors="ignore").copy()
+        if workflow_name == "rewrite-pipeline":
+            out = out.iloc[::-1].reset_index(drop=True)
+            out[COL_REWRITTEN_TEXT] = ["rewrite of " + text for text in out[COL_TEXT]]
+            out[COL_REPAIR_ITERATIONS] = 0
+            return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=positions)
+        out[COL_NEEDS_REPAIR] = False
+        out[COL_UTILITY_SCORE] = 0.9
+        out[COL_LEAKAGE_MASS] = 0.0
+        out[COL_ANY_HIGH_LEAKED] = False
+        return _positional(dataframe=out, failed_records=[])
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = run_workflow
+    replace_df = dataframe.assign(_replacement_map=[{"replacements": []}] * 2)
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, replace_df)
+        run = lambda: RewriteWorkflow(adapter=adapter).run(  # noqa: E731
+            dataframe,
+            model_configs=stub_model_configs,
+            selected_models=stub_rewrite_model_selection,
+            replace_model_selection=stub_replace_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=_EVALUATION,
+        )
+        if positions is None:
+            with pytest.raises(AnonymizerWorkflowError, match="uncorrelated_output"):
+                run()
+            return
+        df = run().dataframe
+    assert df[COL_REWRITTEN_TEXT].tolist() == ["rewrite of " + text for text in df[COL_TEXT]]
 
 
 def test_evaluate_produces_judge_evaluation_column(
@@ -1530,3 +1645,154 @@ def test_run_needs_human_review_not_overwritten_by_evaluate(
     )
 
     assert bool(result.dataframe[COL_NEEDS_HUMAN_REVIEW].iloc[0]) is True
+
+
+@pytest.mark.parametrize("combined", [False, True])
+def test_label_categories_reach_disposition_as_a_row_column(
+    combined: bool,
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
+
+    def entities(*labels: str) -> dict:
+        return {"entities_by_value": [{"value": label, "labels": [label]} for label in labels]}
+
+    frame = pd.DataFrame({COL_TEXT: ["a", "b"], COL_ENTITIES_BY_VALUE: [entities("first_name"), entities("city")]})
+
+    class Stop(Exception):
+        pass
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = Stop
+    kind = CombinedRewriteWorkflow if combined else RewriteWorkflow
+    with patch(_REPLACE_PATCH) as replacement, pytest.raises(Stop):
+        _mock_replace(replacement, frame)
+        kind(adapter).run(
+            frame,
+            model_configs=[],
+            selected_models=stub_rewrite_model_selection,
+            replace_model_selection=stub_replace_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=EvaluationCriteria(max_repair_iterations=0),
+        )
+    seed = adapter.run_workflow.call_args.args[0]
+    assert [json.loads(value) for value in seed[COL_ENTITY_CLASSIFICATION]] == [
+        {"first_name": "direct_identifier"},
+        {"city": "quasi_identifier"},
+    ]
+    names = [column.name for column in adapter.run_workflow.call_args.kwargs["columns"]]
+    assert COL_ENTITY_CLASSIFICATION not in names
+    assert COL_SENSITIVITY_DISPOSITION in names
+
+
+def test_combined_runner_overriding_build_graph_with_release_signature_runs(
+    stub_df_with_entities: pd.DataFrame,
+    stub_eval_df: pd.DataFrame,
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """A caller's CombinedRewriteWorkflow may override build_graph with 0.4.0's six keyword arguments."""
+    from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteGraph, CombinedRewriteWorkflow
+
+    calls = []
+
+    class GraphOverride(CombinedRewriteWorkflow):
+        def build_graph(  # 0.4.0 public signature
+            self,
+            *,
+            selected_models: RewriteModelSelection,
+            replace_model_selection: ReplaceModelSelection,
+            privacy_goal: PrivacyGoal,
+            evaluation: EvaluationCriteria,
+            data_summary: str | None = None,
+            strict_entity_protection: bool = False,
+        ) -> CombinedRewriteGraph:
+            calls.append(True)
+            return super().build_graph(
+                selected_models=selected_models,
+                replace_model_selection=replace_model_selection,
+                privacy_goal=privacy_goal,
+                evaluation=evaluation,
+                data_summary=data_summary,
+                strict_entity_protection=strict_entity_protection,
+            )
+
+    from data_designer.config.column_configs import CustomColumnConfig
+
+    def run(kind: type[CombinedRewriteWorkflow]) -> tuple[pd.DataFrame, CustomColumnConfig]:
+        adapter = Mock()
+        adapter.run_workflow.side_effect = [_positional(stub_eval_df, [])]
+        with patch(_REPLACE_PATCH) as replacement:
+            _mock_replace(replacement, stub_df_with_entities)
+            result = kind(adapter).run(
+                stub_df_with_entities,
+                model_configs=[],
+                selected_models=stub_rewrite_model_selection,
+                replace_model_selection=stub_replace_model_selection,
+                privacy_goal=_PRIVACY_GOAL,
+                evaluation=EvaluationCriteria(max_repair_iterations=0),
+            )
+        (finalizer,) = [
+            column
+            for column in adapter.run_workflow.call_args.kwargs["columns"]
+            if isinstance(column, CustomColumnConfig) and column.name == COL_REWRITTEN_TEXT
+        ]
+        return result.dataframe, finalizer
+
+    expected, builtin_finalizer = run(CombinedRewriteWorkflow)
+    observed, override_finalizer = run(GraphOverride)
+    assert calls == [True]
+    pd.testing.assert_frame_equal(observed, expected)
+    assert observed[COL_REWRITTEN_TEXT].tolist() == ["Maria works"]
+    # Both runs are opaque here (a Mock adapter); the override's finalizer projects exactly like the builtin's.
+    graph = CombinedRewriteWorkflow(Mock()).build_graph(
+        selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(max_repair_iterations=0),
+    )
+    state = graph.evaluation_states[0]
+    row = {
+        state.rewritten_text: "observed",
+        state.quality_reanswer: {"answers": []},
+        state.privacy_reanswer: {"answers": []},
+        state.quality_compare: {"per_item": []},
+        state.utility_score: 0.9,
+        state.leakage_mass: 0.0,
+        state.weighted_leakage_rate: 0.0,
+        state.any_high_leaked: False,
+        state.needs_repair: False,
+    }
+    assert builtin_finalizer.generator_function(dict(row), builtin_finalizer.generator_params) == (
+        override_finalizer.generator_function(dict(row), override_finalizer.generator_params)
+    )
+
+
+def test_run_reports_each_rows_protection_outcome(tmp_path: Path) -> None:
+    """Through ``Anonymizer.run()``, a row that passes its final checks is ``met`` and one still leaking is not."""
+    entities = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{RECORD_ID_COLUMN: ["clean", "leaky"], COL_ENTITIES_BY_VALUE: [entities] * 2}),
+        failed_records=[],
+        source_positions=(0, 1),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["Alice works at Acme", "Alice works at Beta"]}).to_csv(csv_path, index=False)
+    adapter = _ScriptedAdapter({"clean": 0, "leaky": 99})
+    anonymizer = Anonymizer(detection_workflow=detector, rewrite_runner=RewriteWorkflow(adapter=Mock(wraps=adapter)))
+
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        mock_replace_cls.return_value.generate_map_only.side_effect = lambda frame, **_: Mock(
+            dataframe=frame, failed_records=[], source_positions=tuple(range(len(frame)))
+        )
+        result = anonymizer.run(
+            config=AnonymizerConfig(
+                rewrite=Rewrite(privacy_goal=_PRIVACY_GOAL, risk_tolerance="minimal"), emit_telemetry=False
+            ),
+            data=AnonymizerInput(source=str(csv_path), text_column="text"),
+        )
+
+    assert [result.outcome(row).qualification for row in range(2)] == ["met", "not_met"]
+    assert [reason.check for reason in result.outcome(1).reasons] == ["leakage_within_threshold"]

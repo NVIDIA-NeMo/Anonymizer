@@ -19,13 +19,14 @@ from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
-from anonymizer.interface.anonymizer import Anonymizer
+from anonymizer.interface.anonymizer import Anonymizer, _collect_failure_counts
 from anonymizer.telemetry import (
     NOT_APPLICABLE,
     AnonymizerEvent,
     TaskEnum,
     TaskStatusEnum,
 )
+from tests.conftest import stub_run_with_detection
 
 
 @pytest.fixture
@@ -50,6 +51,7 @@ def _make_anonymizer(
     )
     _replace_df.attrs["original_text_column"] = "text"
     replace_runner = Mock(spec=ReplacementWorkflow)
+    stub_run_with_detection(replace_runner)
     replace_runner.run.return_value = replace_return or ReplacementResult(
         dataframe=_replace_df,
         failed_records=[],
@@ -67,6 +69,7 @@ def _make_anonymizer(
     )
     _rewrite_df.attrs["original_text_column"] = "text"
     rewrite_runner = Mock(spec=RewriteWorkflow)
+    stub_run_with_detection(rewrite_runner)
     rewrite_runner.run.return_value = rewrite_return or RewriteResult(
         dataframe=_rewrite_df,
         failed_records=[],
@@ -409,6 +412,7 @@ class TestFailureAggregation:
         _df = pd.DataFrame({COL_TEXT: ["a"], COL_REWRITTEN_TEXT: ["b"]})
         _df.attrs["original_text_column"] = "text"
         combined_runner = Mock(spec=RewriteWorkflow)
+        stub_run_with_detection(combined_runner)  # the line's run() detects through run_with_detection
         combined_runner.run.return_value = RewriteResult(
             dataframe=_df,
             failed_records=[FailedRecord(record_id="r1", step="rewrite-combined", reason="x")],
@@ -437,6 +441,14 @@ class TestFailureAggregation:
         event = captured_events[0]
         assert event.unknown_step_failure_count == 1
         assert event.entity_detection_failure_count == 0
+
+    def test_graph_operation_steps_count_in_their_fields(self) -> None:
+        failed = [
+            FailedRecord(record_id=f"r{i}", step=step, reason="x")
+            for i, step in enumerate(("detect", "substitute-map", "replace"))
+        ]
+        counts = _collect_failure_counts(failed)
+        assert (counts["entity_detection"], counts["replace_map_generation"], counts["unknown"]) == (1, 1, 1)
 
     def test_no_failures_counts_zero(
         self,

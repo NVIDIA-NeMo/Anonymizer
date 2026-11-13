@@ -153,11 +153,10 @@ def _resolve_output_column_collisions(
             resolved_text_column=selected_text_column,
         )
 
-    formatted = ", ".join(f"{old!r} -> {new!r}" for old, new in rename_map.items())
     logger.warning(
-        "Renamed input column(s) that collide with Anonymizer output column names: %s. "
+        "Renamed %d input column(s) that collide with Anonymizer output column names. "
         "Update your input schema to remove this warning.",
-        formatted,
+        len(rename_map),
     )
     return ResolvedInput(
         dataframe=dataframe.rename(columns=rename_map),
@@ -208,7 +207,7 @@ def _load_dataframe(input_data: AnonymizerInput, *, nrows: int | None = None) ->
         supported_formats = " or ".join(SUPPORTED_IO_FORMATS)
         raise InvalidInputError(f"Unsupported input format: {suffix}. Use {supported_formats}.")
     if nrows is not None and nrows <= 0:
-        logger.debug("nrows=%d; returning empty DataFrame for %s", nrows, source_str)
+        logger.debug("nrows=%d; returning empty DataFrame", nrows)
     try:
         if suffix == ".csv":
             df = pd.read_csv(source_str, nrows=nrows)
@@ -218,11 +217,9 @@ def _load_dataframe(input_data: AnonymizerInput, *, nrows: int | None = None) ->
         raise AnonymizerIOError(f"Failed to read input data from: {source_str}") from error
     if nrows is not None:
         logger.info(
-            "👀 Preview mode: 📂 Loaded %d records from %s (column: '%s')",
+            "👀 Preview mode: 📂 Loaded %d records",
             len(df),
-            source_str,
-            input_data.text_column,
         )
     else:
-        logger.info("📂 Loaded %d records from %s (column: '%s')", len(df), source_str, input_data.text_column)
+        logger.info("📂 Loaded %d records", len(df))
     return df

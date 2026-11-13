@@ -31,8 +31,6 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.ndd.adapter import NddAdapter, WorkflowRunResult
 from anonymizer.engine.rewrite.entity_classification import (
     EntityClassificationWorkflow,
-    LabelClassificationParams,
-    _apply_dataset_classifications,
     _classify_labels_locally,
     _get_entity_classification_prompt,
     _make_classification_column,
@@ -77,22 +75,16 @@ def test_dataset_classification_resolves_custom_labels_once_and_reuses_categorie
     adapter.run_workflow.return_value = WorkflowRunResult(
         dataframe=pd.DataFrame([{COL_ENTITY_CLASSIFICATION: categories}]), failed_records=[]
     )
-    workflow = EntityClassificationWorkflow()
-    result = workflow.classify_dataset(
-        pd.DataFrame(rows), adapter=adapter, model_configs=[], selected_models=stub_rewrite_model_selection
+    frame = pd.DataFrame(rows)
+    EntityClassificationWorkflow().classify_rows(
+        frame, adapter=adapter, model_configs=[], selected_models=stub_rewrite_model_selection
     )
 
     adapter.run_workflow.assert_called_once()
     seed = adapter.run_workflow.call_args.args[0]
     assert len(seed) == 1
     assert seed.iloc[0][COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS] == ["custom_id", "custom_role"]
-    columns = workflow.columns(selected_models=stub_rewrite_model_selection, label_categories=result)
-    assert len(columns) == 1
-    assert isinstance(columns[0], CustomColumnConfig)
-    assert columns[0].generator_params is not None
-    params = LabelClassificationParams.model_validate(columns[0].generator_params.model_dump())
-    applied = [_apply_dataset_classifications(row, params)[COL_ENTITY_CLASSIFICATION] for row in rows]
-    assert applied == [
+    assert frame[COL_ENTITY_CLASSIFICATION].tolist() == [
         {"custom_id": "direct_identifier", "first_name": "direct_identifier"},
         {"custom_id": "direct_identifier", "custom_role": "quasi_identifier"},
     ]

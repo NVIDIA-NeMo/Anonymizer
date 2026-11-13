@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Literal
 from unittest.mock import Mock
 
 import numpy as np
@@ -10,6 +12,7 @@ import pandas as pd
 import pytest
 from data_designer.config.models import ModelConfig
 
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.models import EvaluateModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Hash, Redact, Substitute
 from anonymizer.engine.constants import (
@@ -29,6 +32,7 @@ from anonymizer.engine.constants import (
     COL_TYPE_FIDELITY_JUDGE,
     COL_TYPE_FIDELITY_VALID,
 )
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
@@ -36,8 +40,8 @@ from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelit
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, WorkflowRunResult
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult, LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
-from anonymizer.engine.replace.strategies import apply_replacement_map
 from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.interface.anonymizer import Anonymizer
 
 
 def _build_entities_payload(payload_kind: str) -> object:
@@ -87,6 +91,42 @@ def test_local_replace_runner_with_custom_format_template(
     assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == "*** works at ***"
 
 
+@pytest.mark.parametrize(("consistency", "expected"), [("record", ["Maya", "Nora"]), ("run", ["Maya", "Maya"])])
+def test_substitute_consistency_shares_values_across_records_only_for_run(
+    consistency: Literal["record", "run"],
+    expected: list[str],
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    def generate(dataframe: pd.DataFrame, **_: object) -> WorkflowRunResult:
+        out = dataframe.copy()
+        out[COL_REPLACEMENT_MAP] = [
+            {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": name}]}
+            for name in ["Maya", "Nora"]
+        ]
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=(0, 1))
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = generate
+    entities = {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
+    frame = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice called", "Alice wrote"],
+            COL_FINAL_ENTITIES: [entities, entities],
+            COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}] * 2,
+        }
+    )
+    result = ReplacementWorkflow(llm_workflow=LlmReplaceWorkflow(adapter=adapter)).run_with_detection(
+        frame,
+        detect=lambda df: EntityDetectionResult(df, [], tuple(range(len(df)))),
+        replace_method=Substitute(consistency=consistency),
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+    assert adapter.run_workflow.call_count == 1
+    assert result.dataframe[COL_REPLACED_TEXT].tolist() == [f"{expected[0]} called", f"{expected[1]} wrote"]
+
+
 def test_substitute_runner_applies_generated_map(
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
@@ -109,10 +149,11 @@ def test_substitute_runner_applies_generated_map(
             }
         ),
         failed_records=[FailedRecord(record_id="r1", step="replace-map-generation", reason="none")],
+        source_positions=(0,),
     )
     runner = ReplacementWorkflow(llm_workflow=llm_workflow)
     result = runner.run(
-        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
+        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": stub_entities}]}),
         replace_method=Substitute(),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
@@ -150,15 +191,11 @@ def test_malformed_entities_row_fails_while_others_are_replaced(
 
     llm_workflow = Mock()
     llm_workflow.generate_map_only.side_effect = _generate_map_only
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice works at Acme", "Bob works at Acme"],
-            COL_FINAL_ENTITIES: [{"entities": stub_entities[:1]}, malformed],
-            RECORD_ID_COLUMN: ["r0", "r1"],
-        }
-    )
-    result = ReplacementWorkflow(llm_workflow=llm_workflow).run(
+    dataframe = pd.DataFrame({COL_TEXT: ["Alice works at Acme", "Bob works at Acme"], RECORD_ID_COLUMN: ["r0", "r1"]})
+    detected = dataframe.assign(**{COL_FINAL_ENTITIES: [{"entities": stub_entities[:1]}, malformed]})
+    result = ReplacementWorkflow(llm_workflow=llm_workflow).run_with_detection(
         dataframe,
+        detect=lambda _frame: EntityDetectionResult(dataframe=detected, failed_records=[]),
         replace_method=replace_method,
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
@@ -167,69 +204,6 @@ def test_malformed_entities_row_fails_while_others_are_replaced(
     assert "Bob" not in result.failed_records[0].reason
     assert result.dataframe[RECORD_ID_COLUMN].tolist() == ["r0"]
     assert "Alice" not in result.dataframe[COL_REPLACED_TEXT].iloc[0]
-
-
-@pytest.mark.parametrize("replace_method", [Redact(), Substitute()], ids=["redact", "substitute"])
-def test_all_malformed_rows_fail_without_calling_the_model(
-    replace_method: Redact | Substitute,
-    stub_model_configs: list[ModelConfig],
-    stub_replace_model_selection: ReplaceModelSelection,
-) -> None:
-    adapter = Mock()
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["Bob works at Acme", "Eve works at Beta"],
-            COL_FINAL_ENTITIES: ["{not json", 42],
-            COL_ENTITIES_BY_VALUE: [{"entities_by_value": []}] * 2,
-            RECORD_ID_COLUMN: ["r0", "r1"],
-        }
-    )
-    result = ReplacementWorkflow(llm_workflow=LlmReplaceWorkflow(adapter=adapter)).run(
-        dataframe,
-        replace_method=replace_method,
-        model_configs=stub_model_configs,
-        selected_models=stub_replace_model_selection,
-    )
-    assert [(f.record_id, f.step) for f in result.failed_records] == [("r0", "replace"), ("r1", "replace")]
-    assert result.dataframe.empty
-    assert COL_REPLACED_TEXT in result.dataframe.columns
-    adapter.run_workflow.assert_not_called()
-
-
-def test_apply_replacement_map_reports_invalid_and_overlapping_spans() -> None:
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice Bob"],
-            COL_FINAL_ENTITIES: [
-                {
-                    "entities": [
-                        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
-                        {"value": "lice ", "label": "alias", "start_position": 1, "end_position": 6},
-                        {"value": "Bob", "label": "first_name", "start_position": 99, "end_position": 102},
-                    ]
-                }
-            ],
-            COL_REPLACEMENT_MAP: [
-                {
-                    "replacements": [
-                        {"original": "Alice", "label": "first_name", "synthetic": "Maria"},
-                        {"original": "lice ", "label": "alias", "synthetic": "X"},
-                        {"original": "Bob", "label": "first_name", "synthetic": "Robert"},
-                    ]
-                }
-            ],
-        }
-    )
-
-    result = apply_replacement_map(dataframe)
-
-    assert result[COL_REPLACED_TEXT].iloc[0] == "Maria Bob"
-    assert result[COL_REPLACEMENT_APPLICATION].iloc[0] == {
-        "targeted_span_count": 3,
-        "applied_span_count": 1,
-        "skipped_span_count": 2,
-        "skipped_span_label_counts": {"alias": 1, "first_name": 1},
-    }
 
 
 def test_substitute_without_workflow_raises(
@@ -516,6 +490,7 @@ def test_runner_does_not_invoke_judges(
             }
         ),
         failed_records=[],
+        source_positions=(0,),
     )
     detection_judge = Mock()
     type_fidelity_judge = Mock()
@@ -532,7 +507,7 @@ def test_runner_does_not_invoke_judges(
     )
 
     result = runner.run(
-        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
+        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": stub_entities}]}),
         replace_method=Substitute(),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
@@ -574,68 +549,6 @@ def test_evaluate_raises_on_missing_required_columns(
             model_configs=stub_model_configs,
             selected_models=stub_evaluate_model_selection,
         )
-
-
-def test_apply_replacement_map_handles_string_map() -> None:
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["abc Alice xyz"],
-            COL_FINAL_ENTITIES: [
-                {"entities": [{"value": "Alice", "label": "first_name", "start_position": 4, "end_position": 9}]}
-            ],
-            COL_REPLACEMENT_MAP: ['{"replacements":[{"original":"Alice","label":"first_name","synthetic":"Elena"}]}'],
-        }
-    )
-    output_df = apply_replacement_map(dataframe)
-    assert output_df[COL_REPLACED_TEXT].iloc[0] == "abc Elena xyz"
-
-
-def test_apply_replacement_map_does_not_cascade_synthetic_values() -> None:
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice and Maria"],
-            COL_FINAL_ENTITIES: [
-                {
-                    "entities": [
-                        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
-                        {"value": "Maria", "label": "first_name", "start_position": 10, "end_position": 15},
-                    ]
-                }
-            ],
-            COL_REPLACEMENT_MAP: [
-                {
-                    "replacements": [
-                        {"original": "Alice", "label": "first_name", "synthetic": "Maria"},
-                        {"original": "Maria", "label": "first_name", "synthetic": "Elena"},
-                    ]
-                }
-            ],
-        }
-    )
-    assert apply_replacement_map(dataframe)[COL_REPLACED_TEXT].iloc[0] == "Maria and Elena"
-
-
-@pytest.mark.parametrize(
-    "payload_kind",
-    ["dict_wrapper", "numpy_wrapped_dict_wrapper", "entities_schema"],
-)
-def test_apply_replacement_map_handles_entity_payload_shapes(payload_kind: str) -> None:
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice works at Acme"],
-            COL_FINAL_ENTITIES: [_build_entities_payload(payload_kind)],
-            COL_REPLACEMENT_MAP: [
-                {
-                    "replacements": [
-                        {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
-                        {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
-                    ]
-                }
-            ],
-        }
-    )
-    output_df = apply_replacement_map(dataframe)
-    assert output_df[COL_REPLACED_TEXT].iloc[0] == "Maya works at NovaCorp"
 
 
 def test_hash_strategy_executes(
@@ -772,3 +685,49 @@ def test_detection_output_with_numpy_entities_flows_through_redact(
     replaced = result.dataframe[COL_REPLACED_TEXT].iloc[0]
     assert "Alice" not in replaced
     assert "[REDACTED_FIRST_NAME]" in replaced
+
+
+@pytest.mark.parametrize("omit_bob", [True, False], ids=["map-omits-bob", "map-complete"])
+def test_run_reports_each_rows_protection_outcome(omit_bob: bool, tmp_path: Path, stub_entities: list[dict]) -> None:
+    """A Substitute map that omits a detected entity leaves its row ``not_met``; the frame is unchanged."""
+    replacements = [
+        {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
+        {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
+        *([] if omit_bob else [{"original": "Bob", "label": "first_name", "synthetic": "Ravi"}]),
+    ]
+
+    def _generate_map_only(dataframe: pd.DataFrame, **_: object) -> LlmReplaceResult:
+        maps = [{"replacements": replacements}] * len(dataframe)
+        frame = dataframe.assign(**{COL_REPLACEMENT_MAP: maps})
+        return LlmReplaceResult(dataframe=frame, failed_records=[], source_positions=tuple(range(len(frame))))
+
+    llm_workflow = Mock()
+    llm_workflow.generate_map_only.side_effect = _generate_map_only
+    texts = ["Alice works at Acme", "Bob works at Acme"]
+    bob = [{"value": "Bob", "label": "first_name", "start_position": 0, "end_position": 3}, dict(stub_entities[1])]
+    bob[1].update(start_position=13, end_position=17)
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": stub_entities}, {"entities": bob}]}),
+        failed_records=[],
+        source_positions=(0, 1),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": texts}).to_csv(csv_path, index=False)
+    anonymizer = Anonymizer(detection_workflow=detector, replace_runner=ReplacementWorkflow(llm_workflow=llm_workflow))
+
+    result = anonymizer.run(
+        config=AnonymizerConfig(replace=Substitute(), emit_telemetry=False),
+        data=AnonymizerInput(source=str(csv_path), text_column="text"),
+    )
+
+    assert result.dataframe["text_replaced"].tolist() == [
+        "Maya works at NovaCorp",
+        "Bob works at NovaCorp" if omit_bob else "Ravi works at NovaCorp",
+    ]
+    assert result.outcome(0).qualification == "met"
+    second = result.outcome(1)
+    assert second.qualification == ("not_met" if omit_bob else "met")
+    assert any(reason.check == "replacements_applied" for reason in second.reasons) is omit_bob
+    with pytest.raises(IndexError):
+        result.outcome(2)

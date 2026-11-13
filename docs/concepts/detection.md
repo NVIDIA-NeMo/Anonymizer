@@ -75,6 +75,9 @@ records use the same caller-provided IDs in `result.failed_records`. Use
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
 | `validation_max_entities_per_call` | `100` | Maximum candidate entities per validator LLM call. Rows with more candidates are split into chunks. See [Chunked validation](#chunked-validation). |
 | `validation_excerpt_window_chars` | `500` | Characters of context included before and after a chunk's entity spans in the validator prompt. Bounds per-chunk prompt size; not the model's context-window limit. |
+| `detector_offset_unit` | `None` | Declared offset unit of the detector's spans. Only `"code_point"` is accepted; any other value raises `InvalidConfigError` before work starts. |
+| `detector_labels` | `None` | Declared label set the detector supports. Unset declares nothing. |
+| `detector_labels_fixed` | `False` | Declares `detector_labels` fixed: every effective label must be in it (and it must be set), or `run()` / `preview()` raise `InvalidConfigError` before work starts. |
 
 ---
 
@@ -217,6 +220,10 @@ Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["c
 !!! warning
     Exclusions always win. Configured examples for an excluded label are ignored with a warning that names the label but never the example values. A total overlap with the default or explicit label set raises a `ValueError` instead of silently detecting nothing.
 
+### Resolved detection scope
+
+`result.detection_scope` on `run()` and `preview()` results reports the scope the run used: `effective_labels` (after exclusions), `allowed_labels`, `excluded_labels`, and `gliner_threshold`. `allowed_labels` is None when `entity_labels` is unset; validation and augmentation may then produce labels outside `effective_labels`. With explicit `entity_labels`, `allowed_labels` equals `effective_labels` and final entities are restricted to them. In Rewrite mode, latent entities come from a prompt that does not receive the label list, and only exclusions are applied to them. The scope describes final detected entities; `allowed_labels` does not bound the latent entities a rewrite may act on. Finding no entities describes the result under this scope, not proof that the text contains no sensitive information.
+
 ## Tuning the threshold
 
 For `gliner_threshold`, start with the default `0.3`. If you're seeing too many false positives, raise it to `0.5`. If entities are being missed, try lowering to `0.2`. The LLM validation step catches many false positives, so erring on the side of lower thresholds is usually safe.
@@ -225,7 +232,7 @@ For `gliner_threshold`, start with the default `0.3`. If you're seeing too many 
 
 ## Model roles
 
-The detection pipeline uses three model roles, each mapped to a model alias in the default config:
+The detection pipeline uses three model roles, each mapped to a model alias in the bundled configs:
 
 | Role | Default alias | Purpose |
 |------|--------------|---------|

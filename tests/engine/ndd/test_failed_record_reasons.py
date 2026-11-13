@@ -162,7 +162,7 @@ def test_reasons_map_to_rows_across_row_groups(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("collector", [False, True])
-def test_early_shutdown_rows_name_the_most_common_cause(tmp_path: Path, collector: bool) -> None:
+def test_early_shutdown_rows_without_a_trace_get_the_untraced_reason(tmp_path: Path, collector: bool) -> None:
     # Rows 0-1 finish first, rows 2-7 fail next and trip the shutdown, rows 8-11 are still running.
     df = _inputs(12, bad=set(range(2, 8)), slow=set(range(8, 12)))
 
@@ -186,8 +186,7 @@ def test_early_shutdown_rows_name_the_most_common_cause(tmp_path: Path, collecto
     reasons = _reasons_by_position(tagged, result)
     explained = {position: reason for position, reason in reasons.items() if not reason.startswith(_UNTRACED)}
     assert 0 not in reasons and 1 not in reasons
-    assert all(reasons[position].startswith(f"{_UNTRACED} (most common: {_COLUMN}: ") for position in range(8, 12))
-    assert all("max_tokens" in reasons[position] for position in range(8, 12))
+    assert all(reasons[position] == _UNTRACED for position in range(8, 12))
     assert explained, "expected rows that failed before the shutdown to carry their cause"
     assert all(position in range(2, 8) for position in explained)
     assert all(reason.startswith(f"{_PREFIX}: {_COLUMN}: ") and "max_tokens" in reason for reason in explained.values())
@@ -355,7 +354,7 @@ def test_custom_column_exception_echoing_a_cause_marker_cannot_steer_the_reason(
 def test_multiline_exception_markers_do_not_leak_into_reasons_or_warnings(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, payload: str
 ) -> None:
-    """PR #349 promises input-free reasons; Anonymizer also publishes them in WARNING counts."""
+    """Reasons stay input-free, and no WARNING carries a failed record's id or input."""
     sensitive_values = _inputs(3, bad={1})
     df = sensitive_values.copy()
     df.loc[1, COL_TEXT] = "note" + payload.format(text=df.loc[1, COL_TEXT])
@@ -379,7 +378,6 @@ def test_multiline_exception_markers_do_not_leak_into_reasons_or_warnings(
         )
     warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
     assert output.failed_records == result.failed_records
-    assert any(reasons[1] in message for message in warnings)
     assert not any(result.failed_records[0].record_id in message for message in warnings)
     _assert_quotes_no_input([*reasons.values(), *warnings], sensitive_values)
 
@@ -405,7 +403,7 @@ def test_row_dropped_without_an_error_keeps_the_generic_reason_when_other_errors
     assert _reasons_by_position(tagged, result) == {1: _PREFIX}
 
 
-def test_row_dropped_without_an_error_names_the_common_cause_not_an_early_stop(tmp_path: Path) -> None:
+def test_row_dropped_without_an_error_gets_the_untraced_reason(tmp_path: Path) -> None:
     df = _inputs(3, bad={0})
     df.loc[1, COL_TEXT] += " DROP"
     columns: list[ColumnConfigT] = [
@@ -420,15 +418,15 @@ def test_row_dropped_without_an_error_names_the_common_cause_not_an_early_stop(t
     reasons = _reasons_by_position(tagged, result)
     assert set(reasons) == {0, 1}
     cause = reasons[0].removeprefix(f"{_PREFIX}: ")
-    assert reasons[1] == f"{_UNTRACED} (most common: {cause})"
-    assert "stopped early" not in reasons[1] and "max_tokens" in reasons[1]
+    assert "max_tokens" in cause
+    assert reasons[1] == _UNTRACED
     _assert_quotes_no_input(list(reasons.values()), df)
 
 
-def test_untraced_reason_breaks_ties_by_first_recorded_cause() -> None:
+def test_most_common_cause_breaks_ties_by_first_recorded_cause() -> None:
     reasons = [f"{_PREFIX}: b: x", f"{_PREFIX}: a: y", f"{_PREFIX}: a: y", f"{_PREFIX}: b: x"]
 
-    assert adapter._untraced_reason(reasons) == f"{_UNTRACED} (most common: b: x)"
+    assert adapter._most_common_cause(reasons) == "b: x"
 
 
 def test_concurrent_column_failures_keep_the_permanent_cause(tmp_path: Path) -> None:

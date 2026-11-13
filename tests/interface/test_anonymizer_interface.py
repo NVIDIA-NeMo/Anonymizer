@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import contextvars
+import dataclasses
 import functools
 import inspect
 import sys
@@ -43,13 +45,22 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     RECORD_ID_COLUMN,
 )
-from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
+from anonymizer.engine.detection.detection_workflow import (
+    EntityDetectionResult,
+    EntityDetectionWorkflow,
+    _build_entities_by_value,
+)
+from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
+from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
+from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import load_default_model_providers, validate_model_alias_references
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer, _accepts_entity_label_examples, _resolve_model_providers
-from anonymizer.interface.errors import InvalidConfigError, InvalidInputError
+from anonymizer.interface.errors import AnonymizerWorkflowError, InvalidConfigError, InvalidInputError
+from tests.conftest import stub_run_with_detection
 
 
 @pytest.fixture
@@ -73,6 +84,7 @@ def _make_anonymizer(
         {COL_TEXT: ["Alice works at Acme"], COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]"]}
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
+    stub_run_with_detection(replace_runner)
     replace_runner.run.return_value = replace_return or ReplacementResult(
         dataframe=_replace_df,
         failed_records=[],
@@ -89,6 +101,7 @@ def _make_anonymizer(
         }
     )
     rewrite_runner = Mock(spec=RewriteWorkflow)
+    stub_run_with_detection(rewrite_runner)
     rewrite_runner.run.return_value = rewrite_return or RewriteResult(
         dataframe=_rewrite_df,
         failed_records=[],
@@ -171,8 +184,16 @@ def test_run_in_memory_records_tracks_dropped_caller_id_and_survivor_order() -> 
             COL_TAGGED_TEXT: surviving_texts,
         }
     )
+
+    def create(config_builder, **_kwargs):
+        seed = pd.read_parquet(config_builder.get_seed_config().source.path)
+        key_column = next(c for c in seed.columns if c.startswith("_anonymizer_source_"))
+        survivors = seed[seed[RECORD_ID_COLUMN].isin(surviving_ids)]
+        echoed = detected.assign(**{key_column: survivors[key_column].tolist()})
+        return SimpleNamespace(load_dataset=Mock(return_value=echoed))
+
     data_designer = Mock(spec=DataDesigner)
-    data_designer.create.return_value = SimpleNamespace(load_dataset=Mock(return_value=detected))
+    data_designer.create.side_effect = create
 
     result = Anonymizer(data_designer=data_designer).run(
         config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
@@ -231,7 +252,7 @@ def test_run_passes_entity_label_examples_only_to_detection_workflow(stub_input:
     assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
     assert result.entity_labels == ["vendor_api_key"]
     assert not hasattr(result, "entity_label_examples")
-    assert "entity_label_examples" not in replace_runner.run.call_args.kwargs
+    assert "entity_label_examples" not in replace_runner.run_with_detection.call_args.kwargs
     assert "acme_live_abc123" not in (result.dataframe.to_json() or "")
 
 
@@ -248,7 +269,7 @@ def test_rewrite_run_passes_entity_label_examples_to_detection_workflow(stub_inp
     assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
     assert detection_wf.run.call_args.kwargs["tag_latent_entities"] is True
     assert result.entity_labels == ["vendor_api_key"]
-    assert "entity_label_examples" not in rewrite_runner.run.call_args.kwargs
+    assert "entity_label_examples" not in rewrite_runner.run_with_detection.call_args.kwargs
     assert "acme_live_abc123" not in (result.dataframe.to_json() or "")
 
 
@@ -1071,7 +1092,7 @@ def test_run_raises_invalid_config_before_workflows(
         anonymizer.run(config=AnonymizerConfig(replace=Substitute()), data=stub_input)
 
     detection_wf.run.assert_not_called()
-    replace_runner.run.assert_not_called()
+    replace_runner.run_with_detection.assert_not_called()
 
 
 def test_preview_raises_invalid_config_before_workflows(
@@ -1090,7 +1111,7 @@ def test_preview_raises_invalid_config_before_workflows(
         anonymizer.preview(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input, num_records=1)
 
     detection_wf.run.assert_not_called()
-    replace_runner.run.assert_not_called()
+    replace_runner.run_with_detection.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1104,8 +1125,8 @@ def test_run_rewrite_calls_rewrite_runner(stub_input: AnonymizerInput) -> None:
 
     anonymizer.run(config=config, data=stub_input)
 
-    rewrite_runner.run.assert_called_once()
-    call_kwargs = rewrite_runner.run.call_args.kwargs
+    rewrite_runner.run_with_detection.assert_called_once()
+    call_kwargs = rewrite_runner.run_with_detection.call_args.kwargs
     assert config.rewrite is not None
     assert call_kwargs["privacy_goal"] == config.rewrite.privacy_goal
     assert call_kwargs["evaluation"] == config.rewrite.evaluation
@@ -1115,13 +1136,14 @@ def test_run_rewrite_uses_combined_runner_when_enabled(stub_input: AnonymizerInp
     config = AnonymizerConfig(rewrite=Rewrite(use_combined_graph=True))
     anonymizer, _, _, rewrite_runner = _make_anonymizer()
     combined_runner = Mock(spec=RewriteWorkflow)
+    stub_run_with_detection(combined_runner)
     combined_runner.run.return_value = rewrite_runner.run.return_value
     anonymizer._combined_rewrite_runner = combined_runner
 
     anonymizer.run(config=config, data=stub_input)
 
-    rewrite_runner.run.assert_not_called()
-    combined_runner.run.assert_called_once()
+    rewrite_runner.run_with_detection.assert_not_called()
+    combined_runner.run_with_detection.assert_called_once()
 
 
 def test_run_rewrite_rejects_missing_privacy_goal_before_workflows(stub_input: AnonymizerInput) -> None:
@@ -1134,7 +1156,7 @@ def test_run_rewrite_rejects_missing_privacy_goal_before_workflows(stub_input: A
         anonymizer.run(config=config, data=stub_input)
 
     detection_workflow.run.assert_not_called()
-    rewrite_runner.run.assert_not_called()
+    rewrite_runner.run_with_detection.assert_not_called()
 
 
 def test_run_rewrite_output_columns(stub_input: AnonymizerInput) -> None:
@@ -1534,3 +1556,246 @@ def test_evaluate_rewrite_flags_rows_with_missed_entities(
     assert evaluated.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [expected_flag]
     assert str(evaluated.dataframe[COL_NEEDS_HUMAN_REVIEW].dtype) == "boolean"
     assert run_result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False] * len(run_result.dataframe)
+
+
+@pytest.mark.parametrize(
+    "detect",
+    [
+        {"entity_labels": ["first_name", "email"], "detector_labels": ["first_name"], "detector_labels_fixed": True},
+        {"detector_labels_fixed": True},
+        {"detector_offset_unit": "utf16_code_unit"},
+    ],
+)
+def test_conflicting_detector_declarations_rejected_before_detection(stub_input: AnonymizerInput, detect: dict) -> None:
+    anonymizer, detection_wf, _, _ = _make_anonymizer()
+    with pytest.raises(InvalidConfigError):
+        anonymizer.run(config=AnonymizerConfig(detect=detect, replace=Redact()), data=stub_input)
+    detection_wf.run.assert_not_called()
+
+
+def test_detection_scope_is_immutable_and_hashable(stub_input: AnonymizerInput) -> None:
+    anonymizer, _, _, _ = _make_anonymizer()
+
+    scope = anonymizer.preview(config=AnonymizerConfig(replace=Redact()), data=stub_input).detection_scope
+
+    assert scope is not None
+    hash(scope)
+    assert not hasattr(scope.effective_labels, "append")
+    assert not hasattr(scope.effective_labels, "clear")
+
+
+def test_matching_detector_declaration_runs_and_reports_scope(stub_input: AnonymizerInput) -> None:
+    detect = {
+        "entity_labels": ["first_name", "email"],
+        "excluded_entity_labels": ["email"],
+        "detector_labels": ["first_name", "email", "city"],
+        "detector_labels_fixed": True,
+        "detector_offset_unit": "code_point",
+    }
+    anonymizer, _, _, _ = _make_anonymizer()
+
+    result = anonymizer.preview(config=AnonymizerConfig(detect=detect, replace=Redact()), data=stub_input)
+
+    assert result.detection_scope is not None
+    assert result.detection_scope.effective_labels == ("first_name",)
+    assert result.detection_scope.allowed_labels == ("first_name",)
+    assert result.detection_scope.excluded_labels == ("email",)
+    assert not hasattr(result.detection_scope, "augmentation_may_add_labels")
+
+
+def test_detection_scope_reports_the_run_label_policy(stub_input: AnonymizerInput) -> None:
+    resolved = resolve_entity_label_config(entity_labels=None)
+    patched = dataclasses.replace(resolved, labels=[*resolved.labels, "zz_extra"])
+    anonymizer, _, _, _ = _make_anonymizer()
+
+    with patch("anonymizer.interface.anonymizer.resolve_entity_label_config", return_value=patched):
+        scope = anonymizer.preview(config=AnonymizerConfig(replace=Redact()), data=stub_input).detection_scope
+
+    assert scope is not None
+    assert scope.allowed_labels is None
+    assert scope.effective_labels == tuple(sorted(patched.labels))
+
+
+class _FirstWordDetector:
+    """Detects each row's first word as a ``first_name``; records the row count of every call."""
+
+    def __init__(self) -> None:
+        self.calls: list[int] = []
+
+    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+        self.calls.append(len(dataframe))
+        frame = dataframe.copy()
+        names = [str(text).split()[0] for text in frame[COL_TEXT]]
+        entities = [
+            {"entities": [{"id": "a", "value": n, "label": "first_name", "start_position": 0, "end_position": len(n)}]}
+            for n in names
+        ]
+        frame[COL_FINAL_ENTITIES] = entities
+        frame[COL_ENTITIES_BY_VALUE] = [_build_entities_by_value(e) for e in entities]
+        return EntityDetectionResult(frame, [], tuple(range(len(frame))))
+
+
+def _dropped_second(dataframe: pd.DataFrame) -> list[FailedRecord]:
+    ids = dataframe[RECORD_ID_COLUMN] if RECORD_ID_COLUMN in dataframe.columns else dataframe.index
+    return [FailedRecord(str(ids[1]), "judge", "dropped")]
+
+
+class _PartialReplaceRunner(ReplacementWorkflow):
+    def evaluate(self, dataframe: pd.DataFrame, **_: object) -> ReplacementResult:
+        kept = dataframe.iloc[[0]].copy()
+        kept[COL_ENTITY_COVERAGE] = 1.0
+        return ReplacementResult(dataframe=kept, failed_records=_dropped_second(dataframe))
+
+
+class _StubRewriteRunner(RewriteWorkflow):
+    """Rewrite with the model stages stubbed; ``evaluate`` keeps the first row and fails the second."""
+
+    def _produce(self, rows, **options):
+        def produce() -> None:
+            rows.frame[COL_REWRITTEN_TEXT] = [f"R<{t}>" for t in rows.frame[COL_TEXT]]
+            for column in ("utility_score", "leakage_mass", "weighted_leakage_rate"):
+                rows.frame[column] = 1.0 if column == "utility_score" else 0.0
+            rows.frame["any_high_leaked"] = False
+
+        return produce
+
+    def evaluate(self, dataframe: pd.DataFrame, **_: object) -> RewriteResult:  # ty: ignore[invalid-method-override]
+        kept = dataframe.iloc[[0]].copy()
+        kept[COL_JUDGE_EVALUATION] = [{"privacy": 1}]
+        return RewriteResult(kept, _dropped_second(dataframe))
+
+
+def _two_row_anonymizer(tmp_path: Path) -> tuple[Anonymizer, _FirstWordDetector, AnonymizerInput]:
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["Alice Smith lives here", "Bob Jones is here"]}).to_csv(csv_path, index=False)
+    detector = _FirstWordDetector()
+    anonymizer = Anonymizer(
+        artifact_path=tmp_path / "artifacts",
+        detection_workflow=cast(EntityDetectionWorkflow, detector),
+        replace_runner=_PartialReplaceRunner(),
+        rewrite_runner=_StubRewriteRunner(Mock()),
+    )
+    return anonymizer, detector, AnonymizerInput(source=str(csv_path))
+
+
+def _stub_coverage(_self: object, dataframe: pd.DataFrame, **_: object) -> tuple[pd.DataFrame, list[FailedRecord]]:
+    return dataframe.assign(**{COL_ENTITY_COVERAGE: 1.0}), []
+
+
+_MODES = {"replace": AnonymizerConfig(replace=Redact()), "rewrite": AnonymizerConfig(rewrite=Rewrite())}
+
+
+@pytest.mark.parametrize("mode", list(_MODES))
+def test_evaluate_keeps_partial_result_from_custom_runner(tmp_path: Path, mode: str) -> None:
+    anonymizer, _, data = _two_row_anonymizer(tmp_path)
+    run_result = anonymizer.run(config=_MODES[mode], data=data)
+
+    with patch.object(EntityCoverageWorkflow, "run_non_critical", _stub_coverage):
+        evaluated = anonymizer.evaluate(run_result)
+
+    assert len(evaluated.dataframe) == 1
+    assert [(r.step, r.reason) for r in evaluated.failed_records] == [("judge", "dropped")]
+
+
+@pytest.mark.parametrize("mode", list(_MODES))
+def test_run_calls_the_detector_on_empty_input(tmp_path: Path, mode: str) -> None:
+    anonymizer, detector, data = _two_row_anonymizer(tmp_path)
+    pd.DataFrame({"text": []}).to_csv(tmp_path / "input.csv", index=False)
+
+    result = anonymizer.run(config=_MODES[mode], data=data)
+
+    assert result.dataframe.empty
+    assert detector.calls == [0]
+
+
+def _cancelled_token() -> CancelToken:
+    token = CancelToken()
+    token.cancel()
+    return token
+
+
+_NESTED_MODES = {**_MODES, "rewrite-combined": AnonymizerConfig(rewrite=Rewrite(use_combined_graph=True))}
+
+
+@pytest.mark.parametrize("mode", list(_NESTED_MODES))
+def test_nested_run_in_cancelled_frame_raises_without_detecting(tmp_path: Path, mode: str) -> None:
+    anonymizer, detector, data = _two_row_anonymizer(tmp_path)
+
+    with pytest.raises(AnonymizerWorkflowError, match="cancelled"):
+        run_in_frame(anonymizer.run, config=_NESTED_MODES[mode], data=data, token=_cancelled_token())
+
+    assert detector.calls == []
+
+
+def test_nested_evaluate_in_cancelled_frame_raises_without_judging(tmp_path: Path) -> None:
+    anonymizer, _, data = _two_row_anonymizer(tmp_path)
+    run_result = anonymizer.run(config=_MODES["replace"], data=data)
+
+    with patch.object(_PartialReplaceRunner, "evaluate") as judge:
+        with pytest.raises(AnonymizerWorkflowError, match="cancelled"):
+            run_in_frame(anonymizer.evaluate, run_result, token=_cancelled_token())
+
+    judge.assert_not_called()
+
+
+@pytest.mark.parametrize("method", [Redact(), Substitute()], ids=["local", "substitute"])
+def test_replace_route_in_cancelled_frame_raises(method: Redact | Substitute) -> None:
+    entities = [
+        {"entities": [{"id": "a", "value": n, "label": "first_name", "start_position": 0, "end_position": len(n)}]}
+        for n in ("Alice", "Bob")
+    ]
+    frame = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice Smith", "Bob Jones"],
+            COL_FINAL_ENTITIES: entities,
+            COL_ENTITIES_BY_VALUE: [_build_entities_by_value(e) for e in entities],
+        }
+    )
+    llm_workflow = Mock(spec=LlmReplaceWorkflow)
+
+    with pytest.raises(AnonymizerWorkflowError, match="cancelled"):
+        run_in_frame(
+            ReplacementWorkflow(llm_workflow=llm_workflow).run,
+            frame,
+            replace_method=method,
+            model_configs=[],
+            selected_models=ReplaceModelSelection(replacement_generator="x"),
+            token=_cancelled_token(),
+        )
+
+    llm_workflow.generate_map_only.assert_not_called()
+
+
+_BINDING: contextvars.ContextVar[str] = contextvars.ContextVar("test_facade_binding", default="caller")
+
+
+class _BindingReplaceRunner(_PartialReplaceRunner):
+    """An overridden runner whose run and evaluate set a context value."""
+
+    def run(self, dataframe: pd.DataFrame, **_: object) -> ReplacementResult:
+        _BINDING.set("run")
+        return ReplacementResult(dataframe=dataframe.assign(**{COL_REPLACED_TEXT: "[REDACTED]"}), failed_records=[])
+
+    def evaluate(self, dataframe: pd.DataFrame, **options: object) -> ReplacementResult:
+        _BINDING.set("evaluate")
+        return super().evaluate(dataframe, **options)
+
+
+@pytest.mark.parametrize("entry", ["run", "preview", "evaluate"])
+def test_entries_do_not_leak_context_values_set_by_a_runner(tmp_path: Path, entry: str) -> None:
+    anonymizer, _, data = _two_row_anonymizer(tmp_path)
+    anonymizer._replace_runner = _BindingReplaceRunner()
+    config = _MODES["replace"]
+    run_result = anonymizer.run(config=config, data=data)
+    token = _BINDING.set("caller")
+    try:
+        if entry == "evaluate":
+            with patch.object(EntityCoverageWorkflow, "run_non_critical", _stub_coverage):
+                anonymizer.evaluate(run_result)
+        elif entry == "preview":
+            anonymizer.preview(config=config, data=data, num_records=2)
+        else:
+            anonymizer.run(config=config, data=data)
+        assert _BINDING.get() == "caller"
+    finally:
+        _BINDING.reset(token)

@@ -379,12 +379,12 @@ def verify_disposition_coverage(
             ) and _normalize_identity_format(supplied["value"]) == _normalize_identity_format(entry.entity_value)
             logger.log(
                 logging.DEBUG if formatting_only else logging.WARNING,
-                "Disposition entry %d (%r, %r) does not match supplied entity (%r, %r); restoring supplied identity.",
+                "Disposition entry %d (label %r) does not match supplied entity (label %r, formatting only: %s); "
+                "restoring supplied identity.",
                 entry.id,
                 entry.entity_label,
-                entry.entity_value,
                 supplied["label"],
-                supplied["value"],
+                formatting_only,
             )
 
 

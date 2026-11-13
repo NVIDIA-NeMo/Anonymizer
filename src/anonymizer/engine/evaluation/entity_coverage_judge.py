@@ -29,7 +29,12 @@ from anonymizer.engine.evaluation.judge_base import JudgeResult, _BaseJudgeWorkf
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
-from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder
+from anonymizer.engine.row_partitioning import (
+    ROW_ORDER_COL,
+    merge_and_reorder,
+    resolve_source_positions,
+    restore_diagnostic_columns,
+)
 from anonymizer.engine.schemas import EntitiesByValueSchema
 
 logger = logging.getLogger("anonymizer.evaluation.entity_coverage_judge")
@@ -605,21 +610,23 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
                 selected_models=selected_models,
                 preview_num_records=preview_num_records,
             )
-            if RECORD_ID_COLUMN not in result.dataframe.columns:
-                raise ValueError("Entity coverage output is missing record IDs required for row alignment.")
-
             score_cols = [
                 col
                 for col in (self.RAW_COL, self.VALID_COL, self.INVALID_COL, self.N_CANDIDATES_COL)
                 if col in result.dataframe.columns
             ]
-            out = prepared.drop(columns=score_cols, errors="ignore").merge(
-                result.dataframe[[RECORD_ID_COLUMN, *score_cols]],
-                on=RECORD_ID_COLUMN,
-                how="left",
-                sort=False,
-                validate="one_to_one",
-            )
+            if not prepared[RECORD_ID_COLUMN].is_unique or (
+                RECORD_ID_COLUMN in result.dataframe.columns and not result.dataframe[RECORD_ID_COLUMN].is_unique
+            ):
+                # 0.4.0 joined scores one-to-one on record IDs; repeated rows (e.g. a caller detector's
+                # duplicates) fail that join, and every row takes the unavailable defaults below.
+                raise ValueError("Merge keys are not unique; entity coverage cannot be joined one-to-one")
+            out = restore_diagnostic_columns(
+                prepared,
+                result.dataframe,
+                dict.fromkeys(score_cols),
+                source_positions=result.source_positions,
+            ).reset_index(drop=True)
 
             if self.VALID_COL not in out.columns:
                 out[self.VALID_COL] = None
@@ -640,9 +647,9 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             if not had_record_ids:
                 out = out.drop(columns=[RECORD_ID_COLUMN])
             return out, result.failed_records
-        except Exception as exc:
-            logger.warning("Entity coverage workflow failed; scores may be unavailable. Reason: %s", exc)
-            logger.debug("Entity coverage workflow failed.", exc_info=True)
+        except Exception:
+            logger.warning("Entity coverage workflow failed; scores may be unavailable.")
+            logger.debug("Entity coverage workflow failed.")
             out = dataframe.copy()
             out[self.VALID_COL] = None
             out[self.INVALID_COL] = [[] for _ in range(len(out))]
@@ -669,6 +676,12 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             preview_num_records=effective_preview,
         )
 
-        judged_df = self.postprocess(run_result.dataframe)
+        judged_df = run_result.dataframe.copy()
+        positions = getattr(run_result, "source_positions", None)
+        if positions is not None:
+            positions = resolve_source_positions(working_df, judged_df, positions)
+            judged_df[ROW_ORDER_COL] = positions
+            positions = tuple(sorted(positions))
+        judged_df = self.postprocess(judged_df)
         combined = merge_and_reorder(judged_df)
-        return JudgeResult(dataframe=combined, failed_records=run_result.failed_records)
+        return JudgeResult(dataframe=combined, failed_records=run_result.failed_records, source_positions=positions)

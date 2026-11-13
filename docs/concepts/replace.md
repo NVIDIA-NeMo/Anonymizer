@@ -3,7 +3,7 @@
 
 # Replace
 
-Replace mode replaces each [detected entity](detection.md) with an alternative token. Anonymizer provides four strategies. 
+Replace mode replaces each [detected entity](detection.md) with an alternative token. Anonymizer provides four strategies.
 
 ---
 
@@ -37,6 +37,9 @@ AnonymizerConfig(replace=Substitute(
 | Field | Default | Description |
 |-------|---------|-------------|
 | `instructions` | `None` | Additional instructions for the LLM replacement generator. |
+| `consistency` | `"record"` | `"record"` gives each value (with its case and whitespace variants) one substitute within its record; two different values of a record can get the same substitute. `"run"` gives each value one substitute across the whole run, and two different values never share one. A substitute equal to a real value of the record is replaced by `[SUBSTITUTE_<LABEL>_<n>]`; in `"run"`, so is a substitute another value already uses. A mention can still get a different substitute where the shared one would clash with another value, or another value's substitute, in the same record; in `"record"` this happens only to case or whitespace variants. |
+
+Values match on label plus text, ignoring case and whitespace differences. The default `"record"` keeps each record's substitutes independent of other records. `"run"` makes records linkable across the output and preserves how often each value occurs. In `"run"` mode two different values never share a substitute. Use it only for datasets where joins across related documents are needed and unlinkability is not. Otherwise, use [Hash](#hash) for joins.
 
 !!! note "Model role"
 
@@ -69,8 +72,10 @@ AnonymizerConfig(replace=Redact(format_template="[{label}]"))
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `format_template` | `[REDACTED_{label}]` | Template with optional `{label}` placeholder. |
+| `format_template` | `[REDACTED_{label}]` | Nonempty replacement template with optional `{label}` placeholder. |
 | `normalize_label` | `True` | Uppercase and clean the label before substitution. |
+
+Empty templates and statically empty renders, such as `{label:.0}`, raise a configuration error. If a label-dependent template renders an empty string during replacement, Redact raises `ValueError` instead of silently keeping the entity. Whitespace replacements remain valid.
 
 ---
 

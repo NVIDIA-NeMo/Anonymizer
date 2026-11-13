@@ -16,7 +16,7 @@ Failure contract. Each chunk attempts its round-robin primary first and
 fails over sequentially to the rest of the pool; a chunk only fails when
 every pool member has raised. The first failing chunk re-raises out of
 the generator, DataDesigner drops the row, and
-``NddAdapter._detect_missing_records`` surfaces it as a ``FailedRecord``.
+``NddAdapter.run_workflow`` source-position accounting surfaces it as a ``FailedRecord``.
 Raw text never silently leaks through as unscrubbed output.
 
 Concurrency. Async plugin execution dispatches chunks with ``asyncio.gather``
@@ -323,9 +323,8 @@ async def _dispatch_chunk_async(
             )
             if attempt_index > 0:
                 logger.info(
-                    "validator chunk %d: recovered on failover alias=%s (attempt %d of %d)",
+                    "validator chunk %d: recovered on failover (attempt %d of %d)",
                     chunk_index,
-                    alias,
                     attempt_index + 1,
                     len(facades),
                 )
@@ -335,20 +334,14 @@ async def _dispatch_chunk_async(
             remaining = len(facades) - attempt_index - 1
             if remaining > 0:
                 logger.warning(
-                    "validator chunk %d: alias=%s raised %s (%s); failing over to next pool member (%d remaining)",
+                    "validator chunk %d: request failed; failing over to next pool member (%d remaining)",
                     chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
                     remaining,
                 )
             else:
                 logger.error(
-                    "validator chunk %d: alias=%s raised %s (%s); pool exhausted — row will be dropped",
+                    "validator chunk %d: request failed; pool exhausted — row will be dropped",
                     chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
                 )
 
     if last_exc is None:
@@ -359,26 +352,15 @@ async def _dispatch_chunk_async(
     raise last_exc
 
 
-def _build_dispatch_kwargs_per_chunk(
-    row: dict[str, Any],
-    params: ChunkedValidationParams,
-    models: dict[str, Any],
-) -> tuple[ValidationCandidatesSchema, list[dict[str, Any]]]:
-    missing_aliases = [alias for alias in params.pool if alias not in models]
-    if missing_aliases:
-        raise KeyError(
-            f"Validator pool aliases {missing_aliases} not present in models dict. "
-            "Ensure models contains every alias in ChunkedValidationParams.pool."
-        )
-
-    text = str(row.get(COL_TEXT, ""))
+def validation_chunks(
+    row: dict[str, Any], max_entities_per_call: int
+) -> tuple[ValidationCandidatesSchema, list[EntitySpan], list[list[tuple[Any, EntitySpan]]]]:
+    """The candidates, seed spans and chunks of one row."""
     candidates = ValidationCandidatesSchema.from_raw(row.get(COL_SEED_VALIDATION_CANDIDATES, {}))
     seed_entities_schema = EntitiesSchema.from_raw(row.get(COL_SEED_ENTITIES, {}))
-    notation_raw = row.get(COL_TAG_NOTATION) or TagNotation.sentinel.value
-    notation = TagNotation(str(notation_raw))
 
     if not candidates.candidates:
-        return candidates, []
+        return candidates, [], []
 
     all_spans = [
         EntitySpan(
@@ -394,22 +376,43 @@ def _build_dispatch_kwargs_per_chunk(
     ]
 
     ordered = order_candidates_by_position(candidates, all_spans)
-    chunks = chunk_candidates(ordered, params.max_entities_per_call)
+    chunks = chunk_candidates(ordered, max_entities_per_call)
+
+    return candidates, all_spans, chunks
+
+
+def _build_dispatch_kwargs_per_chunk(
+    row: dict[str, Any],
+    params: ChunkedValidationParams,
+    models: dict[str, Any],
+) -> tuple[ValidationCandidatesSchema, list[dict[str, Any]]]:
+    missing_aliases = [alias for alias in params.pool if alias not in models]
+    if missing_aliases:
+        raise KeyError(
+            f"Validator pool aliases {missing_aliases} not present in models dict. "
+            "Ensure models contains every alias in ChunkedValidationParams.pool."
+        )
+
+    text = str(row.get(COL_TEXT, ""))
+    notation = TagNotation(str(row.get(COL_TAG_NOTATION) or TagNotation.sentinel.value))
+    candidates, all_spans, chunks = validation_chunks(row, params.max_entities_per_call)
+    if not chunks:
+        return candidates, []
 
     if len(chunks) == 1:
         logger.debug(
-            "chunked validation: %d candidate(s) in 1 chunk (full-text excerpt), pool=%s",
-            len(ordered),
-            params.pool,
+            "chunked validation: %d candidate(s) in 1 chunk (full-text excerpt), pool_size=%d",
+            len(candidates.candidates),
+            len(params.pool),
         )
     else:
         logger.debug(
-            "chunked validation: %d candidate(s) in %d chunks (max=%d per chunk, window=%d chars), pool=%s",
-            len(ordered),
+            "chunked validation: %d candidate(s) in %d chunks (max=%d per chunk, window=%d chars), pool_size=%d",
+            len(candidates.candidates),
             len(chunks),
             params.max_entities_per_call,
             params.excerpt_window_chars,
-            params.pool,
+            len(params.pool),
         )
 
     # Single-chunk rows preserve parity with the pre-chunking
@@ -496,9 +499,22 @@ async def chunked_validate_row_async(
         chunk_results: list[RawValidationDecisionsSchema] = []
     else:
         semaphore = asyncio.Semaphore(_chunk_worker_count(params, len(dispatch_kwargs_per_chunk)))
-        chunk_results = await asyncio.gather(
-            *[_bounded_dispatch_chunk_async(semaphore, kwargs) for kwargs in dispatch_kwargs_per_chunk]
-        )
+        tasks = [
+            asyncio.create_task(_bounded_dispatch_chunk_async(semaphore, kwargs))
+            for kwargs in dispatch_kwargs_per_chunk
+        ]
+        try:
+            chunk_results = await asyncio.gather(*tasks)
+        except BaseException:
+            # gather may report the first failed chunk while siblings still use
+            # DD clients. Wait for them before releasing the row.
+            drained = asyncio.gather(*tasks, return_exceptions=True)
+            while not drained.done():
+                try:
+                    await asyncio.shield(drained)
+                except asyncio.CancelledError:
+                    continue
+            raise
 
     row[COL_VALIDATION_DECISIONS] = merge_chunk_decisions(chunk_results, candidates)
     return row

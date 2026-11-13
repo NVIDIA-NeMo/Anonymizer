@@ -96,6 +96,22 @@ class TextRecordsInput(BaseModel):
         return self
 
 
+class DetectionScope(BaseModel):
+    """The detection scope a run used. Finding no entities describes the result under this scope only."""
+
+    model_config = ConfigDict(frozen=True)
+
+    effective_labels: tuple[str, ...] = Field(description="Labels detection looked for, after exclusions.")
+    allowed_labels: tuple[str, ...] | None = Field(
+        description=(
+            "Labels final entities are restricted to (effective_labels when entity_labels is set). "
+            "None when entity_labels is unset: final entities may then carry labels outside effective_labels."
+        )
+    )
+    excluded_labels: tuple[str, ...] = Field(description="Configured exclusions (normalized).")
+    gliner_threshold: float = Field(description="GLiNER detection confidence threshold.")
+
+
 class Detect(BaseModel):
     """Configuration for the entity detection stage."""
 
@@ -149,6 +165,42 @@ class Detect(BaseModel):
         ),
     )
 
+    detector_offset_unit: str | None = Field(
+        default=None,
+        description=(
+            "Declared offset unit of the detector's spans. None declares nothing. The pipeline consumes "
+            "Unicode code point offsets, so any other declared unit is rejected before work starts."
+        ),
+    )
+    detector_labels: list[str] | None = Field(
+        default=None, description="Declared label set the detector supports. None declares nothing."
+    )
+    detector_labels_fixed: bool = Field(
+        default=False,
+        description=(
+            "True declares that detector_labels is fixed (the detector cannot take caller-selected labels): "
+            "every effective label must then be in detector_labels, or the run is rejected before work starts."
+        ),
+    )
+
+    def detector_declaration_conflicts(self) -> list[str]:
+        """Conflicts between the declared detector facts and this configuration; empty when consistent."""
+        conflicts = []
+        if self.detector_offset_unit is not None and self.detector_offset_unit != "code_point":
+            conflicts.append(
+                f"detector_offset_unit {self.detector_offset_unit!r} is not supported; the pipeline consumes "
+                "'code_point' offsets."
+            )
+        if self.detector_labels_fixed:
+            if self.detector_labels is None:
+                conflicts.append("detector_labels_fixed=True requires detector_labels.")
+            else:
+                effective = set(self.entity_labels or DEFAULT_ENTITY_LABELS) - set(self.excluded_entity_labels or [])
+                missing = sorted(effective - {normalize_label(x) for x in self.detector_labels})
+                if missing:
+                    conflicts.append(f"Effective labels outside the fixed detector_labels: {missing}.")
+        return conflicts
+
     @field_validator("entity_labels")
     @classmethod
     def validate_entity_labels(cls, value: list[str] | None) -> list[str] | None:
@@ -185,13 +237,13 @@ class Detect(BaseModel):
         if duplicate_keys:
             logger.warning(
                 "entity_label_examples contained label names that normalize to the same label; "
-                "merged automatically: %s",
-                duplicate_keys,
+                "merged automatically (%d labels).",
+                len(duplicate_keys),
             )
         if duplicate_value_labels:
             logger.warning(
-                "entity_label_examples contained duplicate examples; removed automatically for labels: %s",
-                duplicate_value_labels,
+                "entity_label_examples contained duplicate examples; removed automatically for %d labels.",
+                len(duplicate_value_labels),
             )
         return normalized
 
@@ -202,8 +254,8 @@ class Detect(BaseModel):
         excluded_examples = sorted(example_labels & excluded_set)
         if excluded_examples:
             logger.warning(
-                "entity_label_examples configured excluded labels; their examples will be ignored: %s",
-                excluded_examples,
+                "entity_label_examples configured excluded labels; their examples will be ignored (%d labels).",
+                len(excluded_examples),
             )
 
         active_example_labels = example_labels - excluded_set
@@ -213,8 +265,8 @@ class Detect(BaseModel):
             effective_labels = entity_labels_set - excluded_set
             if overlap:
                 logger.warning(
-                    "entity_labels and excluded_entity_labels share labels that will never be detected: %s",
-                    overlap,
+                    "entity_labels and excluded_entity_labels share %d labels that will never be detected.",
+                    len(overlap),
                 )
         else:
             entity_labels_set = set(DEFAULT_ENTITY_LABELS)

@@ -185,7 +185,7 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()
 
 ## Model roles
 
-Rewrite uses multiple LLM roles. All default to models in the [default config](models.md):
+Rewrite uses multiple LLM roles. All default to models in the [bundled configs](models.md):
 
 | Role | Default | Purpose |
 |------|---------|---------|

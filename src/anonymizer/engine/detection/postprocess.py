@@ -208,7 +208,7 @@ def apply_augmented_entities(
             merged.append(
                 EntitySpan(
                     entity_id=entity_id,
-                    value=value,
+                    value=text[start:end],
                     label=label,
                     start_position=start,
                     end_position=end,
@@ -252,7 +252,7 @@ def _split_full_names(text: str, entities: list[EntitySpan]) -> list[EntitySpan]
                 extra.append(
                     EntitySpan(
                         entity_id=entity_id,
-                        value=part,
+                        value=text[start:end],
                         label=part_label,
                         start_position=start,
                         end_position=end,
