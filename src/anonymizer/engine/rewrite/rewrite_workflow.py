@@ -594,13 +594,10 @@ class RewriteWorkflow:
     ) -> Callable[[], None]:
         """The frame stages over ``rows``: label classification, replacement map, pipeline, then the evaluate-repair
         loop."""
-        label_categories: dict[str, str] = {}
 
         def classify() -> None:
-            label_categories.update(
-                self._entity_classification_wf.classify_dataset(
-                    rows.frame, adapter=self._adapter, model_configs=model_configs, selected_models=selected_models
-                )
+            self._entity_classification_wf.classify_rows(
+                rows.frame, adapter=self._adapter, model_configs=model_configs, selected_models=selected_models
             )
 
         stages = [
@@ -616,7 +613,6 @@ class RewriteWorkflow:
                     data_summary=data_summary,
                     preview_num_records=preview_num_records,
                     strict_entity_protection=strict_entity_protection,
-                    label_categories=label_categories,
                 ),
             ),
             *self._evaluate_repair_stages(
@@ -649,7 +645,7 @@ class RewriteWorkflow:
         )
         rows.failed.extend(replace_result.failed_records)
 
-    # --- Step 2: domain, entity classification, disposition, QA, rewrite (single adapter call) ---
+    # --- Step 2: domain, disposition, QA, rewrite (single adapter call) ---
     def _pipeline(
         self,
         rows: _Rows,
@@ -660,11 +656,9 @@ class RewriteWorkflow:
         data_summary: str | None,
         preview_num_records: int | None,
         strict_entity_protection: bool,
-        label_categories: dict[str, str],
     ) -> None:
         pipeline_columns = [
             *self._domain_wf.columns(selected_models=selected_models, data_summary=data_summary),
-            *self._entity_classification_wf.columns(selected_models=selected_models, label_categories=label_categories),
             *self._disposition_wf.columns(
                 selected_models=selected_models,
                 privacy_goal=privacy_goal,

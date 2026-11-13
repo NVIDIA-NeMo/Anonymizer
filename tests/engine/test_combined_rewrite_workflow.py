@@ -22,6 +22,7 @@ from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_ENTITIES_BY_VALUE,
+    COL_ENTITY_CLASSIFICATION,
     COL_FULL_REWRITE,
     COL_LATENT_ENTITIES,
     COL_LEAKAGE_MASS,
@@ -746,6 +747,7 @@ def test_graph_validates_with_data_designer(
             COL_TAGGED_TEXT: ["[[Alice|first_name]] works at Acme"],
             COL_TAG_NOTATION: ["bracket"],
             COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
+            COL_ENTITY_CLASSIFICATION: [{"first_name": "direct_identifier"}],
             COL_LATENT_ENTITIES: [{"latent_entities": []}],
         }
     )

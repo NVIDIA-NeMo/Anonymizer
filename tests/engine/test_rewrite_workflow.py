@@ -25,6 +25,7 @@ from anonymizer.engine.constants import (
     COL_DETECTION_VALID,
     COL_DOMAIN,
     COL_ENTITIES_BY_VALUE,
+    COL_ENTITY_CLASSIFICATION,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
     COL_LEAKED_PRIVACY_ITEMS,
@@ -39,6 +40,7 @@ from anonymizer.engine.constants import (
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
+    COL_SENSITIVITY_DISPOSITION,
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
@@ -1645,19 +1647,58 @@ def test_run_needs_human_review_not_overwritten_by_evaluate(
     assert bool(result.dataframe[COL_NEEDS_HUMAN_REVIEW].iloc[0]) is True
 
 
-def test_combined_runner_overriding_build_graph_runs(
+@pytest.mark.parametrize("combined", [False, True])
+def test_label_categories_reach_disposition_as_a_row_column(
+    combined: bool,
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
+
+    def entities(*labels: str) -> dict:
+        return {"entities_by_value": [{"value": label, "labels": [label]} for label in labels]}
+
+    frame = pd.DataFrame({COL_TEXT: ["a", "b"], COL_ENTITIES_BY_VALUE: [entities("first_name"), entities("city")]})
+
+    class Stop(Exception):
+        pass
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = Stop
+    kind = CombinedRewriteWorkflow if combined else RewriteWorkflow
+    with patch(_REPLACE_PATCH) as replacement, pytest.raises(Stop):
+        _mock_replace(replacement, frame)
+        kind(adapter).run(
+            frame,
+            model_configs=[],
+            selected_models=stub_rewrite_model_selection,
+            replace_model_selection=stub_replace_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=EvaluationCriteria(max_repair_iterations=0),
+        )
+    seed = adapter.run_workflow.call_args.args[0]
+    assert [json.loads(value) for value in seed[COL_ENTITY_CLASSIFICATION]] == [
+        {"first_name": "direct_identifier"},
+        {"city": "quasi_identifier"},
+    ]
+    names = [column.name for column in adapter.run_workflow.call_args.kwargs["columns"]]
+    assert COL_ENTITY_CLASSIFICATION not in names
+    assert COL_SENSITIVITY_DISPOSITION in names
+
+
+def test_combined_runner_overriding_build_graph_with_release_signature_runs(
     stub_df_with_entities: pd.DataFrame,
     stub_eval_df: pd.DataFrame,
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
-    """A caller's CombinedRewriteWorkflow may override build_graph; the override must accept ``label_categories``."""
+    """A caller's CombinedRewriteWorkflow may override build_graph with 0.4.0's six keyword arguments."""
     from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteGraph, CombinedRewriteWorkflow
 
     calls = []
 
     class GraphOverride(CombinedRewriteWorkflow):
-        def build_graph(
+        def build_graph(  # 0.4.0 public signature
             self,
             *,
             selected_models: RewriteModelSelection,
@@ -1666,7 +1707,6 @@ def test_combined_runner_overriding_build_graph_runs(
             evaluation: EvaluationCriteria,
             data_summary: str | None = None,
             strict_entity_protection: bool = False,
-            label_categories: dict[str, str] | None = None,
         ) -> CombinedRewriteGraph:
             calls.append(True)
             return super().build_graph(
@@ -1676,7 +1716,6 @@ def test_combined_runner_overriding_build_graph_runs(
                 evaluation=evaluation,
                 data_summary=data_summary,
                 strict_entity_protection=strict_entity_protection,
-                label_categories=label_categories,
             )
 
     from data_designer.config.column_configs import CustomColumnConfig

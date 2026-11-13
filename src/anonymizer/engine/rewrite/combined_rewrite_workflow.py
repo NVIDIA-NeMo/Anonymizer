@@ -54,7 +54,6 @@ from anonymizer.engine.replace.llm_replace_workflow import (
     _requested_values,
 )
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
-from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.findings import needs_human_review
 from anonymizer.engine.rewrite.parsers import normalize_payload
@@ -399,14 +398,10 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
         evaluation: EvaluationCriteria,
         data_summary: str | None = None,
         strict_entity_protection: bool = False,
-        label_categories: dict[str, str] | None = None,
     ) -> CombinedRewriteGraph:
         columns = _replacement_columns(replace_model_selection)
         columns.extend(
             DomainClassificationWorkflow().columns(selected_models=selected_models, data_summary=data_summary)
-        )
-        columns.extend(
-            EntityClassificationWorkflow().columns(selected_models=selected_models, label_categories=label_categories)
         )
         columns.extend(
             SensitivityDispositionWorkflow().columns(
@@ -557,7 +552,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
         ``rows.frame``."""
 
         def generate() -> None:
-            label_categories = self._entity_classification_wf.classify_dataset(
+            self._entity_classification_wf.classify_rows(
                 rows.frame, adapter=self._adapter, model_configs=model_configs, selected_models=selected_models
             )
             graph = self.build_graph(
@@ -567,7 +562,6 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 evaluation=evaluation,
                 data_summary=data_summary,
                 strict_entity_protection=strict_entity_protection,
-                label_categories=label_categories,
             )
             seed = select_seed_cols(rows.frame, derive_seed_columns(graph.columns, rows.frame))
             run_result = self._adapter.run_workflow(
