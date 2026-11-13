@@ -378,6 +378,12 @@ configuration and change only the roles you are deploying locally, or define
 every alias needed by the selected pipeline. See
 [Custom models](models.md#custom-models) for role mapping and complete examples.
 
+[`tools/inference_service_profiles/examples/local-models.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/tools/inference_service_profiles/examples/local-models.yaml)
+is a complete role configuration that uses only the shipped profiles: GLiNER2
+detection with Gemma 4 26B-A4B, Qwen3.8 27B, Nemotron 3.5 Lightning, and
+Nemotron 3.5 Super VL for the LLM roles. Its header lists which profile serves
+each provider name; add one provider entry per running server.
+
 For the detector request and response contract, chunking behavior, and a live
 PII request, see [Self-hosting GLiNER](self-hosting-gliner.md).
 
