@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import contextvars
+import functools
 import inspect
 import logging
 import os
@@ -13,7 +15,7 @@ import uuid
 from collections import Counter
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TypedDict, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, ParamSpec, Protocol, TypedDict, TypeGuard, TypeVar, cast
 
 import pandas as pd
 from data_designer.config.models import ModelProvider
@@ -307,6 +309,21 @@ def _detection_example_kwargs(method: Callable[..., object], examples: dict[str,
     return {}
 
 
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _in_copied_context(fn: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Run ``fn`` in a copy of the caller's context: it sees the caller's context values, and values it sets,
+    including a caller-supplied runner's, do not leak back to the caller."""
+
+    @functools.wraps(fn)
+    def call(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        return contextvars.copy_context().run(fn, *args, **kwargs)
+
+    return call
+
+
 class Anonymizer:
     """Public facade for anonymization workflows."""
 
@@ -397,6 +414,7 @@ class Anonymizer:
         self._rewrite_runner = rewrite_runner or RewriteWorkflow(adapter=self._adapter)
         self._combined_rewrite_runner = combined_rewrite_runner or CombinedRewriteWorkflow(adapter=self._adapter)
 
+    @_in_copied_context
     def run(
         self,
         *,
@@ -516,6 +534,7 @@ class Anonymizer:
             num_jobs=num_jobs,
         )
 
+    @_in_copied_context
     def preview(
         self,
         *,
@@ -573,6 +592,7 @@ class Anonymizer:
                 duration_sec=time.perf_counter() - t_start,
             )
 
+    @_in_copied_context
     def evaluate(
         self,
         output: AnonymizerResult | PreviewResult,

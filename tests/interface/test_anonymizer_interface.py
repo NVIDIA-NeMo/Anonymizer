@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import dataclasses
 import functools
 import inspect
@@ -1763,3 +1764,38 @@ def test_replace_route_in_cancelled_frame_raises(method: Redact | Substitute) ->
         )
 
     llm_workflow.generate_map_only.assert_not_called()
+
+
+_BINDING: contextvars.ContextVar[str] = contextvars.ContextVar("test_facade_binding", default="caller")
+
+
+class _BindingReplaceRunner(_PartialReplaceRunner):
+    """An overridden runner whose run and evaluate set a context value."""
+
+    def run(self, dataframe: pd.DataFrame, **_: object) -> ReplacementResult:
+        _BINDING.set("run")
+        return ReplacementResult(dataframe=dataframe.assign(**{COL_REPLACED_TEXT: "[REDACTED]"}), failed_records=[])
+
+    def evaluate(self, dataframe: pd.DataFrame, **options: object) -> ReplacementResult:
+        _BINDING.set("evaluate")
+        return super().evaluate(dataframe, **options)
+
+
+@pytest.mark.parametrize("entry", ["run", "preview", "evaluate"])
+def test_entries_do_not_leak_context_values_set_by_a_runner(tmp_path: Path, entry: str) -> None:
+    anonymizer, _, data = _two_row_anonymizer(tmp_path)
+    anonymizer._replace_runner = _BindingReplaceRunner()
+    config = _MODES["replace"]
+    run_result = anonymizer.run(config=config, data=data)
+    token = _BINDING.set("caller")
+    try:
+        if entry == "evaluate":
+            with patch.object(EntityCoverageWorkflow, "run_non_critical", _stub_coverage):
+                anonymizer.evaluate(run_result)
+        elif entry == "preview":
+            anonymizer.preview(config=config, data=data, num_records=2)
+        else:
+            anonymizer.run(config=config, data=data)
+        assert _BINDING.get() == "caller"
+    finally:
+        _BINDING.reset(token)
