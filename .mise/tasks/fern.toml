@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+["docs:fern:preview"]
+description = "Generate a hosted Fern preview. Run docs:fern:check first; requires Fern authentication."
+dir = "docs/fern"
+depends = ["docs:fern:notebooks"]
+run = "fern generate --docs --preview"
+
+["docs:fern:serve"]
+description = "Preview the staged Fern site locally."
+dir = "docs/fern"
+depends = ["docs:fern:notebooks"]
+run = "fern docs dev"
+
+["docs:fern:notebooks"]
+description = "Regenerate Fern tutorial reading pages from saved notebooks and outputs without executing cells."
+run = "uv run --frozen --group docs python docs/fern/scripts/generate_pages.py"

@@ -1,0 +1,221 @@
+---
+title: "Rewrite"
+description: ""
+position: 4
+---
+{/* SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */}
+{/* SPDX-License-Identifier: Apache-2.0 */}
+
+# Rewrite
+
+Instead of replacing individual entities, rewrite mode transforms the entire text to produce a privacy-safe version that reduces both explicit identifiers and implicit, inferable signals that could lead to re-identification. While overall meaning is preserved where possible, rewrite mode intentionally modifies or removes details when needed to eliminate latent entities and break inference pathways.
+
+---
+
+## How it works
+
+[Detect](/concepts/detection) runs first (same as [Replace mode](/concepts/replace), plus latent entity detection for context-inferable information). This includes identifying signals that may not be explicitly tagged but can be deduced from combinations of details (e.g., location inferred from contextual cues). The text is then classified by domain, and each entity or attribute is assigned a sensitivity disposition based on contextual risk, recognizing that quasi-identifiers can emerge from any aspect of the text.
+
+The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. Any records that failed to meet standards are tagged for human review.
+
+---
+
+## Key concepts
+
+**Sensitivity** measures an entity’s privacy risk in the context of the document, considering the information retained alongside it. In normal mode, entities rated `low` use `leave_as_is`, while entities rated `medium` or `high` receive protection. With `strict_entity_protection=True`, every entity receives protection, including entities rated `low`; protection alone does not raise their sensitivity. Sensitivity also feeds downstream leakage scoring.
+
+If the model incorrectly selects `leave_as_is`, the decision is corrected after the entity's
+category is known. Direct identifiers become `high` / `replace`, regardless of the model's
+initial sensitivity. Other high entities use `replace`, medium entities use `generalize`,
+and low entities are retained in normal mode or generalized in strict mode.
+
+The prompt requests a `low_sensitivity_reason` for every low rating, whether the entity is protected or retained. A missing or blank reason does not fail the record or change its sensitivity or protection method. The reason explains the original information’s limited linkage or recognition risk; a planned edit does not justify a low rating.
+
+| Level | Meaning | Examples | Leakage weight |
+|-------|---------|---------|----------------|
+| `high` | Exposure alone can identify a person | Names, ID numbers, contact details | 1.0 |
+| `medium` | Meaningfully narrows the identity space | Location, occupation, age | 0.6 |
+| `low` | Minimal standalone identifying power | Generic attributes, widely shared traits | 0.3 |
+
+**Protection method** describes how a sensitive entity is transformed. The choice reflects a holistic view of the document — what other entities are being protected and how, then shapes what each individual entity needs.
+
+| Method | What it does | Typical use |
+|--------|-------------|-------------|
+| `replace` | Substitutes the entity with a plausible synthetic alternative | Direct identifiers (names, IDs, contact details) |
+| `generalize` | Replaces the entity with a broader form | Quasi-identifiers (exact date → quarter, city → region) |
+| `suppress_inference` | Rewrites the surrounding text to remove cues that enable the inference | Latent entities that are implied rather than stated |
+| `remove` | Deletes the entity entirely | Cases where neither replacement nor generalization can preserve meaning without retaining the identifying detail |
+| `leave_as_is` | Leaves the entity unchanged | Entities judged not to require protection in context |
+
+---
+
+## Basic usage
+
+```python
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite
+
+anonymizer = Anonymizer()
+
+config = AnonymizerConfig(rewrite=Rewrite())
+data = AnonymizerInput(source="data.csv", text_column="text")
+
+preview = anonymizer.preview(config=config, data=data, num_records=3)
+preview.display_record()
+```
+
+---
+
+## Configuration
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `privacy_goal` | Auto-populated | What to protect and what to preserve. |
+| `instructions` | `None` | Additional instructions for the rewrite LLM. |
+| `risk_tolerance` | `low` | Preset controlling repair and review thresholds: `minimal`, `low`, `moderate`, `high`. |
+| `max_repair_iterations` | `3` | Maximum repair rounds. Set to 0 to disable repair. |
+| `strict_entity_protection` | `False` | If `True`, forces every detected entity to be protected regardless of risk. No entity can be left unchanged. |
+
+### Privacy goal
+
+`PrivacyGoal` tells the rewriter what matters. Defaults work for general-purpose data. Override for domain-specific needs:
+
+```python
+from anonymizer.config.rewrite import PrivacyGoal
+
+config = AnonymizerConfig(
+    rewrite=Rewrite(
+        privacy_goal=PrivacyGoal(
+            protect="All patient identifiers and clinical facility names",
+            preserve="Clinical findings, treatment plans, and medical terminology",
+        )
+    )
+)
+```
+
+<Tip title="Be specific">
+The more precise the `protect` and `preserve` fields, the better the rewriter targets sensitive content while retaining what matters.
+</Tip>
+
+### Risk tolerance
+
+Controls the automated repair loop and human review flagging. Each preset bundles a coherent set of behaviors:
+
+| Preset | Repair threshold | Repair on any high leak | Flag utility below | Flag leakage above |
+|--------|-----------------|------------------------|--------------------|--------------------|
+| `minimal` | 0.6 | Yes | 0.6 | 1.0 |
+| `low` | 1.0 | Yes | 0.5 | 2.0 |
+| `moderate` | 1.5 | Yes | 0.4 | 2.5 |
+| `high` | 2.0 | No | 0.3 | 3.0 |
+
+The **repair threshold** is the leakage mass above which a record is sent for repair.
+> Leakage mass is a confidence-weighted sum of leaked entities, where each entity's weight reflects its sensitivity (high=1.0, medium=0.6, low=0.3).
+> A leakage mass of 1.0 roughly equals one high-sensitivity entity leaked at full confidence.
+
+Privacy questions are generated only for entities assigned a protective method. Entities assigned `leave_as_is` receive no privacy question and do not contribute to leakage mass. A protected low-sensitivity entity does receive a question: if the judge answers yes with confidence 0.8, it contributes `0.3 × 0.8 = 0.24`.
+
+```python
+config = AnonymizerConfig(
+    rewrite=Rewrite(
+        risk_tolerance="minimal",
+        max_repair_iterations=3,
+    )
+)
+```
+
+### Strict entity protection
+
+By default, some entities — particularly quasi-identifiers judged to be low-risk in context — may be left unchanged. Setting `strict_entity_protection=True` overrides this: every detected entity is forced into an active protection method, and no entity can be left as-is. Sensitivity can still be `low`, `medium`, or `high`; strict mode does not promote a low rating merely because the entity must be protected.
+
+`strict_entity_protection` controls which entities require protection. `risk_tolerance` controls repair and human-review decisions after evaluation. Enabling strict protection does not change the preset thresholds.
+
+```python
+config = AnonymizerConfig(
+    rewrite=Rewrite(
+        strict_entity_protection=True,
+    )
+)
+```
+
+<Tip title="When to use this">
+Use `strict_entity_protection` when you need a blanket policy that protects all entities regardless of contextual risk — for example, in medical, legal, or financial data where even seemingly benign attributes (gender, marital status, occupation) must be modified. For finer control over which entity types are always protected, combine this with a specific [`privacy_goal`](#privacy-goal).
+</Tip>
+
+---
+
+## Output columns
+
+| Column | When available | Description |
+|--------|---------------|-------------|
+| `{text_col}_rewritten` | Always | The privacy-safe rewritten text. |
+| `utility_score` | Always | Quality preservation (0.0--1.0). Higher is better. |
+| `leakage_mass` | Always | Weighted privacy leakage. Lower is better. |
+| `weighted_leakage_rate` | Always | Normalized leakage (0.0--1.0) relative to the maximum possible leakage mass. |
+| `any_high_leaked` | Always | Whether any high-sensitivity entity leaked through. |
+| `needs_human_review` | Always | Flag for records that may need manual review. |
+| `entity_coverage` | After `evaluate()` | Fraction of the judge's unique, normalized PII candidate values that the anonymizer detected (`n_covered / n_candidates`); `1.0` if no candidates were missed or the judge found no PII, `None` if judge unavailable. |
+| `missed_entities` | After `evaluate()` | Unique candidate values not detected by the anonymizer, each with value, judge-assigned label, and reasoning. |
+| `judge_evaluation` | After `evaluate()` | Dict with `privacy`, `quality`, and `style` rubric scores and reasoning. |
+| `detection_valid` | After `evaluate(config=EvaluateConfig(compute_detection_validity=True))` | Fraction of detected entities that passed the detection judge (0.0--1.0); `None` if judge unavailable. Opt-in, off by default. |
+| `detection_invalid_entities` | After `evaluate(config=EvaluateConfig(compute_detection_validity=True))` | Flagged detections with value, label, and one-sentence reasoning. |
+
+Use `preview.trace_dataframe` for the full pipeline trace (domain, disposition, QA pairs, repair iterations).
+
+<Note title="No entities? No rewrite.">
+Records with no detected entities pass through unchanged with `utility_score=1.0` and `leakage_mass=0.0`.
+</Note>
+
+---
+
+## Working with flagged records
+
+Repair and review decisions are made from named *findings* about each evaluated record: `high_leak` (a high-sensitivity entity can still be deduced), `leakage_above_repair` and `leakage_above_flag` (leakage mass above the preset's repair or review threshold), `utility_below_flag` (utility score below the preset's review floor), `replacement_unavailable` (no usable replacement map was produced), `rewrite_missing` (no rewritten text), and `unavailable_evidence` (`leakage_mass`, `utility_score`, or `any_high_leaked` is missing or NaN, so the record cannot be judged). Each `risk_tolerance` preset lists which findings send a record to repair and which flag it for human review: every preset flags all of them except `leakage_above_repair`, and every preset except `high` repairs on `high_leak` as well as `leakage_above_repair`. Unavailable evidence flags a record but does not trigger repair. The one exception is a NaN `any_high_leaked`: for compatibility it also counts as `high_leak`, so it triggers repair under every preset except `high`. A record has `needs_human_review=True` when any of its preset's flag findings holds after the repair loop. `Anonymizer.evaluate()` also sets it when the coverage judge finds entities that detection missed (`missed_entities` is non-empty). To investigate and resolve:
+
+**Diagnose:** Use `trace_dataframe` to inspect the flagged record's intermediate columns — disposition, leakage breakdown, repair iterations, and judge evaluation.
+
+```python
+flagged = result.trace_dataframe[result.trace_dataframe["needs_human_review"] == True]
+flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()
+```
+
+**Tune and re-run:** Adjust settings and re-run on flagged records:
+
+- Increase `max_repair_iterations` to give the rewriter more attempts.
+- Refine `privacy_goal` with more specific `protect` / `preserve` instructions for the domain.
+- Lower `risk_tolerance` (e.g. `minimal`) to trigger more aggressive repair.
+- Enable `strict_entity_protection=True` to ensure no detected entity is left unchanged in the output regardless of risk.
+
+**Last resort:** Manually edit or exclude records that resist automated repair — some text is inherently difficult to rewrite without losing utility or leaking identifiers, and requires your judgement as the expert.
+
+---
+
+## Model roles
+
+Rewrite uses multiple LLM roles. All default to models in the [default config](/concepts/models):
+
+| Role | Default | Purpose |
+|------|---------|---------|
+| `domain_classifier` | `gpt-oss-120b` | Classifies text domain. |
+| `entity_classifier` | Uses `disposition_analyzer` unless explicitly selected | Classifies custom explicit entity labels as direct or quasi-identifiers. Default labels are classified locally. |
+| `disposition_analyzer` | `gpt-oss-120b` | Assigns sensitivity levels. |
+| `meaning_extractor` | `gpt-oss-120b` | Extracts meaning units. |
+| `qa_generator` | `gpt-oss-120b` | Generates QA pairs for evaluation. |
+| `rewriter` | `gpt-oss-120b` | Generates the rewritten text. |
+| `evaluator` | `nemotron-30b-thinking` | Evaluates quality and leakage. |
+| `repairer` | `gpt-oss-120b` | Repairs high-leakage rewrites. |
+
+The entity-classification LLM classifies the dataset's detected custom labels together once,
+then reuses the categories across all records. Default labels are resolved locally without
+an LLM call. An explicit `disposition_analyzer` override also supplies the classifier unless
+you select `entity_classifier` explicitly; unrelated overrides preserve the bundled default.
+
+Every requested custom label must have a classification. Conflicting categories for the
+same label are rejected; identical duplicate classifications are accepted. Invalid responses
+receive one correction attempt with validation feedback. If that attempt is also invalid,
+the shared classification step fails the run instead of continuing to sensitivity disposition
+with incomplete or contradictory classifications.
+
+---
+
+## Evaluating rewrite output
+
+After running rewrite, you can score detection recall and the holistic rewrite quality using LLM-as-judge evaluation. See [Evaluation](/concepts/evaluation) for details on the always-on entity coverage judge, the three rewrite quality rubrics (privacy, quality, style), the opt-in detection judge, and how to call `Anonymizer.evaluate()`.

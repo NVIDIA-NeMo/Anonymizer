@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Fern tooling only. General developer tooling is managed separately.
+min_version = '2026.7.5'
+
+[tools]
+# Dependencies of the shared Fern validation script.
+jq = "1.8.1"
+yq = "4.44.1"
+# Keep the Fern version aligned with docs/fern/fern.config.json.
+# fern-api is a wrapper; fern.config.json selects the CLI version it executes.
+node = "22"
+"npm:fern-api" = "5.201.0"
+
+[task_config]
+includes = [".mise/tasks", ".mise/tasks/*.toml"]
+
+[settings]
+lockfile = true
+lockfile_platforms = ["macos-arm64", "linux-x64", "linux-arm64"]

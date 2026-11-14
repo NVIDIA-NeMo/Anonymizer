@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+instances:
+- url: nemo-anonymizer.docs.buildwithfern.com
+  multi-source: true
+title: NeMo Anonymizer
+global-theme: nvidia
+logo:
+  href: /nightly/home
+  right-text: NeMo Anonymizer
+navbar-links:
+- type: github
+  value: https://github.com/NVIDIA-NeMo/Anonymizer
+versions:
+- display-name: nightly
+  path: versions/nightly.yml
+  slug: nightly
+
+redirects:
+  - source: "/index.html"
+    destination: "/nightly/home"
+  - source: "/index"
+    destination: "/nightly/home"
+  - source: "/nightly/:path*/index.html"
+    destination: "/nightly/:path*"
+  - source: "/:path*/index.html"
+    destination: "/:path*"
+  # Page URLs ending in .html must follow the index.html rules above.
+  - source: "/:path*.html"
+    destination: "/:path*"
