@@ -11,6 +11,8 @@ SCALAR_LAST_VALUE_FIELDS = (
     "strategy",
     "attacker_endpoint_kind",
     "reid_threshold",
+    "reidentification_rate_ci95_low_pct",
+    "reidentification_rate_ci95_high_pct",
 )
 SCALAR_ADDITIVE_FIELDS = (
     "elapsed_sec",
@@ -64,6 +66,10 @@ SCALAR_ADDITIVE_FIELDS = (
     "unsupported_column_count",
     "rows_processed",
     "rows_failed",
+    "rows_requested",
+    "rows_scored",
+    "rows_missing",
+    "rows_excluded",
     "reidentified_rows",
     "direct_reidentified_rows",
     "correctmatch_reidentified_rows",
