@@ -62,6 +62,10 @@ docs = [
     "mkdocs-literate-nav",
     "mkdocs-jupyter",
     "jupytext",
+    "markdownify>=1.2,<2",
+    "beautifulsoup4>=4,<5",
+    "nbconvert>=7,<8",
+    "nbformat>=5,<6",
 ]
 [build-system]
 requires = ["hatchling", "uv-dynamic-versioning"]

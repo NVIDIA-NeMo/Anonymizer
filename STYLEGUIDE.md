@@ -210,6 +210,19 @@ Every Python and Markdown file requires an SPDX header at the top (enforced by `
 
 Google style (`Args:`, `Returns:`, `Raises:`). Public API classes and methods get docstrings; private helpers (`_`-prefixed) only when the logic is non-obvious. Don't restate the signature — explain why or what, not what the type annotation already says.
 
+## Documentation
+
+Fern prose lives in `docs/**/*.mdx`, with navigation in
+`docs/fern/versions/nightly.yml`. Use explicit slugs for stable URLs,
+version-independent internal links, source-relative images, and native Fern
+components such as `<Note>`, `<Tabs>`, and `<Card>`. The NVIDIA global theme
+supplies shared branding; do not vendor theme files into this repository.
+
+During migration, keep paired `.md` and `.mdx` pages equivalent. Use MkDocs
+Material syntax in `.md` and Fern components in `.mdx`. See
+[DEVELOPMENT.md](DEVELOPMENT.md#documentation) for validation and previews and
+the [migration status](docs/fern/FERN_MIGRATION.md) for temporary requirements.
+
 ---
 
 ## Design Principles
