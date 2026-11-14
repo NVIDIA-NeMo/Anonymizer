@@ -26,6 +26,7 @@ from anonymizer.config.anonymizer_config import (
     TextRecordsInput,
 )
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection
+from anonymizer.config.regex import BuiltinRegex, RegexRule
 from anonymizer.config.replace_strategies import Redact, Substitute
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
@@ -262,13 +263,13 @@ def test_preview_passes_entity_label_examples_to_detection_workflow(stub_input: 
     assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
 
 
-class _Replay040DetectionWorkflow:
-    """Duck-types v0.4.0's EntityDetectionWorkflow.run()/build_* signatures exactly: no
-    entity_label_examples parameter, no **kwargs to swallow it (added in #275, after v0.4.0)."""
+class _DetectionWorkflowWithoutExamples:
+    """Require the v1 regex options while omitting the optional examples keyword."""
 
     def __init__(self, result: EntityDetectionResult) -> None:
         self._result = result
         self.calls: list[str] = []
+        self.regex_options: list[tuple[bool, list[BuiltinRegex | RegexRule]]] = []
         self.config_sentinel = Mock(name="config_sentinel")
         self.builder_sentinel = Mock(name="builder_sentinel")
 
@@ -284,6 +285,8 @@ class _Replay040DetectionWorkflow:
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
+        builtin_regexes: bool,
+        regex_rules: list[BuiltinRegex | RegexRule],
         privacy_goal: object | None = None,
         data_summary: str | None = None,
         tag_latent_entities: bool = True,
@@ -291,6 +294,7 @@ class _Replay040DetectionWorkflow:
         preview_num_records: int | None = None,
     ) -> EntityDetectionResult:
         self.calls.append("run")
+        self.regex_options.append((builtin_regexes, regex_rules))
         return self._result
 
     def build_detection_config(
@@ -306,9 +310,12 @@ class _Replay040DetectionWorkflow:
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
+        builtin_regexes: bool,
+        regex_rules: list[BuiltinRegex | RegexRule],
         data_summary: str | None = None,
     ) -> Mock:
         self.calls.append("config")
+        self.regex_options.append((builtin_regexes, regex_rules))
         return self.config_sentinel
 
     def build_detection_builder_for_seed(
@@ -323,21 +330,38 @@ class _Replay040DetectionWorkflow:
         validation_single_chunk_full_text: bool = True,
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
+        builtin_regexes: bool,
+        regex_rules: list[BuiltinRegex | RegexRule],
         data_summary: str | None = None,
         job_index: int = 0,
         num_jobs: int = 1,
     ) -> Mock:
         self.calls.append("builder")
+        self.regex_options.append((builtin_regexes, regex_rules))
         return self.builder_sentinel
 
 
-# #311 supports legacy injection without examples; configured examples must be honored or rejected.
+# Optional example support remains independent of the v1 regex workflow contract.
 @pytest.mark.parametrize("mode", ["run", "preview"])
 @pytest.mark.parametrize("rewrite", [False, True], ids=["replace", "rewrite"])
-def test_legacy_detection_workflow_without_examples(stub_input: AnonymizerInput, mode: str, rewrite: bool) -> None:
-    config = AnonymizerConfig(rewrite=Rewrite()) if rewrite else AnonymizerConfig(replace=Redact())
+@pytest.mark.parametrize("builtin_regexes", [False, True])
+@pytest.mark.parametrize(
+    "regex_rules", [[], [BuiltinRegex(label="email")], [RegexRule(label="ticket", pattern=r"TKT-\d+")]]
+)
+def test_detection_workflow_without_examples_forwards_regex_options(
+    stub_input: AnonymizerInput,
+    mode: str,
+    rewrite: bool,
+    builtin_regexes: bool,
+    regex_rules: list[BuiltinRegex | RegexRule],
+) -> None:
+    config = AnonymizerConfig(
+        detect={"builtin_regexes": builtin_regexes, "regex_rules": regex_rules},
+        replace=None if rewrite else Redact(),
+        rewrite=Rewrite() if rewrite else None,
+    )
     frame = pd.DataFrame({COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [{"entities": []}], COL_ENTITIES_BY_VALUE: [{}]})
-    detector = _Replay040DetectionWorkflow(EntityDetectionResult(dataframe=frame, failed_records=[]))
+    detector = _DetectionWorkflowWithoutExamples(EntityDetectionResult(dataframe=frame, failed_records=[]))
     anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, detector))
 
     result = getattr(anonymizer, mode)(config=config, data=stub_input)
@@ -345,11 +369,18 @@ def test_legacy_detection_workflow_without_examples(stub_input: AnonymizerInput,
     assert result.dataframe["text"].tolist() == ["Alice"]
     assert result.failed_records == []
     assert detector.calls == ["run"]
+    assert detector.regex_options == [(builtin_regexes, regex_rules)]
 
 
-def test_legacy_detection_exports_without_examples(stub_input: AnonymizerInput, tmp_path: Path) -> None:
-    config = AnonymizerConfig(replace=Redact())
-    detector = _Replay040DetectionWorkflow(
+@pytest.mark.parametrize("builtin_regexes", [False, True])
+@pytest.mark.parametrize(
+    "regex_rules", [[], [BuiltinRegex(label="email")], [RegexRule(label="ticket", pattern=r"TKT-\d+")]]
+)
+def test_detection_exports_without_examples_forward_regex_options(
+    stub_input: AnonymizerInput, tmp_path: Path, builtin_regexes: bool, regex_rules: list[BuiltinRegex | RegexRule]
+) -> None:
+    config = AnonymizerConfig(detect={"builtin_regexes": builtin_regexes, "regex_rules": regex_rules}, replace=Redact())
+    detector = _DetectionWorkflowWithoutExamples(
         EntityDetectionResult(
             dataframe=pd.DataFrame(
                 {COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [{"entities": []}], COL_ENTITIES_BY_VALUE: [{}]}
@@ -367,11 +398,12 @@ def test_legacy_detection_exports_without_examples(stub_input: AnonymizerInput, 
         detector.builder_sentinel
     )
     assert detector.calls == ["config", "builder"]
+    assert detector.regex_options == [(builtin_regexes, regex_rules), (builtin_regexes, regex_rules)]
 
 
 @pytest.mark.parametrize("mode", ["run", "preview", "export_detection_config", "export_detection_builder_for_seed"])
 @pytest.mark.parametrize("rewrite", [False, True], ids=["replace", "rewrite"])
-def test_legacy_detection_workflow_rejects_configured_examples(
+def test_detection_workflow_without_example_support_rejects_configured_examples(
     stub_input: AnonymizerInput, tmp_path: Path, mode: str, rewrite: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
     examples = {"vendor_api_key": ["acme_live_x"]}
@@ -380,7 +412,7 @@ def test_legacy_detection_workflow_rejects_configured_examples(
         replace=None if rewrite else Redact(),
         rewrite=Rewrite() if rewrite else None,
     )
-    detector = _Replay040DetectionWorkflow(
+    detector = _DetectionWorkflowWithoutExamples(
         EntityDetectionResult(
             dataframe=pd.DataFrame(
                 {COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [{"entities": []}], COL_ENTITIES_BY_VALUE: [{}]}

@@ -102,7 +102,11 @@ def project_detection_result_to_entity_spans(result: DetectionResult) -> list[En
             start_position=observation.start_position,
             end_position=observation.end_position,
             score=observation.native_score or 0.0,
-            source="detector",
+            source=(
+                "detector"
+                if observation.source_kind == "initial_detector"
+                else f"{observation.source_kind}:{observation.source_instance}"
+            ),
         )
         for observation in result.observations
     ]

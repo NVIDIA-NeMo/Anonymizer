@@ -22,3 +22,9 @@ augmentation_plugin = Plugin(
     impl_qualified_name="anonymizer.engine.workflow_columns.detection.impl.AugmentationGenerator",
     plugin_type=PluginType.COLUMN_GENERATOR,
 )
+
+regex_detection_plugin = Plugin(
+    config_qualified_name="anonymizer.engine.workflow_columns.detection.config.RegexDetectionConfig",
+    impl_qualified_name="anonymizer.engine.workflow_columns.detection.impl.RegexDetectionGenerator",
+    plugin_type=PluginType.COLUMN_GENERATOR,
+)
