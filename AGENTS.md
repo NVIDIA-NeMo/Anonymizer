@@ -114,6 +114,14 @@ One pipeline-specific fact worth knowing: `COL_TEXT` is the internal name for th
 
 ## Development
 
+During the MkDocs / Fern migration, update paired `docs/**/*.md` and `.mdx`
+pages together, using each renderer's syntax. New prose pages need both formats
+and navigation entries in `mkdocs.yml` and `docs/fern/versions/nightly.yml`.
+Keep legacy sources until cutover. Notebook Python sources remain authoritative;
+see [DEVELOPMENT.md](DEVELOPMENT.md#notebooks) for generation. Standalone
+repository Markdown does not need an MDX counterpart. See the
+[migration status](docs/fern/FERN_MIGRATION.md) for temporary requirements.
+
 ```bash
 make test          # run all tests
 make bootstrap     # install dev dependencies
@@ -121,6 +129,8 @@ make format        # ruff format + sort imports
 make format-check  # read-only lint check (used in CI)
 make typecheck     # blocking ty type check (warnings fail too)
 make docs-serve    # local MkDocs server at http://127.0.0.1:8000
+mise run docs:fern:check  # Fern configuration, MDX, and internal links
+mise run docs:fern:serve  # local Fern server
 ```
 
 For contributor workflow and branch naming see [CONTRIBUTING.md](CONTRIBUTING.md). For local setup, tests, docs, and day-to-day development tasks see [DEVELOPMENT.md](DEVELOPMENT.md). For code style and naming conventions see [STYLEGUIDE.md](STYLEGUIDE.md).

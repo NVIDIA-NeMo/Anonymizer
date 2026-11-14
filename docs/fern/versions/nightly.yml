@@ -1,0 +1,84 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+navigation:
+- page: Home
+  path: ../../index.mdx
+  slug: home
+- section: Concepts
+  slug: concepts
+  contents:
+  - page: Models
+    path: ../../concepts/models.mdx
+    slug: models
+  - page: Detect
+    path: ../../concepts/detection.mdx
+    slug: detection
+  - page: Replace
+    path: ../../concepts/replace.mdx
+    slug: replace
+  - page: Rewrite
+    path: ../../concepts/rewrite.mdx
+    slug: rewrite
+  - page: Choosing a Strategy
+    path: ../../concepts/choosing-a-strategy.mdx
+    slug: choosing-a-strategy
+  - page: Evaluation
+    path: ../../concepts/evaluation.mdx
+    slug: evaluation
+  - page: Self-hosting GLiNER
+    path: ../../concepts/self-hosting-gliner.mdx
+    slug: self-hosting-gliner
+- page: Tuning Quality and Throughput
+  path: ../../tuning.mdx
+  slug: tuning
+- page: Troubleshooting
+  path: ../../troubleshooting.mdx
+  slug: troubleshooting
+- section: Tutorials
+  slug: tutorials
+  contents:
+  - page: Overview
+    path: ../../tutorials/index.mdx
+    slug: overview
+  - page: Your First Anonymization
+    path: ../../notebooks/01_your_first_anonymization.mdx
+    slug: 01_your_first_anonymization
+  - page: Inspecting Detected Entities
+    path: ../../notebooks/02_inspecting_detected_entities.mdx
+    slug: 02_inspecting_detected_entities
+  - page: Choosing a Replacement Strategy
+    path: ../../notebooks/03_choosing_a_replacement_strategy.mdx
+    slug: 03_choosing_a_replacement_strategy
+  - page: Rewriting Biographies
+    path: ../../notebooks/04_rewriting_biographies.mdx
+    slug: 04_rewriting_biographies
+  - page: Rewriting Legal Documents
+    path: ../../notebooks/05_rewriting_legal_documents.mdx
+    slug: 05_rewriting_legal_documents
+- section: Development
+  slug: development
+  contents:
+  - page: Observability
+    path: ../../development/observability.mdx
+    slug: observability
+- section: Developer Notes
+  slug: devnotes
+  contents:
+  - page: Overview
+    path: ../../devnotes/index.mdx
+    slug: overview
+  - page: 'Hybrid Entity Detection: Why One Model Shouldn''t Do Everything'
+    path: ../../devnotes/posts/hybrid-entity-detection.mdx
+    slug: hybrid-entity-detection
+  - page: 'After Anonymization — Part II: Evaluating Rewrite Mode'
+    path: ../../devnotes/posts/evaluation-anonymizer-rewrite.mdx
+    slug: evaluation-anonymizer-rewrite
+  - page: 'After Anonymization — Part I: Evaluating Replace Mode'
+    path: ../../devnotes/posts/evaluation-anonymizer-replace.mdx
+    slug: evaluation-anonymizer-replace
+  - page: Running NeMo Anonymizer Fully Self-Hosted on One B300
+    path: ../../devnotes/posts/self-hosted-anonymizer-b300.mdx
+    slug: self-hosted-anonymizer-b300
+  - page: Introducing NeMo Anonymizer
+    path: ../../devnotes/posts/anonymizer-intro.mdx
+    slug: anonymizer-intro

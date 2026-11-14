@@ -44,6 +44,13 @@ report.xml
 /site
 docs/_build/
 
+# Generated Fern content (regenerate with mise run docs:fern:notebooks)
+docs/fern/generated/
+docs/fern/assets/notebooks/
+docs/notebooks/*.mdx
+docs/fern/node_modules/
+.fern/
+
 # Jupyter Notebook
 .ipynb_checkpoints/
 
@@ -122,3 +129,7 @@ docs/notebook_source/data/synth_bios_sample10_anonymized.csv
 *.pem
 *.enc
 *.csr
+
+# Local mise overrides
+mise.local.toml
+.mise.local.toml
