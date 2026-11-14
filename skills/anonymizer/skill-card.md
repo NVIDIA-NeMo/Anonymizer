@@ -80,12 +80,12 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 93.5% — baseline ran, but no comparable score was available; uplift unavailable | 87.5% — baseline ran, but no comparable score was available; uplift unavailable |
-| Security | 91.7% → 100.0% (+8.3 points) | 91.7% → 83.3% (-8.4 points) |
-| Correctness | 63.3% → 96.7% (+33.4 points) | 83.3% → 100.0% (+16.7 points) |
-| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 92.5% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 38.5% → 77.0% (+38.5 points) | 60.7% → 92.7% (+32.0 points) |
-| Efficiency | 93.7% — baseline ran, but no comparable score was available; uplift unavailable | 69.1% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 91.9% — baseline ran, but no comparable score was available; uplift unavailable | 85.3% — baseline ran, but no comparable score was available; uplift unavailable |
+| Security | 100.0% → 83.3% (-16.7 points) | 91.7% → 83.3% (-8.4 points) |
+| Correctness | 53.3% → 96.7% (+43.4 points) | 80.0% → 93.3% (+13.3 points) |
+| Discoverability | 98.8% — baseline ran, but no comparable score was available; uplift unavailable | 92.5% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 41.7% → 92.5% (+50.8 points) | 60.7% → 86.9% (+26.2 points) |
+| Efficiency | 88.2% — baseline ran, but no comparable score was available; uplift unavailable | 70.6% — baseline ran, but no comparable score was available; uplift unavailable |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -100,12 +100,20 @@ Shared-source comparisons use the same signals and weights on both conditions. T
 | Agent | Dimension | Basis | Baseline → With skill (uplift) | Explanation |
 | --- | --- | --- | --- | --- |
 | claude-code | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| claude-code | Efficiency | Token-only comparison | 97.6% → 95.7% (-1.9 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| claude-code | Efficiency | Token-only comparison | 98.8% → 95.1% (-3.7 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
 | codex | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| codex | Efficiency | Token-only comparison | 87.9% → 88.1% (+0.2 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| codex | Efficiency | Token-only comparison | 87.5% → 88.8% (+1.3 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+
+### Tier Status
+
+| Tier | Purpose | Status | Evidence |
+|---|---|---|---|
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 16 finding(s) |
+| Tier 2 | Semantic deduplication | **PASSED** | 2 validator(s); 0 finding(s) |
+| Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 6 task(s) |
 
 ## Skill Version(s): <br>
-927eaa9 (source: git SHA, committed 2026-11-03) <br>
+480a7d7 (source: git SHA, committed 2026-11-14) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
