@@ -100,3 +100,14 @@ def test_sensitivity_weights_have_required_keys() -> None:
 def test_max_repair_iterations_rejects_negative() -> None:
     with pytest.raises(ValueError):
         EvaluationCriteria(max_repair_iterations=-1)
+
+
+@pytest.mark.parametrize("batch_size", [5, 2, None])
+def test_privacy_batch_defaults_and_overrides(batch_size: int | None) -> None:
+    from anonymizer.config.anonymizer_config import EvaluateConfig, Rewrite
+
+    assert EvaluateConfig().privacy_qa_batch_size == 5
+    assert Rewrite().privacy_qa_batch_size == 5
+    assert EvaluationCriteria().privacy_qa_batch_size == 5
+    assert EvaluateConfig(privacy_qa_batch_size=batch_size).privacy_qa_batch_size == batch_size
+    assert Rewrite(privacy_qa_batch_size=batch_size).evaluation.privacy_qa_batch_size == batch_size

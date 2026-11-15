@@ -1751,3 +1751,28 @@ def test_legacy_malformed_payload_failure_falls_back_to_dataframe_index() -> Non
     result = _finalize_legacy_detection_result(EntityDetectionResult(dataframe=frame, failed_records=[]), Detect())
     assert result.dataframe.empty
     assert result.failed_records[0].record_id == "42"
+
+
+@pytest.mark.parametrize("is_rewrite", [False, True])
+def test_evaluate_preserves_prior_failures_without_duplicating_entries(
+    stub_input: AnonymizerInput, is_rewrite: bool
+) -> None:
+    anonymizer, _, replace_runner, rewrite_runner = _make_anonymizer()
+    config = AnonymizerConfig(rewrite=Rewrite()) if is_rewrite else AnonymizerConfig(replace=Redact())
+    original = anonymizer.run(config=config, data=stub_input)
+    prior = FailedRecord(record_id="r1", step="detection", reason="Parse failed")
+    current = FailedRecord(record_id="r2", step="judge", reason="Timeout")
+    original.failed_records = [prior]
+    if is_rewrite:
+        rewrite_runner.evaluate.return_value = RewriteResult(
+            dataframe=rewrite_runner.run.return_value.dataframe, failed_records=[prior, current]
+        )
+    else:
+        replace_runner.evaluate.return_value = ReplacementResult(
+            dataframe=replace_runner.run.return_value.dataframe, failed_records=[prior, current]
+        )
+    evaluated = anonymizer.evaluate(original)
+    assert evaluated.failed_records == [prior, current]
+    assert original.failed_records == [prior]
+    repeated = anonymizer.evaluate(evaluated)
+    assert repeated.failed_records == [prior, current]

@@ -44,7 +44,7 @@ class CompletePrivacyAnswersSchema(BaseModel):
 
 
 class PrivacyAnswerParams(BaseModel):
-    batch_size: int | None = Field(default=None, ge=1, strict=True)
+    batch_size: int | None = Field(default=5, ge=1, strict=True)
 
 
 class ReplacePrivacyAnswerWorkflow:
@@ -54,7 +54,7 @@ class ReplacePrivacyAnswerWorkflow:
     It must not be interpreted as an empty successful evaluation or a leak.
     """
 
-    def columns(self, *, evaluator_alias: str, batch_size: int | None = None) -> list[ColumnConfigT]:
+    def columns(self, *, evaluator_alias: str, batch_size: int | None = 5) -> list[ColumnConfigT]:
         return [
             CustomColumnConfig(
                 name=COL_PRIVACY_QA_REANSWER,

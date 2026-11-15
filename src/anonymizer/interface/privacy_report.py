@@ -25,7 +25,9 @@ from anonymizer.engine.constants import (
 )
 
 
-def render_privacy_report_html(summary: dict[str, Any], problems: pd.DataFrame) -> str:
+def render_privacy_report_sections(
+    summary: dict[str, Any], problems: pd.DataFrame, *, heading: str = "Privacy evaluation summary"
+) -> tuple[str, str, str]:
     """Render a summary above untruncated, escaped problem details."""
     rows = [
         ("Records evaluated", f"{summary['records_evaluated']} / {summary['records_total']}"),
@@ -54,6 +56,13 @@ def render_privacy_report_html(summary: dict[str, Any], problems: pd.DataFrame) 
         rows[0:0] = [
             ("Risk tolerance", summary["risk_tolerance"]),
             ("Repair threshold (leakage mass)", _number(summary["repair_threshold"])),
+            ("Max repair iterations", str(summary["max_repair_iterations"])),
+            (
+                "Repair iterations taken (maximum across records)",
+                str(summary["repair_iterations_taken"])
+                if summary["repair_iterations_taken"] is not None
+                else "Unavailable",
+            ),
         ]
     for level, mass in summary["leakage_mass_by_sensitivity"].items():
         rows.append((f"Leakage mass — {level} sensitivity", _number(mass)))
@@ -83,8 +92,7 @@ def render_privacy_report_html(summary: dict[str, Any], problems: pd.DataFrame) 
             if not problems.empty
             else "<p>No reported leaks or unavailable evaluations.</p>"
         )
-    return (
-        '<div class="anonymizer-privacy-report">'
+    styles = (
         "<style>.anonymizer-privacy-report th,.anonymizer-privacy-report td"
         "{text-align:left;vertical-align:top;white-space:normal;padding:6px;overflow-wrap:anywhere;}"
         ".anonymizer-privacy-report table{border-collapse:collapse;}"
@@ -109,7 +117,9 @@ def render_privacy_report_html(summary: dict[str, Any], problems: pd.DataFrame) 
         "{width:200px!important;min-width:200px!important;max-width:200px!important;"
         "white-space:normal!important;overflow-wrap:anywhere!important;}"
         "</style>"
-        "<h3>Privacy evaluation summary</h3><table>" + metrics + "</table>"
+    )
+    inference_summary = (
+        "<h3>" + html.escape(heading) + "</h3><table>" + metrics + "</table>"
         "<p><strong>Weighted entity recovery rate</strong> = leakage mass divided by the total "
         "sensitivity weight of evaluated entity targets. Each reported recoverable entity contributes "
         "its sensitivity weight × the judge's confidence; negative answers contribute zero. "
@@ -117,7 +127,21 @@ def render_privacy_report_html(summary: dict[str, Any], problems: pd.DataFrame) 
         "This is a judge-based recovery score, not a probability of identifying a person.</p>"
         "<p>Rates use complete evaluated records and evaluated entity targets; unavailable records "
         "and exempted entities are excluded. These are the privacy judge's reported findings.</p>"
-        '<h3>Reported problems</h3><div class="privacy-details">' + details + "</div></div>"
+    )
+    inference_issues = '<div class="privacy-details">' + details + "</div>"
+    return styles, inference_summary, inference_issues
+
+
+def render_privacy_report_html(summary: dict[str, Any], problems: pd.DataFrame) -> str:
+    """Render the existing privacy-only report for compatibility."""
+    styles, inference_summary, inference_issues = render_privacy_report_sections(summary, problems)
+    return (
+        '<div class="anonymizer-privacy-report">'
+        + styles
+        + inference_summary
+        + "<h3>Reported problems</h3>"
+        + inference_issues
+        + "</div>"
     )
 
 

@@ -783,8 +783,15 @@ class Anonymizer:
                 data_summary=data_summary,
             )
 
+        # Preserve pipeline failures through evaluation; repeated evaluations must
+        # not multiply identical failure entries.
+        failures = {
+            (failure.record_id, failure.step, failure.reason): failure
+            for failure in [*output.failed_records, *result.failed_records]
+        }
+        result.failed_records = list(failures.values())
         if result.failed_records:
-            logger.debug("%d evaluation failed record(s).", len(result.failed_records))
+            logger.debug("%d saved failed record entries.", len(result.failed_records))
             for failure in result.failed_records:
                 logger.debug("  %s (%s: %s)", failure.record_id, failure.step, failure.reason)
         logger.info(

@@ -62,7 +62,7 @@ class ReplacePrivacyLeakageWorkflow:
         selected_models: EvaluateModelSelection,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
-        privacy_qa_batch_size: int | None = None,
+        privacy_qa_batch_size: int | None = 5,
     ) -> PrivacyLeakageEvaluationResult:
         prepared = self._adapter._attach_record_ids(dataframe).reset_index(drop=True)
         prepared = prepared.drop(

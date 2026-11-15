@@ -381,7 +381,7 @@ def _make_quality_reanswer_column(evaluator_alias: str) -> Any:
     return _quality_reanswer
 
 
-def _make_privacy_reanswer_column(evaluator_alias: str, batch_size: int | None = None) -> Any:
+def _make_privacy_reanswer_column(evaluator_alias: str, batch_size: int | None = 5) -> Any:
     @custom_column_generator(
         required_columns=[COL_PRIVACY_QA, COL_REWRITTEN_TEXT],
         model_aliases=[evaluator_alias],

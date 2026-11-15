@@ -266,7 +266,7 @@ class Rewrite(BaseModel):
         description="Preset controlling repair thresholds and review flagging.",
     )
     privacy_qa_batch_size: int | None = Field(
-        default=None,
+        default=5,
         ge=1,
         strict=True,
         description="Maximum privacy questions per answering call; None answers all questions together.",
@@ -379,7 +379,7 @@ class EvaluateConfig(BaseModel):
     Rewrite already computes privacy leakage and does not repeat it here.
     """
 
-    privacy_qa_batch_size: int | None = Field(default=None, ge=1, strict=True)
+    privacy_qa_batch_size: int | None = Field(default=5, ge=1, strict=True)
     """Maximum privacy questions per model call in optional Replace evaluation.
 
     None keeps one call per record. Every batch receives the full replaced text;

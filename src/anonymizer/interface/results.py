@@ -18,10 +18,13 @@ from anonymizer.engine.constants import (
     COL_FINDING_QUESTION,
     COL_FINDING_SENSITIVITY_REASON,
     COL_FINDING_STATUS,
+    COL_REPAIR_ITERATIONS,
 )
+from anonymizer.engine.evaluation.judge_findings import build_judge_report
 from anonymizer.engine.evaluation.privacy_findings import build_privacy_findings, summarize_privacy_findings
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.interface.display import render_record_html
+from anonymizer.interface.evaluation_report import render_evaluation_report_html, write_report_html
 from anonymizer.interface.privacy_report import render_privacy_report_html
 
 
@@ -32,6 +35,9 @@ class _DisplayMixin:
     resolved_text_column: str
     _display_cycle_index: int
     rewrite_evaluation: EvaluationCriteria | None
+    rewrite_config: PrivacyGoal | None
+    replace_method: ReplaceMethod | None
+    failed_records: list[FailedRecord]
 
     @property
     def privacy_findings(self) -> pd.DataFrame:
@@ -73,6 +79,11 @@ class _DisplayMixin:
         if self.rewrite_evaluation is not None:
             summary["risk_tolerance"] = self.rewrite_evaluation.risk_tolerance.value
             summary["repair_threshold"] = self.rewrite_evaluation.repair_threshold
+            summary["max_repair_iterations"] = self.rewrite_evaluation.max_repair_iterations
+            iterations = pd.to_numeric(
+                self.trace_dataframe.get(COL_REPAIR_ITERATIONS, pd.Series(dtype=float)), errors="coerce"
+            )
+            summary["repair_iterations_taken"] = int(iterations.max()) if iterations.notna().any() else None
         return summary
 
     def display_privacy_report(self) -> None:
@@ -87,20 +98,41 @@ class _DisplayMixin:
         overwritten; the parent directory must exist. Open in a browser to
         view or print to PDF. Original entity values are included.
         """
-        destination = Path(path)
         report = render_privacy_report_html(self.privacy_summary, self.privacy_findings)
-        document = (
-            '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-            '<meta name="viewport" content="width=device-width, initial-scale=1">'
-            "<title>Privacy evaluation report</title>"
-            "<style>body{font-family:Arial,sans-serif;margin:24px;}"
-            "@media print{@page{size:landscape;}"
-            ".anonymizer-privacy-report .privacy-details{overflow:visible;}"
-            ".anonymizer-privacy-report thead{display:table-header-group;}}"
-            "</style></head><body>" + report + "</body></html>"
+        return write_report_html(path, report, title="Privacy evaluation report")
+
+    def _evaluation_report_html(self) -> str:
+        judge_summary, judge_issues = build_judge_report(self.trace_dataframe)
+        if self.rewrite_config is not None or self.rewrite_evaluation is not None:
+            strategy = "Rewrite"
+        elif self.replace_method is not None:
+            strategy = f"Replace - {type(self.replace_method).__name__}"
+        else:
+            strategy = "Unknown (strategy metadata unavailable)"
+        return render_evaluation_report_html(
+            strategy=strategy,
+            failed_records=len({failure.record_id for failure in self.failed_records}),
+            privacy_summary=self.privacy_summary,
+            privacy_issues=self.privacy_findings,
+            judge_summary=judge_summary,
+            judge_issues=judge_issues,
         )
-        destination.write_text(document, encoding="utf-8")
-        return destination
+
+    def display_evaluation_report(self) -> None:
+        """Display saved judge and privacy inference summaries and problems.
+
+        No models are called. Applicable judges are identified by saved columns.
+        """
+        _display_html(self._evaluation_report_html())
+
+    def export_evaluation_report(self, path: str | Path) -> Path:
+        """Save the combined report as standalone HTML and return its path.
+
+        Accepts a string or Path, overwrites existing files, and requires an
+        existing parent directory. Includes original entity values and saved
+        judge reasons. Does not call models or require IPython.
+        """
+        return write_report_html(path, self._evaluation_report_html(), title="NeMo Anonymizer Evaluation Report")
 
     def display_record(self, index: int | None = None) -> None:
         """Render a record with entity highlights and replacement map in a notebook.

@@ -12,6 +12,44 @@ Anonymizer provides LLM-as-judge evaluation for both modes, replace and rewrite,
 
 ---
 
+## Combined evaluation report
+
+Both result types support a **NeMo Anonymizer Evaluation Report** from saved results:
+
+```python
+evaluated.display_evaluation_report()
+evaluated.export_evaluation_report("evaluation_report.html")
+```
+
+The strategy and number of unique failed records appear below the title. Failure
+counts retain saved pipeline and evaluation failures; repeated failures for the
+same record count once. Unavailable judge results are also shown separately in
+the summaries. The strategy is: Rewrite or Replace - Redact, Substitute,
+Annotate, or Hash. Older results without strategy metadata display Unknown.
+Two summaries appear side by side on wide screens and stack on narrow screens
+and when printing:
+
+- **Privacy & Quality Judge Summary:** record-level pass counts for saved judges,
+  pooled entity coverage from candidate counts, unavailable counts, and separate
+  high/medium/low distributions for Rewrite's privacy, quality, and style rubrics.
+- **Privacy Inference Summary:** the existing inference metrics, plus saved
+  Rewrite risk tolerance, repair threshold, repair limit, and iterations taken.
+
+Full-width **Privacy & Quality Judge Issues** and **Privacy Inference Issues**
+sections follow. Only problems are listed: missed entities, failed judge checks,
+medium/low Rewrite ratings, inference leaks, and unavailable evaluations. Medium
+ratings are shown as ratings, not converted to boolean failures. Record indexes
+are zero-based and shared across both sections. Original values, replacements,
+relations, and saved reasons appear where available.
+
+Judges without saved result columns are omitted. Inference that has not run says
+**Not evaluated**; missing results from attempted evaluations remain unavailable.
+No model calls are made. The HTML export accepts a string or Path, returns a Path,
+overwrites existing files, and requires an existing parent directory. It includes
+original entity values and can be opened in a browser to print to PDF.
+The existing `display_privacy_report()` and `export_privacy_report()` remain
+available for inference-only reports.
+
 ## Replace Evaluation
 
 ### Inspect entity-level privacy findings
@@ -32,7 +70,9 @@ findings = evaluated.privacy_findings
 ```
 
 Rewrite reports also show the saved risk tolerance and its repair threshold in
-leakage-mass units. These settings are retained by new runs and previews through
+leakage-mass units, the maximum repair iterations allowed, and the maximum repair
+iterations taken across records (initial rewrite/evaluation excluded). Missing
+saved iteration counts display as unavailable. These settings are retained by new runs and previews through
 subsequent evaluation; older results without saved settings omit these rows.
 
 The report starts with evaluation coverage, records with reported leakage, recoverable
@@ -84,7 +124,8 @@ evaluated = anonymizer.evaluate(
 )
 ```
 
-`privacy_qa_batch_size` defaults to `None` (one call per record). Each batch
+`privacy_qa_batch_size` defaults to `5` (up to five questions per call). Set it
+to `None` for one call per record. Each batch
 receives the full replaced text and preserves the original question IDs. Batches
 run sequentially within a record, with independent correction retries, and their
 answers are merged back in question order. Classification and sensitivity logic
@@ -505,7 +546,8 @@ Configure batching on `Rewrite`, rather than `EvaluateConfig`:
 rewrite=Rewrite(privacy_qa_batch_size=5)
 ```
 
-The default `None` answers all privacy questions for a record in one call. Each
+The default batch size is `5`. Set `None` to answer all privacy questions for
+a record in one call. Each
 batch receives the full current rewritten text and preserves original question IDs.
 Answers are merged before leakage scoring and repair decisions. This also applies
 to the combined graph. A failed batch follows Rewrite's existing evaluation failure

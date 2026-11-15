@@ -404,3 +404,23 @@ def test_export_privacy_report_propagates_file_errors(tmp_path: Path) -> None:
     result = _result(pd.DataFrame([_row()]))
     with pytest.raises(FileNotFoundError):
         result.export_privacy_report(tmp_path / "missing" / "report.html")
+
+
+@pytest.mark.parametrize("preview", [False, True])
+@pytest.mark.parametrize("counts,expected", [([0, 1, 2], 2), ([0, 0, 0], 0), ([None, None, None], None)])
+def test_rewrite_summary_reports_repair_limit_and_maximum_taken(
+    preview: bool, counts: list[int | None], expected: int | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from anonymizer.config.rewrite import EvaluationCriteria
+
+    trace = pd.DataFrame([_row(), _row(), _row()])
+    trace[cols.COL_REPAIR_ITERATIONS] = counts
+    result = _result(trace, preview)
+    result.rewrite_evaluation = EvaluationCriteria(max_repair_iterations=4)
+    assert result.privacy_summary["max_repair_iterations"] == 4
+    assert result.privacy_summary["repair_iterations_taken"] == expected
+    rendered: list[str] = []
+    monkeypatch.setattr("anonymizer.interface.results._display_html", rendered.append)
+    result.display_privacy_report()
+    assert "Max repair iterations" in rendered[0]
+    assert "Repair iterations taken (maximum across records)" in rendered[0]

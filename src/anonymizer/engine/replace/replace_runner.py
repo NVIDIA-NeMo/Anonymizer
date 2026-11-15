@@ -144,7 +144,7 @@ class ReplacementWorkflow:
         excluded_entity_labels: list[str] | None = None,
         compute_detection_validity: bool = False,
         compute_privacy_leakage: bool = False,
-        privacy_qa_batch_size: int | None = None,
+        privacy_qa_batch_size: int | None = 5,
         data_summary: str | None = None,
     ) -> ReplacementResult:
         """Run the LLM evaluation judges on an already-replaced dataframe.

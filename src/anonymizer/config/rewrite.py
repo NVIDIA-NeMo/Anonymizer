@@ -157,7 +157,7 @@ class EvaluationCriteria(BaseModel):
         description="Preset controlling repair and review thresholds.",
     )
     privacy_qa_batch_size: int | None = Field(
-        default=None,
+        default=5,
         ge=1,
         strict=True,
         description="Maximum privacy questions per answering call; None answers all questions together.",
