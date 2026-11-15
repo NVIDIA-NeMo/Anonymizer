@@ -15,9 +15,9 @@ class RiskTolerance(str, Enum):
 
     Each preset bundles a coherent set of repair and review thresholds:
 
-    - **minimal** — Tight leakage threshold (0.6), flags for review aggressively.
+    - **minimal** — Tight leakage threshold (0.25), flags for review aggressively.
       Good for medical, legal, and financial data.
-    - **low** — Default. Moderate leakage threshold (1.0).
+    - **low** — Default. Leakage threshold (0.4).
       Good for most privacy-sensitive data.
     - **moderate** — Relaxed leakage threshold (1.5), lower review bar.
     - **high** — High leakage threshold (2.0), does not auto-repair
@@ -86,14 +86,14 @@ _FLAG_ON = (
 
 _RISK_TOLERANCE_BUNDLES: dict[RiskTolerance, _RiskToleranceBundle] = {
     RiskTolerance.minimal: _RiskToleranceBundle(
-        repair_threshold=0.6,
+        repair_threshold=0.25,
         flag_utility_below=0.6,
         flag_leakage_above=1.0,
         repair_on=(Finding.high_leak, Finding.leakage_above_repair),
         flag_on=_FLAG_ON,
     ),
     RiskTolerance.low: _RiskToleranceBundle(
-        repair_threshold=1.0,
+        repair_threshold=0.4,
         flag_utility_below=0.5,
         flag_leakage_above=2.0,
         repair_on=(Finding.high_leak, Finding.leakage_above_repair),
@@ -155,6 +155,12 @@ class EvaluationCriteria(BaseModel):
     risk_tolerance: RiskTolerance = Field(
         default=RiskTolerance.low,
         description="Preset controlling repair and review thresholds.",
+    )
+    privacy_qa_batch_size: int | None = Field(
+        default=None,
+        ge=1,
+        strict=True,
+        description="Maximum privacy questions per answering call; None answers all questions together.",
     )
     max_repair_iterations: int = Field(
         default=3,

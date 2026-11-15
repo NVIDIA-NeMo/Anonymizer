@@ -21,40 +21,46 @@ dataframe through `privacy_findings`. After Replace privacy evaluation, or after
 Rewrite's automatic evaluation:
 
 ```python
-findings = evaluated.privacy_findings
+evaluated.display_privacy_report()
 
-# Indexes are zero-based, matching display_record().
-first_record = findings[findings.record_index == 0]
-reported_leaks = findings[
-    (findings.answer == "yes") & (findings.evaluation_status == "evaluated")
-].drop(columns=["evaluation_status", "evaluation_error"])
-unavailable = findings[findings.evaluation_status == "unavailable"]
+# Save a standalone HTML file to share or open in a browser and print to PDF.
+evaluated.export_privacy_report("report.html")
+
+# Access the same summary and problems programmatically.
+summary = evaluated.privacy_summary
+findings = evaluated.privacy_findings
 ```
 
-The reported-leaks view includes only completed positive assessments and hides
-the redundant status/error columns. The full `findings` table retains those fields.
+Rewrite reports also show the saved risk tolerance and its repair threshold in
+leakage-mass units. These settings are retained by new runs and previews through
+subsequent evaluation; older results without saved settings omit these rows.
 
-The table includes `record_index`, `record_id`, `entity_value`, `entity_label`,
-`category`, `sensitivity`, `sensitivity_reason`, `question`, `answer`, `confidence`,
-`reason`, `evidence`, `leakage_contribution`, `evaluation_status`, and `evaluation_error`.
-Record IDs are the internal IDs used by the pipeline; positional indexes let you
-locate records even when IDs are absent from older results.
-For Rewrite, `sensitivity_reason` uses the available disposition rationale
-(`protection_reason` or legacy `low_sensitivity_reason`), not a newly generated
-explanation of sensitivity.
+The report starts with evaluation coverage, records with reported leakage, recoverable
+entity counts, high-sensitivity leaks, leakage mass, and the weighted entity recovery
+rate. The overall weighted rate divides total leakage mass by total possible sensitivity
+weight across complete evaluated records; it does not average record rates.
+Unavailable records and Rewrite entities exempted from QA are excluded from rate
+denominators. Records not evaluated are counted separately.
 
-`evaluated` means a complete final QA answer is available, whether yes or no.
-`not_evaluated` includes Rewrite entities exempted from privacy QA and targets
-whose privacy evaluation has not run. `unavailable` means evaluation failed or
-the saved answer is missing or incomplete. Unavailable and unevaluated
-contributions are null, not zero. If an unavailable record has no recoverable
-targets, a row with null entity fields retains its diagnostic. Known empty
-entity sets produce no rows; an empty table still has the same columns.
+The detail table shows **problems only**: reported leaks (`yes`) and unavailable
+evaluations (`Unavailable`). It includes record index/ID, entity value/label,
+category (shown as Type: direct/quasi/latent), sensitivity (medium shown as med), `Can entity still be inferred?`, confidence, reason, evidence, and
+leakage contribution. Negative answers and unevaluated entities are omitted.
+Sensitivity rationale, questions, status, and errors remain in
+`trace_dataframe`. Indexes are zero-based, matching `display_record()`.
+Unavailable contributions are null, never zero. An unavailable record with no
+recoverable targets has a row with null entity fields.
 
-The accessor reads the final saved questions and answers, not pre-repair issues.
-It preserves the judge's assessments and does not validate their semantic
-correctness. Each access builds a fresh table without model calls; editing its
-evidence lists cannot mutate the result's trace.
+`export_privacy_report()` accepts a string or `Path`, writes UTF-8 HTML with
+embedded styles, and returns the output `Path`. It overwrites an existing file;
+the parent directory must already exist. No notebook dependency or model calls
+are needed. The export includes original entity values. For Google Docs, copy
+the rendered report from a browser and paste it into a document.
+
+The HTML report wraps full reasons and evidence without truncation. These accessors
+read saved final assessments without model calls and preserve the judge's findings;
+they do not independently verify their correctness. Editing findings cannot mutate
+the saved trace.
 
 ### Optional privacy leakage evaluation
 
@@ -110,8 +116,9 @@ It does not discover latent entities, require a privacy goal, or rewrite or repa
 
 `evaluated.dataframe` includes `leakage_mass`: the sum of sensitivity weight ×
 confidence for answers indicating that an original value remains recoverable.
-Weights are high = 1.0, medium = 0.6, low = 0.3. No normalized leakage rate or
-high-leak flag is added for Replace.
+Weights are high = 1.0, medium = 0.6, low = 0.3. `weighted_leakage_rate` is
+leakage mass divided by the sum of weights for evaluated entity targets (zero
+for an empty successful evaluation). Both scores are unavailable when evaluation fails.
 
 `evaluated.trace_dataframe` also includes:
 
@@ -488,3 +495,18 @@ selected_models:
     detection_validity_judge: your-model-alias
     rewrite_judge: your-model-alias
 ```
+
+### Batching Rewrite privacy answers
+
+Rewrite answers privacy questions during `run()` / `preview()` and after each repair.
+Configure batching on `Rewrite`, rather than `EvaluateConfig`:
+
+```python
+rewrite=Rewrite(privacy_qa_batch_size=5)
+```
+
+The default `None` answers all privacy questions for a record in one call. Each
+batch receives the full current rewritten text and preserves original question IDs.
+Answers are merged before leakage scoring and repair decisions. This also applies
+to the combined graph. A failed batch follows Rewrite's existing evaluation failure
+handling; partial answers are not scored. Quality QA is unchanged.

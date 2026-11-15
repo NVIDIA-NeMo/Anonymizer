@@ -4,14 +4,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 from anonymizer.config.replace_strategies import ReplaceMethod
-from anonymizer.config.rewrite import PrivacyGoal
-from anonymizer.engine.evaluation.privacy_findings import build_privacy_findings
+from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
+from anonymizer.engine.constants import (
+    COL_FINDING_ANSWER,
+    COL_FINDING_ERROR,
+    COL_FINDING_INFERRED,
+    COL_FINDING_QUESTION,
+    COL_FINDING_SENSITIVITY_REASON,
+    COL_FINDING_STATUS,
+)
+from anonymizer.engine.evaluation.privacy_findings import build_privacy_findings, summarize_privacy_findings
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.interface.display import render_record_html
+from anonymizer.interface.privacy_report import render_privacy_report_html
 
 
 class _DisplayMixin:
@@ -20,19 +31,76 @@ class _DisplayMixin:
     trace_dataframe: pd.DataFrame
     resolved_text_column: str
     _display_cycle_index: int
+    rewrite_evaluation: EvaluationCriteria | None
 
     @property
     def privacy_findings(self) -> pd.DataFrame:
-        """Saved entity-level privacy assessments as a fresh, editable dataframe.
+        """Reported leaks and unavailable assessments as a fresh dataframe.
 
-        Includes all assessed targets, with zero-based record_index, record_id,
-        original value/label, category, sensitivity and its reason, question,
-        answer, confidence, reason, evidence, leakage_contribution, and
-        evaluation_status (evaluated/unavailable/not_evaluated) plus evaluation_error.
-        Rewrite entities excluded from QA are not_evaluated. No model calls run.
+        Includes record index/ID, original value/label, sensitivity, confidence,
+        reason, evidence, contribution, and "Can entity still be inferred?".
+        The inference column contains yes for leaks and Unavailable for failures.
+        Negative answers and unevaluated exemptions are omitted. No model calls run.
         Missing answers have unavailable contributions, never implied zero leakage.
+        Full diagnostic details remain in trace_dataframe.
         """
-        return build_privacy_findings(self.trace_dataframe)
+        findings = build_privacy_findings(self.trace_dataframe)
+        findings = findings[
+            ((findings[COL_FINDING_STATUS] == "evaluated") & (findings[COL_FINDING_ANSWER] == "yes"))
+            | (findings[COL_FINDING_STATUS] == "unavailable")
+        ].copy()
+        findings[COL_FINDING_ANSWER] = findings[COL_FINDING_ANSWER].where(
+            findings[COL_FINDING_STATUS] == "evaluated",
+            findings[COL_FINDING_STATUS].map({"unavailable": "Unavailable", "not_evaluated": "Not evaluated"}),
+        )
+        return findings.drop(
+            columns=[
+                COL_FINDING_SENSITIVITY_REASON,
+                COL_FINDING_QUESTION,
+                COL_FINDING_STATUS,
+                COL_FINDING_ERROR,
+            ]
+        ).rename(columns={COL_FINDING_ANSWER: COL_FINDING_INFERRED})
+
+    @property
+    def privacy_summary(self) -> dict[str, Any]:
+        """Coverage, reported recovery, and weighted metrics from saved assessments.
+
+        The overall weighted rate is summed leakage mass divided by summed
+        possible weight, excluding entire unavailable records from both sums.
+        """
+        summary = summarize_privacy_findings(self.trace_dataframe)
+        if self.rewrite_evaluation is not None:
+            summary["risk_tolerance"] = self.rewrite_evaluation.risk_tolerance.value
+            summary["repair_threshold"] = self.rewrite_evaluation.repair_threshold
+        return summary
+
+    def display_privacy_report(self) -> None:
+        """Display a summary above reported leaks and unavailable assessments."""
+        _display_html(render_privacy_report_html(self.privacy_summary, self.privacy_findings))
+
+    def export_privacy_report(self, path: str | Path) -> Path:
+        """Write a standalone UTF-8 HTML report and return its path.
+
+        Includes the same summary and problems as display_privacy_report(),
+        without model calls or an IPython dependency. Existing files are
+        overwritten; the parent directory must exist. Open in a browser to
+        view or print to PDF. Original entity values are included.
+        """
+        destination = Path(path)
+        report = render_privacy_report_html(self.privacy_summary, self.privacy_findings)
+        document = (
+            '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            "<title>Privacy evaluation report</title>"
+            "<style>body{font-family:Arial,sans-serif;margin:24px;}"
+            "@media print{@page{size:landscape;}"
+            ".anonymizer-privacy-report .privacy-details{overflow:visible;}"
+            ".anonymizer-privacy-report thead{display:table-header-group;}}"
+            "</style></head><body>" + report + "</body></html>"
+        )
+        destination.write_text(document, encoding="utf-8")
+        return destination
 
     def display_record(self, index: int | None = None) -> None:
         """Render a record with entity highlights and replacement map in a notebook.
@@ -47,15 +115,19 @@ class _DisplayMixin:
         row = self.trace_dataframe.iloc[i]
         html_str = render_record_html(row, record_index=i, resolved_text_column=self.resolved_text_column)
 
-        try:
-            from IPython.display import HTML, display
-
-            display(HTML(html_str))
-        except ImportError:
-            print(html_str)
+        _display_html(html_str)
 
         if index is None:
             self._display_cycle_index = (self._display_cycle_index + 1) % len(self.trace_dataframe)
+
+
+def _display_html(html_str: str) -> None:
+    try:
+        from IPython.display import HTML, display
+
+        display(HTML(html_str))
+    except ImportError:
+        print(html_str)
 
 
 @dataclass
@@ -80,6 +152,8 @@ class AnonymizerResult(_DisplayMixin):
             mode was used. Set by ``run()`` / ``preview()``; consumed by
             ``evaluate()`` to dispatch the rewrite judges. Mutually exclusive
             with ``replace_method``.
+        rewrite_evaluation: Saved Rewrite evaluation settings used for the privacy
+            report's risk tolerance and repair threshold. None when unavailable.
         entity_labels: Allowlist of entity labels that were in scope during
             detection. Preserved for ``evaluate()`` so the coverage judge scopes
             its evaluation to the same label set. ``None`` means detection was
@@ -107,6 +181,7 @@ class AnonymizerResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
+    rewrite_evaluation: EvaluationCriteria | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:
@@ -142,6 +217,8 @@ class PreviewResult(_DisplayMixin):
         rewrite_config: The privacy goal that produced this preview when rewrite
             mode was used. Set by ``preview()``; consumed by ``evaluate()`` to
             dispatch the rewrite judges. Mutually exclusive with ``replace_method``.
+        rewrite_evaluation: Saved Rewrite evaluation settings used for the privacy
+            report's risk tolerance and repair threshold. None when unavailable.
         entity_labels: Allowlist of entity labels that were in scope during
             detection. Preserved for ``evaluate()`` so the coverage judge scopes
             its evaluation to the same label set. ``None`` means detection was
@@ -170,6 +247,7 @@ class PreviewResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
+    rewrite_evaluation: EvaluationCriteria | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:

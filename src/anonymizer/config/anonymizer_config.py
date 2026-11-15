@@ -265,6 +265,12 @@ class Rewrite(BaseModel):
         default=RiskTolerance.low,
         description="Preset controlling repair thresholds and review flagging.",
     )
+    privacy_qa_batch_size: int | None = Field(
+        default=None,
+        ge=1,
+        strict=True,
+        description="Maximum privacy questions per answering call; None answers all questions together.",
+    )
     max_repair_iterations: int = Field(
         default=3,
         ge=0,
@@ -294,7 +300,7 @@ class Rewrite(BaseModel):
 
         `Rewrite` and `EvaluationCriteria` both carry `max_repair_iterations`.
         This property keeps them in sync: it passes through `self.risk_tolerance`
-        and `self.max_repair_iterations`. Leakage thresholds and repair
+        `self.max_repair_iterations`, and `self.privacy_qa_batch_size`. Leakage thresholds and repair
         parameters are derived from `risk_tolerance` via `_RiskToleranceBundle`
         (see `rewrite.py`).
 
@@ -307,6 +313,7 @@ class Rewrite(BaseModel):
         return EvaluationCriteria(
             risk_tolerance=self.risk_tolerance,
             max_repair_iterations=self.max_repair_iterations,
+            privacy_qa_batch_size=self.privacy_qa_batch_size,
         )
 
 

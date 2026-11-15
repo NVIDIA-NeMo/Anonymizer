@@ -26,6 +26,7 @@ from anonymizer.engine.constants import (
     COL_PRIVACY_QA_REANSWER,
     COL_REPLACED_TEXT,
     COL_TEXT,
+    COL_WEIGHTED_LEAKAGE_RATE,
     RECORD_ID_COLUMN,
 )
 from anonymizer.engine.evaluation.replace.entity_sensitivity import ReplaceEntitySensitivityWorkflow
@@ -109,6 +110,7 @@ class ReplacePrivacyLeakageWorkflow:
                 prepared.at[idx, COL_PRIVACY_QA] = {"items": []}
                 prepared.at[idx, COL_PRIVACY_QA_REANSWER] = {"answers": []}
                 prepared.at[idx, COL_LEAKAGE_MASS] = 0.0
+                prepared.at[idx, COL_WEIGHTED_LEAKAGE_RATE] = 0.0
                 prepared.at[idx, COL_PRIVACY_LEAKAGE_CONTRIBUTIONS] = []
 
         if active_positions:

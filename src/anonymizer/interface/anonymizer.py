@@ -536,6 +536,7 @@ class Anonymizer:
                 id_column=result.id_column,
                 replace_method=config.replace,
                 rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
+                rewrite_evaluation=result.rewrite_evaluation,
                 entity_labels=config.detect.entity_labels,
                 excluded_entity_labels=config.detect.excluded_entity_labels,
                 data_summary=result.data_summary,
@@ -720,6 +721,7 @@ class Anonymizer:
                 failed_records=all_failed,
                 id_column=output.id_column,
                 rewrite_config=rewrite_config,
+                rewrite_evaluation=output.rewrite_evaluation,
                 entity_labels=entity_labels,
                 excluded_entity_labels=excluded_entity_labels,
                 data_summary=data_summary,
@@ -1020,6 +1022,7 @@ class Anonymizer:
             id_column=context.resolved_id_column,
             replace_method=config.replace,
             rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
+            rewrite_evaluation=config.rewrite.evaluation.model_copy(deep=True) if config.rewrite is not None else None,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
             data_summary=data.data_summary,
@@ -1267,7 +1270,7 @@ def _build_user_dataframe(
 
     Replace:     {text_col}, {text_col}_replaced, {text_col}_with_spans, final_entities,
                  entity_coverage, missed_entities (always after evaluate()),
-                 leakage_mass (only after optional privacy leakage evaluation),
+                 leakage_mass, weighted_leakage_rate (after optional privacy leakage evaluation),
                  detection_valid, detection_invalid_entities (only when compute_detection_validity=True)
     Rewrite:     {text_col}, {text_col}_rewritten, utility_score, leakage_mass, weighted_leakage_rate,
                  any_high_leaked, needs_human_review
@@ -1306,6 +1309,7 @@ def _build_user_dataframe(
             COL_ATTRIBUTE_FIDELITY_VALID,
             COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
             COL_LEAKAGE_MASS,
+            COL_WEIGHTED_LEAKAGE_RATE,
         }
         if compute_detection_validity:
             allowed |= {COL_DETECTION_VALID, COL_DETECTION_INVALID_ENTITIES}

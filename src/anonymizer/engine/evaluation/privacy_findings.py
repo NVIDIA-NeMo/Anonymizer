@@ -30,6 +30,7 @@ from anonymizer.engine.constants import (
     COL_FINDING_SENSITIVITY,
     COL_FINDING_SENSITIVITY_REASON,
     COL_FINDING_STATUS,
+    COL_LEAKAGE_MASS,
     COL_PRIVACY_LEAKAGE_CONTRIBUTIONS,
     COL_PRIVACY_QA,
     COL_PRIVACY_QA_ERROR,
@@ -92,6 +93,69 @@ def build_privacy_findings(trace_dataframe: pd.DataFrame) -> pd.DataFrame:
                 finding[column] = value.value
     rows = [{column: finding.get(column) for column in PRIVACY_FINDING_COLUMNS} for finding in findings]
     return pd.DataFrame(deepcopy(rows), columns=pd.Index(PRIVACY_FINDING_COLUMNS), dtype=object)
+
+
+def summarize_privacy_findings(trace_dataframe: pd.DataFrame) -> dict[str, Any]:
+    """Aggregate complete records without averaging their normalized rates.
+
+    Unavailable records are excluded from both weighted sums. Rewrite entities
+    exempted from QA are excluded from entity counts and possible leakage mass.
+    Known empty evaluations count as evaluated records with zero leakage.
+    """
+    findings = build_privacy_findings(trace_dataframe)
+    evaluated: set[int] = set()
+    unavailable = 0
+    for index, (_, row) in enumerate(trace_dataframe.iterrows()):
+        record = findings[findings[COL_FINDING_RECORD_INDEX] == index]
+        statuses = set(record[COL_FINDING_STATUS])
+        answered = record[record[COL_FINDING_STATUS] == "evaluated"]
+        if "unavailable" in statuses or (
+            not answered.empty
+            and (
+                answered[COL_FINDING_CONTRIBUTION].isna().any()
+                or not answered[COL_FINDING_SENSITIVITY].isin(SENSITIVITY_WEIGHTS).all()
+            )
+        ):
+            unavailable += 1
+            continue
+        questions = _value(row.get(COL_PRIVACY_QA))
+        answers = _value(row.get(COL_PRIVACY_QA_REANSWER))
+        empty_evaluation = (
+            isinstance(questions, dict)
+            and questions.get("items") == []
+            and isinstance(answers, dict)
+            and answers.get("answers") == []
+        )
+        passthrough = record.empty and _value(row.get(COL_LEAKAGE_MASS)) == 0
+        if "evaluated" in statuses or empty_evaluation or passthrough:
+            evaluated.add(index)
+
+    eligible = findings[
+        findings[COL_FINDING_RECORD_INDEX].isin(evaluated) & (findings[COL_FINDING_STATUS] == "evaluated")
+    ]
+    leaked = eligible[eligible[COL_FINDING_ANSWER] == "yes"]
+    by_sensitivity = {
+        sensitivity: float(leaked.loc[leaked[COL_FINDING_SENSITIVITY] == sensitivity, COL_FINDING_CONTRIBUTION].sum())
+        for sensitivity in ("high", "medium", "low")
+    }
+    mass = sum(by_sensitivity.values())
+    possible_mass = float(eligible[COL_FINDING_SENSITIVITY].map(SENSITIVITY_WEIGHTS).sum())
+    record_leaks = int(leaked[COL_FINDING_RECORD_INDEX].nunique())
+    return {
+        "records_total": len(trace_dataframe),
+        "records_evaluated": len(evaluated),
+        "records_unavailable": unavailable,
+        "records_not_evaluated": len(trace_dataframe) - len(evaluated) - unavailable,
+        "records_with_leakage": record_leaks,
+        "record_leakage_rate": record_leaks / len(evaluated) if evaluated else None,
+        "entities_evaluated": len(eligible),
+        "entities_leaked": len(leaked),
+        "entity_recovery_rate": len(leaked) / len(eligible) if len(eligible) else (0.0 if evaluated else None),
+        "high_sensitivity_entities_leaked": int((leaked[COL_FINDING_SENSITIVITY] == "high").sum()),
+        "leakage_mass": mass if evaluated else None,
+        "weighted_leakage_rate": mass / possible_mass if possible_mass else (0.0 if evaluated else None),
+        "leakage_mass_by_sensitivity": by_sensitivity if evaluated else {key: None for key in by_sensitivity},
+    }
 
 
 def _value(raw: Any) -> Any:

@@ -20,9 +20,10 @@ from anonymizer.engine.constants import (
     COL_PRIVACY_QA,
     COL_PRIVACY_QA_ERROR,
     COL_PRIVACY_QA_REANSWER,
+    COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.evaluation.replace.privacy_answers import CompletePrivacyAnswersSchema
-from anonymizer.engine.rewrite.evaluate import compute_leakage_mass
+from anonymizer.engine.rewrite.evaluate import compute_leakage_mass, compute_weighted_leakage_rate
 from anonymizer.engine.rewrite.parsers import normalize_payload, parse_privacy_qa
 from anonymizer.engine.schemas import (
     EntityCategory,
@@ -50,6 +51,7 @@ class PrivacyLeakageScoreSchema(BaseModel):
     """Record mass and its complete entity-level breakdown."""
 
     leakage_mass: float = Field(ge=0.0)
+    weighted_leakage_rate: float = Field(ge=0.0, le=1.0)
     entities: list[PrivacyLeakageContributionSchema]
 
 
@@ -84,14 +86,16 @@ def compute_privacy_leakage_score(
                 leakage_contribution=contribution,
             )
         )
+    mass = compute_leakage_mass(answers.answers, privacy_qa, dict(SENSITIVITY_WEIGHTS))
     return PrivacyLeakageScoreSchema(
-        leakage_mass=compute_leakage_mass(answers.answers, privacy_qa, dict(SENSITIVITY_WEIGHTS)),
+        leakage_mass=mass,
+        weighted_leakage_rate=compute_weighted_leakage_rate(mass, privacy_qa, dict(SENSITIVITY_WEIGHTS)),
         entities=entities,
     )
 
 
 class ReplacePrivacyScoringWorkflow:
-    """Declare scoring columns without repair decisions or additional metrics."""
+    """Declare leakage mass, normalized rate, and entity contributions."""
 
     def columns(self) -> list[ColumnConfigT]:
         return [CustomColumnConfig(name=COL_LEAKAGE_MASS, generator_function=_compute_privacy_score_column)]
@@ -99,11 +103,12 @@ class ReplacePrivacyScoringWorkflow:
 
 @custom_column_generator(
     required_columns=[COL_PRIVACY_QA, COL_PRIVACY_QA_REANSWER, COL_PRIVACY_QA_ERROR],
-    side_effect_columns=[COL_PRIVACY_LEAKAGE_CONTRIBUTIONS],
+    side_effect_columns=[COL_PRIVACY_LEAKAGE_CONTRIBUTIONS, COL_WEIGHTED_LEAKAGE_RATE],
 )
 def _compute_privacy_score_column(row: dict[str, Any]) -> dict[str, Any]:
     # Reset outputs so re-evaluating an unavailable record cannot retain old scores.
     row[COL_LEAKAGE_MASS] = None
+    row[COL_WEIGHTED_LEAKAGE_RATE] = None
     row[COL_PRIVACY_LEAKAGE_CONTRIBUTIONS] = None
     if row.get(COL_PRIVACY_QA_ERROR):
         return row
@@ -116,5 +121,6 @@ def _compute_privacy_score_column(row: dict[str, Any]) -> dict[str, Any]:
         logger.warning("Privacy QA answers or questions are unavailable or invalid; leakage score unavailable.")
         return row
     row[COL_LEAKAGE_MASS] = score.leakage_mass
+    row[COL_WEIGHTED_LEAKAGE_RATE] = score.weighted_leakage_rate
     row[COL_PRIVACY_LEAKAGE_CONTRIBUTIONS] = [entity.model_dump(mode="json") for entity in score.entities]
     return row

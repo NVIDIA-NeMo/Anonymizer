@@ -86,6 +86,7 @@ def test_score_reconciles_all_sensitivities_and_joins_reordered_answers() -> Non
 def test_empty_evaluation_has_zero_mass_and_no_contributions() -> None:
     score = compute_privacy_leakage_score(PrivacyQAPairsSchema(items=[]), PrivacyAnswersSchema(answers=[]))
     assert score.leakage_mass == 0.0
+    assert score.weighted_leakage_rate == 0.0
     assert score.entities == []
 
 
@@ -95,6 +96,7 @@ def test_all_negative_answers_have_zero_mass() -> None:
         answer.answer = PrivacyAnswer.no
     score = compute_privacy_leakage_score(_questions(), answers)
     assert score.leakage_mass == 0.0
+    assert score.weighted_leakage_rate == 0.0
     assert all(entity.leakage_contribution == 0.0 for entity in score.entities)
 
 
@@ -130,7 +132,7 @@ def test_score_column_handles_payloads_without_adding_other_metrics(serialized: 
     result = _compute_privacy_score_column(row)
     assert result[COL_LEAKAGE_MASS] == pytest.approx(1.22)
     assert len(result[COL_PRIVACY_LEAKAGE_CONTRIBUTIONS]) == 4
-    assert COL_WEIGHTED_LEAKAGE_RATE not in result
+    assert result[COL_WEIGHTED_LEAKAGE_RATE] == pytest.approx(1.22 / 2.9)
     assert COL_ANY_HIGH_LEAKED not in result
 
 
@@ -144,6 +146,7 @@ def test_unavailable_answers_clear_old_scores_and_preserve_error() -> None:
     }
     result = _compute_privacy_score_column(row)
     assert result[COL_LEAKAGE_MASS] is None
+    assert result[COL_WEIGHTED_LEAKAGE_RATE] is None
     assert result[COL_PRIVACY_LEAKAGE_CONTRIBUTIONS] is None
     assert result[COL_PRIVACY_QA_ERROR] == row[COL_PRIVACY_QA_ERROR]
 
@@ -157,6 +160,7 @@ def test_invalid_answers_never_become_zero_leakage(answers: object) -> None:
     }
     result = _compute_privacy_score_column(row)
     assert result[COL_LEAKAGE_MASS] is None
+    assert result[COL_WEIGHTED_LEAKAGE_RATE] is None
     assert result[COL_PRIVACY_LEAKAGE_CONTRIBUTIONS] is None
 
 
@@ -166,4 +170,4 @@ def test_workflow_declares_mass_and_contributions_only() -> None:
     column = columns[0]
     assert isinstance(column, CustomColumnConfig)
     assert column.name == COL_LEAKAGE_MASS
-    assert column.side_effect_columns == [COL_PRIVACY_LEAKAGE_CONTRIBUTIONS]
+    assert column.side_effect_columns == [COL_PRIVACY_LEAKAGE_CONTRIBUTIONS, COL_WEIGHTED_LEAKAGE_RATE]

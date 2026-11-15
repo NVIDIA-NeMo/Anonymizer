@@ -58,8 +58,8 @@ def test_privacy_goal_to_prompt_string() -> None:
 @pytest.mark.parametrize(
     "tolerance,expected_threshold",
     [
-        (RiskTolerance.minimal, 0.6),
-        (RiskTolerance.low, 1.0),
+        (RiskTolerance.minimal, 0.25),
+        (RiskTolerance.low, 0.4),
         (RiskTolerance.moderate, 1.5),
         (RiskTolerance.high, 2.0),
     ],
@@ -72,7 +72,7 @@ def test_repair_threshold_per_tolerance(tolerance: RiskTolerance, expected_thres
 def test_default_is_low() -> None:
     criteria = EvaluationCriteria()
     assert criteria.risk_tolerance == RiskTolerance.low
-    assert criteria.repair_threshold == 1.0
+    assert criteria.repair_threshold == 0.4
     assert criteria.max_repair_iterations == 3
 
 

@@ -97,8 +97,8 @@ Controls the automated repair loop and human review flagging. Each preset bundle
 
 | Preset | Repair threshold | Repair on any high leak | Flag utility below | Flag leakage above |
 |--------|-----------------|------------------------|--------------------|--------------------|
-| `minimal` | 0.6 | Yes | 0.6 | 1.0 |
-| `low` | 1.0 | Yes | 0.5 | 2.0 |
+| `minimal` | 0.25 | Yes | 0.6 | 1.0 |
+| `low` | 0.4 | Yes | 0.5 | 2.0 |
 | `moderate` | 1.5 | Yes | 0.4 | 2.5 |
 | `high` | 2.0 | No | 0.3 | 3.0 |
 

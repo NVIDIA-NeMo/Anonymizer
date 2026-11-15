@@ -243,3 +243,34 @@ def test_normalize_answer_items_drops_extra_and_duplicate_ids() -> None:
         default_item_factory=lambda item_id: {"id": item_id, "answer": "unknown"},
     )
     assert normalized == [{"id": 1, "answer": "first"}, {"id": 2, "answer": "unknown"}]
+
+
+@pytest.mark.parametrize("batch_size,expected", [(None, [[1, 2]]), (1, [[1], [2]]), (5, [[1, 2]])])
+def test_rewrite_privacy_batches_keep_full_text_and_original_ids(
+    privacy_qa_high_and_low: dict, batch_size: int | None, expected: list[list[int]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    from anonymizer.engine.constants import COL_PRIVACY_QA, COL_PRIVACY_QA_REANSWER, COL_REWRITTEN_TEXT
+    from anonymizer.engine.rewrite.evaluate import _make_privacy_reanswer_column
+    from anonymizer.engine.schemas import PrivacyAnswersSchema
+
+    calls = []
+
+    async def answer(qa, text, **kwargs):
+        calls.append([item.id for item in qa.items])
+        assert text == "Full current rewritten text"
+        return PrivacyAnswersSchema.model_validate(
+            {
+                "answers": [
+                    {"id": item.id, "answer": "no", "confidence": 1.0, "reason": "Absent", "evidence": []}
+                    for item in reversed(qa.items)
+                ]
+            }
+        )
+
+    monkeypatch.setattr("anonymizer.engine.rewrite.evaluate.answer_privacy_qa", answer)
+    row = {COL_PRIVACY_QA: privacy_qa_high_and_low, COL_REWRITTEN_TEXT: "Full current rewritten text"}
+    result = asyncio.run(_make_privacy_reanswer_column("judge", batch_size)(row, None, {"judge": object()}))
+    assert calls == expected
+    assert sorted(answer["id"] for answer in result[COL_PRIVACY_QA_REANSWER]["answers"]) == [1, 2]

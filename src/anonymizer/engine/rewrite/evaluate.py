@@ -381,23 +381,30 @@ def _make_quality_reanswer_column(evaluator_alias: str) -> Any:
     return _quality_reanswer
 
 
-def _make_privacy_reanswer_column(evaluator_alias: str) -> Any:
+def _make_privacy_reanswer_column(evaluator_alias: str, batch_size: int | None = None) -> Any:
     @custom_column_generator(
         required_columns=[COL_PRIVACY_QA, COL_REWRITTEN_TEXT],
         model_aliases=[evaluator_alias],
     )
     async def _privacy_reanswer(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
         qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
-        expected_ids = [item.id for item in qa.items]
-
         recipe = PydanticResponseRecipe(data_type=PrivacyAnswersSchema)
-        parser = _make_privacy_answer_parser(recipe, expected_ids)
-        result = await answer_privacy_qa(
-            qa,
-            str(row.get(COL_REWRITTEN_TEXT, "")),
-            model=models[evaluator_alias],
-            recipe=recipe,
-            parser=parser,
+        answers = []
+        size = batch_size or max(len(qa.items), 1)
+        for start in range(0, len(qa.items), size):
+            batch = PrivacyQAPairsSchema(items=qa.items[start : start + size])
+            parser = _make_privacy_answer_parser(recipe, [item.id for item in batch.items])
+            result = await answer_privacy_qa(
+                batch,
+                str(row.get(COL_REWRITTEN_TEXT, "")),
+                model=models[evaluator_alias],
+                recipe=recipe,
+                parser=parser,
+            )
+            answers.extend(result.answers)
+        result = PrivacyAnswersSchema.model_validate(
+            {"answers": [answer.model_dump() for answer in answers]},
+            context={"expected_ids": [item.id for item in qa.items]},
         )
         row[COL_PRIVACY_QA_REANSWER] = result.model_dump()
         return row
@@ -498,7 +505,7 @@ class EvaluateWorkflow:
             # Step 2 -- Privacy re-answer (LLM with context-validated parser)
             CustomColumnConfig(
                 name=COL_PRIVACY_QA_REANSWER,
-                generator_function=_make_privacy_reanswer_column(evaluator_alias),
+                generator_function=_make_privacy_reanswer_column(evaluator_alias, evaluation.privacy_qa_batch_size),
             ),
             # Step 3 -- Quality comparison (LLM with context-validated parser)
             CustomColumnConfig(
