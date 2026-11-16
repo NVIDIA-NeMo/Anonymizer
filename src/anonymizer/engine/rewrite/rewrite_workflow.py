@@ -384,13 +384,13 @@ def _final_checks(evaluation: EvaluationCriteria) -> tuple[Operation, ...]:
     }
 
     def verifier(check: str, predicate: Callable[[dict[str, Any]], bool | None]) -> Operation:
-        def assess(text: str, metrics: dict[str, Any], target: Datum) -> Assessment:
+        def assess(metrics: dict[str, Any], target: Datum) -> Assessment:
             satisfied = predicate(metrics)
             missing = "replacement_policy_unavailable" if check == "replacements_applied" else "metric_unavailable"
             return Assessment(satisfied, target, missing if satisfied is None else "")
 
-        inputs = {"text": TEXT, "metrics": REWRITE_METRICS, "target": DATUM}
-        return Operation.verifier(f"assess-{check}", assess, inputs, checks=(check,))
+        inputs = {"metrics": REWRITE_METRICS, "target": DATUM}
+        return Operation.verifier(f"assess-{check}", assess, inputs, checks=(check,), subject=("metrics",))
 
     return tuple(verifier(check, predicate) for check, predicate in predicates.items())
 

@@ -132,11 +132,7 @@ def _prepare(
     final_text = max((i for i, n in enumerate(nodes) if "text" in n.outputs), default=None)
     if final_text is not None and nodes[final_text].outputs["text"] != TEXT:
         raise k.GraphRejection("final_text_not_text", nodes[final_text].name)
-    covering = frozenset(
-        i
-        for i, (_, op) in enumerate(ops)
-        if op.is_verifier and plan.sources[i].get("text") == k.Source(final_text, "text")
-    )
+    covering = _covering(ops, plan, -1 if final_text is None else final_text)
     answered = {c for i in covering for c in ops[i][1].checks}
     if unanswered := [c for c in workflow.requires if c not in answered]:
         # Evidence on earlier text is a diagnostic; a requirement only it answers could never be met.
@@ -146,6 +142,39 @@ def _prepare(
     names = tuple(n for n, _ in ops)
     prepared = PreparedProtection(graph, workflow, limits, plan, names, planned, covering, admitted, final_text)
     return replace(prepared, seal=_seal(prepared))
+
+
+def _covering(ops: tuple[tuple[str, Operation], ...], plan: k.Plan, final: int) -> frozenset[int]:
+    """The verifiers whose every declared subject derives from the final candidate, from declared ports only.
+
+    A candidate version is the index of the operation whose ``text`` output it is, or -1 for the source text. The
+    seeds ``text``, ``source``, ``mentions`` and ``target`` derive from the source text; ``context`` from none.
+    Interim rule: every output of a text-producing operation derives from the version it emits, so evidence it
+    returns beside its text counts as about that text. Any other operation's outputs derive from all its inputs.
+    """
+    outputs: list[dict[str, frozenset[int]]] = []
+    covering = set()
+    for i, (name, op) in enumerate(ops):
+        read = {
+            port: (frozenset() if port == "context" else frozenset({-1}))
+            if source.node is None
+            else outputs[source.node][source.port]
+            for port, source in plan.sources[i].items()
+        }
+        if op.subject and not op.is_verifier:
+            raise k.GraphRejection("verifier_subject_invalid", f"{name}: not a verifier")
+        if op.is_verifier and op.checks and not op.subject:
+            raise k.GraphRejection("verifier_subject_invalid", f"{name}: undeclared")
+        for port in op.subject:
+            if port not in read:
+                raise k.GraphRejection("verifier_subject_invalid", f"{name}.{port}: not an input")
+            if not read[port]:
+                raise k.GraphRejection("verifier_subject_invalid", f"{name}.{port}: about no candidate")
+        if op.subject and all(final in read[port] for port in op.subject):
+            covering.add(i)
+        derived = frozenset({i}) if "text" in op.outputs else frozenset().union(*read.values())
+        outputs.append(dict.fromkeys(op.outputs, derived))
+    return frozenset(covering)
 
 
 def _seal(p: PreparedProtection) -> str:

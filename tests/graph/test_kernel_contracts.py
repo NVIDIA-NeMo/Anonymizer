@@ -82,7 +82,11 @@ def test_verifier_only_release_maps_target_to_its_source_text() -> None:
     scope = graph.GraphScope()
     target = scope.datum("verified text")
     check = graph.Operation.verifier(
-        "v", lambda text, target: graph.Assessment(True, target), {"text": "text", "target": "datum"}, checks=("c",)
+        "v",
+        lambda text, target: graph.Assessment(True, target),
+        {"text": "text", "target": "datum"},
+        checks=("c",),
+        subject=("text",),
     )
     result = graph.protect(
         graph.prepare(graph.ProtectionGraph(scope, (target,)), graph.Workflow("w", (check,), requires=("c",)))
@@ -103,7 +107,11 @@ def test_final_text_of_another_kind_is_rejected() -> None:
     scope = graph.GraphScope()
     g = graph.ProtectionGraph(scope, (scope.datum("Alice"),))
     check = graph.Operation.verifier(
-        "v", lambda text, target: graph.Assessment(True, target), {"text": kind, "target": "datum"}, checks=("c",)
+        "v",
+        lambda text, target: graph.Assessment(True, target),
+        {"text": kind, "target": "datum"},
+        checks=("c",),
+        subject=("text",),
     )
     wrap = graph.Operation("wrap", lambda text: {"value": text}, outputs={"text": kind})
     with pytest.raises(graph.GraphRejection) as rejected:
@@ -116,7 +124,11 @@ def test_nested_release_other_than_protected_is_rejected(release: str) -> None:
     scope = graph.GraphScope()
     g = graph.ProtectionGraph(scope, (scope.datum("Alice"),))
     check = graph.Operation.verifier(
-        "v", lambda text, target: graph.Assessment(True, target), {"text": "text", "target": "datum"}, checks=("c",)
+        "v",
+        lambda text, target: graph.Assessment(True, target),
+        {"text": "text", "target": "datum"},
+        checks=("c",),
+        subject=("text",),
     )
     inner = graph.Workflow("tag", (graph.Operation("wrap", lambda text: f"<{text}>"), check), release=release)  # ty: ignore[invalid-argument-type]
     outer = graph.Workflow("w", (inner,), requires=("c",))
@@ -133,7 +145,11 @@ def test_annotation_nested_in_protected_workflow_is_rejected() -> None:
     target = scope.datum("Alice")
     g = graph.ProtectionGraph(scope, (target,))
     check = graph.Operation.verifier(
-        "v", lambda text, target: graph.Assessment(True, target), {"text": "text", "target": "datum"}, checks=("c",)
+        "v",
+        lambda text, target: graph.Assessment(True, target),
+        {"text": "text", "target": "datum"},
+        checks=("c",),
+        subject=("text",),
     )
     inner = graph.Workflow("tag", (graph.Operation("wrap", lambda text: f"<{text}>"), check), release="annotation")
     with pytest.raises(graph.GraphRejection) as rejected:

@@ -321,6 +321,7 @@ def _protect_rows(
                 "target": DATUM,
             },
             checks=("replacements_applied",),
+            subject=("text",),
         ),
     )
     operations = (*(s for s in (detect_op, map_step) if s is not None), *operations)

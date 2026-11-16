@@ -108,7 +108,9 @@ def test_required_check_must_be_answered_by_a_final_text_verifier() -> None:
             ok = ("Alice" not in text and "Smith" not in text) if verdict is None else verdict
             return graph.Assessment(ok, target, "" if ok else "name_present")
 
-        return graph.Operation.verifier(name, assess, {"text": "text", "target": "datum"}, checks=(check,))
+        return graph.Operation.verifier(
+            name, assess, {"text": "text", "target": "datum"}, checks=(check,), subject=("text",)
+        )
 
     def attempt(steps: tuple, requires: tuple[str, ...]) -> tuple[str, str]:
         scope = graph.GraphScope()

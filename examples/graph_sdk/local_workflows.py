@@ -28,7 +28,7 @@ def main() -> None:
 
     # Compose: one transform, then one verifier over the transform's output answering the required check.
     inputs = {"text": "text", "target": "datum"}
-    verifier = g.Operation.verifier("check-names", check_names, inputs, checks=("names_removed",))
+    verifier = g.Operation.verifier("check-names", check_names, inputs, checks=("names_removed",), subject=("text",))
     steps = (g.Operation("redact-alice", redact_alice), verifier)
     workflow = g.Workflow("redact-names", steps, requires=("names_removed",))
 

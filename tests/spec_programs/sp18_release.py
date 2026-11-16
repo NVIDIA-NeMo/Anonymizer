@@ -28,6 +28,7 @@ CHECK = Operation.verifier(
     lambda text, target: Assessment("bad" not in text, target),
     {"text": TEXT, "target": DATUM},
     checks=("check",),
+    subject=("text",),
 )
 
 

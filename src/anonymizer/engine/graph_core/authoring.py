@@ -282,7 +282,8 @@ class Operation:
 
     Input ports bind by name to the latest earlier output, else to the per-target seeds ``text`` (current candidate),
     ``source`` (original text), ``mentions``, ``context`` and ``target``. An operation whose output kind is
-    ``assessment`` is a verifier; ``checks`` names the workflow requirements its assessment answers.
+    ``assessment`` is a verifier; ``checks`` names the workflow requirements its assessment answers and ``subject``
+    names the input ports the assessment is about (required with ``checks``; there is no default).
     """
 
     name: str
@@ -292,8 +293,10 @@ class Operation:
     requests: Requests = Requests()
     scope: Literal["target", "phase_scoped"] = "target"
     checks: tuple[str, ...] = ()
+    subject: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "subject", tuple(self.subject))
         if self.scope == "invocation":  # older spelling of "phase_scoped"
             object.__setattr__(self, "scope", "phase_scoped")
         # The caller keeps its own mappings; the admitted ports cannot change after preparation.
@@ -308,9 +311,10 @@ class Operation:
         inputs: Mapping[str, str] | None = None,
         requests: Requests = Requests(),
         checks: tuple[str, ...] = (),
+        subject: tuple[str, ...] = (),
     ) -> Operation:
         inputs = MappingProxyType(dict(inputs or {"text": TEXT}))
-        return cls(name, fn, inputs, {"assessment": ASSESSMENT}, requests, checks=tuple(checks))
+        return cls(name, fn, inputs, {"assessment": ASSESSMENT}, requests, checks=tuple(checks), subject=subject)
 
     @classmethod
     def phase_scoped(

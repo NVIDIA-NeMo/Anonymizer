@@ -154,7 +154,7 @@ def program() -> list[dict[str, str]]:
         op = Operation.per_invocation(
             "verify", call, {"text": TEXT, "target": DATUM}, {"assessment": ASSESSMENT}, Requests.none()
         )
-        return replace(op, checks=("verify",))
+        return replace(op, checks=("verify",), subject=("text",))
 
     def keep_second(ts: tuple[str, ...]) -> list[str]:
         return [t if "two" in t else t.replace(NAME, "[NAME]") for t in ts]

@@ -72,7 +72,7 @@ class Recorder:
             self.calls.append((name, text, threading.get_ident()))
             return Assessment(needle not in text, target)
 
-        return Operation.verifier(name, call, {"text": "text", "target": "datum"}, checks=(name,))
+        return Operation.verifier(name, call, {"text": "text", "target": "datum"}, checks=(name,), subject=("text",))
 
 
 def graph(*texts: str) -> tuple[ProtectionGraph, tuple]:

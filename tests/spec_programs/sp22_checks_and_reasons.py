@@ -26,7 +26,7 @@ def _check(name: str, satisfied: Any, *, attributed: bool = True) -> Operation:
     def assess(text: str, target: Any) -> Assessment:
         return Assessment(satisfied, target if attributed else None)
 
-    return Operation.verifier(name, assess, {"text": TEXT, "target": DATUM}, checks=(name,))
+    return Operation.verifier(name, assess, {"text": TEXT, "target": DATUM}, checks=(name,), subject=("text",))
 
 
 def program() -> list[dict[str, str]]:
