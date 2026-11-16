@@ -22,11 +22,13 @@ from data_designer.interface.data_designer import DataDesigner
 from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
+    Detect,
     EvaluateConfig,
     Rewrite,
     TextRecordsInput,
     resolve_effective_detection_labels,
 )
+from anonymizer.config.regex import BuiltinRegex, RegexRule
 from anonymizer.config.replace_strategies import ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
@@ -163,7 +165,7 @@ class _DetectionExampleKwargs(TypedDict, total=False):
     entity_label_examples: dict[str, list[str]]
 
 
-def _accepts_entity_label_examples(method: Callable[..., object]) -> bool:
+def _accepts_keyword(method: Callable[..., object], name: str) -> bool:
     """Check keyword support; preserve forwarding when a callable cannot be inspected."""
     try:
         if sys.version_info >= (3, 14):
@@ -174,11 +176,32 @@ def _accepts_entity_label_examples(method: Callable[..., object]) -> bool:
         parameters = signature.parameters
     except (TypeError, ValueError):
         return True
-    parameter = parameters.get("entity_label_examples")
+    parameter = parameters.get(name)
     return any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()) or (
         parameter is not None
         and parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
     )
+
+
+def _accepts_entity_label_examples(method: Callable[..., object]) -> bool:
+    return _accepts_keyword(method, "entity_label_examples")
+
+
+class _DetectionRegexKwargs(TypedDict, total=False):
+    builtin_regexes: bool
+    regex_rules: list[BuiltinRegex | RegexRule]
+
+
+def _detection_regex_kwargs(method: Callable[..., object], detect: Detect) -> _DetectionRegexKwargs:
+    """Forward supported regex options without dropping explicitly requested behavior."""
+    if _accepts_keyword(method, "builtin_regexes") and _accepts_keyword(method, "regex_rules"):
+        return {"builtin_regexes": detect.builtin_regexes, "regex_rules": detect.regex_rules}
+    if detect.regex_rules or ("builtin_regexes" in detect.model_fields_set and detect.builtin_regexes):
+        raise InvalidConfigError(
+            "The configured detection_workflow does not accept builtin_regexes and regex_rules. "
+            "Update the workflow to accept these keywords or remove the regex options from detect."
+        )
+    return {}
 
 
 def _detection_example_kwargs(method: Callable[..., object], examples: dict[str, list[str]]) -> _DetectionExampleKwargs:
@@ -225,12 +248,14 @@ class Anonymizer:
                 applied to the Anonymizer-managed or caller-supplied DataDesigner
                 instance. Use this for DataDesigner execution knobs such as
                 ``buffer_size`` and ``max_in_flight_tasks``.
-            detection_workflow: Custom detection workflow (advanced/testing). Methods must
-                accept the v1 detection options, including ``builtin_regexes`` and
-                ``regex_rules``. Methods
-                without an ``entity_label_examples`` keyword remain supported when no
-                examples are configured; configuring examples raises ``InvalidConfigError``
-                if the method does not accept them.
+            detection_workflow: Custom detection workflow (advanced/testing). Methods
+                without the regex keywords remain supported when regex options are
+                implicit or built-ins are explicitly disabled; they retain their own
+                detection behavior, without gaining built-in regex recognition.
+                Explicitly enabling built-ins or supplying regex rules requires keyword
+                support, otherwise ``InvalidConfigError`` is raised. Methods without
+                ``entity_label_examples`` remain supported when no examples are configured;
+                configuring unsupported examples raises ``InvalidConfigError`` too.
             replace_runner: Custom replacement workflow (advanced/testing).
             rewrite_runner: Custom rewrite workflow (advanced/testing).
             combined_rewrite_runner: Custom combined rewrite workflow (advanced/testing).
@@ -363,8 +388,7 @@ class Anonymizer:
             **_detection_example_kwargs(
                 self._detection_workflow.build_detection_config, config.detect.entity_label_examples
             ),
-            builtin_regexes=config.detect.builtin_regexes,
-            regex_rules=config.detect.regex_rules,
+            **_detection_regex_kwargs(self._detection_workflow.build_detection_config, config.detect),
             data_summary=data.data_summary,
         )
 
@@ -401,8 +425,7 @@ class Anonymizer:
             **_detection_example_kwargs(
                 self._detection_workflow.build_detection_builder_for_seed, config.detect.entity_label_examples
             ),
-            builtin_regexes=config.detect.builtin_regexes,
-            regex_rules=config.detect.regex_rules,
+            **_detection_regex_kwargs(self._detection_workflow.build_detection_builder_for_seed, config.detect),
             data_summary=data_summary,
             job_index=job_index,
             num_jobs=num_jobs,
@@ -829,8 +852,7 @@ class Anonymizer:
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
             **_detection_example_kwargs(self._detection_workflow.run, config.detect.entity_label_examples),
-            builtin_regexes=config.detect.builtin_regexes,
-            regex_rules=config.detect.regex_rules,
+            **_detection_regex_kwargs(self._detection_workflow.run, config.detect),
             privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
             data_summary=data.data_summary,
             tag_latent_entities=config.rewrite is not None,
