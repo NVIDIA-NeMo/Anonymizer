@@ -28,6 +28,9 @@ navigation:
   - page: Self-hosting GLiNER
     path: ../../concepts/self-hosting-gliner.mdx
     slug: self-hosting-gliner
+  - page: Deploy Local Models
+    path: ../../concepts/inference-services.mdx
+    slug: inference-services
 - page: Tuning Quality and Throughput
   path: ../../tuning.mdx
   slug: tuning
