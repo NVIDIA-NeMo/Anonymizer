@@ -41,6 +41,9 @@ def render_evaluation_report_html(
             if not judge_issues.empty
             else ("<p>No reported judge issues.</p>" if not judge_summary.empty else "<p>Not evaluated.</p>")
         )
+    judge_note = "Pass counts refer to records; unavailable results are excluded from evaluated counts."
+    if judge_summary["Check"].isin(["Rewrite privacy", "Rewrite quality", "Rewrite style"]).any():
+        judge_note += " Rewrite rubric ratings are categorical; medium and low ratings appear below as issues."
     return (
         '<div class="anonymizer-privacy-report anonymizer-evaluation-report">'
         + styles
@@ -66,8 +69,9 @@ def render_evaluation_report_html(
         + f" &nbsp; | &nbsp; <strong>Failed records:</strong> {failed_records}</p>"
         '<div class="evaluation-summaries"><section><h3>Privacy &amp; Quality Judge Summary</h3>'
         + judges
-        + "<p>Pass counts refer to records; unavailable results are excluded from evaluated counts. "
-        "Rewrite rubric ratings are categorical; medium and low ratings appear below as issues.</p></section>"
+        + "<p>"
+        + judge_note
+        + "</p></section>"
         "<section>" + inference + "</section></div>"
         '<h2>Privacy &amp; Quality Judge Issues</h2><div class="privacy-details">' + issues + "</div>"
         "<h2>Privacy Inference Issues</h2>" + inference_issues + "</div>"

@@ -190,3 +190,15 @@ def test_report_counts_unique_failed_records_near_title(preview: bool, tmp_path:
     document = result.export_evaluation_report(tmp_path / "report.html").read_text()
     assert "<strong>Failed records:</strong> 2" in document
     assert document.index("Failed records:") < document.index("Privacy &amp; Quality Judge Summary")
+
+
+@pytest.mark.parametrize("rewrite_ratings", [False, True])
+def test_rubric_explanation_only_appears_with_saved_rewrite_ratings(tmp_path: Path, rewrite_ratings: bool) -> None:
+    row = {cols.COL_TYPE_FIDELITY_VALID: True}
+    if rewrite_ratings:
+        row[cols.COL_JUDGE_EVALUATION] = {
+            rubric: {"score": "high", "reasoning": "Good"} for rubric in ("privacy", "quality", "style")
+        }
+    result = _result(pd.DataFrame([row]), replace_method=None if rewrite_ratings else Substitute())
+    document = result.export_evaluation_report(tmp_path / "report.html").read_text()
+    assert ("Rewrite rubric ratings are categorical" in document) is rewrite_ratings
