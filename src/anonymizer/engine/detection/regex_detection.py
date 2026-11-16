@@ -204,7 +204,14 @@ def detect_regex_entities(
             # between matches: parallel row work can otherwise exhaust its budget.
             matches = list(
                 islice(
-                    pattern.finditer(text, timeout=timeout_seconds, concurrent=False),
+                    pattern.finditer(
+                        text,
+                        timeout=timeout_seconds,
+                        concurrent=False,
+                        # A failed layout starting at an adjacent ID must not
+                        # consume the real card's complete digit-group start.
+                        overlapped=rule.source == "regex_builtin" and rule.label == "credit_debit_card",
+                    ),
                     max_matches_per_rule + 1,
                 )
             )
@@ -226,8 +233,6 @@ def detect_regex_entities(
                     end = start + len(trimmed)
                     if end <= start:
                         continue
-                if rule.source == "regex_builtin" and rule.label == "credit_debit_card":
-                    end = start + len(_trim_credit_card(text[start:end]))
                 value = text[start:end]
                 validation = _run_local_validator(
                     text=text,
@@ -485,20 +490,6 @@ def _validate_credit_card(candidate: RegexCandidate) -> bool:
     return _passes_card_checksum(candidate.value)
 
 
-def _trim_credit_card(value: str) -> str:
-    """Prefer the longest valid card, recovering only at complete digit groups.
-
-    A greedy built-in match can include an adjacent numeric code. Never recover
-    a checksum-valid prefix by cutting inside a contiguous run of digits.
-    """
-    if _passes_card_checksum(value):
-        return value
-    for index in range(len(value) - 1, 0, -1):
-        if value[index] in " -" and _passes_card_checksum(value[:index]):
-            return value[:index]
-    return value
-
-
 def _passes_card_checksum(value: str) -> bool:
     digits = "".join(char for char in value if char in "0123456789")
     if not 13 <= len(digits) <= 19 or len(set(digits)) == 1:
@@ -606,7 +597,13 @@ _BUILTIN_RULES: tuple[ResolvedRegexRule, ...] = (
     ResolvedRegexRule(
         rule_id="nemo-anonymizer.credit-debit-card.v1",
         label="credit_debit_card",
-        pattern=r"(?<![0-9])(?:[0-9][ -]?){12,18}[0-9](?![0-9])",
+        pattern=(
+            r"(?<![0-9])(?:"
+            r"[0-9]{13,19}"
+            r"|[0-9]{4}(?P<sep>[ -])[0-9]{4}(?P=sep)[0-9]{4}(?P=sep)[0-9]{1,7}"
+            r"|[0-9]{4}(?P<amex_sep>[ -])[0-9]{6}(?P=amex_sep)[0-9]{4,5}"
+            r")(?![0-9])"
+        ),
         validator_id="nemo-anonymizer.credit-card-luhn.v1",
         source="regex_builtin",
     ),

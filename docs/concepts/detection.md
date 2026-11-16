@@ -192,10 +192,30 @@ validators must not be asynchronous.
 `RegexValidationResult.valid` must be a Boolean and `reason` must be a string
 or `None`; malformed results fail the record rather than being coerced.
 
-The built-in payment-card recognizer prefers the longest checksum-valid match.
-If a trailing numeric code invalidates that match, it tries shorter candidates
-only at complete digit-group boundaries, never inside a contiguous digit run.
-Custom patterns retain their explicitly matched spans.
+The built-in payment-card recognizer matches 13–19 unseparated digits,
+4-4-4-n groups (n is 1–7 digits), or 4-6-4 / 4-6-5 groups, with a consistent
+space or hyphen separator. Each candidate must pass the Luhn checksum. These
+layouts keep a following expiry date or security code outside the match. The
+built-in also checks later complete digit-group starts, so a failed candidate
+starting at an adjacent ID cannot hide a subsequent card; it never starts
+inside a contiguous digit run. Format and checksum validity do not establish
+that a number is actually a payment card.
+
+Mixed separators and other group layouts are outside the built-in scope.
+For more permissive matching, add a custom rule alongside it using the named,
+exportable built-in Luhn validator:
+
+```python
+RegexRule(
+    label="credit_debit_card",
+    pattern=r"(?<![0-9])(?:[0-9][ -]?){12,18}[0-9](?![0-9])",
+    validator="nemo-anonymizer.credit-card-luhn.v1",
+)
+```
+
+Custom rules retain their explicit match spans and normal non-overlapping scan;
+they do not inherit the built-in's later-start search. Independently accepted
+equivalent custom and built-in claims coalesce with both origins retained.
 
 For exported builders, use a validator name registered by a trusted installed
 package under `nemo_anonymizer.regex_validators`; direct callables are

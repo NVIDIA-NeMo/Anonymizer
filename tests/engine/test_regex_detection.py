@@ -69,9 +69,12 @@ def test_matching_finishes_before_local_validation(monkeypatch: pytest.MonkeyPat
     compiled = regex_detection._compile_pattern(rules[0].pattern)
 
     class Pattern:
-        def finditer(self, text: str, *, timeout: float, concurrent: bool | None = None) -> Iterator[Any]:
+        def finditer(
+            self, text: str, *, timeout: float, concurrent: bool | None = None, overlapped: bool = False
+        ) -> Iterator[Any]:
             nonlocal finished
-            yield from compiled.finditer(text, timeout=timeout, concurrent=concurrent)
+            assert overlapped is False
+            yield from compiled.finditer(text, timeout=timeout, concurrent=concurrent, overlapped=overlapped)
             finished = True
 
     monkeypatch.setattr(regex_detection, "_compile_pattern", lambda _pattern: Pattern())
@@ -86,10 +89,13 @@ def test_match_collection_is_bounded_and_keeps_scan_nonconcurrent(monkeypatch: p
     visited = 0
 
     class Pattern:
-        def finditer(self, text: str, *, timeout: float, concurrent: bool | None = None) -> Iterator[Any]:
+        def finditer(
+            self, text: str, *, timeout: float, concurrent: bool | None = None, overlapped: bool = False
+        ) -> Iterator[Any]:
             nonlocal visited
             assert concurrent is False
-            for match in compiled.finditer(text, timeout=timeout, concurrent=concurrent):
+            assert overlapped is False
+            for match in compiled.finditer(text, timeout=timeout, concurrent=concurrent, overlapped=overlapped):
                 visited += 1
                 assert visited <= 4, "Collected beyond the overflow-detection match"
                 yield match
@@ -1035,7 +1041,7 @@ def test_export_ignores_callable_validator_on_disabled_custom_rule() -> None:
         ("4111111111111111", " 123"),
         ("4111 1111 1111 1111", " 1234"),
         ("4222 2222 2222 2", " 123"),
-        ("4000 0000 0000 0000 006", ""),
+        ("4000 0000 0000 0000006", ""),
     ],
 )
 def test_builtin_card_keeps_valid_group_boundary_before_numeric_code(
@@ -1077,6 +1083,106 @@ def test_custom_card_pattern_retains_its_explicit_span() -> None:
         rules=[RegexRule(label="credit_debit_card", pattern=value, validate_matches_with_llm=False)],
     )
     assert [entity.value for entity in detect_regex_entities(value, rules=rules).accepted_entities] == [value]
+
+
+@pytest.mark.parametrize("validate_matches", [False, True])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "4111 1111 1111 1111",
+        "4111-1111-1111-1111",
+        "4111111111111111",
+        "3782 822463 10005",
+        "3056-930902-5904",
+    ],
+)
+def test_builtin_card_recovers_after_a_leading_identifier(value: str, validate_matches: bool) -> None:
+    text = f"1001 {value} 12/25 CVV 123"
+    rules = resolve_regex_rules(
+        labels=["credit_debit_card"],
+        builtin_regexes=True,
+        rules=[BuiltinRegex(label="credit_debit_card", validate_matches_with_llm=validate_matches)],
+    )
+
+    result = detect_regex_entities(text, rules=rules)
+
+    entities = result.llm_entities if validate_matches else result.accepted_entities
+    assert [(entity.value, entity.start_position, entity.end_position) for entity in entities] == [
+        (value, 5, 5 + len(value))
+    ]
+
+
+@pytest.mark.parametrize(
+    "value", ["4111-1111 1111-1111", "411 11111 1111 1111", "4 111 1111 1111 1111", "4000 0000 0000 0000 006"]
+)
+def test_builtin_card_rejects_mixed_or_unsupported_group_layouts(value: str) -> None:
+    result = detect_regex_entities(
+        value, rules=resolve_regex_rules(labels=["credit_debit_card"], builtin_regexes=True, rules=[])
+    )
+
+    assert result.llm_entities == result.accepted_entities == []
+
+
+@pytest.mark.parametrize("validate_matches", [False, True])
+def test_builtin_card_never_extends_to_a_checksum_valid_adjacent_code(validate_matches: bool) -> None:
+    # Both the 16-digit card and the 19-digit concatenation pass Luhn.
+    value = "4111 1111 1111 1111"
+    text = value + " 102"
+    rules = resolve_regex_rules(
+        labels=["credit_debit_card"],
+        builtin_regexes=True,
+        rules=[BuiltinRegex(label="credit_debit_card", validate_matches_with_llm=validate_matches)],
+    )
+
+    result = detect_regex_entities(text, rules=rules)
+
+    entities = result.llm_entities if validate_matches else result.accepted_entities
+    assert [(entity.value, entity.start_position, entity.end_position) for entity in entities] == [
+        (value, 0, len(value))
+    ]
+
+
+@pytest.mark.parametrize("validate_matches", [False, True])
+@pytest.mark.parametrize("separator", ["", " ", "-"])
+@pytest.mark.parametrize(
+    "digits",
+    [
+        "4000000000006",
+        "40000000000002",
+        "400000000000006",
+        "4000000000000002",
+        "40000000000000006",
+        "400000000000000002",
+        "4000000000000000006",
+    ],
+)
+def test_builtin_card_supported_lengths_and_layouts(digits: str, separator: str, validate_matches: bool) -> None:
+    value = separator.join([digits[:4], digits[4:8], digits[8:12], digits[12:]])
+    text = f"Card: {value}; expiry 12/25"
+    rules = resolve_regex_rules(
+        labels=["credit_debit_card"],
+        builtin_regexes=True,
+        rules=[BuiltinRegex(label="credit_debit_card", validate_matches_with_llm=validate_matches)],
+    )
+
+    result = detect_regex_entities(text, rules=rules)
+
+    entities = result.llm_entities if validate_matches else result.accepted_entities
+    assert [(entity.value, entity.start_position, entity.end_position) for entity in entities] == [
+        (value, 6, 6 + len(value))
+    ]
+
+
+def test_custom_card_matching_remains_non_overlapping() -> None:
+    rules = resolve_regex_rules(
+        labels=["credit_debit_card"],
+        builtin_regexes=False,
+        rules=[RegexRule(label="credit_debit_card", pattern=r"[0-9]{4}", validate_matches_with_llm=False)],
+    )
+
+    result = detect_regex_entities("11111111", rules=rules)
+
+    assert [(entity.start_position, entity.end_position) for entity in result.accepted_entities] == [(0, 4), (4, 8)]
 
 
 def test_url_trimming_does_not_rescan_each_suffix() -> None:

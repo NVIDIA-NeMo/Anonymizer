@@ -47,6 +47,7 @@ from anonymizer.engine.detection.regex_detection import (
     build_regex_detection_results,
     detect_regex_entities,
     resolve_regex_rules,
+    validate_exportable_regex_rules,
 )
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 from anonymizer.engine.schemas import (
@@ -142,6 +143,16 @@ def _finalize(row: dict[str, Any], *, constrained: list[str] | None = None) -> l
     [
         ("ipv6", "std::vector<int>; IP:2001:db8::1", "std::vector<int>; IP:[REDACTED_IPV6]"),
         ("url", "Visit `https://example.org/private` now", "Visit `[REDACTED_URL]` now"),
+        (
+            "credit_debit_card",
+            "1001 4111 1111 1111 1111 12/25 CVV 123",
+            "1001 [REDACTED_CREDIT_DEBIT_CARD] 12/25 CVV 123",
+        ),
+        (
+            "credit_debit_card",
+            "4111 1111 1111 1111 102",
+            "[REDACTED_CREDIT_DEBIT_CARD] 102",
+        ),
     ],
 )
 def test_builtin_boundaries_preserve_surrounding_text_through_redaction(
@@ -161,6 +172,39 @@ def test_builtin_boundaries_preserve_surrounding_text_through_redaction(
     result = apply_local_replace_strategy(frame, strategy=Redact())
 
     assert result[COL_REPLACED_TEXT].tolist() == [expected]
+
+
+@pytest.mark.parametrize(
+    ("value", "origins"),
+    [
+        ("4111 1111 1111 1111", {"regex_builtin", "regex_user"}),
+        ("4111-1111 1111-1111", {"regex_user"}),
+    ],
+)
+def test_exportable_permissive_card_rule_preserves_independent_origins(value: str, origins: set[str]) -> None:
+    custom_rule = RegexRule(
+        label="credit_debit_card",
+        pattern=r"(?<![0-9])(?:[0-9][ -]?){12,18}[0-9](?![0-9])",
+        validator="nemo-anonymizer.credit-card-luhn.v1",
+        validate_matches_with_llm=False,
+    )
+    restored = RegexRule.model_validate_json(custom_rule.model_dump_json())
+    validate_exportable_regex_rules([restored], active_labels=["credit_debit_card"])
+    row = _row(
+        value,
+        [BuiltinRegex(label="credit_debit_card", validate_matches_with_llm=False), restored],
+        builtins=True,
+    )
+
+    _admit(row, [])
+
+    candidates = AdmittedCandidates.model_validate(row[COL_ADMITTED_CANDIDATES]).candidates
+    assert len(candidates) == 1
+    assert {origin.source_kind for origin in candidates[0].accepted_origins} == origins
+    entities = _finalize(row)
+    assert [(entity["value"], entity["start_position"], entity["end_position"]) for entity in entities] == [
+        (value, 0, len(value))
+    ]
 
 
 @pytest.mark.parametrize("decision", ["keep", "drop", None])
