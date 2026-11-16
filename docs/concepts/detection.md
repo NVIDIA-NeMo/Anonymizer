@@ -110,6 +110,10 @@ records use the same caller-provided IDs in `result.failed_records`. Use
 Built-ins cover `credit_debit_card`, `email`, `ipv4`, `ipv6`,
 `mac_address`, and `url`. They run only for active labels and use local
 structural checks (such as IP parsing and the card-number Luhn checksum).
+IPv6 addresses must be separated from adjoining word characters (Unicode
+letters, digits, and underscores), rather than extracted from inside identifiers
+such as `std::vector`. A colon-delimited prefix such as `IP:2001:db8::1`
+remains supported.
 Format validity is not proof that a value identifies a person; contextual
 LLM validation is enabled by default.
 
@@ -137,6 +141,8 @@ the label's detection limit; neither GLiNER nor augmentation fills its gaps.
 Surrounding prose punctuation is trimmed while balanced delimiters are kept;
 ambiguous literal trailing punctuation can require a custom rule with exact
 match boundaries.
+Backticks delimit URL candidates, so inline-code wrappers such as
+`` `https://example.org` `` are preserved when the address is replaced.
 
 A standalone, case-insensitive `url:` field prefix is supported without a space
 (for example, `URL:https://example.org/path`). The prefix is not part of the

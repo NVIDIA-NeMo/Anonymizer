@@ -7,18 +7,22 @@ import asyncio
 import json
 from typing import Any
 
+import pandas as pd
 import pytest
 from pydantic import ValidationError
 
 from anonymizer.config.regex import BuiltinRegex, RegexRule
+from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
     COL_ADMITTED_CANDIDATES,
     COL_AUGMENTATION_ADMISSION_RESULTS,
     COL_AUGMENTED_CANDIDATES,
     COL_DETECTED_ENTITIES,
+    COL_FINAL_ENTITIES,
     COL_RAW_DETECTED,
     COL_REGEX_DETECTION_RESULTS,
+    COL_REPLACED_TEXT,
     COL_SEED_DETECTION_RESULT,
     COL_TAGGED_TEXT,
     COL_TEXT,
@@ -44,6 +48,7 @@ from anonymizer.engine.detection.regex_detection import (
     detect_regex_entities,
     resolve_regex_rules,
 )
+from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 from anonymizer.engine.schemas import (
     AdmissionReason,
     AdmissionResults,
@@ -129,6 +134,33 @@ def _finalize(row: dict[str, Any], *, constrained: list[str] | None = None) -> l
     merge_and_build_candidates(row)
     finalize_entities(row)
     return row[COL_DETECTED_ENTITIES]["entities"]
+
+
+@pytest.mark.parametrize("validate_matches", [False, True])
+@pytest.mark.parametrize(
+    ("label", "text", "expected"),
+    [
+        ("ipv6", "std::vector<int>; IP:2001:db8::1", "std::vector<int>; IP:[REDACTED_IPV6]"),
+        ("url", "Visit `https://example.org/private` now", "Visit `[REDACTED_URL]` now"),
+    ],
+)
+def test_builtin_boundaries_preserve_surrounding_text_through_redaction(
+    label: str, text: str, expected: str, validate_matches: bool
+) -> None:
+    row = _row(
+        text,
+        [BuiltinRegex(label=label, validate_matches_with_llm=validate_matches, detect_additional_matches=False)],
+        builtins=True,
+        constrained=[label],
+    )
+    _admit(row, [{"id": "c1", "decision": "keep"}] if validate_matches else [], constrained=[label])
+    entities = _finalize(row)
+    assert len(entities) == 1
+    frame = pd.DataFrame({COL_TEXT: [text], COL_FINAL_ENTITIES: [{"entities": entities}]})
+
+    result = apply_local_replace_strategy(frame, strategy=Redact())
+
+    assert result[COL_REPLACED_TEXT].tolist() == [expected]
 
 
 @pytest.mark.parametrize("decision", ["keep", "drop", None])

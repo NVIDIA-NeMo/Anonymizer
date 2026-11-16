@@ -634,11 +634,11 @@ _BUILTIN_RULES: tuple[ResolvedRegexRule, ...] = (
         rule_id="nemo-anonymizer.ipv6.v1",
         label="ipv6",
         pattern=(
-            r"(?:(?<![0-9A-Fa-f:])|(?<=^:)|(?<=[^0-9A-Fa-f:]:))"
+            r"(?:(?<![\w:])|(?<=^:)|(?<=[^0-9A-Fa-f:]:))"
             r"(?!:(?!:))(?!:::)(?:"
             r"(?:[0-9A-Fa-f]{0,4}:){2,6}(?:[0-9]{1,3}\.){3}[0-9]{1,3}"
             r"|(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}"
-            r")(?![0-9A-Fa-f:]|\.[0-9])"
+            r")(?![\w:]|\.[0-9])"
         ),
         validator_id="nemo-anonymizer.ipv6.v1",
         source="regex_builtin",
@@ -660,7 +660,7 @@ _BUILTIN_RULES: tuple[ResolvedRegexRule, ...] = (
         # cover only the URL. Other colon prefixes retain the conservative guard.
         pattern=(
             r"(?i)(?:(?<![A-Za-z0-9_+./:@-])|(?<=(?<![\w+./:@-])url:))"
-            rf"(?:(?:{'|'.join(_URL_SCHEMES)})://|www\.)[^\s<>\"']+"
+            rf"(?:(?:{'|'.join(_URL_SCHEMES)})://|www\.)[^\s<>\"'`]+"
         ),
         validator_id="nemo-anonymizer.url.v1",
         source="regex_builtin",

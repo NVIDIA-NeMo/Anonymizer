@@ -124,7 +124,7 @@ def test_builtin_scans_under_parallel_row_load(workers: int) -> None:
         ("credit_debit_card", "Card 4111 1111 1111 1111.", "4111 1111 1111 1111"),
         ("email", "联系：用户@example.公司，处理", "用户@example.公司"),
         ("ipv4", "Address 192.168.1.10.", "192.168.1.10"),
-        ("ipv6", "地址2001:db8::1结束", "2001:db8::1"),
+        ("ipv6", "地址：2001:db8::1。", "2001:db8::1"),
         ("mac_address", "MAC 00:1A:2B:3C:4D:5E", "00:1A:2B:3C:4D:5E"),
         ("url", "请访问https://例子.公司/路径?值=一。", "https://例子.公司/路径?值=一"),
     ],
@@ -300,6 +300,53 @@ def test_ipv6_regex_does_not_extract_a_suffix_from_an_overlong_hex_group() -> No
     result = detect_regex_entities("12345:2001:db8::1", rules=rules)
 
     assert result.llm_entities == []
+
+
+@pytest.mark.parametrize("validate_matches", [False, True])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "std::vector<int>",
+        "std::deque<int>",
+        "prefix2001:db8::1",
+        "_2001:db8::1",
+        "2001:db8::1suffix",
+        "2001:db8::1_",
+        "pré2001:db8::1",
+        "2001:db8::1終",
+    ],
+)
+def test_builtin_ipv6_rejects_address_fragments_inside_identifiers(text: str, validate_matches: bool) -> None:
+    rules = resolve_regex_rules(
+        labels=["ipv6"],
+        builtin_regexes=True,
+        rules=[BuiltinRegex(label="ipv6", validate_matches_with_llm=validate_matches)],
+    )
+
+    result = detect_regex_entities(text, rules=rules)
+
+    assert result.llm_entities == []
+    assert result.accepted_entities == []
+
+
+@pytest.mark.parametrize("validate_matches", [False, True])
+@pytest.mark.parametrize("locator", ["http://", "https://", "ftp://", "ftps://", "sftp://", "ws://", "wss://", "www."])
+@pytest.mark.parametrize("suffix", ["", "/private?x=1#part"])
+def test_builtin_url_excludes_markdown_backticks(locator: str, suffix: str, validate_matches: bool) -> None:
+    value = f"{locator}example.org{suffix}"
+    text = f"Visit `{value}` now"
+    rules = resolve_regex_rules(
+        labels=["url"],
+        builtin_regexes=True,
+        rules=[BuiltinRegex(label="url", validate_matches_with_llm=validate_matches)],
+    )
+
+    result = detect_regex_entities(text, rules=rules)
+
+    entities = result.llm_entities if validate_matches else result.accepted_entities
+    assert [(entity.value, entity.start_position, entity.end_position) for entity in entities] == [
+        (value, len("Visit `"), len("Visit `") + len(value))
+    ]
 
 
 def test_url_validator_accepts_uppercase_www_prefix() -> None:
