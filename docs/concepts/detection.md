@@ -134,15 +134,18 @@ The URL recognizer supports explicit `http://`, `https://`, `ftp://`, `ftps://`,
 addresses may use internal single-label hosts or `localhost`, as well as DNS
 names and IP addresses. Recognition and structural validation are entirely
 local: no URL is fetched or resolved. Arbitrary bare domains, scheme-relative
-references (`//host/path`), JSON-escaped addresses, `file://`, and cloud-storage
+references (`//host/path`), slash-escaped schemes (`https:\/\/`), `file://`, and cloud-storage
 locators such as `s3://` are not covered by this built-in. Custom rules can
 cover these forms. When `detect_additional_matches=False`, this scope is also
 the label's detection limit; neither GLiNER nor augmentation fills its gaps.
 Surrounding prose punctuation is trimmed while balanced delimiters are kept;
 ambiguous literal trailing punctuation can require a custom rule with exact
 match boundaries.
-Backticks delimit URL candidates, so inline-code wrappers such as
-`` `https://example.org` `` are preserved when the address is replaced.
+Backticks and literal backslashes delimit URL candidates, so inline-code
+wrappers such as `` `https://example.org` `` and the backslashes escaping
+closing quotes in nested JSON remain outside the replaced span. Ordinary
+addresses inside JSON strings are supported; JSON-escaped slash forms such as
+`https:\/\/example.org` remain outside the built-in scope described above.
 
 A standalone, case-insensitive `url:` field prefix is supported without a space
 (for example, `URL:https://example.org/path`). The prefix is not part of the

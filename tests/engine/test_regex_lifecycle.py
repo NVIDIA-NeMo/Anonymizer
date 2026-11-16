@@ -174,6 +174,40 @@ def test_builtin_boundaries_preserve_surrounding_text_through_redaction(
     assert result[COL_REPLACED_TEXT].tolist() == [expected]
 
 
+@pytest.mark.parametrize("validate_matches", [False, True])
+@pytest.mark.parametrize("depth", [1, 2, 3])
+@pytest.mark.parametrize("value", ["https://a.example.org/x", "https://example.org", "www.example.org/private"])
+def test_builtin_url_redaction_preserves_nested_json_escapes(value: str, depth: int, validate_matches: bool) -> None:
+    payload = {"u": value, "e": "ops@example.org"}
+    text = json.dumps(payload)
+    expected = json.dumps({**payload, "u": "[REDACTED_URL]"})
+    for _ in range(depth - 1):
+        text = json.dumps({"msg": text})
+        expected = json.dumps({"msg": expected})
+    row = _row(
+        text,
+        [BuiltinRegex(label="url", validate_matches_with_llm=validate_matches, detect_additional_matches=False)],
+        builtins=True,
+        constrained=["url"],
+    )
+    _admit(row, [{"id": "c1", "decision": "keep"}] if validate_matches else [], constrained=["url"])
+    entities = _finalize(row)
+    start = text.index(value)
+    assert [(entity["value"], entity["start_position"], entity["end_position"]) for entity in entities] == [
+        (value, start, start + len(value))
+    ]
+    frame = pd.DataFrame({COL_TEXT: [text], COL_FINAL_ENTITIES: [{"entities": entities}]})
+
+    result = apply_local_replace_strategy(frame, strategy=Redact())
+
+    output = result[COL_REPLACED_TEXT].iloc[0]
+    assert output == expected
+    decoded = json.loads(output)
+    for _ in range(depth - 1):
+        decoded = json.loads(decoded["msg"])
+    assert decoded == {**payload, "u": "[REDACTED_URL]"}
+
+
 @pytest.mark.parametrize(
     ("value", "origins"),
     [

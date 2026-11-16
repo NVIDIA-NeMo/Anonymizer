@@ -355,6 +355,26 @@ def test_builtin_url_excludes_markdown_backticks(locator: str, suffix: str, vali
     ]
 
 
+@pytest.mark.parametrize("validate_matches", [False, True])
+@pytest.mark.parametrize("locator", ["http://", "https://", "ftp://", "ftps://", "sftp://", "ws://", "wss://", "www."])
+@pytest.mark.parametrize("suffix", ["", "/path?x=1#part"])
+def test_builtin_url_stops_before_a_literal_backslash(locator: str, suffix: str, validate_matches: bool) -> None:
+    value = f"{locator}example.org{suffix}"
+    text = f"Visit {value}" + r"\marker"
+    rules = resolve_regex_rules(
+        labels=["url"],
+        builtin_regexes=True,
+        rules=[BuiltinRegex(label="url", validate_matches_with_llm=validate_matches)],
+    )
+
+    result = detect_regex_entities(text, rules=rules)
+
+    entities = result.llm_entities if validate_matches else result.accepted_entities
+    assert [(entity.value, entity.start_position, entity.end_position) for entity in entities] == [
+        (value, 6, 6 + len(value))
+    ]
+
+
 def test_url_validator_accepts_uppercase_www_prefix() -> None:
     address = "WWW.example.com/path"
     text = f"Visit {address} now"
@@ -398,6 +418,7 @@ def test_url_validator_rejects_malformed_hosts_without_llm_validation(address: s
     "address",
     [
         "https://example.com/path",
+        "https://example.com/path%5Csegment?x=%5c",
         "https://example.com./path",
         "https://例子.公司/路径",
         "http://192.0.2.1/path",
