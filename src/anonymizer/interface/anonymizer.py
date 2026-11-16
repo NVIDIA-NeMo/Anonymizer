@@ -474,6 +474,7 @@ class Anonymizer:
                 resolved_text_column=result.resolved_text_column,
                 failed_records=result.failed_records,
                 preview_num_records=num_records,
+                effective_entity_labels=result.effective_entity_labels,
                 id_column=result.id_column,
                 replace_method=config.replace,
                 rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
@@ -561,6 +562,7 @@ class Anonymizer:
             raise InvalidConfigError(str(exc)) from exc
 
         entity_labels = getattr(output, "entity_labels", None)
+        effective_entity_labels = getattr(output, "effective_entity_labels", None)
         excluded_entity_labels = getattr(output, "excluded_entity_labels", None)
         data_summary = getattr(output, "data_summary", None)
         num_records = len(output.trace_dataframe)
@@ -624,6 +626,7 @@ class Anonymizer:
             all_failed: list[FailedRecord] = list(rewrite_result.failed_records)
             coverage_wf = EntityCoverageWorkflow(
                 adapter=self._adapter,
+                effective_entity_labels=effective_entity_labels,
                 entity_labels=entity_labels,
                 excluded_entity_labels=excluded_entity_labels,
                 data_summary=data_summary,
@@ -659,6 +662,7 @@ class Anonymizer:
                 failed_records=all_failed,
                 id_column=output.id_column,
                 rewrite_config=rewrite_config,
+                effective_entity_labels=effective_entity_labels,
                 entity_labels=entity_labels,
                 excluded_entity_labels=excluded_entity_labels,
                 data_summary=data_summary,
@@ -670,6 +674,7 @@ class Anonymizer:
             stage_start = time.perf_counter()
             replace_result = self._replace_runner.evaluate(
                 internal_df,
+                effective_entity_labels=effective_entity_labels,
                 replace_method=replace_method,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.evaluate,
@@ -711,6 +716,7 @@ class Anonymizer:
                 failed_records=replace_result.failed_records,
                 id_column=output.id_column,
                 replace_method=replace_method,
+                effective_entity_labels=effective_entity_labels,
                 entity_labels=entity_labels,
                 excluded_entity_labels=excluded_entity_labels,
                 data_summary=data_summary,
@@ -970,6 +976,7 @@ class Anonymizer:
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
             data_summary=data.data_summary,
+            effective_entity_labels=effective_labels,
         )
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:

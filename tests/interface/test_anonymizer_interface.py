@@ -1526,7 +1526,10 @@ def test_evaluate_rewrite_calls_validate_with_check_rewrite_false(stub_input: An
 def test_run_and_preview_persist_data_summary(stub_input: AnonymizerInput) -> None:
     """run()/preview() must preserve input context for later evaluation."""
     data = stub_input.model_copy(update={"data_summary": "Customer support transcripts."})
-    config = AnonymizerConfig(rewrite=Rewrite())
+    config = AnonymizerConfig(
+        detect={"regex_rules": [RegexRule(label="ticket", pattern=r"TICKET-\d+")]},
+        rewrite=Rewrite(),
+    )
     anonymizer, _, _, _ = _make_anonymizer()
 
     result = anonymizer.run(config=config, data=data)
@@ -1534,6 +1537,10 @@ def test_run_and_preview_persist_data_summary(stub_input: AnonymizerInput) -> No
 
     assert result.data_summary == "Customer support transcripts."
     assert preview.data_summary == "Customer support transcripts."
+    assert result.entity_labels is preview.entity_labels is None
+    assert result.effective_entity_labels == preview.effective_entity_labels
+    assert result.effective_entity_labels is not None
+    assert "ticket" in result.effective_entity_labels
 
 
 def test_evaluate_passes_detection_context_to_coverage_judge(stub_input: AnonymizerInput) -> None:
@@ -1566,6 +1573,8 @@ def test_evaluate_passes_detection_context_to_coverage_judge(stub_input: Anonymi
     assert mock_coverage_wf.call_args.kwargs["excluded_entity_labels"] == ["email"]
     assert evaluated.data_summary == "Customer support transcripts."
     assert evaluated.excluded_entity_labels == ["email"]
+    assert mock_coverage_wf.call_args.kwargs["effective_entity_labels"] == run_result.effective_entity_labels
+    assert evaluated.effective_entity_labels == run_result.effective_entity_labels
 
 
 _MISSED = [{"value": "Smith", "label": "last_name", "reasoning": "kept verbatim"}]

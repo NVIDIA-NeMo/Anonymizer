@@ -79,6 +79,8 @@ class AnonymizerResult(_DisplayMixin):
         id_column: Record identifier column retained in ``dataframe`` for
             in-memory record input. File-backed input currently leaves this as
             ``None``.
+        effective_entity_labels: Resolved detection labels used as coverage-prompt
+            guidance, without restricting permissive evaluation.
     """
 
     dataframe: pd.DataFrame
@@ -91,6 +93,7 @@ class AnonymizerResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
+    effective_entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:
@@ -139,6 +142,8 @@ class PreviewResult(_DisplayMixin):
         id_column: Record identifier column retained in ``dataframe`` for
             in-memory record input. File-backed input currently leaves this as
             ``None``.
+        effective_entity_labels: Resolved detection labels used as coverage-prompt
+            guidance, without restricting permissive evaluation.
     """
 
     dataframe: pd.DataFrame
@@ -152,6 +157,7 @@ class PreviewResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
+    effective_entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:

@@ -351,9 +351,11 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
         assert bool(result.dataframe[col].iloc[0]) is True
 
 
+@pytest.mark.parametrize("entity_labels", [["first_name", "organization", "email"], None])
 def test_evaluate_threads_detection_context_into_coverage_prompt(
     stub_model_configs: list[ModelConfig],
     stub_evaluate_model_selection: EvaluateModelSelection,
+    entity_labels: list[str] | None,
 ) -> None:
     """Replace-mode ``evaluate()`` must forward detection context into the
     coverage prompt so it uses the run's effective taxonomy.
@@ -389,14 +391,19 @@ def test_evaluate_threads_detection_context_into_coverage_prompt(
         replace_method=Redact(),
         model_configs=stub_model_configs,
         selected_models=stub_evaluate_model_selection,
-        entity_labels=["first_name", "organization", "email"],
+        entity_labels=entity_labels,
+        effective_entity_labels=["first_name", "organization", "ticket"],
         excluded_entity_labels=["email"],
         data_summary="Employee HR records.",
     )
 
     call_columns = adapter.run_workflow.call_args.kwargs["columns"]
     coverage_col = next(c for c in call_columns if c.name == COL_ENTITY_COVERAGE_JUDGE)
-    assert "ONLY these entity types: first_name, organization." in coverage_col.prompt
+    if entity_labels is None:
+        assert "Common entity types include: first_name, organization, ticket." in coverage_col.prompt
+        assert "This list is not exhaustive" in coverage_col.prompt
+    else:
+        assert "ONLY these entity types: first_name, organization." in coverage_col.prompt
     assert "Employee HR records." in coverage_col.prompt
 
 
