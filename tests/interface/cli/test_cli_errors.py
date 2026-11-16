@@ -9,7 +9,8 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from anonymizer.interface.cli.main import app
+import anonymizer.graph as graph
+from anonymizer.interface.cli.main import _cli_error_handler, app
 from anonymizer.interface.errors import AnonymizerIOError, InvalidConfigError
 
 
@@ -105,3 +106,14 @@ def test_threshold_out_of_range_exits(tmp_path: Path) -> None:
             ]
         )
     assert exc_info.value.code != 0
+
+
+def test_error_handler_lets_graph_rejection_propagate() -> None:
+    def fail(exc: Exception) -> None:
+        raise exc
+
+    with pytest.raises(graph.GraphRejection):
+        _cli_error_handler(fail)(graph.GraphRejection("over_limit", "max_targets"))
+    with pytest.raises(SystemExit) as exit_info:
+        _cli_error_handler(fail)(ValueError("plain"))
+    assert exit_info.value.code == 1

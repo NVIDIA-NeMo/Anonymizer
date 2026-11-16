@@ -33,6 +33,7 @@ from anonymizer.engine.graph_core.authoring import (
     Operation,
     ProtectionGraph,
     Workflow,
+    _reject_bare_string,
     mention_problem,
     utf8_size,
 )
@@ -92,6 +93,7 @@ def prepare(
     ``request_budget`` rejects the workflow here when its planned external-request count is unknown, opaque or
     above the budget; it is not enforced while the workflow runs.
     """
+    _reject_bare_string("capabilities", capabilities, "operation names")
     with _measure("graph_prepare", operation_count=None, target_count=len(graph.targets)) as m:
         prepared = _prepare(graph, workflow, limits, capabilities, request_budget)
         m["operation_count"] = len(prepared.names)

@@ -98,7 +98,7 @@ markers = [
 ]
 
 [tool.ty.src]
-include = ["src", "tests", "tests_e2e", "docs", "scripts", "tools"]
+include = ["src", "tests", "tests_e2e", "docs", "scripts", "tools", "examples"]
 
 [tool.ty.environment]
 python-version = "3.11"

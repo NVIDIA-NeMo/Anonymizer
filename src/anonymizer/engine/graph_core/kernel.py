@@ -17,18 +17,32 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, Self
 
 from anonymizer.engine.graph_core.observe import activation
 
 
-class GraphRejection(Exception):
-    """Typed rejection raised before any callback runs. Not an ``AnonymizerError``."""
+class GraphRejection(ValueError):
+    """Typed rejection raised before any callback runs. Not an ``AnonymizerError``.
+
+    Every rejection is a ``ValueError``. A rejection whose code is in ``_TYPE_ERROR_CODES`` is also a ``TypeError``.
+    A code is listed there only if every site that raises it rejects a caller value for its Python type.
+    """
+
+    def __new__(cls, code: str, *args: Any, **kwargs: Any) -> Self:
+        return super().__new__(_TypeRejection if cls is GraphRejection and code in _TYPE_ERROR_CODES else cls)  # ty: ignore[invalid-return-type]
 
     def __init__(self, code: str, detail: str = "") -> None:
         super().__init__(f"{code}: {detail}" if detail else code)
         self.code = code
         self.detail = detail
+
+
+class _TypeRejection(GraphRejection, TypeError):
+    """The class ``GraphRejection(code)`` takes for a code in ``_TYPE_ERROR_CODES``."""
+
+
+_TYPE_ERROR_CODES = frozenset({"datum_not_text", "names_not_tuple"})
 
 
 # ---------------------------------------------------------------- artifact kinds (routes register their own)

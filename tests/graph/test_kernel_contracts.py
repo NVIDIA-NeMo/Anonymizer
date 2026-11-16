@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import pickle
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 
@@ -157,3 +159,55 @@ def test_annotation_nested_in_protected_workflow_is_rejected() -> None:
     assert rejected.value.code == "annotation_in_protected"
     outer = graph.Workflow("w", (inner,), release="annotation", requires=("c",))
     assert graph.protect(graph.prepare(g, outer)).protected == {}
+
+
+def _prepare(cycle: bool = False, **kw: Any) -> graph.PreparedProtection:
+    scope = graph.GraphScope()
+    a, b = scope.datum("a"), scope.datum("b")
+    deps = (graph.Dependency(a, b), graph.Dependency(b, a)) if cycle else ()
+    g = graph.ProtectionGraph(scope, (a, b), dependencies=deps)
+    return graph.prepare(g, graph.Workflow("w", (graph.Operation("op", lambda text: text),)), **kw)
+
+
+@pytest.mark.parametrize(
+    "build, code",
+    [
+        (lambda: graph.GraphScope().datum(b"Alice"), "datum_not_text"),  # ty: ignore[invalid-argument-type]
+        (lambda: _prepare(capabilities="judge"), "names_not_tuple"),
+    ],
+)
+def test_wrong_python_type_is_also_a_type_error(build: Callable[[], Any], code: str) -> None:
+    with pytest.raises(TypeError) as info:
+        build()
+    rejection = info.value
+    assert isinstance(rejection, graph.GraphRejection) and isinstance(rejection, ValueError) and rejection.code == code
+    copy = pickle.loads(pickle.dumps(rejection))
+    assert type(copy) is type(rejection) and (copy.code, copy.detail) == (code, rejection.detail)
+
+
+@pytest.mark.parametrize(
+    "build, code",
+    [
+        (lambda: _prepare(limits=graph.Limits(max_targets=1)), "over_limit"),
+        (lambda: _prepare(cycle=True), "dependency_cycle"),
+        (lambda: graph.Requests.exact(-1), "invalid_request_count"),
+    ],
+)
+def test_other_rejections_are_value_errors_only(build: Callable[[], Any], code: str) -> None:
+    try:
+        build()
+    except ValueError as caught:
+        assert isinstance(caught, graph.GraphRejection) and caught.code == code
+        assert not isinstance(caught, TypeError)
+    else:
+        pytest.fail("no rejection")
+
+
+def test_subclass_with_extra_arguments_constructs_and_keeps_its_class() -> None:
+    class Hinted(graph.GraphRejection):
+        def __init__(self, code: str, detail: str = "", *, hint: str = "") -> None:
+            super().__init__(code, detail)
+            self.hint = hint
+
+    rejection: Hinted = Hinted("names_not_tuple", hint="h")  # ty pin: the constructor is typed as the subclass
+    assert type(rejection) is Hinted and rejection.hint == "h" and not isinstance(rejection, TypeError)

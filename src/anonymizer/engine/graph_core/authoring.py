@@ -276,6 +276,15 @@ class Assessment:
     reason: str = ""
 
 
+def _reject_bare_string(field_name: str, value: object, what: str) -> None:
+    # tuple("text") would silently split a single name into characters.
+    if isinstance(value, str):
+        raise GraphRejection(
+            "names_not_tuple",
+            f"{field_name} must be a tuple of {what}, such as {field_name}=({value!r},); got the string {value!r}",
+        )
+
+
 @dataclass(frozen=True)
 class Operation:
     """A caller-supplied local operation with typed ports and declared requests.
@@ -296,6 +305,8 @@ class Operation:
     subject: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        _reject_bare_string("checks", self.checks, "check names")
+        _reject_bare_string("subject", self.subject, "input port names")
         object.__setattr__(self, "subject", tuple(self.subject))
         if self.scope == "invocation":  # older spelling of "phase_scoped"
             object.__setattr__(self, "scope", "phase_scoped")
@@ -314,6 +325,7 @@ class Operation:
         subject: tuple[str, ...] = (),
     ) -> Operation:
         inputs = MappingProxyType(dict(inputs or {"text": TEXT}))
+        _reject_bare_string("checks", checks, "check names")
         return cls(name, fn, inputs, {"assessment": ASSESSMENT}, requests, checks=tuple(checks), subject=subject)
 
     @classmethod
@@ -359,6 +371,9 @@ class Workflow:
     steps: tuple[Operation | Workflow, ...]
     release: Literal["protected", "annotation"] = "protected"
     requires: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _reject_bare_string("requires", self.requires, "check names")
 
     def flatten(self, prefix: str = "") -> tuple[tuple[str, Operation], ...]:
         out: list[tuple[str, Operation]] = []

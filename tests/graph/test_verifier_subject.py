@@ -119,3 +119,39 @@ def test_verifier_without_checks_or_subject_is_valid_and_not_covering() -> None:
     prepared = graph.prepare(graph.ProtectionGraph(scope, (target,)), graph.Workflow("w", (judge,)))
     assert prepared.covering_verifiers == frozenset()
     assert graph.protect(prepared).outcome(target).qualification == "not_assessed"
+
+
+def _graph() -> graph.ProtectionGraph:
+    scope = graph.GraphScope()
+    return graph.ProtectionGraph(scope, (scope.datum(SOURCE),))
+
+
+def _assess(target: graph.Datum, text: str) -> graph.Assessment:
+    return graph.Assessment(True, target)
+
+
+@pytest.mark.parametrize(
+    "build, field",
+    [
+        # The ignores pin the annotations: if they widen to accept a str, ty reports the ignore as unused.
+        (lambda: graph.Operation.verifier("v", _assess, checks="c", subject=("text",)), "checks"),  # ty: ignore[invalid-argument-type]
+        (lambda: graph.Operation.verifier("v", _assess, checks=("c",), subject="text"), "subject"),  # ty: ignore[invalid-argument-type]
+        (lambda: graph.Operation("v", _assess, checks="c"), "checks"),  # ty: ignore[invalid-argument-type]
+        (lambda: graph.Operation("v", _assess, subject="text"), "subject"),  # ty: ignore[invalid-argument-type]
+        (lambda: graph.Workflow("w", (), requires="c"), "requires"),  # ty: ignore[invalid-argument-type]
+        (lambda: graph.prepare(_graph(), graph.Workflow("w", ()), capabilities="c"), "capabilities"),  # ty: ignore[invalid-argument-type]
+    ],
+)
+def test_bare_string_name_tuple_is_rejected_at_construction(build: Callable[[], Any], field: str) -> None:
+    with pytest.raises(graph.GraphRejection) as info:
+        build()
+    detail = info.value.detail
+    assert info.value.code == "names_not_tuple"
+    assert f"{field} must be a tuple" in detail
+    value = "'text'" if field == "subject" else "'c'"
+    assert f"{field}=({value},)" in detail and f"got the string {value}" in detail
+
+
+def test_list_of_names_is_still_accepted() -> None:
+    v = graph.Operation.verifier("v", _assess, checks=["c"], subject=["text"])  # ty: ignore[invalid-argument-type]
+    assert v.checks == ("c",) and v.subject == ("text",)
