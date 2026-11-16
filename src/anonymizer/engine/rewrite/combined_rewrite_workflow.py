@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -38,8 +39,9 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT_NEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
+from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
@@ -49,6 +51,7 @@ from anonymizer.engine.replace.llm_replace_workflow import (
     _get_replacement_mapping_prompt,
 )
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
+from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.findings import needs_human_review
 from anonymizer.engine.rewrite.parsers import normalize_payload
@@ -70,6 +73,8 @@ from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select
 from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 from anonymizer.measurement import stage_timer
+
+logger = logging.getLogger("anonymizer.rewrite.combined_workflow")
 
 
 @dataclass(frozen=True)
@@ -387,17 +392,21 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
         evaluation: EvaluationCriteria,
         data_summary: str | None = None,
         strict_entity_protection: bool = False,
+        label_categories: dict[str, str] | None = None,
     ) -> CombinedRewriteGraph:
         columns = _replacement_columns(replace_model_selection)
         columns.extend(
             DomainClassificationWorkflow().columns(selected_models=selected_models, data_summary=data_summary)
         )
         columns.extend(
+            EntityClassificationWorkflow().columns(selected_models=selected_models, label_categories=label_categories)
+        )
+        columns.extend(
             SensitivityDispositionWorkflow().columns(
                 selected_models=selected_models,
                 privacy_goal=privacy_goal,
-                data_summary=data_summary,
                 strict_entity_protection=strict_entity_protection,
+                data_summary=data_summary,
             )
         )
         columns.extend(QAGenerationWorkflow().columns(selected_models=selected_models))
@@ -495,6 +504,9 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 measurement.update(output_row_count=len(result.dataframe), failed_record_count=0)
                 return result
 
+            label_categories = self._entity_classification_wf.classify_dataset(
+                entity_rows, adapter=self._adapter, model_configs=model_configs, selected_models=selected_models
+            )
             graph = self.build_graph(
                 selected_models=selected_models,
                 replace_model_selection=replace_model_selection,
@@ -502,6 +514,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 evaluation=evaluation,
                 data_summary=data_summary,
                 strict_entity_protection=strict_entity_protection,
+                label_categories=label_categories,
             )
             seed = select_seed_cols(entity_rows, derive_seed_columns(graph.columns, entity_rows))
             run_result = self._adapter.run_workflow(

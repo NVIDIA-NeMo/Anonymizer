@@ -31,7 +31,7 @@ Label = NewType("Label", str)
 Device = Literal["cuda", "mps", "cpu"]
 Dtype = Literal["float32", "bfloat16"]
 Attention = Literal["standard", "disentangled_flash"]
-OverlapPolicy = Literal["longest", "disallow"]
+OverlapPolicy = Literal["allow", "longest", "disallow"]
 
 DeviceRequest = Literal["auto", "cuda", "mps", "cpu"]
 DtypeRequest = Literal["auto", "float32", "bfloat16"]

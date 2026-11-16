@@ -10,7 +10,7 @@ from data_designer.config import custom_column_generator
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from pydantic import BaseModel
 
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN
+from anonymizer.engine.constants import RECORD_ID_COLUMN
 from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
 
 

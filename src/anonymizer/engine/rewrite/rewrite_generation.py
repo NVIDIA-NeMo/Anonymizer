@@ -94,7 +94,6 @@ Protection decisions for each entity that needs protection:
 - {{ entity.entity_label }}: "{{ entity.entity_value }}"
   Sensitivity: {{ entity.sensitivity }}
   Protection method: {{ entity.protection_method_suggestion }}
-  Reason: {{ entity.protection_reason }}
 {% endfor %}
 
 Entities NOT listed above may be kept as-is.
@@ -156,7 +155,6 @@ def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
                 "entity_value": d["entity_value"],
                 "sensitivity": d["sensitivity"],
                 "protection_method_suggestion": d["protection_method_suggestion"],
-                "protection_reason": d["protection_reason"],
             }
         )
     row[COL_REWRITE_DISPOSITION_BLOCK] = block

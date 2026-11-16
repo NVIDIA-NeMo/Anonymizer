@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+SOURCE_KIND_AUGMENTER = "augmenter"
+SEED_DETECTION_RESULT_ID = "r1"
+AUGMENTATION_DETECTION_RESULT_ID = "r2"
+
 # ---------------------------------------------------------------------------
 # Column names for the anonymizer pipeline
 #
@@ -14,33 +18,40 @@ COL_TEXT = "__nemo_anonymizer_text_input__"
 RECORD_ID_COLUMN = "_anonymizer_record_id"
 
 # Step 1: GLiNER detection
+COL_DETECTOR_SOURCE = "_detector_source"
 COL_RAW_DETECTED = "_raw_detected_entities"
 
 # Step 2: parse_detected_entities
 COL_SEED_ENTITIES = "_seed_entities"
+COL_SEED_DETECTION_RESULT = "_seed_detection_result"
 COL_INITIAL_TAGGED_TEXT = "_initial_tagged_text"
 COL_SEED_ENTITIES_JSON = "_seed_entities_json"
 COL_TAG_NOTATION = "_tag_notation"
-COL_VALIDATED_SEED_ENTITIES = "_validated_seed_entities"
 
 # Step 3: LLM augmentation
 COL_AUGMENTED_ENTITIES = "_augmented_entities"
+"""Grounded augmenter suggestions only; excludes suggestions dropped during grounding."""
+COL_AUGMENTATION_DETECTION_RESULT = "_augmentation_detection_result"
+COL_AUGMENTATION_ADMISSION_RESULTS = "_augmentation_admission_results"
+COL_AUGMENTATION_ATTEMPTS = "_augmentation_attempts"
+COL_AUGMENTED_CANDIDATES = "_augmented_candidates"
 
 # Step 3b: prepare_validation_inputs (seed-only, pre-augmentation)
-COL_SEED_TAGGED_TEXT = "_seed_tagged_text"
 COL_SEED_VALIDATION_CANDIDATES = "_seed_validation_candidates"
 
 # Step 4: merge_and_build_candidates
 COL_MERGED_ENTITIES = "_merged_entities"
-COL_MERGED_TAGGED_TEXT = "_merged_tagged_text"
+COL_RECONCILED_CANDIDATES = "_reconciled_candidates"
 COL_VALIDATION_CANDIDATES = "_validation_candidates"
 
 # Step 5: LLM validation
 COL_VALIDATION_SKELETON = "_validation_skeleton"
 COL_VALIDATION_DECISIONS = "_validation_decisions"
-COL_VALIDATED_ENTITIES = "_validated_entities"
+COL_VALIDATION_INVENTORIES = "_validation_request_inventories"
+COL_ADMISSION_RESULTS = "_admission_results"
+COL_ADMITTED_CANDIDATES = "_admitted_candidates"
 
-# Step 6: apply_validation_and_finalize
+# Step 6: finalize_entities
 COL_DETECTED_ENTITIES = "_detected_entities"
 COL_TAGGED_TEXT = "tagged_text"
 COL_ENTITIES_BY_VALUE = "_entities_by_value"
@@ -101,7 +112,21 @@ COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES = "attribute_fidelity_invalid_entities" 
 COL_DOMAIN = "_domain"
 COL_DOMAIN_SUPPLEMENT = "_domain_supplement"
 COL_DOMAIN_SUPPLEMENT_PRIVACY = "_domain_supplement_privacy"
+COL_ENTITY_CLASSIFICATION_LOCAL = "_entity_classification_local"  # label -> category, from the default table
+COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS = "_entity_classification_unmapped_labels"  # labels not in default table
+COL_ENTITY_CLASSIFICATION_LLM = "_entity_classification_llm"  # raw LLM output for unmapped labels only
+COL_ENTITY_CLASSIFICATION = "_entity_classification"  # merged map, consumed by sensitivity disposition
+COL_DISPOSITION_EXPLICIT_ENTITIES = (
+    "_disposition_explicit_entities"  # numbered explicit entities fed to the disposition prompt
+)
+COL_DISPOSITION_LATENT_ENTITIES = (
+    "_disposition_latent_entities"  # numbered latent entities (IDs continue after explicit)
+)
+COL_RAW_SENSITIVITY_DISPOSITION = "_raw_sensitivity_disposition"
 COL_SENSITIVITY_DISPOSITION = "_sensitivity_disposition"
+COL_DISPOSITION_COVERAGE = (
+    "_disposition_coverage"  # True once the disposition is verified to cover every supplied entity
+)
 COL_SENSITIVITY_DISPOSITION_BLOCK = "_sensitivity_disposition_block"
 COL_REWRITE_DISPOSITION_BLOCK = "_rewrite_disposition_block"
 COL_REPLACEMENT_MAP_FOR_PROMPT = "_replacement_map_for_prompt"
@@ -176,7 +201,7 @@ ENTITY_LABEL_EXAMPLES: dict[str, list[str]] = {
     "last_name": ["Smith", "Rodriguez", "McKenzie", "Nakamura"],
     "cvv": ["161", "884", "447", "760"],
     "customer_id": ["CUS439012", "SM-19382", "CUST-00012345", "SM-78321"],
-    "date": ["07/15/2024", "2023-09-15", "March 15, 2024", "15/07/2024"],
+    "date": ["07/15/2024", "2023-09-15", "March 15, 2024", "15/07/2024", "March", "2024", "March 2024", "the 15th"],
     "user_name": ["jeffreymoon87", "stacy.flynn", "e.sullivan", "Henry1985"],
     "street_address": ["661 NE Regents Dr", "739 Main St", "4/87 Collins Street", "22 Boulevard Haussmann"],
     "ipv6": ["2001:0db8:85a3:0000:0000:8a2e:0370:7334", "2a02:4d60:1031::85e1:7341:9203:4c56"],
@@ -224,6 +249,99 @@ ENTITY_LABEL_EXAMPLES: dict[str, list[str]] = {
 }
 
 DEFAULT_ENTITY_LABELS: list[str] = list(ENTITY_LABEL_EXAMPLES.keys())
+
+
+# ---------------------------------------------------------------------------
+# Entity label -> category mapping (rewrite mode only)
+#
+# Direct/quasi-identifier taxonomy for the default entity labels above.
+# Used by EntityClassificationWorkflow (engine/rewrite/entity_classification.py)
+# to resolve category locally, without an LLM call, for labels covered here.
+# Only labels outside this table (custom user-supplied entity_labels) go
+# through the LLM classification fallback.
+#
+# Values match anonymizer.engine.schemas.EntityCategory ("direct_identifier" /
+# "quasi_identifier"); kept as plain strings here to avoid importing the
+# schemas package into this zero-dependency constants module.
+# ---------------------------------------------------------------------------
+
+DEFAULT_ENTITY_LABEL_CATEGORY: dict[str, str] = {
+    # Direct identifiers: uniquely identify an individual (or their account/device) on their own.
+    "first_name": "direct_identifier",
+    "last_name": "direct_identifier",
+    "ssn": "direct_identifier",
+    "email": "direct_identifier",
+    "phone_number": "direct_identifier",
+    "fax_number": "direct_identifier",
+    "national_id": "direct_identifier",
+    "tax_id": "direct_identifier",
+    "account_number": "direct_identifier",
+    "medical_record_number": "direct_identifier",
+    "certificate_license_number": "direct_identifier",
+    "unique_id": "direct_identifier",
+    "password": "direct_identifier",
+    "api_key": "direct_identifier",
+    "biometric_identifier": "direct_identifier",
+    "credit_debit_card": "direct_identifier",
+    "cvv": "direct_identifier",
+    "pin": "direct_identifier",
+    "device_identifier": "direct_identifier",
+    "mac_address": "direct_identifier",
+    "http_cookie": "direct_identifier",
+    "vehicle_identifier": "direct_identifier",
+    "license_plate": "direct_identifier",
+    "health_plan_beneficiary_number": "direct_identifier",
+    "employee_id": "direct_identifier",
+    "customer_id": "direct_identifier",
+    "street_address": "direct_identifier",
+    "ipv4": "direct_identifier",
+    "ipv6": "direct_identifier",
+    "user_name": "direct_identifier",
+    "coordinate": "direct_identifier",
+    # Quasi-identifiers: narrow identity only in combination with other facts.
+    "date_of_birth": "quasi_identifier",
+    "occupation": "quasi_identifier",
+    "swift_bic": "quasi_identifier",
+    "company_name": "quasi_identifier",
+    "country": "quasi_identifier",
+    "state": "quasi_identifier",
+    "date_time": "quasi_identifier",
+    "city": "quasi_identifier",
+    "postcode": "quasi_identifier",
+    "bank_routing_number": "quasi_identifier",
+    "url": "quasi_identifier",
+    "date": "quasi_identifier",
+    "time": "quasi_identifier",
+    "age": "quasi_identifier",
+    "county": "quasi_identifier",
+    "gender": "quasi_identifier",
+    "sexuality": "quasi_identifier",
+    "political_view": "quasi_identifier",
+    "race_ethnicity": "quasi_identifier",
+    "religious_belief": "quasi_identifier",
+    "language": "quasi_identifier",
+    "blood_type": "quasi_identifier",
+    "employment_status": "quasi_identifier",
+    "education_level": "quasi_identifier",
+    "university": "quasi_identifier",
+    "court_name": "quasi_identifier",
+    "prison_detention_facility": "quasi_identifier",
+    "nationality": "quasi_identifier",
+    "degree": "quasi_identifier",
+    "field_of_study": "quasi_identifier",
+    "place_name": "quasi_identifier",
+    "landmark": "quasi_identifier",
+    "organization_name": "quasi_identifier",
+    "monetary_amount": "quasi_identifier",
+}
+
+if DEFAULT_ENTITY_LABEL_CATEGORY.keys() != set(DEFAULT_ENTITY_LABELS):
+    _missing = set(DEFAULT_ENTITY_LABELS) - DEFAULT_ENTITY_LABEL_CATEGORY.keys()
+    _extra = DEFAULT_ENTITY_LABEL_CATEGORY.keys() - set(DEFAULT_ENTITY_LABELS)
+    raise ValueError(
+        "DEFAULT_ENTITY_LABEL_CATEGORY is out of sync with ENTITY_LABEL_EXAMPLES: "
+        f"missing={sorted(_missing)}, extra={sorted(_extra)}"
+    )
 
 
 # ---------------------------------------------------------------------------

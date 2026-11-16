@@ -51,6 +51,15 @@ _DTYPE_ALIASES: Mapping[str, str] = {"fp32": "float32", "bf16": "bfloat16"}
 _WARMUP_TEXT = "Alice Smith lives in Paris."
 _WARMUP_LABELS = ["first_name", "city"]
 
+# Use checkpoint-native inference names without changing Anonymizer's label scope.
+_INFERENCE_LABELS: Mapping[str, str] = {
+    "user_name": "username",
+    "state": "state_or_region",
+    "postcode": "postal_code",
+    "bank_routing_number": "routing_number",
+    "credit_debit_card": "payment_card",
+}
+
 logger = logging.getLogger(__name__)
 
 
@@ -182,8 +191,8 @@ def _warm_up(model: GLiNER2Like) -> None:
 
 
 def overlap_policy(flat_ner: bool) -> OverlapPolicy:
-    """Map `flat_ner` to GLiNER2's overlap policy."""
-    return "disallow" if flat_ner else "longest"
+    """Map `flat_ner` to GLiNER2's overlap policy; without it, overlapping alternatives are kept."""
+    return "disallow" if flat_ner else "allow"
 
 
 def flatten_result(result: object) -> list[DetectedEntity]:
@@ -247,10 +256,15 @@ def detect_entities_for_texts(
     if not chunks:
         return results
 
+    requested_labels_by_inference_label: dict[str, list[Label]] = {}
+    for label in dict.fromkeys(labels):
+        inference_label = _INFERENCE_LABELS.get(label, label)
+        requested_labels_by_inference_label.setdefault(inference_label, []).append(Label(label))
+
     policy = overlap_policy(flat_ner)
     raw_results = model.batch_extract_entities(
         [chunk.text for chunk in chunks],
-        labels,
+        list(requested_labels_by_inference_label),
         batch_size=inference_batch_size,
         threshold=threshold,
         include_confidence=True,
@@ -262,8 +276,11 @@ def detect_entities_for_texts(
     for chunk, raw_result in zip(chunks, raw_results, strict=True):
         for raw_entity in flatten_result(raw_result):
             entity = _ground_chunk_entity(raw_entity, chunk.text)
-            if entity is not None:
-                results[chunk.text_index].append(entity.shifted(chunk.offset))
+            if entity is None:
+                continue
+            shifted = entity.shifted(chunk.offset)
+            for requested_label in requested_labels_by_inference_label.get(shifted.label, []):
+                results[chunk.text_index].append(replace(shifted, label=requested_label))
     return [_resolve_document_overlaps(entities, policy) for entities in results]
 
 
@@ -326,7 +343,7 @@ def _best_disjoint(candidates: Sequence[DetectedEntity]) -> list[DetectedEntity]
 
 
 Resolver = Callable[[Sequence[DetectedEntity]], list[DetectedEntity]]
-_RESOLVERS: Mapping[OverlapPolicy, Resolver] = {"longest": _keep_outermost, "disallow": _best_disjoint}
+_RESOLVERS: Mapping[OverlapPolicy, Resolver] = {"allow": list, "longest": _keep_outermost, "disallow": _best_disjoint}
 
 
 def _resolve_document_overlaps(entities: Sequence[DetectedEntity], policy: OverlapPolicy) -> list[DetectedEntity]:

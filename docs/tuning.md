@@ -185,6 +185,8 @@ After every candidate run, apply the same quality gate to the retained output. S
 - **Self-hosted GLiNER:** The native server coalesces concurrent detection requests into model batches of up to 32 requests, waiting at most 10 ms to fill a batch. These values are fixed and not configurable. Measure queue delay and host or accelerator utilization when sizing detector-side admission. See [Self-hosting GLiNER](concepts/self-hosting-gliner.md).
 - **External detection execution:** `export_detection_config()` and `export_detection_builder_for_seed(..., job_index=..., num_jobs=...)` can export and partition detection for an external DataDesigner executor. They do not distribute the complete Replace or Rewrite pipeline. See the [`Anonymizer` API reference](reference/anonymizer/interface/anonymizer.md).
 
+  Exported detection builders include Anonymizer-owned plugin column types and internal transform operations. Install the matching `nemo-anonymizer` package revision on every executor and regenerate exports after upgrading. Builders from different internal workflow revisions are not guaranteed to be interchangeable. Model-backed validation and augmentation plugin columns require DataDesigner's asynchronous generation path; their synchronous `generate()` entry points are unsupported.
+
 ## 5. Select the production setting
 
 Use the same workload shape that production will receive; many short records and a small number of long records require different tests.

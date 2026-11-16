@@ -7,13 +7,14 @@ import json
 import random
 import re
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
-from anonymizer.engine.detection.postprocess import parse_raw_entities
+from anonymizer.engine.detection.backend import _GlinerDetectionBackend
 from anonymizer.engine.local_inference.gliner2 import backend
 from anonymizer.engine.local_inference.gliner2.backend import (
     _best_disjoint,
@@ -25,6 +26,7 @@ from anonymizer.engine.local_inference.gliner2.backend import (
     overlap_policy,
 )
 from anonymizer.engine.local_inference.gliner2.contract import DetectedEntity, Device, Label, OverlapPolicy, Span
+from anonymizer.engine.schemas import SourceTextRef, SourceView
 
 
 def _split_words(text: str, lower: bool = True) -> Iterator[tuple[str, int, int]]:
@@ -73,9 +75,9 @@ def test_flatten_result_converts_label_keyed_entities() -> None:
     ]
 
 
-def test_flat_ner_maps_to_disallow_overlap_policy() -> None:
+def test_overlap_policy_retains_alternatives_when_not_flat() -> None:
     assert overlap_policy(True) == "disallow"
-    assert overlap_policy(False) == "longest"
+    assert overlap_policy(False) == "allow"
 
 
 def _entity(text: str, start: int, end: int, score: float = 0.8, label: str = "pii") -> DetectedEntity:
@@ -97,6 +99,81 @@ def test_longest_overlap_contract_handles_disjoint_nested_crossing_and_same_span
     ]
 
 
+def test_allow_overlap_contract_keeps_nested_crossing_and_same_span_alternatives() -> None:
+    outer = _entity("Alice Johnson", 0, 13, 0.9)
+    inner = _entity("Alice", 0, 5, 0.6, label="first_name")
+    crossing = _entity("Johnson calls", 6, 19, 0.7)
+    duplicate = replace(inner, score=0.5)
+    assert _resolve_document_overlaps([outer, inner, crossing, duplicate], "allow") == [inner, outer, crossing]
+
+
+@pytest.mark.parametrize(
+    ("original", "native"),
+    [
+        ("user_name", "username"),
+        ("state", "state_or_region"),
+        ("postcode", "postal_code"),
+        ("bank_routing_number", "routing_number"),
+        ("credit_debit_card", "payment_card"),
+    ],
+)
+def test_inference_labels_are_mapped_and_restored(original: str, native: str) -> None:
+    model = _FakeModel([{"entities": {native: [{"text": "synthetic", "start": 0, "end": 9, "confidence": 0.8}]}}])
+    result = detect_entities_for_texts(
+        model,
+        ["synthetic"],
+        [original, "occupation"],
+        threshold=0.3,
+        chunk_length=128,
+        overlap=32,
+        flat_ner=False,
+        inference_batch_size=1,
+    )
+    assert model.calls[0][1] == [native, "occupation"]
+    assert result[0][0].label == original
+
+
+def test_alias_collisions_restore_each_requested_label_without_duplicate_inference() -> None:
+    model = _FakeModel([{"entities": {"username": [{"text": "synthetic", "start": 0, "end": 9, "confidence": 0.8}]}}])
+    result = detect_entities_for_texts(
+        model,
+        ["synthetic"],
+        ["user_name", "username", "user_name"],
+        threshold=0.3,
+        chunk_length=128,
+        overlap=32,
+        flat_ner=False,
+        inference_batch_size=1,
+    )
+    assert model.calls[0][1] == ["username"]
+    assert [entity.label for entity in result[0]] == ["user_name", "username"]
+
+
+def test_inference_and_document_merge_keep_nested_candidates() -> None:
+    model = _FakeModel(
+        [
+            {
+                "entities": {
+                    "first_name": [{"text": "Alice", "start": 0, "end": 5, "confidence": 0.7}],
+                    "full_name": [{"text": "Alice Johnson", "start": 0, "end": 13, "confidence": 0.9}],
+                }
+            }
+        ]
+    )
+    result = detect_entities_for_texts(
+        model,
+        ["Alice Johnson"],
+        ["first_name", "full_name"],
+        threshold=0.3,
+        chunk_length=128,
+        overlap=32,
+        flat_ner=False,
+        inference_batch_size=1,
+    )
+    assert model.calls[0][2]["overlap_policy"] == "allow"
+    assert [entity.text for entity in result[0]] == ["Alice", "Alice Johnson"]
+
+
 def test_disallow_overlap_contract_uses_maximum_total_score() -> None:
     outer = _entity("outer", 0, 10, 0.9)
     left = _entity("left", 0, 5, 0.6)
@@ -104,7 +181,7 @@ def test_disallow_overlap_contract_uses_maximum_total_score() -> None:
     assert _resolve_document_overlaps([outer, left, right], "disallow") == [left, right]
 
 
-@pytest.mark.parametrize("policy", ["longest", "disallow"])
+@pytest.mark.parametrize("policy", ["allow", "longest", "disallow"])
 def test_overlap_contract_retains_different_labels_for_the_same_span(policy: OverlapPolicy) -> None:
     name = _entity("Alice", 0, 5, 0.9)
     identifier = _entity("Alice", 0, 5, 0.8, label="identifier")
@@ -179,7 +256,7 @@ def test_detect_entities_remaps_and_deduplicates_overlapping_word_chunks() -> No
     assert model.calls[0][0] == ["xxxx Alice", "Alice yyyy"]
     assert model.calls[0][2]["include_spans"] is True
     assert model.calls[0][2]["include_confidence"] is True
-    assert model.calls[0][2]["overlap_policy"] == "longest"
+    assert model.calls[0][2]["overlap_policy"] == "allow"
 
 
 @pytest.mark.parametrize(
@@ -226,8 +303,17 @@ def test_synthetic_suffix_is_removed_without_losing_the_source_entity(
     )[0]
     wire = [_wire(entity) for entity in result]
     assert wire == [{"text": value, "label": label, "start": start, "end": len(text), "score": 0.9}]
-    parsed = parse_raw_entities(raw_response=json.dumps({"entities": wire}), text=text)
-    assert [(entity.value, entity.start_position, entity.end_position) for entity in parsed] == [
+    parsed = _GlinerDetectionBackend(source_instance="gliner-pii-detector").to_detection_result(
+        detection_result_id="r1",
+        source_view=SourceView(
+            source_text_ref=SourceTextRef(record_id="record-1", field_id="text"),
+            start_position=0,
+            end_position=len(text),
+        ),
+        canonical_text=text,
+        raw_output=json.dumps({"entities": wire}),
+    )
+    assert [(entity.value, entity.start_position, entity.end_position) for entity in parsed.observations] == [
         (value, start, len(text))
     ]
 

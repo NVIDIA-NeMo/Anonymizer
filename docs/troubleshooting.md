@@ -49,7 +49,7 @@ GLiNER candidate set → chunked into validator calls → each call dispatched t
 Fix in this order:
 
 1. **If failures are at `step="entity-detection"`, add aliases to the validator pool** in `models.yaml`. The validator is the only role that supports a pool — set `entity_validator` to a list of aliases and chunked validation will round-robin across them, giving you failover when one provider rate-limits. Every other role (detector, augmenter, rewriter, evaluator, etc.) is a single alias.
-2. **Lower `validation_max_entities_per_call`** (default `100`) on `Detect` if individual validator requests exceed a context or per-request token limit. This creates more calls, each of which repeats the full resolved label/example section, so it can increase total tokens and is not necessarily helpful for a tokens-per-minute limit.
+2. **Lower `validation_max_entities_per_call`** (default `100`) on `Detect` if individual validator requests exceed a context or per-request token limit. This is a batching target: an overlapping group larger than the target stays intact in one request and emits a warning. Smaller batches create more calls, each repeating the full resolved label/example section, so they can increase total tokens and may not help with a tokens-per-minute limit.
 3. **Switch the heavy alias to a different `provider`** in `providers.yaml`. If you're hammering one tenant's quota, moving to a second deployment of the same model helps more than tuning batch sizes. This is the only lever for non-validator stages (rewrite, evaluate, etc.) since they don't have pools.
 4. **Re-run on just the failed records** — filter the input dataframe to those `record_id`s and call `anonymizer.run` again. Failures are usually transient.
 
@@ -131,6 +131,10 @@ Try in order:
 
 Verify by re-running `preview` with `Annotate` and confirming the entity now appears tagged.
 
+Repeated text is handled occurrence by occurrence. A detected `John Smith` does not automatically create a separate `John` finding elsewhere, and accepting one `May` does not accept every `May`. Inspect the missed occurrence's source context rather than assuming that value propagation or name splitting will fill it in. A grounded augmenter suggestion may match more than one occurrence only when its exact surrounding context also matches.
+
+For augmentation misses, inspect `_augmentation_attempts` in `result.trace_dataframe`. Grounding failures receive one targeted correction attempt; still-ungrounded suggestions are dropped while valid suggestions and existing admitted detections are retained. Check `result.failed_records` separately for delivery or schema failures; a failed record is not a successful output with a missed entity.
+
 ### Too many false-positive entities
 
 Symptoms: detected entities include obvious common words, dates that aren't dates, etc.
@@ -139,7 +143,7 @@ Symptoms: detected entities include obvious common words, dates that aren't date
    ```python
    Detect(excluded_entity_labels=["occupation", "age"])
    ```
-2. **Raise `gliner_threshold`** to `0.5`. The augmenter will pick up real misses, so this rarely costs recall.
+2. **Raise `gliner_threshold`** to `0.5`. This can reduce false positives but also remove real detections; the augmenter may recover misses, but recovery is not guaranteed. Compare annotated previews before and after the change.
 3. **Lower `validation_excerpt_window_chars`** (default `500`) if context-driven validation is being misled by far-away sentences. Smaller per-chunk prompts trade context for precision.
 4. **Sanity-check the validator with an `Annotate` preview.** A flaky validator (or a misconfigured alias) returns "keep" on almost everything, which presents as recall going way up — easiest spotted by eyeballing the entity list on a handful of rows.
 
