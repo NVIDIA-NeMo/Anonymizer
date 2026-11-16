@@ -24,6 +24,7 @@ from anonymizer.config.models import (
     ReplaceModelSelection,
     RewriteModelSelection,
 )
+from anonymizer.config.options import RunContext
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
@@ -162,6 +163,23 @@ def stub_slim_model_selection() -> ModelSelection:
             replace_attribute_fidelity_judge="known",
             rewrite_judge="known",
         ),
+    )
+
+
+def detection_context(
+    model_configs: list[ModelConfig],
+    detection: DetectionModelSelection,
+    *,
+    data_summary: str | None = None,
+    preview_num_records: int | None = None,
+) -> RunContext:
+    """A RunContext for calling a detection workflow directly, with `detection` as the detection models."""
+    models = load_default_model_selection().model_copy(update={"detection": detection})
+    return RunContext(
+        model_configs=tuple(model_configs),
+        models=models,
+        data_summary=data_summary,
+        preview_num_records=preview_num_records,
     )
 
 

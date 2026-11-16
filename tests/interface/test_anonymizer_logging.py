@@ -493,7 +493,7 @@ def test_preview_set_preview_num_records_capped(stub_input: AnonymizerInput) -> 
     anonymizer.preview(config=config, data=stub_input, num_records=5)
 
     det_call_kwargs = _call_kwargs(anonymizer._detection_workflow.run)
-    assert det_call_kwargs["preview_num_records"] == 2
+    assert det_call_kwargs["context"].preview_num_records == 2
 
     rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run_with_detection)
     assert rep_call_kwargs["preview_num_records"] == 2
@@ -508,7 +508,7 @@ def test_preview_set_preview_num_records_not_capped(stub_input: AnonymizerInput)
     anonymizer.preview(config=config, data=stub_input, num_records=1)
 
     det_call_kwargs = _call_kwargs(anonymizer._detection_workflow.run)
-    assert det_call_kwargs["preview_num_records"] == 1
+    assert det_call_kwargs["context"].preview_num_records == 1
 
     rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run_with_detection)
     assert rep_call_kwargs["preview_num_records"] == 1
@@ -522,7 +522,7 @@ def test_run_set_preview_num_records(stub_input: AnonymizerInput) -> None:
     anonymizer.run(config=config, data=stub_input)
 
     det_call_kwargs = _call_kwargs(anonymizer._detection_workflow.run)
-    assert det_call_kwargs["preview_num_records"] is None
+    assert det_call_kwargs["context"].preview_num_records is None
 
     rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run_with_detection)
     assert rep_call_kwargs["preview_num_records"] is None

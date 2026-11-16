@@ -22,7 +22,7 @@ from data_designer.config.run_config import RunConfig
 from data_designer.interface.data_designer import DataDesigner
 from pydantic import BaseModel
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_TEXT
@@ -31,6 +31,7 @@ from anonymizer.engine.ndd import adapter
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter, WorkflowRunResult
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.measurement import MeasurementConfig, configured_measurement_session
+from tests.conftest import detection_context
 from tests.engine.ndd.stub_provider import COMPLETE, Script, cut_off, stub_provider
 
 _PREFIX = "Record missing from workflow output"
@@ -478,14 +479,16 @@ def test_detector_offset_mismatch_reason_is_reported(tmp_path: Path) -> None:
         )
         result = EntityDetectionWorkflow(NddAdapter(data_designer)).detect_and_validate_entities(
             pd.DataFrame({COL_TEXT: [text, healthy]}),
-            model_configs=[
-                ModelConfig(alias="gliner", model="gliner", provider="stub"),
-                ModelConfig(alias="llm", model="llm", provider="stub"),
-            ],
-            selected_models=DetectionModelSelection(
-                entity_detector="gliner", entity_validator="llm", entity_augmenter="llm", latent_detector="llm"
+            options=Detect(gliner_threshold=0.3),
+            context=detection_context(
+                [
+                    ModelConfig(alias="gliner", model="gliner", provider="stub"),
+                    ModelConfig(alias="llm", model="llm", provider="stub"),
+                ],
+                DetectionModelSelection(
+                    entity_detector="gliner", entity_validator="llm", entity_augmenter="llm", latent_detector="llm"
+                ),
             ),
-            gliner_detection_threshold=0.3,
         )
 
     assert [record.step for record in result.failed_records] == ["entity-detection"]

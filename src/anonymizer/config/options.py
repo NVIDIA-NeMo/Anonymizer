@@ -6,10 +6,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Protocol
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol
 
 from anonymizer.config.anonymizer_config import DetectionScope
+from anonymizer.config.models import ModelSelection
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
+
+if TYPE_CHECKING:
+    from data_designer.config.models import ModelConfig
 
 
 class DetectionOptions(Protocol):
@@ -17,6 +22,11 @@ class DetectionOptions(Protocol):
 
     @property
     def scope(self) -> DetectionScope: ...
+
+    @property
+    def ordered_labels(self) -> tuple[str, ...]:
+        """The effective labels in the order sent to the detector and the detection prompts."""
+        ...
 
     @property
     def strict_labels(self) -> bool: ...
@@ -32,6 +42,16 @@ class DetectionOptions(Protocol):
 
     @property
     def validation_excerpt_window_chars(self) -> int: ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunContext:
+    """Facts of one call that are not user config. Built by the facade per call; never shared between calls."""
+
+    model_configs: tuple[ModelConfig, ...]
+    models: ModelSelection
+    data_summary: str | None = None
+    preview_num_records: int | None = None
 
 
 class RewriteOptions(Protocol):

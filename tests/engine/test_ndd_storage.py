@@ -26,7 +26,9 @@ from data_designer.engine.models.facade import ModelFacade
 from data_designer.interface.data_designer import DataDesigner
 from data_designer.interface.errors import DataDesignerGenerationError
 
+from anonymizer.config.anonymizer_config import Detect
 from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelection
+from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_LATENT_ENTITIES,
@@ -45,6 +47,7 @@ from anonymizer.engine.ndd.storage import prepare_json_storage_column, prepare_j
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.interface.errors import AnonymizerWorkflowError
+from tests.conftest import detection_context
 
 _USER_JSON_TEXT = "user_json_text"
 _PLUGIN_DIAGNOSTIC = "plugin_diagnostic"
@@ -320,15 +323,17 @@ def test_actual_workflow_handoff_from_batch_loaded_detection(
     else:
         result = EntityDetectionWorkflow(adapter).identify_latent_entities(
             detected.dataframe,
-            model_configs=configs,
-            selected_models=DetectionModelSelection(
-                entity_detector="synthetic",
-                entity_validator=["synthetic"],
-                entity_augmenter="synthetic",
-                latent_detector="synthetic",
+            options=Detect(gliner_threshold=0.3),
+            context=detection_context(
+                configs,
+                DetectionModelSelection(
+                    entity_detector="synthetic",
+                    entity_validator=["synthetic"],
+                    entity_augmenter="synthetic",
+                    latent_detector="synthetic",
+                ),
             ),
-            gliner_detection_threshold=0.3,
-            privacy_goal=None,
+            latent_goal=PrivacyGoal(protect="Protect names from disclosure.", preserve="Keep the meaning of the text."),
         )
         assert result.dataframe[COL_LATENT_ENTITIES].tolist() == [{"latent_entities": []}] * len(texts)
     assert detected.failed_records == []

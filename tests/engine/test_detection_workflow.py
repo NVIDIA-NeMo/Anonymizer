@@ -16,6 +16,7 @@ from data_designer.plugins.plugin import PluginType
 from data_designer.plugins.registry import PluginRegistry
 from jinja2 import Environment, StrictUndefined
 
+from anonymizer.config.anonymizer_config import Detect
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
@@ -70,6 +71,8 @@ from anonymizer.engine.workflow_columns.detection.config import (
     DetectionTransformOperation,
 )
 from anonymizer.interface.errors import AnonymizerWorkflowError
+from anonymizer.measurement import MeasurementCollector, measurement_session
+from tests.conftest import detection_context
 
 
 def _positional(dataframe: pd.DataFrame, failed_records: list) -> WorkflowRunResult:
@@ -146,15 +149,14 @@ def test_run_with_latent_detection_calls_second_workflow(
 
     result = workflow.run(
         input_df,
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        tag_latent_entities=True,
-        privacy_goal=PrivacyGoal(
+        options=Detect(gliner_threshold=0.5),
+        context=detection_context(
+            stub_detector_model_configs, stub_detection_model_selection, data_summary="Employee records"
+        ),
+        latent_goal=PrivacyGoal(
             protect="Protect direct and latent identifiers from disclosure.",
             preserve="General utility and semantic meaning of the original text.",
         ),
-        data_summary="Employee records",
     )
 
     assert adapter.run_workflow.call_count == 2
@@ -241,11 +243,9 @@ def test_identify_latent_entities_filters_excluded_labels(
 
     result = workflow.identify_latent_entities(
         pd.DataFrame({COL_TEXT: ["The patient works at Acme."]}),
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        excluded_entity_labels=["health_condition"],
-        privacy_goal=PrivacyGoal(
+        options=Detect(gliner_threshold=0.5, excluded_entity_labels=["health_condition"]),
+        context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
+        latent_goal=PrivacyGoal(
             protect="Protect inferred sensitive attributes.",
             preserve="Preserve non-sensitive facts.",
         ),
@@ -274,11 +274,8 @@ def test_run_without_latent_detection_materializes_final_entities(
 
     result = workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]}),
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        tag_latent_entities=False,
-        privacy_goal=None,
+        options=Detect(gliner_threshold=0.5),
+        context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
 
     assert adapter.run_workflow.call_count == 1
@@ -288,32 +285,6 @@ def test_run_without_latent_detection_materializes_final_entities(
     assert len(final["entities"]) == 1
     assert final["entities"][0]["value"] == "Alice"
     assert final["entities"][0]["label"] == "first_name"
-
-
-def test_run_compute_grouped_entities_false_drops_grouped_column(
-    stub_detector_model_configs: list[ModelConfig],
-    stub_detection_model_selection: DetectionModelSelection,
-) -> None:
-    adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
-        dataframe=pd.DataFrame(
-            {
-                COL_TEXT: ["Alice works in Seattle"],
-                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
-            }
-        ),
-        failed_records=[],
-    )
-    workflow = EntityDetectionWorkflow(adapter=adapter)
-    result = workflow.run(
-        pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]}),
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        tag_latent_entities=False,
-        compute_grouped_entities=False,
-    )
-    assert COL_ENTITIES_BY_VALUE not in result.dataframe.columns
 
 
 def test_run_with_latent_detection_merges_failures_in_order(
@@ -345,11 +316,9 @@ def test_run_with_latent_detection_merges_failures_in_order(
     workflow = EntityDetectionWorkflow(adapter=adapter)
     result = workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]}),
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        tag_latent_entities=True,
-        privacy_goal=PrivacyGoal(
+        options=Detect(gliner_threshold=0.5),
+        context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
+        latent_goal=PrivacyGoal(
             protect="Protect direct and latent identifiers from disclosure.",
             preserve="General utility and semantic meaning of the original text.",
         ),
@@ -386,11 +355,9 @@ def test_run_in_cancelled_frame_raises_and_skips_later_stages(
         run_in_frame(
             EntityDetectionWorkflow(adapter=adapter).run,
             pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]}),
-            model_configs=stub_detector_model_configs,
-            selected_models=stub_detection_model_selection,
-            gliner_detection_threshold=0.5,
-            tag_latent_entities=True,
-            privacy_goal=PrivacyGoal(
+            options=Detect(gliner_threshold=0.5),
+            context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
+            latent_goal=PrivacyGoal(
                 protect="Protect direct and latent identifiers from disclosure.",
                 preserve="General utility and semantic meaning of the original text.",
             ),
@@ -399,22 +366,6 @@ def test_run_in_cancelled_frame_raises_and_skips_later_stages(
 
     # Before the first stage nothing runs; between stages only detection ran, not latent tagging.
     assert adapter.run_workflow.call_count == (0 if cancel_at == "before-first-stage" else 1)
-
-
-def test_run_requires_privacy_goal_for_latent_path(
-    stub_detector_model_configs: list[ModelConfig],
-    stub_detection_model_selection: DetectionModelSelection,
-) -> None:
-    workflow = EntityDetectionWorkflow(adapter=Mock())
-    with pytest.raises(ValueError, match="privacy_goal is required"):
-        workflow.run(
-            pd.DataFrame({COL_TEXT: ["Alice"]}),
-            model_configs=stub_detector_model_configs,
-            selected_models=stub_detection_model_selection,
-            gliner_detection_threshold=0.5,
-            tag_latent_entities=True,
-            privacy_goal=None,
-        )
 
 
 def test_inject_detector_params_does_not_mutate_input_configs(
@@ -949,11 +900,8 @@ def test_explicit_entity_labels_filter_out_of_scope_augmented_entities(
     workflow, input_df, model_configs, selected_models = _detection_with_novel_augmented_label
     result = workflow.run(
         input_df,
-        model_configs=model_configs,
-        selected_models=selected_models,
-        gliner_detection_threshold=0.5,
-        entity_labels=["hostname", "ipv4"],
-        tag_latent_entities=False,
+        options=Detect(gliner_threshold=0.5, entity_labels=["hostname", "ipv4"]),
+        context=detection_context(model_configs, selected_models),
     )
 
     final = EntitiesSchema.from_raw(result.dataframe[COL_FINAL_ENTITIES].iloc[0])
@@ -978,10 +926,8 @@ def test_default_entity_labels_preserves_novel_augmented_entities(
     workflow, input_df, model_configs, selected_models = _detection_with_novel_augmented_label
     result = workflow.run(
         input_df,
-        model_configs=model_configs,
-        selected_models=selected_models,
-        gliner_detection_threshold=0.5,
-        tag_latent_entities=False,
+        options=Detect(gliner_threshold=0.5),
+        context=detection_context(model_configs, selected_models),
     )
 
     final = EntitiesSchema.from_raw(result.dataframe[COL_FINAL_ENTITIES].iloc[0])
@@ -999,12 +945,12 @@ def test_defaults_plus_non_default_examples_use_strict_augmentation(
     workflow, input_df, model_configs, selected_models = _detection_with_novel_augmented_label
     result = workflow.run(
         input_df,
-        model_configs=model_configs,
-        selected_models=selected_models,
-        gliner_detection_threshold=0.5,
-        entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
-        entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
-        tag_latent_entities=False,
+        options=Detect(
+            gliner_threshold=0.5,
+            entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
+            entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+        ),
+        context=detection_context(model_configs, selected_models),
     )
 
     final = EntitiesSchema.from_raw(result.dataframe[COL_FINAL_ENTITIES].iloc[0])
@@ -1106,11 +1052,8 @@ def test_excluded_labels_are_removed_from_final_entities(
 
     result = workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice works at Acme, her email is alice@example.com"]}),
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        excluded_entity_labels=["email"],
-        tag_latent_entities=False,
+        options=Detect(gliner_threshold=0.5, excluded_entity_labels=["email"]),
+        context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
 
     final = EntitiesSchema.from_raw(result.dataframe[COL_FINAL_ENTITIES].iloc[0])
@@ -1145,11 +1088,8 @@ def test_excluded_labels_do_not_affect_col_detected_entities(
 
     result = workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice, alice@example.com"]}),
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        excluded_entity_labels=["email"],
-        tag_latent_entities=False,
+        options=Detect(gliner_threshold=0.5, excluded_entity_labels=["email"]),
+        context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
 
     detected = EntitiesSchema.from_raw(result.dataframe[COL_DETECTED_ENTITIES].iloc[0])
@@ -1183,12 +1123,10 @@ def test_exclusions_combined_with_allowlist_preserve_other_allowed_labels(
 
     result = workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice in Houston, alice@example.com"]}),
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        entity_labels=["first_name", "city", "email"],
-        excluded_entity_labels=["email"],
-        tag_latent_entities=False,
+        options=Detect(
+            gliner_threshold=0.5, entity_labels=["first_name", "city", "email"], excluded_entity_labels=["email"]
+        ),
+        context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
 
     final = EntitiesSchema.from_raw(result.dataframe[COL_FINAL_ENTITIES].iloc[0])
@@ -1207,12 +1145,10 @@ def test_excluded_labels_are_removed_from_gliner_labels(
 
     workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice"]}),
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        entity_labels=["first_name", "email", "city"],
-        excluded_entity_labels=["email"],
-        tag_latent_entities=False,
+        options=Detect(
+            gliner_threshold=0.5, entity_labels=["first_name", "email", "city"], excluded_entity_labels=["email"]
+        ),
+        context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
 
     injected_configs = adapter.run_workflow.call_args.kwargs["model_configs"]
@@ -1264,11 +1200,8 @@ def test_detection_workflow_uses_plugin_transform_columns(
     workflow = EntityDetectionWorkflow(adapter=adapter)
     workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice"]}),
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        excluded_entity_labels=["email"],
-        tag_latent_entities=False,
+        options=Detect(gliner_threshold=0.5, excluded_entity_labels=["email"]),
+        context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
     columns = adapter.run_workflow.call_args.kwargs["columns"]
     expected_operations = {
@@ -1320,10 +1253,8 @@ def test_detection_workflow_columns_are_json_serializable(
     workflow = EntityDetectionWorkflow(adapter=adapter)
     workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice"]}),
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        tag_latent_entities=False,
+        options=Detect(gliner_threshold=0.5),
+        context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
     payload = json.dumps(
         [column.model_dump(mode="json") for column in adapter.run_workflow.call_args.kwargs["columns"]]
@@ -1349,10 +1280,8 @@ def test_validation_column_is_chunked_validation_plugin(
     workflow = EntityDetectionWorkflow(adapter=adapter)
     workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice"]}),
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        tag_latent_entities=False,
+        options=Detect(gliner_threshold=0.5),
+        context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
     columns = adapter.run_workflow.call_args.kwargs["columns"]
     validation_col = _find_column(columns, COL_VALIDATION_DECISIONS)
@@ -1389,84 +1318,13 @@ def test_validator_pool_kwargs_thread_through_to_plugin_config(
     workflow = EntityDetectionWorkflow(adapter=adapter)
     workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice"]}),
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        validation_max_entities_per_call=17,
-        validation_excerpt_window_chars=42,
-        tag_latent_entities=False,
+        options=Detect(gliner_threshold=0.5, validation_max_entities_per_call=17, validation_excerpt_window_chars=42),
+        context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
     columns = adapter.run_workflow.call_args.kwargs["columns"]
     config = _find_column(columns, COL_VALIDATION_DECISIONS)
     assert config.max_entities_per_call == 17
     assert config.excerpt_window_chars == 42
-
-
-def test_validation_single_chunk_full_text_threads_to_config(
-    stub_detector_model_configs: list[ModelConfig],
-    stub_detection_model_selection: DetectionModelSelection,
-) -> None:
-    adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
-        dataframe=pd.DataFrame(
-            {
-                COL_TEXT: ["Alice"],
-                COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
-            }
-        ),
-        failed_records=[],
-    )
-    workflow = EntityDetectionWorkflow(adapter=adapter)
-    workflow.run(
-        pd.DataFrame({COL_TEXT: ["Alice"]}),
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        validation_single_chunk_full_text=False,
-        tag_latent_entities=False,
-    )
-    columns = adapter.run_workflow.call_args.kwargs["columns"]
-    config = _find_column(columns, COL_VALIDATION_DECISIONS)
-    assert config.single_chunk_full_text is False
-
-
-def test_build_detection_config_threads_validation_single_chunk_full_text(
-    tmp_path,
-    stub_detector_model_configs: list[ModelConfig],
-    stub_detection_model_selection: DetectionModelSelection,
-) -> None:
-    adapter = Mock()
-    workflow = EntityDetectionWorkflow(adapter=adapter)
-    workflow.build_detection_config(
-        pd.DataFrame({COL_TEXT: ["Alice"]}),
-        seed_path=tmp_path / "seed.parquet",
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        validation_single_chunk_full_text=False,
-    )
-    columns = adapter.build_config.call_args.kwargs["columns"]
-    config = _find_column(columns, COL_VALIDATION_DECISIONS)
-    assert config.single_chunk_full_text is False
-
-
-def test_build_detection_builder_for_seed_threads_validation_single_chunk_full_text(
-    tmp_path,
-    stub_detector_model_configs: list[ModelConfig],
-    stub_detection_model_selection: DetectionModelSelection,
-) -> None:
-    adapter = Mock()
-    workflow = EntityDetectionWorkflow(adapter=adapter)
-    workflow.build_detection_builder_for_seed(
-        seed_path=tmp_path / "seed.parquet",
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
-        validation_single_chunk_full_text=False,
-    )
-    columns = adapter.build_config_for_seed.call_args.kwargs["columns"]
-    config = _find_column(columns, COL_VALIDATION_DECISIONS)
-    assert config.single_chunk_full_text is False
 
 
 def test_build_detection_config_uses_default_validation_single_chunk_full_text(
@@ -1479,9 +1337,8 @@ def test_build_detection_config_uses_default_validation_single_chunk_full_text(
     workflow.build_detection_config(
         pd.DataFrame({COL_TEXT: ["Alice"]}),
         seed_path=tmp_path / "seed.parquet",
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.5,
+        options=Detect(gliner_threshold=0.5),
+        context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
     columns = adapter.build_config.call_args.kwargs["columns"]
     config = _find_column(columns, COL_VALIDATION_DECISIONS)
@@ -1512,10 +1369,8 @@ def test_pool_size_greater_than_one_emits_warning(
     with caplog.at_level("WARNING"):
         workflow.run(
             pd.DataFrame({COL_TEXT: ["Alice"]}),
-            model_configs=stub_detector_model_configs,
-            selected_models=selection,
-            gliner_detection_threshold=0.5,
-            tag_latent_entities=False,
+            options=Detect(gliner_threshold=0.5),
+            context=detection_context(stub_detector_model_configs, selection),
         )
     # caplog can attach handlers at both the target logger and root, so the
     # same record may appear twice in ``records``; dedupe by identity.
@@ -1552,10 +1407,8 @@ def test_pool_size_one_does_not_emit_warning(
     with caplog.at_level("WARNING"):
         workflow.run(
             pd.DataFrame({COL_TEXT: ["Alice"]}),
-            model_configs=stub_detector_model_configs,
-            selected_models=stub_detection_model_selection,
-            gliner_detection_threshold=0.5,
-            tag_latent_entities=False,
+            options=Detect(gliner_threshold=0.5),
+            context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
         )
     pool_warnings = [
         r
@@ -1563,3 +1416,53 @@ def test_pool_size_one_does_not_emit_warning(
         if r.name == "anonymizer.detection" and "pool of" in r.getMessage() and "aliases" in r.getMessage()
     ]
     assert pool_warnings == []
+
+
+def test_run_without_latent_goal_runs_no_latent_workflow(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    frame = pd.DataFrame({COL_TEXT: ["Alice"], COL_DETECTED_ENTITIES: [{"entities": []}]})
+    goal = PrivacyGoal(protect="Protect names from disclosure.", preserve="Keep the meaning of the text.")
+    context = detection_context(stub_detector_model_configs, stub_detection_model_selection)
+    for latent_goal, expected in (
+        (None, ["entity-detection"]),
+        (goal, ["entity-detection", "latent-entity-detection"]),
+    ):
+        adapter = Mock()
+        adapter.run_workflow.return_value = _positional(dataframe=frame, failed_records=[])
+        collector = MeasurementCollector(record_hash_key="test-key")
+
+        with measurement_session(collector):
+            EntityDetectionWorkflow(adapter=adapter).run(
+                pd.DataFrame({COL_TEXT: ["Alice"]}), options=Detect(), context=context, latent_goal=latent_goal
+            )
+
+        assert [c.kwargs["workflow_name"] for c in adapter.run_workflow.call_args_list] == expected
+        [record] = [r for r in collector.records if r["stage"] == "EntityDetectionWorkflow.run"]
+        assert record["tag_latent_entities"] is (latent_goal is not None)
+
+
+@pytest.mark.parametrize("detect", [Detect(), Detect(excluded_entity_labels=["email"])], ids=["default", "excluded"])
+def test_detection_keeps_resolution_label_order(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+    detect: Detect,
+) -> None:
+    expected = [label for label in DEFAULT_ENTITY_LABELS if label not in (detect.excluded_entity_labels or [])]
+    assert list(detect.ordered_labels) == expected
+    assert list(detect.scope.effective_labels) != expected
+    adapter = Mock()
+    adapter.run_workflow.return_value = _positional(dataframe=pd.DataFrame({COL_TEXT: ["Alice"]}), failed_records=[])
+
+    EntityDetectionWorkflow(adapter=adapter).detect_and_validate_entities(
+        pd.DataFrame({COL_TEXT: ["Alice"]}),
+        options=detect,
+        context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
+    )
+
+    kwargs = adapter.run_workflow.call_args.kwargs
+    assert kwargs["model_configs"][0].inference_parameters.extra_body["labels"] == expected
+    prompt = _find_column(kwargs["columns"], COL_VALIDATION_DECISIONS).prompt_template
+    label_lines = [line[2:].split(":")[0] for line in prompt.splitlines() if line.startswith("- ")]
+    assert [label for label in label_lines if label in expected][: len(expected)] == expected

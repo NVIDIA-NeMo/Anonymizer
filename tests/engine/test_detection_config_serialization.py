@@ -19,6 +19,7 @@ from data_designer.engine.testing.utils import assert_valid_plugin
 from data_designer.interface.data_designer import DataDesigner
 from data_designer.plugins import Plugin
 
+from anonymizer.config.anonymizer_config import Detect
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
     COL_ADMITTED_CANDIDATES,
@@ -43,6 +44,7 @@ from anonymizer.engine.workflow_columns.detection.plugins import (
     chunked_validation_plugin,
     detection_transform_plugin,
 )
+from tests.conftest import detection_context
 
 
 @pytest.mark.parametrize("plugin", [detection_transform_plugin, chunked_validation_plugin, augmentation_plugin])
@@ -58,18 +60,22 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
     workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
     builder = workflow.build_detection_builder_for_seed(
         seed_path=seed_path,
-        model_configs=parsed_models.model_configs,
-        selected_models=parsed_models.selected_models.detection,
-        gliner_detection_threshold=0.42,
-        validation_max_entities_per_call=7,
-        validation_excerpt_window_chars=321,
-        entity_labels=["first_name", "email"],
-        excluded_entity_labels=["email"],
-        entity_label_examples={
-            "first_name": ["Alicia"],
-            "email": ["configured@example.test"],
-        },
-        data_summary="Customer support messages",
+        options=Detect(
+            gliner_threshold=0.42,
+            entity_labels=["first_name", "email"],
+            excluded_entity_labels=["email"],
+            entity_label_examples={
+                "first_name": ["Alicia"],
+                "email": ["configured@example.test"],
+            },
+            validation_max_entities_per_call=7,
+            validation_excerpt_window_chars=321,
+        ),
+        context=detection_context(
+            parsed_models.model_configs,
+            parsed_models.selected_models.detection,
+            data_summary="Customer support messages",
+        ),
         job_index=1,
         num_jobs=3,
     )
@@ -164,11 +170,10 @@ def test_build_detection_builder_for_seed_respects_excluded_entity_labels(tmp_pa
     workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
     builder = workflow.build_detection_builder_for_seed(
         seed_path=seed_path,
-        model_configs=parsed_models.model_configs,
-        selected_models=parsed_models.selected_models.detection,
-        gliner_detection_threshold=0.3,
-        entity_labels=["first_name", "email", "city"],
-        excluded_entity_labels=["email"],
+        options=Detect(
+            gliner_threshold=0.3, entity_labels=["first_name", "email", "city"], excluded_entity_labels=["email"]
+        ),
+        context=detection_context(parsed_models.model_configs, parsed_models.selected_models.detection),
     )
 
     labels = _get_gliner_labels_from_builder(builder)
@@ -187,11 +192,10 @@ def test_build_detection_config_respects_excluded_entity_labels(tmp_path: Path) 
     builder = workflow.build_detection_config(
         input_df,
         seed_path=seed_path,
-        model_configs=parsed_models.model_configs,
-        selected_models=parsed_models.selected_models.detection,
-        gliner_detection_threshold=0.3,
-        entity_labels=["first_name", "email", "city"],
-        excluded_entity_labels=["email"],
+        options=Detect(
+            gliner_threshold=0.3, entity_labels=["first_name", "email", "city"], excluded_entity_labels=["email"]
+        ),
+        context=detection_context(parsed_models.model_configs, parsed_models.selected_models.detection),
     )
 
     augmenter = next(column for column in builder.get_column_configs() if column.name == COL_AUGMENTED_ENTITIES)
@@ -210,11 +214,12 @@ def test_exported_builder_includes_explicit_non_default_example_label(tmp_path: 
     workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
     builder = workflow.build_detection_builder_for_seed(
         seed_path=seed_path,
-        model_configs=parsed_models.model_configs,
-        selected_models=parsed_models.selected_models.detection,
-        gliner_detection_threshold=0.3,
-        entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
-        entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+        options=Detect(
+            gliner_threshold=0.3,
+            entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
+            entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+        ),
+        context=detection_context(parsed_models.model_configs, parsed_models.selected_models.detection),
     )
 
     assert "vendor_api_key" in _get_gliner_labels_from_builder(builder)
@@ -233,7 +238,8 @@ def test_exported_builder_includes_explicit_non_default_example_label(tmp_path: 
     assert "vendor_api_key: acme_live_abc123" in augmenter.prompt_template
     assert "Use ONLY labels from this list" in augmenter.prompt_template
     assert finalize.allowed_entity_labels is None
-    assert validation.allowed_entity_labels == [*DEFAULT_ENTITY_LABELS, "vendor_api_key"]
+    # Detect sorts explicit entity_labels, so the allowed list is the sorted set.
+    assert validation.allowed_entity_labels == sorted([*DEFAULT_ENTITY_LABELS, "vendor_api_key"])
 
 
 def test_fresh_process_discovers_plugins_when_loading_native_config(tmp_path: Path) -> None:
@@ -244,9 +250,8 @@ def test_fresh_process_discovers_plugins_when_loading_native_config(tmp_path: Pa
     workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
     builder = workflow.build_detection_builder_for_seed(
         seed_path=seed_path,
-        model_configs=parsed_models.model_configs,
-        selected_models=parsed_models.selected_models.detection,
-        gliner_detection_threshold=0.3,
+        options=Detect(gliner_threshold=0.3),
+        context=detection_context(parsed_models.model_configs, parsed_models.selected_models.detection),
     )
     config_path = tmp_path / "detection.json"
     output_path = tmp_path / "restored-columns.json"

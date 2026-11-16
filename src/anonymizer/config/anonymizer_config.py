@@ -224,6 +224,15 @@ class Detect(BaseModel):
         )
 
     @property
+    def ordered_labels(self) -> tuple[str, ...]:
+        """The effective labels in resolution order, computed on every read.
+
+        This is the order sent to the detector and the detection prompts: the default label order, or the
+        `entity_labels` order, minus exclusions. `scope.effective_labels` holds the same labels sorted.
+        """
+        return tuple(self._resolved().labels)
+
+    @property
     def strict_labels(self) -> bool:
         """True when final entities are restricted to the effective labels (entity_labels is set)."""
         return self.entity_labels is not None
