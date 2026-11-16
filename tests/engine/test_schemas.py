@@ -15,7 +15,6 @@ from anonymizer.engine.schemas import (
     QualityAnswersSchema,
     RawValidationDecisionsSchema,
     SensitivityDispositionSchema,
-    ValidatedDecisionsSchema,
     ValidationCandidatesSchema,
     ValidationSkeletonSchema,
 )
@@ -132,25 +131,6 @@ def test_raw_validation_decision_normalizes_explicit_null_proposed_label() -> No
 def test_raw_validation_decisions_payload_from_malformed_list_returns_empty() -> None:
     payload = RawValidationDecisionsSchema.from_raw({"decisions": ["bad-item"]})
     assert payload.decisions == []
-
-
-def test_validated_decisions_payload_from_raw_list() -> None:
-    payload = ValidatedDecisionsSchema.from_raw(
-        {
-            "decisions": [
-                {
-                    "id": "city_3_10",
-                    "decision": "keep",
-                    "proposed_label": "",
-                    "reason": "quasi-identifier",
-                    "value": "Seattle",
-                    "label": "city",
-                }
-            ]
-        }
-    )
-    assert len(payload.decisions) == 1
-    assert payload.decisions[0].value == "Seattle"
 
 
 def test_validation_skeleton_payload_from_raw_dict() -> None:

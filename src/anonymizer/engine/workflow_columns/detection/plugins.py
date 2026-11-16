@@ -16,3 +16,9 @@ chunked_validation_plugin = Plugin(
     impl_qualified_name="anonymizer.engine.workflow_columns.detection.impl.ChunkedValidationGenerator",
     plugin_type=PluginType.COLUMN_GENERATOR,
 )
+
+augmentation_plugin = Plugin(
+    config_qualified_name="anonymizer.engine.workflow_columns.detection.config.AugmentationConfig",
+    impl_qualified_name="anonymizer.engine.workflow_columns.detection.impl.AugmentationGenerator",
+    plugin_type=PluginType.COLUMN_GENERATOR,
+)

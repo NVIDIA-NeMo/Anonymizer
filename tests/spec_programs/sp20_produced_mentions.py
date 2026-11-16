@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-20 mentions an operation produces are checked when accepted: typed target failures, limits (E20.1-E20.4)."""
+"""SP-20 mentions an operation produces are checked when accepted: typed target failures, limits (E20.1-E20.6)."""
 
 from __future__ import annotations
 
@@ -10,10 +10,17 @@ from typing import Any
 import pandas as pd
 
 from anonymizer.config.replace_strategies import Redact
-from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_TEXT
+from anonymizer.engine.constants import (
+    COL_AUGMENTATION_DETECTION_RESULT,
+    COL_FINAL_ENTITIES,
+    COL_REPLACED_TEXT,
+    COL_SEED_ENTITIES_JSON,
+    COL_TEXT,
+    RECORD_ID_COLUMN,
+)
+from anonymizer.engine.detection.augmentation import augment_row
 from anonymizer.engine.detection.detect_step import DetectState, detect_step
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
-from anonymizer.engine.detection.postprocess import EntitySpan, apply_augmented_entities
 from anonymizer.engine.graph_core.authoring import (
     DATUM,
     MENTIONS,
@@ -27,6 +34,7 @@ from anonymizer.engine.graph_core.authoring import (
 from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
 from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.engine.replace.route import run_replace_pipeline
+from anonymizer.engine.schemas import AugmentedEntitiesSchema, DetectionResult
 from tests.spec_programs._builder import Checks
 
 TEXTS = ("Alice met Bob.", "Carol left.")
@@ -142,20 +150,44 @@ def program() -> list[dict[str, str]]:
     out4 = _outcomes(r4, targets)
     c.check("E20.4", out4 == [("failed", "overlapping_output_ownership"), ("success", "")], f"outcomes={out4}")
 
-    # E20.5 built-in name splitting and augmentation match case-insensitively; every row is still redacted.
-    john = "John Smith wrote from john@x.org today."
-    alice = "Alice met alice."
-    full = EntitySpan("full_name_0_10", "John Smith", "full_name", 0, 10, 0.9, "detector")
-    built = [
-        apply_augmented_entities(john, [full], {"entities": []}),
-        apply_augmented_entities(alice, [], {"entities": [{"value": "Alice", "label": "first_name"}]}),
-    ]
-    r5 = _redact([john, alice], [[e.as_dict() for e in row] for row in built])
+    # E20.5 an augmenter value that is not verbatim in the source is rejected; accepted ones are source slices.
+    text5 = "Alice met Bob."
+    reply = AugmentedEntitiesSchema.model_validate(
+        {
+            "entities": [
+                {"value": "Alice", "label": "first_name", "context_before": "", "context_after": " met"},
+                {"value": "BOB", "label": "first_name", "context_before": "met ", "context_after": "."},
+            ]
+        }
+    )
+
+    class _Augmenter:
+        replies = [reply, AugmentedEntitiesSchema(entities=[])]  # the repair request gets no correction
+
+        def generate(self, **_kwargs: Any) -> tuple[AugmentedEntitiesSchema, list[Any]]:
+            return self.replies.pop(0), []
+
+    row5 = augment_row(
+        row={RECORD_ID_COLUMN: "r", COL_TEXT: text5, COL_SEED_ENTITIES_JSON: "[]"},
+        prompt_template="{{ " + COL_TEXT + " }}",
+        model_alias="augmenter",
+        facade=_Augmenter(),
+        allowed_entity_labels=["first_name"],
+        excluded_entity_labels=[],
+    )
+    found = DetectionResult.model_validate(row5[COL_AUGMENTATION_DETECTION_RESULT]).observations
+    spans5 = [(o.value, o.start_position, o.end_position) for o in found]
+    r5 = _redact(
+        [text5], [[{"value": v, "label": "first_name", "start_position": a, "end_position": b} for v, a, b in spans5]]
+    )
     shown5 = list(r5.dataframe[COL_REPLACED_TEXT])
     c.check(
         "E20.5",
-        len(shown5) == 2 and "john@" not in shown5[0] and "alice" not in shown5[1].lower() and not r5.failed_records,
-        f"rows={shown5}, failed={r5.failed_records}",
+        spans5 == [("Alice", 0, 5)]
+        and all(text5[a:b] == v for v, a, b in spans5)
+        and "Alice" not in shown5[0]
+        and not r5.failed_records,
+        f"accepted={spans5}, rows={shown5}, failed={r5.failed_records}",
     )
 
     # E20.6 a detected span that fails acceptance makes its row a failed record naming the reason; others proceed.

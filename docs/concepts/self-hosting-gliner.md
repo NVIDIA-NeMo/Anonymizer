@@ -52,6 +52,18 @@ Chinese or Japanese text can form a single long token, so word-window size does
 not guarantee a subword-token limit; evaluate chunk sizes for your language.
 Returned entities must match the original source text at their reported offsets.
 
+With `flat_ner=false`, the bundled server keeps overlapping candidates through inference and
+document merging, removing only duplicate label/span pairs. This lets validation judge both a
+longer span and a shorter span inside it. Final reconciliation chooses the non-overlapping output.
+`flat_ner=true` instead requests non-overlapping detection.
+
+The bundled server maps five Anonymizer labels to the pinned checkpoint's inference names:
+`user_name` to `username`, `state` to `state_or_region`, `postcode` to `postal_code`,
+`bank_routing_number` to `routing_number`, and `credit_debit_card` to `payment_card`.
+Responses use the original requested labels. Other labels pass through unchanged; the broader
+Anonymizer label set and the default confidence threshold of 0.3 are retained.
+Externally managed servers need equivalent support to obtain this behavior.
+
 The response must use the chat-completion shape. `message.content` is a JSON string containing an
 `entities` list. Each entity has `text`, `label`, `start`, `end`, and `score` fields:
 

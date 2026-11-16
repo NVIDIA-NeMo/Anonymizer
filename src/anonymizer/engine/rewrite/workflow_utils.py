@@ -9,7 +9,7 @@ from collections.abc import Sequence
 import pandas as pd
 from data_designer.config.column_types import ColumnConfigT
 
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN
+from anonymizer.engine.constants import RECORD_ID_COLUMN
 
 
 def derive_seed_columns(

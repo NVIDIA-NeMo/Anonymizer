@@ -31,11 +31,12 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_LATENT_ENTITIES,
     COL_REPLACEMENT_MAP,
+    COL_SEED_ENTITIES,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
-    COL_VALIDATED_SEED_ENTITIES,
     COL_VALIDATION_DECISIONS,
+    COL_VALIDATION_INVENTORIES,
     RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
@@ -47,6 +48,17 @@ from anonymizer.interface.errors import AnonymizerWorkflowError
 
 _USER_JSON_TEXT = "user_json_text"
 _PLUGIN_DIAGNOSTIC = "plugin_diagnostic"
+
+
+def test_lifecycle_inventory_arrow_handoff_preserves_nested_values(tmp_path: Path) -> None:
+    values = [[{"request_id": "synthetic", "entries": []}], []]
+    table = pa.table({COL_VALIDATION_INVENTORIES: values})
+    original = table.to_pandas(types_mapper=pd.ArrowDtype)
+    prepared = prepare_json_storage_seed(original)
+    source = LocalFileSeedSource.from_dataframe(prepared, str(tmp_path / "inventories.parquet"))
+    loaded = read_parquet_dataset(Path(source.path))
+    assert loaded[COL_VALIDATION_INVENTORIES].tolist() == values
+    assert read_storage_plan(pq.read_schema(source.path)).columns == {COL_VALIDATION_INVENTORIES: [[]]}
 
 
 @custom_column_generator(required_columns=[COL_TEXT])
@@ -69,11 +81,11 @@ def _generate_side_effect(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-@custom_column_generator(required_columns=[COL_TEXT], side_effect_columns=[COL_VALIDATED_SEED_ENTITIES])
+@custom_column_generator(required_columns=[COL_TEXT], side_effect_columns=[COL_SEED_ENTITIES])
 def _generate_seed_entities_side_effect(row: dict[str, Any]) -> dict[str, Any]:
     span = {"value": "Ada", "label": "first_name", "start_position": 0, "end_position": 3}
     row[COL_VALIDATION_DECISIONS] = {"decisions": []}
-    row[COL_VALIDATED_SEED_ENTITIES] = {"entities": [span] if row[COL_TEXT].startswith("Ada") else []}
+    row[COL_SEED_ENTITIES] = {"entities": [span] if row[COL_TEXT].startswith("Ada") else []}
     return row
 
 
@@ -203,7 +215,7 @@ def test_registered_side_effect_survives_row_groups_with_different_nested_types(
 
     assert first.failed_records == second.failed_records == []
     span = {"value": "Ada", "label": "first_name", "start_position": 0, "end_position": 3}
-    assert second.dataframe[COL_VALIDATED_SEED_ENTITIES].tolist() == [{"entities": []}] * 2 + [{"entities": [span]}] * 2
+    assert second.dataframe[COL_SEED_ENTITIES].tolist() == [{"entities": []}] * 2 + [{"entities": [span]}] * 2
 
 
 @pytest.mark.parametrize(
@@ -323,7 +335,7 @@ def test_actual_workflow_handoff_from_batch_loaded_detection(
     assert result.failed_records == []
     assert result.dataframe[COL_TEXT].tolist() == texts
     assert result.dataframe[RECORD_ID_COLUMN].tolist() == detected.dataframe[RECORD_ID_COLUMN].tolist()
-    entity_spans = [EntitiesSchema.from_raw(raw).entities for raw in result.dataframe[COL_VALIDATED_SEED_ENTITIES]]
+    entity_spans = [EntitiesSchema.from_raw(raw).entities for raw in result.dataframe[COL_SEED_ENTITIES]]
     assert [
         [(entity.value, entity.label, entity.start_position, entity.end_position) for entity in entities]
         for entities in entity_spans
