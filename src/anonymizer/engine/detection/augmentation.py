@@ -211,6 +211,8 @@ def augment_row(
     allowed_entity_labels: list[str] | None,
     excluded_entity_labels: list[str],
     system_prompt: str | None = None,
+    max_conversation_restarts: int = 0,
+    max_correction_steps: int = 0,
 ) -> dict[str, Any]:
     """Generate, ground, and directly admit one row's augmentation output."""
     prepared = _prepare_augmentation(
@@ -226,6 +228,8 @@ def augment_row(
         canonical_text=prepared.canonical_text,
         source_view=prepared.source_view,
         model_alias=model_alias,
+        max_conversation_restarts=max_conversation_restarts,
+        max_correction_steps=max_correction_steps,
     )
     return _store_augmentation_lifecycle(
         row=row,
@@ -246,6 +250,8 @@ async def augment_row_async(
     allowed_entity_labels: list[str] | None,
     excluded_entity_labels: list[str],
     system_prompt: str | None = None,
+    max_conversation_restarts: int = 0,
+    max_correction_steps: int = 0,
 ) -> dict[str, Any]:
     """Async equivalent of :func:`augment_row`."""
     prepared = _prepare_augmentation(
@@ -261,6 +267,8 @@ async def augment_row_async(
         canonical_text=prepared.canonical_text,
         source_view=prepared.source_view,
         model_alias=model_alias,
+        max_conversation_restarts=max_conversation_restarts,
+        max_correction_steps=max_correction_steps,
     )
     return _store_augmentation_lifecycle(
         row=row,
@@ -327,6 +335,8 @@ def _generate_and_ground(
     canonical_text: str,
     source_view: SourceView,
     model_alias: str,
+    max_conversation_restarts: int,
+    max_correction_steps: int,
 ) -> tuple[AugmentedEntitiesSchema, DetectionResult, AugmentationAttempts]:
     recipe = PydanticResponseRecipe(data_type=AugmentedEntitiesSchema)
     repair_message = ""
@@ -339,6 +349,8 @@ def _generate_and_ground(
             parser=recipe.parse,
             system_prompt=recipe.apply_recipe_to_system_prompt(system_prompt),
             purpose=f"entity-augmentation-attempt-{attempt_index}",
+            max_conversation_restarts=max_conversation_restarts,
+            max_correction_steps=max_correction_steps,
         )
         grounded = _ground_augmentation_items(canonical_text=canonical_text, source_view=source_view, output=output)
         grounded_attempts.append(grounded)
@@ -366,6 +378,8 @@ async def _generate_and_ground_async(
     canonical_text: str,
     source_view: SourceView,
     model_alias: str,
+    max_conversation_restarts: int,
+    max_correction_steps: int,
 ) -> tuple[AugmentedEntitiesSchema, DetectionResult, AugmentationAttempts]:
     recipe = PydanticResponseRecipe(data_type=AugmentedEntitiesSchema)
     repair_message = ""
@@ -378,6 +392,8 @@ async def _generate_and_ground_async(
             parser=recipe.parse,
             system_prompt=recipe.apply_recipe_to_system_prompt(system_prompt),
             purpose=f"entity-augmentation-attempt-{attempt_index}",
+            max_conversation_restarts=max_conversation_restarts,
+            max_correction_steps=max_correction_steps,
         )
         grounded = _ground_augmentation_items(canonical_text=canonical_text, source_view=source_view, output=output)
         grounded_attempts.append(grounded)

@@ -107,6 +107,8 @@ class AugmentationGenerator(ColumnGeneratorWithModelRegistry[AugmentationConfig]
             allowed_entity_labels=self.config.allowed_entity_labels,
             excluded_entity_labels=self.config.excluded_entity_labels,
             system_prompt=self.config.system_prompt,
+            max_conversation_restarts=self.resource_provider.run_config.max_conversation_restarts,
+            max_correction_steps=self.resource_provider.run_config.max_conversation_correction_steps,
         )
 
 

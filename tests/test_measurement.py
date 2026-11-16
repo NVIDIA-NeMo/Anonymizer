@@ -1011,7 +1011,10 @@ class _TraceModelRegistry:
 
 class _CustomTraceDataDesigner:
     def __init__(self, *, facade: Any | None = None) -> None:
-        self.resource_provider = SimpleNamespace(model_registry=_TraceModelRegistry(facade))
+        self.resource_provider = SimpleNamespace(
+            model_registry=_TraceModelRegistry(facade),
+            run_config=RunConfig(max_conversation_restarts=0, max_conversation_correction_steps=0),
+        )
 
     def _create_resource_provider(self, *_args: Any, **_kwargs: Any) -> SimpleNamespace:
         return self.resource_provider
