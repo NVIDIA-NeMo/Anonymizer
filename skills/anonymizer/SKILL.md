@@ -63,13 +63,34 @@ regulatory and business context.
 Use `result.display_evaluation_report()` or
 `result.export_evaluation_report("evaluation_report.html")` for the combined
 NeMo Anonymizer Evaluation Report. The strategy and unique failed-record count are shown at the top (saved pipeline
-and evaluation failures are preserved and record IDs deduplicated); the Privacy
-& Quality Judge Summary and Privacy Inference Summary sit side by side (stacked
+and evaluation failures are preserved and record IDs deduplicated). A Failed
+Record Summary groups unique records by stage and exact saved reason, with
+expandable record IDs and full reasons; group counts may overlap and duplicate
+failure entries are omitted from display. Generic reasons are not embellished.
+Models Used appears before the summaries, with anonymization and evaluation tasks
+in two columns. `model_metadata` stores safe snapshots of task, alias, model name,
+and provider (no credentials/endpoints). Run/preview snapshots persist through
+evaluation; repeated evaluation refreshes judge roles without duplication.
+These are task assignments, not per-request usage: conditional tasks may skip.
+Missing older metadata says Model information unavailable.
+Labels Used follows Models Used: omitted `entity_labels` says Default label list;
+explicit custom labels are listed in full. Excluded labels are shown separately.
+This is configured detection scope, not a list of labels found in the output.
+Batching Settings shows saved `privacy_qa_batch_size` and
+`validation_max_entities_per_call` from `execution_settings`. The privacy value
+comes from Rewrite's run or Replace's evaluation; None means one call per record.
+Evaluation preserves the original detection-validation batch size.
+The Privacy & Quality Judge Summary and Privacy Inference Summary sit side by side (stacked
 on narrow screens or print), followed by problems-only issues for both. Judges
 with no saved columns are omitted. Boolean checks show record pass counts;
 Rewrite privacy/quality/style show categorical rating counts, with medium/low
 ratings in issues. Unavailable evaluations are separate from passes. Pooled
 entity coverage uses candidate counts rather than average record scores.
+Entity-level issues include Source (detector, augment, latent, or multiple saved
+origins), matched by exact original value and label. Detector means GLiNER in the
+standard pipeline. Unknown/tagged preserve missing or coarse older provenance;
+coverage misses without provenance show Not detected. Record/relation-level
+issues have no single entity source.
 These methods use saved traces only, make no model calls, and support both
 result types. Exports return a Path and include original sensitive values.
 

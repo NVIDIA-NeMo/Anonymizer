@@ -215,3 +215,158 @@ def test_inference_summary_defines_inference(tmp_path: Path, evaluated: bool) ->
     assert definition in document
     assert document.index("Privacy Inference Summary") < document.index(definition)
     assert "including direct mentions and contextual clues." in document
+
+
+@pytest.mark.parametrize("preview", [False, True])
+def test_failure_summary_groups_records_and_escapes_full_details(
+    preview: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from anonymizer.engine.ndd.adapter import FailedRecord
+
+    reason = "Missing label <script>unsafe</script> " + "full saved reason " * 50
+    failures = [
+        FailedRecord(record_id="r1", step="entity-detection", reason=reason),
+        FailedRecord(record_id="r1", step="entity-detection", reason=reason),
+        FailedRecord(record_id="r2", step="entity-detection", reason=reason),
+        FailedRecord(record_id="r1", step="evaluation", reason="Timeout"),
+    ]
+    result = _result(pd.DataFrame([{}]), preview, replace_method=Redact())
+    result.failed_records = failures
+    rendered: list[str] = []
+    monkeypatch.setattr("anonymizer.interface.results._display_html", rendered.append)
+    result.display_evaluation_report()
+    document = result.export_evaluation_report(tmp_path / "report.html").read_text()
+    assert rendered[0] in document
+    assert "<strong>Failed records:</strong> 2" in document
+    assert document.index("Failed Record Summary") < document.index("Privacy &amp; Quality Judge Summary")
+    assert "<details><summary>Failed record details</summary>" in document
+    assert "<td>2</td>" in document
+    assert "<td>1</td>" in document
+    assert "<script>unsafe</script>" not in document
+    assert "&lt;script&gt;unsafe&lt;/script&gt;" in document
+    assert "full saved reason " * 49 in document
+    assert document.count("<td>r1</td>") == 2  # two stages, duplicate detection entry removed
+    assert document.count("<td>r2</td>") == 1
+    assert "<td>evaluation</td><td>Timeout</td><td>1</td>" in document
+    assert len(result.failed_records) == 4  # presentation never mutates saved failures
+
+
+def test_no_failure_summary_when_there_are_no_saved_failures(tmp_path: Path) -> None:
+    result = _result(pd.DataFrame([{}]), replace_method=Redact())
+    document = result.export_evaluation_report(tmp_path / "report.html").read_text()
+    assert "<strong>Failed records:</strong> 0" in document
+    assert "Failed Record Summary" not in document
+    assert "Failed record details" not in document
+
+
+def test_judge_entity_source_does_not_guess_for_missed_entities() -> None:
+    trace = pd.DataFrame(
+        [
+            {
+                cols.COL_FINAL_ENTITIES: {
+                    "entities": [{"value": "Alice", "label": "first_name", "source": "augmenter"}]
+                },
+                cols.COL_TYPE_FIDELITY_VALID: False,
+                cols.COL_TYPE_FIDELITY_INVALID_REPLACEMENTS: [
+                    {"original": "Alice", "label": "first_name", "synthetic": "123", "reasoning": "Not a name"}
+                ],
+                cols.COL_ENTITY_COVERAGE: 0.5,
+                cols.COL_MISSED_ENTITIES: [{"value": "Denver", "label": "city", "reasoning": "Missed"}],
+            }
+        ]
+    )
+    _, issues = build_judge_report(trace)
+    assert issues["Source"].tolist() == ["Not detected", "augment"]
+
+
+@pytest.mark.parametrize("preview", [False, True])
+def test_models_section_uses_saved_metadata_and_escapes_values(preview: bool, tmp_path: Path) -> None:
+    result = _result(pd.DataFrame([{}]), preview, replace_method=Substitute())
+    result.model_metadata = [
+        {
+            "phase": "run",
+            "group": "Anonymization",
+            "task": "Entity detection",
+            "alias": 'alias"bad',
+            "model": "example/detector",
+            "provider": "local",
+        },
+        {
+            "phase": "evaluate",
+            "group": "Evaluation",
+            "task": "Entity coverage",
+            "alias": "coverage",
+            "model": "<script>judge</script>",
+            "provider": "openrouter",
+        },
+    ]
+    document = result.export_evaluation_report(tmp_path / "report.html").read_text()
+    assert document.index("Models Used") < document.index("Privacy &amp; Quality Judge Summary")
+    assert document.index("Anonymization tasks") < document.index("Evaluation tasks")
+    assert "example/detector" in document and "openrouter" in document
+    assert "&lt;script&gt;judge&lt;/script&gt;" in document
+    assert "<script>judge</script>" not in document
+    assert "Alias: alias&quot;bad" in document
+
+
+def test_models_section_marks_missing_older_metadata(tmp_path: Path) -> None:
+    result = _result(pd.DataFrame([{}]), replace_method=Redact())
+    document = result.export_evaluation_report(tmp_path / "report.html").read_text()
+    assert "Models Used" in document
+    assert "Model information unavailable." in document
+
+
+@pytest.mark.parametrize("preview", [False, True])
+@pytest.mark.parametrize("labels", [None, ["first_name", "custom_case_id", "<script>unsafe</script>"]])
+def test_labels_used_distinguishes_defaults_and_lists_all_custom_labels(
+    preview: bool, labels: list[str] | None, tmp_path: Path
+) -> None:
+    result = _result(pd.DataFrame([{}]), preview, replace_method=Redact(), entity_labels=labels)
+    document = result.export_evaluation_report(tmp_path / "report.html").read_text()
+    assert (
+        document.index("Models Used")
+        < document.index("Labels Used")
+        < document.index("Privacy &amp; Quality Judge Summary")
+    )
+    if labels is None:
+        assert "Default label list." in document
+        assert "Custom label list:" not in document
+    else:
+        assert "Custom label list:" in document
+        assert "<code>first_name</code>" in document
+        assert "<code>custom_case_id</code>" in document
+        assert "<code>&lt;script&gt;unsafe&lt;/script&gt;</code>" in document
+        assert "<script>unsafe</script>" not in document
+
+
+def test_default_labels_with_exclusions_are_explicit_in_report(tmp_path: Path) -> None:
+    result = _result(pd.DataFrame([{}]), replace_method=Redact(), excluded_entity_labels=["city", "country"])
+    document = result.export_evaluation_report(tmp_path / "report.html").read_text()
+    assert "Default label list." in document
+    assert "Excluded labels: <code>city</code>, <code>country</code>" in document
+
+
+@pytest.mark.parametrize("preview", [False, True])
+@pytest.mark.parametrize(
+    "batch_size,display", [(5, "5"), (2, "2"), (None, "None (all questions in one call per record)")]
+)
+def test_report_shows_saved_batching_settings(
+    preview: bool, batch_size: int | None, display: str, tmp_path: Path
+) -> None:
+    result = _result(pd.DataFrame([{}]), preview, replace_method=Redact())
+    result.execution_settings = {"privacy_qa_batch_size": batch_size, "validation_max_entities_per_call": 17}
+    document = result.export_evaluation_report(tmp_path / "report.html").read_text()
+    assert (
+        document.index("Labels Used")
+        < document.index("Batching Settings")
+        < document.index("Privacy &amp; Quality Judge Summary")
+    )
+    assert f"<th>privacy_qa_batch_size</th><td>{display}</td>" in document
+    assert "<th>validation_max_entities_per_call</th><td>17</td>" in document
+
+
+def test_report_does_not_invent_missing_batch_settings(tmp_path: Path) -> None:
+    result = _result(pd.DataFrame([{}]), replace_method=Redact())
+    document = result.export_evaluation_report(tmp_path / "report.html").read_text()
+    assert "<th>privacy_qa_batch_size</th><td>Not evaluated</td>" in document
+    assert "<th>validation_max_entities_per_call</th><td>Unavailable</td>" in document

@@ -22,6 +22,7 @@ from anonymizer.engine.constants import (
     COL_FINDING_RECORD_ID,
     COL_FINDING_RECORD_INDEX,
     COL_FINDING_SENSITIVITY,
+    COL_FINDING_SOURCE,
 )
 
 PRIVACY_INFERENCE_DESCRIPTION = (
@@ -85,6 +86,7 @@ def render_privacy_report_sections(
                     COL_FINDING_RECORD_ID: "Record ID",
                     COL_FINDING_ENTITY_VALUE: "Entity",
                     COL_FINDING_ENTITY_LABEL: "Label",
+                    COL_FINDING_SOURCE: "Source",
                     COL_FINDING_CATEGORY: "Type",
                     COL_FINDING_SENSITIVITY: "Sens.",
                     COL_FINDING_INFERRED: "Inferred?",
@@ -117,8 +119,8 @@ def render_privacy_report_sections(
         ".anonymizer-privacy-report .privacy-problems td:nth-child(3),"
         ".anonymizer-privacy-report .privacy-problems td:nth-child(4)"
         "{min-width:160px!important;white-space:nowrap;overflow-wrap:normal;}"
-        ".anonymizer-privacy-report .privacy-problems td:nth-child(9),"
-        ".anonymizer-privacy-report .privacy-problems td:nth-child(10)"
+        ".anonymizer-privacy-report .privacy-problems td:nth-child(10),"
+        ".anonymizer-privacy-report .privacy-problems td:nth-child(11)"
         "{width:200px!important;min-width:200px!important;max-width:200px!important;"
         "white-space:normal!important;overflow-wrap:anywhere!important;}"
         "</style>"
@@ -139,7 +141,12 @@ def render_privacy_report_sections(
         "<p>Rates use complete evaluated records and evaluated entity targets; unavailable records "
         "and exempted entities are excluded. These are the privacy judge's reported findings.</p>"
     )
-    inference_issues = '<div class="privacy-details">' + details + "</div>"
+    inference_issues = (
+        "<p>Source: detector (GLiNER in the standard pipeline), augment, or latent. "
+        "Multiple sources may be listed for repeated occurrences. Unknown means provenance was not saved; "
+        "tagged means an explicit entity whose detector/augmentation source is unavailable.</p>"
+        '<div class="privacy-details">' + details + "</div>"
+    )
     return styles, inference_summary, inference_issues
 
 

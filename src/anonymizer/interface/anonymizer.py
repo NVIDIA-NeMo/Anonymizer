@@ -86,6 +86,7 @@ from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.workflow_columns.detection.config import DetectionTransformConfig, DetectionTransformOperation
 from anonymizer.interface.errors import InvalidConfigError
+from anonymizer.interface.model_metadata import evaluation_model_metadata, run_model_metadata
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 from anonymizer.logging import LOG_INDENT, configure_logging, reapply_log_levels
 from anonymizer.measurement import (
@@ -537,6 +538,8 @@ class Anonymizer:
                 replace_method=config.replace,
                 rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
                 rewrite_evaluation=result.rewrite_evaluation,
+                model_metadata=[dict(entry) for entry in result.model_metadata],
+                execution_settings=dict(result.execution_settings),
                 entity_labels=config.detect.entity_labels,
                 excluded_entity_labels=config.detect.excluded_entity_labels,
                 data_summary=result.data_summary,
@@ -783,6 +786,19 @@ class Anonymizer:
                 data_summary=data_summary,
             )
 
+        result.execution_settings = dict(output.execution_settings)
+        if rewrite_config is None and evaluate_config.compute_privacy_leakage:
+            result.execution_settings["privacy_qa_batch_size"] = evaluate_config.privacy_qa_batch_size
+        result.model_metadata = [dict(entry) for entry in output.model_metadata if entry.get("phase") != "evaluate"]
+        result.model_metadata.extend(
+            evaluation_model_metadata(
+                evaluate_config,
+                self._selected_models,
+                self._model_configs,
+                rewrite=rewrite_config is not None,
+                substitute=isinstance(replace_method, Substitute),
+            )
+        )
         # Preserve pipeline failures through evaluation; repeated evaluations must
         # not multiply identical failure entries.
         failures = {
@@ -1027,6 +1043,15 @@ class Anonymizer:
             resolved_text_column=text_col,
             failed_records=all_failures,
             id_column=context.resolved_id_column,
+            model_metadata=run_model_metadata(config, self._selected_models, self._model_configs),
+            execution_settings={
+                "validation_max_entities_per_call": config.detect.validation_max_entities_per_call,
+                **(
+                    {"privacy_qa_batch_size": config.rewrite.privacy_qa_batch_size}
+                    if config.rewrite is not None
+                    else {}
+                ),
+            },
             replace_method=config.replace,
             rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
             rewrite_evaluation=config.rewrite.evaluation.model_copy(deep=True) if config.rewrite is not None else None,

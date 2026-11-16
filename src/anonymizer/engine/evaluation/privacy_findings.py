@@ -29,6 +29,7 @@ from anonymizer.engine.constants import (
     COL_FINDING_RECORD_INDEX,
     COL_FINDING_SENSITIVITY,
     COL_FINDING_SENSITIVITY_REASON,
+    COL_FINDING_SOURCE,
     COL_FINDING_STATUS,
     COL_LEAKAGE_MASS,
     COL_PRIVACY_LEAKAGE_CONTRIBUTIONS,
@@ -38,6 +39,7 @@ from anonymizer.engine.constants import (
     COL_SENSITIVITY_DISPOSITION,
     RECORD_ID_COLUMN,
 )
+from anonymizer.engine.evaluation.entity_sources import entity_source
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.schemas import EntitiesByValueSchema
 
@@ -46,6 +48,7 @@ PRIVACY_FINDING_COLUMNS = (
     COL_FINDING_RECORD_ID,
     COL_FINDING_ENTITY_VALUE,
     COL_FINDING_ENTITY_LABEL,
+    COL_FINDING_SOURCE,
     COL_FINDING_CATEGORY,
     COL_FINDING_SENSITIVITY,
     COL_FINDING_SENSITIVITY_REASON,
@@ -248,6 +251,9 @@ def _record_findings(row: pd.Series, base: dict[str, Any]) -> list[dict[str, Any
                 COL_FINDING_ENTITY_VALUE: target["entity_value"],
                 COL_FINDING_ENTITY_LABEL: target["entity_label"],
                 COL_FINDING_CATEGORY: target.get("category"),
+                COL_FINDING_SOURCE: entity_source(
+                    row, target["entity_value"], target["entity_label"], fallback=target.get("source")
+                ),
                 COL_FINDING_SENSITIVITY: target.get("sensitivity"),
                 COL_FINDING_SENSITIVITY_REASON: target.get(
                     "reason", target.get("protection_reason", target.get("low_sensitivity_reason"))

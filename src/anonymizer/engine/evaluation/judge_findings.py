@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 
 from anonymizer.engine import constants as cols
+from anonymizer.engine.evaluation.entity_sources import entity_source
 from anonymizer.engine.rewrite.parsers import normalize_payload
 
 
@@ -39,6 +40,13 @@ def build_judge_report(trace: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]
         target = entry.get("original", entry.get("value", entry.get("description", "")))
         if entry.get("entities"):
             target = f"{target}: " + "; ".join(str(entity) for entity in entry["entities"])
+        source = (
+            entity_source(row, entry.get("original", entry.get("value")), entry.get("label"))
+            if entry.get("label")
+            else "—"
+        )
+        if check == "Entity coverage" and source == "Unknown":
+            source = "Not detected"
         issues.append(
             {
                 "Row": index,
@@ -46,6 +54,7 @@ def build_judge_report(trace: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]
                 "Check": check,
                 "Entity / relation": target,
                 "Label": entry.get("label", ""),
+                "Source": source,
                 "Replacement": entry.get("synthetic", ""),
                 "Result": status,
                 "Reason": entry.get("reasoning", "No saved reasoning.") if entry else str(detail),
@@ -139,7 +148,7 @@ def build_judge_report(trace: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]
         pd.DataFrame(
             issues,
             columns=pd.Index(
-                ["Row", "Record ID", "Check", "Entity / relation", "Label", "Replacement", "Result", "Reason"]
+                ["Row", "Record ID", "Check", "Entity / relation", "Label", "Source", "Replacement", "Result", "Reason"]
             ),
         ),
     )

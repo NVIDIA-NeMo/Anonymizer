@@ -23,11 +23,44 @@ evaluated.export_evaluation_report("evaluation_report.html")
 
 The strategy and number of unique failed records appear below the title. Failure
 counts retain saved pipeline and evaluation failures; repeated failures for the
-same record count once. Unavailable judge results are also shown separately in
+same record count once. When failures are present, a Failed Record Summary groups
+unique records by stage and exact saved reason. Expand Failed record details to
+see record IDs, stages, and full reasons. Duplicate entries are omitted from the
+display; a record may appear in several groups, so group counts can exceed the
+headline total. Generic saved errors are preserved rather than replaced with an
+inferred cause; consult the run log for more specific diagnostics.
+Unavailable judge results are also shown separately in
 the summaries. The strategy is: Rewrite or Replace - Redact, Substitute,
 Annotate, or Hash. Older results without strategy metadata display Unknown.
-Two summaries appear side by side on wide screens and stack on narrow screens
-and when printing:
+A compact **Models Used** section follows the strategy/failure information.
+Anonymization and evaluation tasks appear in two columns, with model names and
+providers (aliases are available on hover). Validator pools list all configured
+models. Only applicable roles are included; local Redact/Annotate/Hash replacements
+have no replacement-model entry. These are saved task assignments, not request
+usage logs: conditional tasks such as repair or custom-label classification may
+not run for every record. No API keys, endpoints, or inference parameters are saved.
+
+Run metadata is snapshotted on `run()` / `preview()` as `model_metadata`.
+`evaluate()` preserves those assignments and snapshots its own requested judge
+roles. Repeated evaluation replaces the previous judge assignments, rather than
+adding duplicates. Older results without snapshots show **Model information
+unavailable**; the report never guesses from current configuration.
+
+**Labels Used** follows Models Used. It says Default label list when
+`Detect.entity_labels` was omitted; an explicitly supplied custom list is shown
+in full. Any excluded labels are listed separately. This describes the configured
+detection scope, rather than the labels actually found in the data.
+
+**Batching Settings** follows Labels Used and displays saved
+`privacy_qa_batch_size` and `validation_max_entities_per_call`. Privacy QA batch
+size comes from Rewrite's run settings or Replace's evaluation settings; explicit
+None means all questions in one call per record. Validation batching is preserved
+from the detection run. Missing saved values display Unavailable; privacy QA
+that has not run displays Not evaluated. The result's `execution_settings`
+dictionary holds these snapshots.
+
+Two evaluation summaries appear side by side on wide screens and stack on narrow
+screens and when printing:
 
 - **Privacy & Quality Judge Summary:** record-level pass counts for saved judges,
   pooled entity coverage from candidate counts, unavailable counts, and separate
@@ -40,7 +73,13 @@ sections follow. Only problems are listed: missed entities, failed judge checks,
 medium/low Rewrite ratings, inference leaks, and unavailable evaluations. Medium
 ratings are shown as ratings, not converted to boolean failures. Record indexes
 are zero-based and shared across both sections. Original values, replacements,
-relations, and saved reasons appear where available.
+relations, and saved reasons appear where available. Entity-level issues also
+show Source, joined by exact original value and label from saved span annotations:
+`detector` (GLiNER in the standard pipeline), `augment`, or `latent`. Multiple
+sources are listed when occurrences have different origins. Unknown means no
+saved provenance; tagged means an explicit Rewrite entity with no finer source
+available. Coverage-judge misses show Not detected when no matching source is
+available. Record-level and relation-level issues have no single entity source.
 
 Judges without saved result columns are omitted. Inference that has not run says
 **Not evaluated**; missing results from attempted evaluations remain unavailable.

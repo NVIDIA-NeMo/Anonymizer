@@ -1776,3 +1776,76 @@ def test_evaluate_preserves_prior_failures_without_duplicating_entries(
     assert original.failed_records == [prior]
     repeated = anonymizer.evaluate(evaluated)
     assert repeated.failed_records == [prior, current]
+
+
+@pytest.mark.parametrize("strategy", [Redact(), Substitute(), Hash(), Annotate()])
+def test_run_saves_only_applicable_model_assignments(stub_input: AnonymizerInput, strategy: object) -> None:
+    anonymizer, _, _, _ = _make_anonymizer()
+    config = AnonymizerConfig.model_validate({"replace": strategy})
+    result = anonymizer.run(config=config, data=stub_input)
+    tasks = {entry["task"] for entry in result.model_metadata}
+    assert {"Entity detection", "Entity validation", "Entity augmentation"} <= tasks
+    assert ("Replacement generation" in tasks) == isinstance(strategy, Substitute)
+    assert "Repair (when needed)" not in tasks
+    assert all(entry["model"] != "Unknown" and entry["provider"] != "Unknown" for entry in result.model_metadata)
+    assert all(
+        set(entry) == {"phase", "group", "task", "alias", "model", "provider"} for entry in result.model_metadata
+    )
+
+
+def test_model_metadata_preserves_original_run_and_updates_only_evaluation_roles(stub_input: AnonymizerInput) -> None:
+    anonymizer, _, runner, _ = _make_anonymizer()
+    original = anonymizer.preview(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+    saved = [dict(entry) for entry in original.model_metadata]
+    for model in anonymizer._model_configs:
+        model.model = "new-model-for-evaluation"
+    runner.evaluate.return_value = ReplacementResult(dataframe=runner.run.return_value.dataframe, failed_records=[])
+    evaluated = anonymizer.evaluate(original)
+    assert [entry for entry in evaluated.model_metadata if entry["phase"] == "run"] == saved
+    assert all(
+        entry["model"] == "new-model-for-evaluation"
+        for entry in evaluated.model_metadata
+        if entry["phase"] == "evaluate"
+    )
+    assert original.model_metadata == saved
+    repeated = anonymizer.evaluate(evaluated)
+    assert repeated.model_metadata == evaluated.model_metadata
+
+
+def test_rewrite_model_metadata_omits_disabled_repair(stub_input: AnonymizerInput) -> None:
+    anonymizer, _, _, _ = _make_anonymizer()
+    result = anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite(max_repair_iterations=0)), data=stub_input)
+    tasks = {entry["task"] for entry in result.model_metadata}
+    assert {"Rewriting", "QA generation", "Privacy / quality QA evaluation", "Latent detection"} <= tasks
+    assert "Repair (when needed)" not in tasks
+
+
+@pytest.mark.parametrize("is_rewrite", [False, True])
+def test_batch_settings_snapshot_preserves_run_values_through_evaluation(
+    stub_input: AnonymizerInput, is_rewrite: bool
+) -> None:
+    anonymizer, _, replace_runner, rewrite_runner = _make_anonymizer()
+    config = (
+        AnonymizerConfig(detect=Detect(validation_max_entities_per_call=17), rewrite=Rewrite(privacy_qa_batch_size=2))
+        if is_rewrite
+        else AnonymizerConfig(detect=Detect(validation_max_entities_per_call=17), replace=Redact())
+    )
+    original = anonymizer.preview(config=config, data=stub_input)
+    assert original.execution_settings["validation_max_entities_per_call"] == 17
+    config.detect.validation_max_entities_per_call = 99
+    if is_rewrite:
+        assert original.execution_settings["privacy_qa_batch_size"] == 2
+        rewrite_runner.evaluate.return_value = RewriteResult(
+            dataframe=rewrite_runner.run.return_value.dataframe, failed_records=[]
+        )
+    else:
+        replace_runner.evaluate.return_value = ReplacementResult(
+            dataframe=replace_runner.run.return_value.dataframe, failed_records=[]
+        )
+    evaluated = anonymizer.evaluate(
+        original, config=EvaluateConfig(compute_privacy_leakage=not is_rewrite, privacy_qa_batch_size=None)
+    )
+    assert evaluated.execution_settings["validation_max_entities_per_call"] == 17
+    assert evaluated.execution_settings["privacy_qa_batch_size"] == (2 if is_rewrite else None)
+    if not is_rewrite:
+        assert "privacy_qa_batch_size" not in original.execution_settings

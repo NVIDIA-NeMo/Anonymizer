@@ -257,6 +257,7 @@ def test_public_findings_view_has_single_inference_column_and_hides_details(prev
         cols.COL_FINDING_RECORD_ID,
         cols.COL_FINDING_ENTITY_VALUE,
         cols.COL_FINDING_ENTITY_LABEL,
+        cols.COL_FINDING_SOURCE,
         cols.COL_FINDING_CATEGORY,
         cols.COL_FINDING_SENSITIVITY,
         cols.COL_FINDING_INFERRED,
@@ -424,3 +425,20 @@ def test_rewrite_summary_reports_repair_limit_and_maximum_taken(
     result.display_privacy_report()
     assert "Max repair iterations" in rendered[0]
     assert "Repair iterations taken (maximum across records)" in rendered[0]
+
+
+@pytest.mark.parametrize("preview", [False, True])
+def test_privacy_findings_join_sources_by_value_and_label(preview: bool) -> None:
+    row = _row()
+    row[cols.COL_FINAL_ENTITIES] = {
+        "entities": [
+            {"value": "Catholic", "label": "religious_belief", "source": "detector"},
+            {"value": "Catholic", "label": "religious_belief", "source": "augmenter"},
+            {"value": "Catholic", "label": "other_label", "source": "other_source"},
+        ]
+    }
+    result = _result(pd.DataFrame([row]), preview)
+    assert result.privacy_findings.iloc[0][cols.COL_FINDING_SOURCE] == "augment, detector"
+    row[cols.COL_ENTITY_SENSITIVITY]["entities"][1]["source"] = "latent"
+    assert _result(pd.DataFrame([row]), preview).privacy_findings.iloc[0][cols.COL_FINDING_SOURCE] == "latent"
+    assert _result(pd.DataFrame([_row()]), preview).privacy_findings.iloc[0][cols.COL_FINDING_SOURCE] == "Unknown"

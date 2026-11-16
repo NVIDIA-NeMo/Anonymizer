@@ -38,6 +38,10 @@ class _DisplayMixin:
     rewrite_config: PrivacyGoal | None
     replace_method: ReplaceMethod | None
     failed_records: list[FailedRecord]
+    model_metadata: list[dict[str, str]]
+    execution_settings: dict[str, int | None]
+    entity_labels: list[str] | None
+    excluded_entity_labels: list[str] | None
 
     @property
     def privacy_findings(self) -> pd.DataFrame:
@@ -111,7 +115,11 @@ class _DisplayMixin:
             strategy = "Unknown (strategy metadata unavailable)"
         return render_evaluation_report_html(
             strategy=strategy,
-            failed_records=len({failure.record_id for failure in self.failed_records}),
+            failed_records=self.failed_records,
+            model_metadata=self.model_metadata,
+            execution_settings=self.execution_settings,
+            entity_labels=self.entity_labels,
+            excluded_entity_labels=self.excluded_entity_labels,
             privacy_summary=self.privacy_summary,
             privacy_issues=self.privacy_findings,
             judge_summary=judge_summary,
@@ -186,6 +194,9 @@ class AnonymizerResult(_DisplayMixin):
             with ``replace_method``.
         rewrite_evaluation: Saved Rewrite evaluation settings used for the privacy
             report's risk tolerance and repair threshold. None when unavailable.
+        execution_settings: Saved privacy QA and detection-validation batch sizes.
+        model_metadata: Saved task/model/provider assignments for reports. Empty
+            for older results without metadata; contains no provider credentials.
         entity_labels: Allowlist of entity labels that were in scope during
             detection. Preserved for ``evaluate()`` so the coverage judge scopes
             its evaluation to the same label set. ``None`` means detection was
@@ -213,6 +224,8 @@ class AnonymizerResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
+    model_metadata: list[dict[str, str]] = field(default_factory=list)
+    execution_settings: dict[str, int | None] = field(default_factory=dict)
     rewrite_evaluation: EvaluationCriteria | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
@@ -251,6 +264,9 @@ class PreviewResult(_DisplayMixin):
             dispatch the rewrite judges. Mutually exclusive with ``replace_method``.
         rewrite_evaluation: Saved Rewrite evaluation settings used for the privacy
             report's risk tolerance and repair threshold. None when unavailable.
+        execution_settings: Saved privacy QA and detection-validation batch sizes.
+        model_metadata: Saved task/model/provider assignments for reports. Empty
+            for older results without metadata; contains no provider credentials.
         entity_labels: Allowlist of entity labels that were in scope during
             detection. Preserved for ``evaluate()`` so the coverage judge scopes
             its evaluation to the same label set. ``None`` means detection was
@@ -279,6 +295,8 @@ class PreviewResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
+    model_metadata: list[dict[str, str]] = field(default_factory=list)
+    execution_settings: dict[str, int | None] = field(default_factory=dict)
     rewrite_evaluation: EvaluationCriteria | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
