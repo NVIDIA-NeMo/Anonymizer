@@ -119,7 +119,7 @@ _RISK_TOLERANCE_BUNDLES: dict[RiskTolerance, _RiskToleranceBundle] = {
 class PrivacyGoal(BaseModel):
     """Structured privacy and utility goal for rewrite mode."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
     protect: str = Field(
         min_length=10, max_length=1000, description="What to protect (e.g. direct identifiers, quasi-identifiers)."

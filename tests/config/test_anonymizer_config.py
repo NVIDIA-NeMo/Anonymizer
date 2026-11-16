@@ -16,6 +16,7 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerInput,
     Detect,
     DetectorDeclaration,
+    EvaluateConfig,
     Rewrite,
     TextRecord,
     TextRecordsInput,
@@ -640,7 +641,7 @@ def test_detector_declarations_live_under_detect_detector() -> None:
 
 def test_rewrite_instructions_is_removed_with_a_message() -> None:
     with pytest.raises(ValidationError, match=r"Rewrite\.instructions was removed in v1.*privacy_goal\.protect"):
-        Rewrite(instructions="x")  # ty: ignore[pydantic-discarded-extra-argument]
+        Rewrite(instructions="x")  # ty: ignore[unknown-argument]
 
 
 def test_rewrite_loads_dumps_that_carry_instructions_none() -> None:
@@ -657,3 +658,64 @@ def test_rewrite_none_goal_yields_the_default() -> None:
         return rewrite.privacy_goal.protect
 
     assert _protect(Rewrite()) == default_privacy_goal().protect
+
+
+# ── unknown keys ──────────────────────────────────────────────────────────────
+
+_REMOTE_SOURCE = "https://example.invalid/data.csv"
+_GOAL = {"protect": "Names and street addresses", "preserve": "Clinical meaning of the note"}
+
+_UNKNOWN_KEY_CASES: list[tuple[Any, dict[str, Any], str]] = [
+    (AnonymizerConfig, {"replace": {"kind": "redact"}}, "AnonymizerConfig"),
+    (Detect, {}, "Detect"),
+    (DetectorDeclaration, {}, "DetectorDeclaration"),
+    (Rewrite, {}, "Rewrite"),
+    (PrivacyGoal, dict(_GOAL), "PrivacyGoal"),
+    (Substitute, {}, "Substitute"),
+    (Redact, {}, "Redact"),
+    (Annotate, {}, "Annotate"),
+    (Hash, {}, "Hash"),
+    (EvaluateConfig, {}, "EvaluateConfig"),
+    (AnonymizerInput, {"source": _REMOTE_SOURCE}, "AnonymizerInput"),
+    (TextRecord, {"id": "r1", "text": "Alice"}, "TextRecord"),
+    (TextRecordsInput, {"records": [{"id": "r1", "text": "Alice"}]}, "TextRecordsInput"),
+]
+
+
+@pytest.mark.parametrize(("model", "data", "title"), _UNKNOWN_KEY_CASES, ids=lambda v: v if isinstance(v, str) else "")
+def test_config_models_reject_unknown_keys_naming_key_and_model(model: Any, data: dict[str, Any], title: str) -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        model.model_validate({**data, "unknown_knob": "SECRET-VALUE"})
+    message = str(excinfo.value)
+    assert f"validation error for {title}" in message
+    assert "unknown_knob" in message
+    assert "extra_forbidden" in message
+    assert "SECRET-VALUE" not in message
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"rewrite": {"unknown_knob": "SECRET-VALUE"}},
+        {"replace": {"kind": "hash", "unknown_knob": "SECRET-VALUE"}},
+        {"replace": {"kind": "redact"}, "detect": {"unknown_knob": "SECRET-VALUE"}},
+        {"rewrite": {"privacy_goal": {**_GOAL, "unknown_knob": "SECRET-VALUE"}}},
+    ],
+)
+def test_nested_unknown_keys_are_rejected_with_their_path(data: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError, match=r"unknown_knob") as excinfo:
+        AnonymizerConfig.model_validate(data)
+    assert "SECRET-VALUE" not in str(excinfo.value)
+
+
+def test_rewrite_instructions_tombstone_takes_precedence_over_unknown_keys() -> None:
+    with pytest.raises(ValidationError, match=r"Rewrite\.instructions was removed in v1") as excinfo:
+        AnonymizerConfig.model_validate({"rewrite": {"instructions": "keep dates"}})
+    assert "extra_forbidden" not in str(excinfo.value)
+
+
+@pytest.mark.parametrize("name", ["offset_unit", "labels", "labels_fixed"])
+def test_flat_detector_tombstone_takes_precedence_over_unknown_keys(name: str) -> None:
+    with pytest.raises(ValidationError, match=rf"detect\.detector\.{name}") as excinfo:
+        AnonymizerConfig.model_validate({"replace": {"kind": "redact"}, "detect": {f"detector_{name}": None}})
+    assert "extra_forbidden" not in str(excinfo.value)

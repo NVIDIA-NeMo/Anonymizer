@@ -21,7 +21,7 @@ def _normalize_replace_kind(value: Any) -> Any:
 class ReplaceMethodBase(BaseModel):
     """Shared configuration for all replacement methods."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
     def _render_template(self, template: str, *, text: str, label: str, **extra: str) -> str:
         return template.format(text=text, label=label, **extra)
