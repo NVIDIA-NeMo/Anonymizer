@@ -201,7 +201,7 @@ class AnonymizerResult(_DisplayMixin):
             report's risk tolerance and repair threshold. None when unavailable.
         privacy_inference_enabled: Saved report choice from evaluate(). None
             uses the mode default (Rewrite enabled, Replace disabled).
-        execution_settings: Saved privacy QA and detection-validation batch sizes.
+        execution_settings: Saved batching and Rewrite strict-protection settings.
         model_metadata: Saved task/model/provider assignments for reports. Empty
             for older results without metadata; contains no provider credentials.
         entity_labels: Allowlist of entity labels that were in scope during
@@ -274,7 +274,7 @@ class PreviewResult(_DisplayMixin):
             report's risk tolerance and repair threshold. None when unavailable.
         privacy_inference_enabled: Saved report choice from evaluate(). None
             uses the mode default (Rewrite enabled, Replace disabled).
-        execution_settings: Saved privacy QA and detection-validation batch sizes.
+        execution_settings: Saved batching and Rewrite strict-protection settings.
         model_metadata: Saved task/model/provider assignments for reports. Empty
             for older results without metadata; contains no provider credentials.
         entity_labels: Allowlist of entity labels that were in scope during

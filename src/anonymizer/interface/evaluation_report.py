@@ -208,6 +208,14 @@ def render_evaluation_report_html(
     if judge_summary["Check"].isin(["Rewrite privacy", "Rewrite quality", "Rewrite style"]).any():
         judge_note += " Rewrite rubric ratings are categorical; medium and low ratings appear below as issues."
     summary_layout = "evaluation-summaries" if include_inference else "evaluation-summaries judge-only"
+    rewrite_settings = ""
+    if strategy == "Rewrite":
+        strict_protection = str(execution_settings.get("strict_entity_protection", "Unavailable"))
+        rewrite_settings = (
+            "<section><h3>Rewrite Settings</h3><table><tr><th>strict_entity_protection</th><td>"
+            + html.escape(strict_protection)
+            + "</td></tr></table></section>"
+        )
     return (
         '<div class="anonymizer-privacy-report anonymizer-evaluation-report">'
         + styles
@@ -247,6 +255,7 @@ def render_evaluation_report_html(
         + _render_models_used(model_metadata)
         + _render_labels_used(entity_labels, excluded_entity_labels)
         + _render_batching_settings(execution_settings, privacy_summary)
+        + rewrite_settings
         + f'<div class="{summary_layout}"><section><h3>Privacy &amp; Quality Judge Summary</h3>'
         + judges
         + "<p>"

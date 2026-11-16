@@ -1885,3 +1885,18 @@ def test_inference_mode_defaults_and_explicit_overrides(
         assert "compute_privacy_inference" not in rewrite_runner.evaluate.call_args.kwargs
     else:
         assert replace_runner.evaluate.call_args.kwargs["compute_privacy_inference"] is expected
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_strict_entity_protection_is_saved_for_report(stub_input: AnonymizerInput, strict: bool) -> None:
+    anonymizer, _, _, rewrite_runner = _make_anonymizer()
+    config = AnonymizerConfig(rewrite=Rewrite(strict_entity_protection=strict))
+    original = anonymizer.preview(config=config, data=stub_input)
+    assert original.execution_settings["strict_entity_protection"] is strict
+    assert config.rewrite is not None
+    config.rewrite.strict_entity_protection = not strict
+    rewrite_runner.evaluate.return_value = RewriteResult(
+        dataframe=rewrite_runner.run.return_value.dataframe, failed_records=[]
+    )
+    evaluated = anonymizer.evaluate(original)
+    assert evaluated.execution_settings["strict_entity_protection"] is strict

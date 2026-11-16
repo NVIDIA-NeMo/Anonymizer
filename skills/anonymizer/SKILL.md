@@ -79,7 +79,9 @@ This is configured detection scope, not a list of labels found in the output.
 Batching Settings shows saved `privacy_qa_batch_size` and
 `validation_max_entities_per_call` from `execution_settings`. The privacy value
 comes from Rewrite's run or Replace's evaluation; None means one call per record.
-Evaluation preserves the original detection-validation batch size.
+Evaluation preserves the original detection-validation batch size. Rewrite
+Settings also displays saved `strict_entity_protection` even when inference
+is hidden; missing historical values are Unavailable.
 The Privacy & Quality Judge Summary and Privacy Inference Summary sit side by side (stacked
 on narrow screens or print), followed by problems-only issues for both. Judges
 with no saved columns are omitted. Boolean checks show record pass counts;

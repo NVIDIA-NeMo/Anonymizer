@@ -1053,7 +1053,10 @@ class Anonymizer:
             execution_settings={
                 "validation_max_entities_per_call": config.detect.validation_max_entities_per_call,
                 **(
-                    {"privacy_qa_batch_size": config.rewrite.privacy_qa_batch_size}
+                    {
+                        "privacy_qa_batch_size": config.rewrite.privacy_qa_batch_size,
+                        "strict_entity_protection": config.rewrite.strict_entity_protection,
+                    }
                     if config.rewrite is not None
                     else {}
                 ),

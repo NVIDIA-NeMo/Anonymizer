@@ -81,7 +81,9 @@ size comes from Rewrite's run settings or Replace's evaluation settings; explici
 None means all questions in one call per record. Validation batching is preserved
 from the detection run. Missing saved values display Unavailable; privacy QA
 that has not run displays Not evaluated. The result's `execution_settings`
-dictionary holds these snapshots.
+dictionary holds these snapshots. Rewrite reports also show saved
+`strict_entity_protection` under Rewrite Settings, even when inference sections
+are disabled; older results without this setting show Unavailable.
 
 Two evaluation summaries appear side by side on wide screens and stack on narrow
 screens and when printing:

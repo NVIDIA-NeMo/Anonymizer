@@ -508,3 +508,14 @@ def test_replace_issues_omit_result_and_mark_unavailable_in_reason(
     assert "<th>Reason</th>" in issues_html
     _, saved_issues = build_judge_report(trace)
     assert saved_issues["Result"].tolist() == ["Issue", "Unavailable"]
+
+
+@pytest.mark.parametrize("strict", [True, False, None])
+def test_rewrite_strict_protection_is_visible_even_without_inference(strict: bool | None, tmp_path: Path) -> None:
+    result = _result(pd.DataFrame([{}]), rewrite_evaluation=EvaluationCriteria(), privacy_inference_enabled=False)
+    if strict is not None:
+        result.execution_settings["strict_entity_protection"] = strict
+    document = result.export_evaluation_report(tmp_path / "report.html").read_text()
+    expected = str(strict) if strict is not None else "Unavailable"
+    assert "Rewrite Settings" in document
+    assert f"<th>strict_entity_protection</th><td>{expected}</td>" in document
