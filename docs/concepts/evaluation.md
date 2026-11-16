@@ -21,6 +21,30 @@ evaluated.display_evaluation_report()
 evaluated.export_evaluation_report("evaluation_report.html")
 ```
 
+The judge summary and judge issues are always included. Inference sections are
+controlled by `EvaluateConfig.compute_privacy_inference`:
+
+| Value | Replace | Rewrite |
+|---|---|---|
+| Omitted / `None` | No inference evaluation or report sections | Include saved inference results |
+| `True` | Run inference and include its sections | Include saved inference results |
+| `False` | Skip inference and hide its sections | Hide inference sections |
+
+Rewrite continues computing leakage internally for repair regardless of this
+report choice; `evaluate()` never repeats Rewrite privacy QA. No config is needed
+to include inference in a Rewrite report. To hide it:
+
+```python
+evaluated = anonymizer.evaluate(result, config=EvaluateConfig(compute_privacy_inference=False))
+```
+
+The resolved choice is saved as `privacy_inference_enabled` on the evaluated
+result, so later display/export follows the same choice even if trace columns
+already contain inference results. Before evaluation, reports use their mode's
+default. Explicit privacy-only display/export methods remain available.
+The former `compute_privacy_leakage` parameter was removed; use
+`compute_privacy_inference` instead. Unknown EvaluateConfig fields are rejected.
+
 The strategy and number of unique failed records appear below the title. Failure
 counts retain saved pipeline and evaluation failures; repeated failures for the
 same record count once. When failures are present, a Failed Record Summary groups
@@ -150,7 +174,7 @@ from anonymizer import EvaluateConfig
 
 evaluated = anonymizer.evaluate(
     result,
-    config=EvaluateConfig(compute_privacy_leakage=True),
+    config=EvaluateConfig(compute_privacy_inference=True),
 )
 ```
 
@@ -159,7 +183,7 @@ To answer smaller batches of questions per record:
 ```python
 evaluated = anonymizer.evaluate(
     result,
-    config=EvaluateConfig(compute_privacy_leakage=True, privacy_qa_batch_size=5),
+    config=EvaluateConfig(compute_privacy_inference=True, privacy_qa_batch_size=5),
 )
 ```
 
@@ -172,7 +196,7 @@ are unchanged. If any batch fails, the record's privacy answers and leakage scor
 remain unavailable; partial answers are not scored. Smaller batches increase
 request count and repeat the text in each request. The option does not affect Rewrite.
 
-This option is off by default and works with Substitute, Redact, Hash, and Annotate.
+For Replace, this option resolves to off by default and works with Substitute, Redact, Hash, and Annotate.
 It assigns category and sensitivity to each detected
 value/label pair, generates privacy questions, and answers them using the replaced
 text. All detected entities are evaluated, including low-sensitivity entities.

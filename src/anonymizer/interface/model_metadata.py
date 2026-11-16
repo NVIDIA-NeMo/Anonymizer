@@ -82,7 +82,7 @@ def evaluation_model_metadata(
                 ("Evaluation", "Relational consistency", evaluate.replace_relational_consistency_judge),
             ]
         )
-    if not rewrite and config.compute_privacy_leakage:
+    if not rewrite and config.compute_privacy_inference:
         tasks.extend(
             [
                 (

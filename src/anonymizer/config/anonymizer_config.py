@@ -361,6 +361,8 @@ class EvaluateConfig(BaseModel):
     by ``evaluate()``, so users don't restate it and can't mis-state it.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     compute_detection_validity: bool = False
     """Run the tag-precision judge (detection_valid / detection_invalid_entities).
 
@@ -370,8 +372,13 @@ class EvaluateConfig(BaseModel):
     evaluate() output alongside ``entity_coverage``.
     """
 
-    compute_privacy_leakage: bool = False
-    """Evaluate recovery of original detected entities from Replace output.
+    compute_privacy_inference: bool | None = None
+    """Include privacy inference in evaluation and its combined report.
+
+    None uses the mode default: enabled for Rewrite, disabled for Replace.
+    Explicit True/False overrides that choice. Replace runs inference when
+    enabled; Rewrite reuses saved inference and never repeats it here. False
+    hides inference report sections without disabling Rewrite's repair metrics.
 
     Adds leakage_mass to the result dataframe and entity sensitivities, privacy
     QA, answers, contributions, and diagnostics to trace_dataframe. Includes

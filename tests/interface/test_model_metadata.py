@@ -27,7 +27,7 @@ def test_validator_pool_is_saved_as_separate_models_without_private_config() -> 
 def test_optional_evaluation_roles_and_classifier_fallback() -> None:
     selection = load_default_model_selection()
     selection.evaluate.privacy_entity_classifier = None
-    config = EvaluateConfig(compute_privacy_leakage=True, compute_detection_validity=True)
+    config = EvaluateConfig(compute_privacy_inference=True, compute_detection_validity=True)
     rows = evaluation_model_metadata(config, selection, [], rewrite=False, substitute=True)
     tasks = {entry["task"]: entry for entry in rows}
     assert tasks["Entity classification (custom labels)"]["alias"] == selection.evaluate.privacy_sensitivity_analyzer

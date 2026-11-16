@@ -609,6 +609,11 @@ class Anonymizer:
                 "Hand-built or legacy results need their `replace_method` or `rewrite_config` "
                 "attribute set before calling evaluate()."
             )
+        inference_enabled = (
+            is_rewrite
+            if evaluate_config.compute_privacy_inference is None
+            else evaluate_config.compute_privacy_inference
+        )
         try:
             validate_model_alias_references(
                 self._model_configs,
@@ -618,7 +623,7 @@ class Anonymizer:
                 check_evaluate=True,
                 check_rewrite_judge=is_rewrite,
                 check_detection_validity_judge=evaluate_config.compute_detection_validity,
-                check_privacy_leakage=evaluate_config.compute_privacy_leakage and not is_rewrite,
+                check_privacy_leakage=inference_enabled and not is_rewrite,
             )
         except ValueError as exc:
             raise InvalidConfigError(str(exc)) from exc
@@ -629,7 +634,7 @@ class Anonymizer:
         num_records = len(output.trace_dataframe)
         mode_name = "rewrite" if is_rewrite else type(replace_method).__name__
         active_judges = ["rewrite_judge", "entity_coverage_judge"] if is_rewrite else ["entity_coverage_judge"]
-        if evaluate_config.compute_privacy_leakage and not is_rewrite:
+        if inference_enabled and not is_rewrite:
             active_judges.extend(["privacy_entity_classifier", "privacy_sensitivity_analyzer", "privacy_qa_judge"])
         if evaluate_config.compute_detection_validity:
             active_judges.append("detection_validity_judge")
@@ -742,12 +747,12 @@ class Anonymizer:
                 entity_labels=entity_labels,
                 excluded_entity_labels=excluded_entity_labels,
                 compute_detection_validity=evaluate_config.compute_detection_validity,
-                compute_privacy_leakage=evaluate_config.compute_privacy_leakage,
+                compute_privacy_inference=inference_enabled,
                 privacy_qa_batch_size=evaluate_config.privacy_qa_batch_size,
                 data_summary=data_summary,
             )
             replace_checks = [("entity coverage", COL_ENTITY_COVERAGE, None)]
-            if evaluate_config.compute_privacy_leakage:
+            if inference_enabled:
                 replace_checks.append(("privacy leakage", COL_LEAKAGE_MASS, None))
             if evaluate_config.compute_detection_validity:
                 replace_checks.append(("detection validity", COL_DETECTION_VALID, None))
@@ -786,8 +791,9 @@ class Anonymizer:
                 data_summary=data_summary,
             )
 
+        result.privacy_inference_enabled = inference_enabled
         result.execution_settings = dict(output.execution_settings)
-        if rewrite_config is None and evaluate_config.compute_privacy_leakage:
+        if rewrite_config is None and inference_enabled:
             result.execution_settings["privacy_qa_batch_size"] = evaluate_config.privacy_qa_batch_size
         result.model_metadata = [dict(entry) for entry in output.model_metadata if entry.get("phase") != "evaluate"]
         result.model_metadata.extend(

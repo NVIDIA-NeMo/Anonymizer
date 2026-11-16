@@ -80,9 +80,9 @@ def test_evaluate_replace_privacy_opt_in_exposes_mass_and_trace_details(
     )
     runner.evaluate.return_value = ReplacementResult(dataframe=frame, failed_records=[])
     evaluated = anonymizer.evaluate(
-        original, config=EvaluateConfig(compute_privacy_leakage=True, privacy_qa_batch_size=5)
+        original, config=EvaluateConfig(compute_privacy_inference=True, privacy_qa_batch_size=5)
     )
-    assert runner.evaluate.call_args.kwargs["compute_privacy_leakage"] is True
+    assert runner.evaluate.call_args.kwargs["compute_privacy_inference"] is True
     assert runner.evaluate.call_args.kwargs["privacy_qa_batch_size"] == 5
     assert evaluated.dataframe[COL_LEAKAGE_MASS].tolist() == [0.3]
     assert COL_PRIVACY_LEAKAGE_CONTRIBUTIONS not in evaluated.dataframe
@@ -96,9 +96,9 @@ def test_privacy_roles_validated_only_for_opted_in_replace(stub_input: Anonymize
     anonymizer._selected_models.evaluate.privacy_qa_judge = "unknown-privacy-model"
     runner.evaluate.return_value = ReplacementResult(dataframe=original.trace_dataframe, failed_records=[])
     anonymizer.evaluate(original)
-    assert runner.evaluate.call_args.kwargs["compute_privacy_leakage"] is False
+    assert runner.evaluate.call_args.kwargs["compute_privacy_inference"] is False
     with pytest.raises(InvalidConfigError, match="privacy_qa_judge"):
-        anonymizer.evaluate(original, config=EvaluateConfig(compute_privacy_leakage=True))
+        anonymizer.evaluate(original, config=EvaluateConfig(compute_privacy_inference=True))
 
 
 def test_privacy_option_does_not_rerun_rewrite_privacy(stub_input: AnonymizerInput) -> None:
@@ -108,9 +108,9 @@ def test_privacy_option_does_not_rerun_rewrite_privacy(stub_input: AnonymizerInp
     rewrite_runner.evaluate.return_value = RewriteResult(
         dataframe=rewrite_runner.run.return_value.dataframe, failed_records=[]
     )
-    evaluated = anonymizer.evaluate(original, config=EvaluateConfig(compute_privacy_leakage=True))
+    evaluated = anonymizer.evaluate(original, config=EvaluateConfig(compute_privacy_inference=True))
     assert evaluated.dataframe[COL_LEAKAGE_MASS].tolist() == [0.3]
-    assert "compute_privacy_leakage" not in rewrite_runner.evaluate.call_args.kwargs
+    assert "compute_privacy_inference" not in rewrite_runner.evaluate.call_args.kwargs
     replace_runner.evaluate.assert_not_called()
 
 
@@ -1843,9 +1843,45 @@ def test_batch_settings_snapshot_preserves_run_values_through_evaluation(
             dataframe=replace_runner.run.return_value.dataframe, failed_records=[]
         )
     evaluated = anonymizer.evaluate(
-        original, config=EvaluateConfig(compute_privacy_leakage=not is_rewrite, privacy_qa_batch_size=None)
+        original, config=EvaluateConfig(compute_privacy_inference=not is_rewrite, privacy_qa_batch_size=None)
     )
     assert evaluated.execution_settings["validation_max_entities_per_call"] == 17
     assert evaluated.execution_settings["privacy_qa_batch_size"] == (2 if is_rewrite else None)
     if not is_rewrite:
         assert "privacy_qa_batch_size" not in original.execution_settings
+
+
+@pytest.mark.parametrize("is_rewrite", [False, True])
+@pytest.mark.parametrize("choice", [None, False, True])
+def test_inference_mode_defaults_and_explicit_overrides(
+    stub_input: AnonymizerInput, is_rewrite: bool, choice: bool | None
+) -> None:
+    anonymizer, _, replace_runner, rewrite_runner = _make_anonymizer()
+    original = anonymizer.run(
+        config=AnonymizerConfig(rewrite=Rewrite()) if is_rewrite else AnonymizerConfig(replace=Redact()),
+        data=stub_input,
+    )
+    if is_rewrite:
+        rewrite_runner.evaluate.return_value = RewriteResult(
+            dataframe=rewrite_runner.run.return_value.dataframe, failed_records=[]
+        )
+    else:
+        replace_runner.evaluate.return_value = ReplacementResult(
+            dataframe=replace_runner.run.return_value.dataframe, failed_records=[]
+        )
+    expected = is_rewrite if choice is None else choice
+    evaluated = (
+        anonymizer.evaluate(original, config=EvaluateConfig(compute_privacy_inference=choice))
+        if choice is not None
+        else anonymizer.evaluate(original)
+    )
+    assert evaluated.privacy_inference_enabled is expected
+    document = evaluated._evaluation_report_html()
+    assert ("Privacy Inference Summary" in document) is expected
+    assert ("Privacy Inference Issues" in document) is expected
+    assert "Privacy &amp; Quality Judge Summary" in document
+    assert "Privacy &amp; Quality Judge Issues" in document
+    if is_rewrite:
+        assert "compute_privacy_inference" not in rewrite_runner.evaluate.call_args.kwargs
+    else:
+        assert replace_runner.evaluate.call_args.kwargs["compute_privacy_inference"] is expected

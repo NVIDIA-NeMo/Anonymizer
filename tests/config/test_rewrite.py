@@ -111,3 +111,13 @@ def test_privacy_batch_defaults_and_overrides(batch_size: int | None) -> None:
     assert EvaluationCriteria().privacy_qa_batch_size == 5
     assert EvaluateConfig(privacy_qa_batch_size=batch_size).privacy_qa_batch_size == batch_size
     assert Rewrite(privacy_qa_batch_size=batch_size).evaluation.privacy_qa_batch_size == batch_size
+
+
+def test_evaluate_inference_defaults_to_mode_and_rejects_removed_flag() -> None:
+    from pydantic import ValidationError
+
+    from anonymizer.config.anonymizer_config import EvaluateConfig
+
+    assert EvaluateConfig().compute_privacy_inference is None
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        EvaluateConfig.model_validate({"compute_privacy_leakage": True})

@@ -93,7 +93,7 @@ def test_replace_runner_dispatches_privacy_only_when_enabled(
             replace_method=strategy,
             model_configs=[],
             selected_models=stub_evaluate_model_selection,
-            compute_privacy_leakage=enabled,
+            compute_privacy_inference=enabled,
             privacy_qa_batch_size=5,
         )
     if enabled:

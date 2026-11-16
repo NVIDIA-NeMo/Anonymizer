@@ -19,6 +19,7 @@ from anonymizer.interface.results import AnonymizerResult, PreviewResult
 
 
 def _result(trace: pd.DataFrame, preview: bool = False, **metadata: Any) -> AnonymizerResult | PreviewResult:
+    metadata.setdefault("privacy_inference_enabled", True)
     args: dict[str, Any] = dict(
         dataframe=trace.copy(), trace_dataframe=trace, resolved_text_column="text", failed_records=[], **metadata
     )
@@ -370,3 +371,30 @@ def test_report_does_not_invent_missing_batch_settings(tmp_path: Path) -> None:
     document = result.export_evaluation_report(tmp_path / "report.html").read_text()
     assert "<th>privacy_qa_batch_size</th><td>Not evaluated</td>" in document
     assert "<th>validation_max_entities_per_call</th><td>Unavailable</td>" in document
+
+
+@pytest.mark.parametrize("is_rewrite", [False, True])
+@pytest.mark.parametrize("choice", [None, False, True])
+def test_report_mode_default_and_saved_inference_choice(is_rewrite: bool, choice: bool | None, tmp_path: Path) -> None:
+    result = _result(
+        pd.DataFrame([{}]),
+        privacy_inference_enabled=choice,
+        replace_method=None if is_rewrite else Substitute(),
+        rewrite_evaluation=EvaluationCriteria() if is_rewrite else None,
+    )
+    expected = is_rewrite if choice is None else choice
+    document = result.export_evaluation_report(tmp_path / "report.html").read_text()
+    assert ("Privacy Inference Summary" in document) is expected
+    assert ("Privacy Inference Issues" in document) is expected
+    assert "Privacy &amp; Quality Judge Issues" in document
+
+
+def test_disabled_inference_report_never_reads_saved_inference(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    result = _result(pd.DataFrame([{}]), replace_method=Substitute(), privacy_inference_enabled=False)
+
+    def unexpected(_self: object) -> None:
+        raise AssertionError("Inference should not be parsed for judge-only reports")
+
+    monkeypatch.setattr(type(result), "privacy_summary", property(unexpected))
+    monkeypatch.setattr(type(result), "privacy_findings", property(unexpected))
+    result.export_evaluation_report(tmp_path / "report.html")

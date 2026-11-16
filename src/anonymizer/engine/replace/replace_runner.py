@@ -143,7 +143,7 @@ class ReplacementWorkflow:
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         compute_detection_validity: bool = False,
-        compute_privacy_leakage: bool = False,
+        compute_privacy_inference: bool = False,
         privacy_qa_batch_size: int | None = 5,
         data_summary: str | None = None,
     ) -> ReplacementResult:
@@ -153,7 +153,7 @@ class ReplacementWorkflow:
         runs type fidelity, relational consistency, and attribute fidelity.
         Detection validity runs only when ``compute_detection_validity=True``.
         All active judges are submitted as columns of one DataDesigner workflow.
-        When ``compute_privacy_leakage=True``, a separate privacy workflow adds
+        When ``compute_privacy_inference=True``, a separate privacy workflow adds
         leakage mass and entity-level diagnostics while preserving all records.
 
         ``entity_labels`` and ``excluded_entity_labels`` together define the label
@@ -196,7 +196,7 @@ class ReplacementWorkflow:
             preview_num_records=preview_num_records,
             failed_records=failed_records,
         )
-        if compute_privacy_leakage:
+        if compute_privacy_inference:
             privacy_result = ReplacePrivacyLeakageWorkflow(self._adapter).run(
                 judged_df,
                 model_configs=model_configs,
