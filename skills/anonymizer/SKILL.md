@@ -84,12 +84,18 @@ The Privacy & Quality Judge Summary and Privacy Inference Summary sit side by si
 on narrow screens or print), followed by problems-only issues for both. Judges
 with no saved columns are omitted. Boolean checks show record pass counts;
 Rewrite privacy/quality/style show categorical rating counts, with medium/low
-ratings in issues. Unavailable evaluations are separate from passes. Pooled
+ratings in issues. Rewrite judge issues use separate subsections for entity
+coverage, privacy, quality, and style, plus detection validity when enabled.
+Entity checks show only applicable entity columns; rubrics show Row, Record ID,
+Rating, Reason. Clean subsections say None; missing judges say Not evaluated;
+unavailable results remain explicit. Replace keeps its combined judge issue table, omitting Result and marking
+unavailable evaluations in Reason with Evaluation unavailable.
+Unavailable evaluations are separate from passes. Pooled
 entity coverage uses candidate counts rather than average record scores.
 Entity-level issues include Source (detector, augment, latent, or multiple saved
 origins), matched by exact original value and label. Detector means GLiNER in the
 standard pipeline. Unknown/tagged preserve missing or coarse older provenance;
-coverage misses without provenance show Not detected. Record/relation-level
+Entity coverage and Relational consistency show N/A in Source. Record-level
 issues have no single entity source.
 These methods use saved traces only, make no model calls, and support both
 result types. Exports return a Path and include original sensitive values.

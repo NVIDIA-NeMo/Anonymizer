@@ -93,7 +93,15 @@ screens and when printing:
   Rewrite risk tolerance, repair threshold, repair limit, and iterations taken.
 
 Full-width **Privacy & Quality Judge Issues** and **Privacy Inference Issues**
-sections follow. Only problems are listed: missed entities, failed judge checks,
+sections follow when applicable. Rewrite's judge issues are split into Entity
+Coverage Misses (Row, Record ID, Entity, Label, Reason) and separate Rewrite
+Privacy, Quality, and Style Issues (Row, Record ID, Rating, Reason). Each
+subsection says None when evaluated with no issues, or Not evaluated when no
+results are saved. Unavailable ratings remain explicit; unavailable entity checks
+are identified in Reason. Detection validity has its own subsection when enabled.
+Replace retains its combined judge issue table without a Result column; unavailable
+evaluations are marked in Reason with Evaluation unavailable. The privacy inference issue
+table is unchanged. Only problems are listed: missed entities, failed judge checks,
 medium/low Rewrite ratings, inference leaks, and unavailable evaluations. Medium
 ratings are shown as ratings, not converted to boolean failures. Record indexes
 are zero-based and shared across both sections. Original values, replacements,
@@ -102,8 +110,8 @@ show Source, joined by exact original value and label from saved span annotation
 `detector` (GLiNER in the standard pipeline), `augment`, or `latent`. Multiple
 sources are listed when occurrences have different origins. Unknown means no
 saved provenance; tagged means an explicit Rewrite entity with no finer source
-available. Coverage-judge misses show Not detected when no matching source is
-available. Record-level and relation-level issues have no single entity source.
+available. Entity coverage and Relational consistency show N/A in Source. Record-level
+issues have no single entity source.
 
 Judges without saved result columns are omitted. Inference that has not run says
 **Not evaluated**; missing results from attempted evaluations remain unavailable.

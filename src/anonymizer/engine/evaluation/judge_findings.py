@@ -45,8 +45,8 @@ def build_judge_report(trace: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]
             if entry.get("label")
             else "—"
         )
-        if check == "Entity coverage" and source == "Unknown":
-            source = "Not detected"
+        if check in ("Entity coverage", "Relational consistency"):
+            source = "N/A"
         issues.append(
             {
                 "Row": index,

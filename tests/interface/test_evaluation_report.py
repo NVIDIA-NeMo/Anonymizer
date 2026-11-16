@@ -176,6 +176,7 @@ def test_detection_fraction_and_relation_failures_keep_problem_details() -> None
     assert issues.iloc[1]["Replacement"] == "Bob"
     assert "city -> Dallas" in issues.iloc[2]["Entity / relation"]
     assert "state -> CA" in issues.iloc[2]["Entity / relation"]
+    assert issues.iloc[2]["Source"] == "N/A"
 
 
 @pytest.mark.parametrize("preview", [False, True])
@@ -277,7 +278,7 @@ def test_judge_entity_source_does_not_guess_for_missed_entities() -> None:
         ]
     )
     _, issues = build_judge_report(trace)
-    assert issues["Source"].tolist() == ["Not detected", "augment"]
+    assert issues["Source"].tolist() == ["N/A", "augment"]
 
 
 @pytest.mark.parametrize("preview", [False, True])
@@ -398,3 +399,112 @@ def test_disabled_inference_report_never_reads_saved_inference(tmp_path: Path, m
     monkeypatch.setattr(type(result), "privacy_summary", property(unexpected))
     monkeypatch.setattr(type(result), "privacy_findings", property(unexpected))
     result.export_evaluation_report(tmp_path / "report.html")
+
+
+def test_rewrite_judge_issue_sections_have_only_applicable_columns(tmp_path: Path) -> None:
+    trace = pd.DataFrame(
+        [
+            {
+                cols.RECORD_ID_COLUMN: "record-a",
+                cols.COL_ENTITY_COVERAGE: 0.5,
+                cols.COL_ENTITY_COVERAGE_N_CANDIDATES: 2,
+                cols.COL_MISSED_ENTITIES: [{"value": "BA in English", "label": "degree", "reasoning": "Degree missed"}],
+                cols.COL_JUDGE_EVALUATION: {
+                    "privacy": {"score": "high", "reasoning": "Protected"},
+                    "quality": {"score": "medium", "reasoning": "Some meaning lost <script>bad</script>"},
+                    "style": {"score": "low", "reasoning": "Awkward phrasing"},
+                },
+            },
+            {
+                cols.RECORD_ID_COLUMN: "record-b",
+                cols.COL_ENTITY_COVERAGE: None,
+                cols.COL_JUDGE_EVALUATION: {"privacy": {"score": "high"}, "quality": {"score": "high"}},
+            },
+        ]
+    )
+    result = _result(trace, rewrite_evaluation=EvaluationCriteria(), privacy_inference_enabled=False)
+    document = result.export_evaluation_report(tmp_path / "report.html").read_text()
+
+    def section(heading: str) -> str:
+        return document.split(f"<h3>{heading}</h3>", 1)[1].split("</section>", 1)[0]
+
+    coverage = section("Entity Coverage Misses")
+    assert "BA in English" in coverage
+    assert "Unavailable: Saved judge result unavailable." in coverage
+    for column in ["Row", "Record ID", "Entity", "Label", "Reason"]:
+        assert f"<th>{column}</th>" in coverage
+    for column in ["Source", "Replacement", "Result", "Check", "Rating"]:
+        assert f"<th>{column}</th>" not in coverage
+    assert "<p>None.</p>" in section("Rewrite Privacy Issues")
+    quality = section("Rewrite Quality Issues")
+    assert "<th>Rating</th>" in quality
+    assert "<td>medium</td>" in quality
+    assert "&lt;script&gt;bad&lt;/script&gt;" in quality
+    for column in ["Entity", "Label", "Source", "Replacement", "Check", "Result"]:
+        assert f"<th>{column}</th>" not in quality
+    style = section("Rewrite Style Issues")
+    assert "<td>low</td>" in style
+    assert "<td>Unavailable</td>" in style
+    assert "Detection Validity Issues" not in document
+    assert "Privacy Inference Issues" not in document
+
+
+def test_rewrite_judges_not_run_show_not_evaluated_and_optional_detection_has_own_section(tmp_path: Path) -> None:
+    result = _result(pd.DataFrame([{}]), rewrite_evaluation=EvaluationCriteria(), privacy_inference_enabled=False)
+    document = result.export_evaluation_report(tmp_path / "not-run.html").read_text()
+    for heading in [
+        "Entity Coverage Misses",
+        "Rewrite Privacy Issues",
+        "Rewrite Quality Issues",
+        "Rewrite Style Issues",
+    ]:
+        assert f"<h3>{heading}</h3><p>Not evaluated.</p>" in document
+    result.trace_dataframe[cols.COL_DETECTION_VALID] = [True]
+    document = result.export_evaluation_report(tmp_path / "detection.html").read_text()
+    assert "<h3>Detection Validity Issues</h3><p>None.</p>" in document
+
+
+def test_replace_keeps_combined_judge_issue_table(tmp_path: Path) -> None:
+    result = _result(
+        pd.DataFrame(
+            [
+                {
+                    cols.COL_ENTITY_COVERAGE: 0.5,
+                    cols.COL_MISSED_ENTITIES: [{"value": "Alice", "label": "first_name", "reasoning": "Missed"}],
+                }
+            ]
+        ),
+        replace_method=Substitute(),
+        privacy_inference_enabled=False,
+    )
+    document = result.export_evaluation_report(tmp_path / "replace.html").read_text()
+    issues = document.split("<h2>Privacy &amp; Quality Judge Issues</h2>", 1)[1]
+    assert "Entity Coverage Misses" not in issues
+    assert "Rewrite Privacy Issues" not in issues
+    assert "<th>Check</th>" in issues and "<th>Replacement</th>" in issues
+
+
+@pytest.mark.parametrize("preview", [False, True])
+@pytest.mark.parametrize("strategy", [Substitute(), Redact(), Annotate(), Hash()])
+def test_replace_issues_omit_result_and_mark_unavailable_in_reason(
+    preview: bool, strategy: Any, tmp_path: Path
+) -> None:
+    trace = pd.DataFrame(
+        [
+            {
+                cols.COL_ENTITY_COVERAGE: 0.5,
+                cols.COL_MISSED_ENTITIES: [{"value": "Alice", "label": "name", "reasoning": "Name missed"}],
+            },
+            {cols.COL_ENTITY_COVERAGE: None},
+        ]
+    )
+    result = _result(trace, preview, replace_method=strategy, privacy_inference_enabled=False)
+    document = result.export_evaluation_report(tmp_path / "report.html").read_text()
+    issues_html = document.split("<h2>Privacy &amp; Quality Judge Issues</h2>", 1)[1]
+    assert "<th>Result</th>" not in issues_html
+    assert "<td>Issue</td>" not in issues_html
+    assert "Evaluation unavailable: Saved judge result unavailable." in issues_html
+    assert "Name missed" in issues_html
+    assert "<th>Reason</th>" in issues_html
+    _, saved_issues = build_judge_report(trace)
+    assert saved_issues["Result"].tolist() == ["Issue", "Unavailable"]

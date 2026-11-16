@@ -115,6 +115,48 @@ def _render_batching_settings(settings: dict[str, int | None], summary: dict[str
     )
 
 
+def _render_rewrite_judge_issues(summary: pd.DataFrame, issues: pd.DataFrame) -> str:
+    """Separate entity checks from record-level Rewrite ratings."""
+    sections: list[str] = []
+    specs = [
+        ("Entity coverage", "Entity Coverage Misses", False),
+        ("Rewrite privacy", "Rewrite Privacy Issues", True),
+        ("Rewrite quality", "Rewrite Quality Issues", True),
+        ("Rewrite style", "Rewrite Style Issues", True),
+    ]
+    if "Detection validity" in set(summary["Check"]):
+        specs.append(("Detection validity", "Detection Validity Issues", False))
+    for check, heading, rubric in specs:
+        saved = summary[summary["Check"] == check]
+        problems = issues[issues["Check"] == check].copy()
+        if saved.empty:
+            body = "<p>Not evaluated.</p>"
+        elif problems.empty:
+            evaluated = int(str(saved.iloc[0]["Evaluated"]).split("/")[0])
+            body = "<p>None.</p>" if evaluated else "<p>Not evaluated.</p>"
+        else:
+            if rubric:
+                table = problems[["Row", "Record ID", "Result", "Reason"]].rename(columns={"Result": "Rating"})
+                table_class = "rewrite-rubric-issues"
+            else:
+                unavailable = problems["Result"] == "Unavailable"
+                problems.loc[unavailable, "Reason"] = "Unavailable: " + problems.loc[unavailable, "Reason"].astype(str)
+                columns = ["Row", "Record ID", "Entity / relation", "Label"]
+                if check == "Detection validity":
+                    columns.append("Source")
+                columns.append("Reason")
+                table = problems[columns].rename(columns={"Entity / relation": "Entity"})
+                table_class = "rewrite-entity-issues"
+            with pd.option_context("display.max_colwidth", None):
+                body = (
+                    '<div class="privacy-details">'
+                    + table.to_html(index=False, escape=True, border=0, classes=["rewrite-judge-issues", table_class])
+                    + "</div>"
+                )
+        sections.append("<section><h3>" + heading + "</h3>" + body + "</section>")
+    return "".join(sections)
+
+
 def render_evaluation_report_html(
     *,
     strategy: str,
@@ -142,6 +184,13 @@ def render_evaluation_report_html(
                 "<h3>Privacy Inference Summary</h3><p>" + PRIVACY_INFERENCE_DESCRIPTION + "</p><p>Not evaluated.</p>"
             )
             inference_issues = "<p>Not evaluated.</p>"
+    display_issues = judge_issues.copy()
+    if strategy.startswith("Replace - "):
+        unavailable = display_issues["Result"] == "Unavailable"
+        display_issues.loc[unavailable, "Reason"] = "Evaluation unavailable: " + display_issues.loc[
+            unavailable, "Reason"
+        ].astype(str)
+        display_issues = display_issues.drop(columns="Result")
     with pd.option_context("display.max_colwidth", None):
         judges = (
             judge_summary.to_html(index=False, escape=True, border=0)
@@ -149,10 +198,12 @@ def render_evaluation_report_html(
             else "<p>Not evaluated.</p>"
         )
         issues = (
-            judge_issues.to_html(index=False, escape=True, border=0, classes="judge-issues")
+            display_issues.to_html(index=False, escape=True, border=0, classes="judge-issues")
             if not judge_issues.empty
             else ("<p>No reported judge issues.</p>" if not judge_summary.empty else "<p>Not evaluated.</p>")
         )
+    if strategy == "Rewrite":
+        issues = _render_rewrite_judge_issues(judge_summary, judge_issues)
     judge_note = "Pass counts refer to records; unavailable results are excluded from evaluated counts."
     if judge_summary["Check"].isin(["Rewrite privacy", "Rewrite quality", "Rewrite style"]).any():
         judge_note += " Rewrite rubric ratings are categorical; medium and low ratings appear below as issues."
@@ -168,13 +219,22 @@ def render_evaluation_report_html(
         ".anonymizer-evaluation-report .models-used h4{margin:8px 0;}"
         ".anonymizer-evaluation-report .models-used td span{color:#666;}"
         ".anonymizer-evaluation-report .judge-issues td:nth-child(2){min-width:110px;max-width:110px;}"
+        ".anonymizer-evaluation-report .judge-issues td:nth-child(6)"
+        "{min-width:110px;white-space:nowrap!important;overflow-wrap:normal!important;}"
         ".anonymizer-evaluation-report .judge-issues td:nth-child(3),"
-        ".anonymizer-evaluation-report .judge-issues td:nth-child(5),"
-        ".anonymizer-evaluation-report .judge-issues td:nth-child(8)"
+        ".anonymizer-evaluation-report .judge-issues td:nth-child(5)"
         "{white-space:nowrap!important;overflow-wrap:normal!important;}"
         ".anonymizer-evaluation-report .judge-issues td:nth-child(4),"
         ".anonymizer-evaluation-report .judge-issues td:nth-child(7){min-width:160px;}"
         ".anonymizer-evaluation-report .judge-issues td:last-child{min-width:280px;max-width:600px;}"
+        ".anonymizer-evaluation-report .rewrite-judge-issues td:nth-child(2)"
+        "{min-width:110px;max-width:110px;}"
+        ".anonymizer-evaluation-report .rewrite-judge-issues td:last-child{min-width:280px;max-width:650px;}"
+        ".anonymizer-evaluation-report .rewrite-entity-issues td:nth-child(3){min-width:180px;}"
+        ".anonymizer-evaluation-report .rewrite-entity-issues td:nth-child(4),"
+        ".anonymizer-evaluation-report .rewrite-entity-issues td:nth-child(5):not(:last-child),"
+        ".anonymizer-evaluation-report .rewrite-rubric-issues td:nth-child(3)"
+        "{white-space:nowrap!important;overflow-wrap:normal!important;}"
         "@media(max-width:1000px){.anonymizer-evaluation-report .evaluation-summaries{grid-template-columns:1fr;}}"
         "@media print{.anonymizer-evaluation-report .evaluation-summaries{display:block;}"
         ".anonymizer-evaluation-report .privacy-details{overflow:visible;}"
