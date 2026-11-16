@@ -21,7 +21,7 @@ logger = logging.getLogger("anonymizer.cli")
 import cyclopts
 from pydantic import ValidationError
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite
+from anonymizer.config.anonymizer_config import INSTRUCTIONS_REMOVED, AnonymizerConfig, AnonymizerInput, Detect, Rewrite
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.config.rewrite import (
     DEFAULT_PRESERVE_TEXT,
@@ -114,8 +114,8 @@ class CliOpts:
     risk_tolerance: Annotated[RiskToleranceChoice, cyclopts.Parameter(help="Risk tolerance preset.")] = "low"
     max_repair_iterations: Annotated[int, cyclopts.Parameter(help="Max evaluate-repair iterations.")] = 3
 
-    # -- shared between substitute (replace) and rewrite --
-    instructions: Annotated[str | None, cyclopts.Parameter(help="Extra instructions for the LLM.")] = None
+    # -- substitute-specific --
+    instructions: Annotated[str | None, cyclopts.Parameter(help="Extra instructions for the Substitute LLM.")] = None
 
     # -- telemetry --
     emit_telemetry: Annotated[
@@ -191,6 +191,8 @@ def _build_replace_strategy(opts: CliOpts) -> Substitute | Redact | Hash | Annot
 
 def _build_rewrite_config(opts: CliOpts) -> Rewrite:
     """Build a Rewrite config from CLI args."""
+    if opts.instructions is not None:
+        raise InvalidConfigError(INSTRUCTIONS_REMOVED)
     privacy_goal = None
     if opts.protect or opts.preserve:
         privacy_goal = PrivacyGoal(
@@ -199,7 +201,6 @@ def _build_rewrite_config(opts: CliOpts) -> Rewrite:
         )
     return Rewrite(
         privacy_goal=privacy_goal,
-        instructions=opts.instructions,
         risk_tolerance=RiskTolerance(opts.risk_tolerance),
         max_repair_iterations=opts.max_repair_iterations,
     )

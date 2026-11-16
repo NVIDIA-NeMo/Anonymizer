@@ -8,7 +8,7 @@ import re
 from string import Formatter
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
 
 def _normalize_replace_kind(value: Any) -> Any:
@@ -20,6 +20,8 @@ def _normalize_replace_kind(value: Any) -> Any:
 
 class ReplaceMethodBase(BaseModel):
     """Shared configuration for all replacement methods."""
+
+    model_config = ConfigDict(frozen=True)
 
     def _render_template(self, template: str, *, text: str, label: str, **extra: str) -> str:
         return template.format(text=text, label=label, **extra)

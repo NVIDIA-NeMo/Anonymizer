@@ -12,14 +12,17 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import (
-    DEFAULT_PRESERVE_TEXT,
-    DEFAULT_PROTECT_TEXT,
     EvaluationCriteria,
     PrivacyGoal,
     RiskTolerance,
+    default_privacy_goal,
 )
 from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
-from anonymizer.engine.detection.entity_label_examples import normalize_entity_label_examples
+from anonymizer.engine.detection.entity_label_examples import (
+    ResolvedEntityLabelConfig,
+    normalize_entity_label_examples,
+    resolve_entity_label_config,
+)
 from anonymizer.engine.detection.postprocess import normalize_label
 
 logger = logging.getLogger(__name__)
@@ -112,10 +115,34 @@ class DetectionScope(BaseModel):
     gliner_threshold: float = Field(description="GLiNER detection confidence threshold.")
 
 
+class DetectorDeclaration(BaseModel):
+    """Facts a detector declares about itself, checked against the configuration before work starts."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    offset_unit: str | None = Field(
+        default=None,
+        description=(
+            "Declared offset unit of the detector's spans. None declares nothing. The pipeline consumes "
+            "Unicode code point offsets, so any other declared unit is rejected before work starts."
+        ),
+    )
+    labels: list[str] | None = Field(
+        default=None, description="Declared label set the detector supports. None declares nothing."
+    )
+    labels_fixed: bool = Field(
+        default=False,
+        description=(
+            "True declares that labels is fixed (the detector cannot take caller-selected labels): "
+            "every effective label must then be in labels, or the run is rejected before work starts."
+        ),
+    )
+
+
 class Detect(BaseModel):
     """Configuration for the entity detection stage."""
 
-    model_config = ConfigDict(hide_input_in_errors=True)
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
 
     entity_labels: list[str] | None = Field(
         default=None,
@@ -165,40 +192,70 @@ class Detect(BaseModel):
         ),
     )
 
-    detector_offset_unit: str | None = Field(
-        default=None,
-        description=(
-            "Declared offset unit of the detector's spans. None declares nothing. The pipeline consumes "
-            "Unicode code point offsets, so any other declared unit is rejected before work starts."
-        ),
+    detector: DetectorDeclaration | None = Field(
+        default=None, description="Facts the detector declares about itself. None declares nothing."
     )
-    detector_labels: list[str] | None = Field(
-        default=None, description="Declared label set the detector supports. None declares nothing."
-    )
-    detector_labels_fixed: bool = Field(
-        default=False,
-        description=(
-            "True declares that detector_labels is fixed (the detector cannot take caller-selected labels): "
-            "every effective label must then be in detector_labels, or the run is rejected before work starts."
-        ),
-    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_flat_detector_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for name in ("offset_unit", "labels", "labels_fixed"):
+                if f"detector_{name}" in data:
+                    raise ValueError(f"detect.detector_{name} moved to detect.detector.{name} in v1.")
+        return data
+
+    @property
+    def scope(self) -> DetectionScope:
+        """The detection scope this configuration resolves to, computed on every read."""
+        resolved = self._resolved()
+        labels = sorted(resolved.labels)
+        return DetectionScope(
+            effective_labels=tuple(labels),
+            allowed_labels=tuple(labels) if resolved.strict_labels else None,
+            excluded_labels=tuple(self.excluded_entity_labels or []),
+            gliner_threshold=self.gliner_threshold,
+        )
+
+    @property
+    def strict_labels(self) -> bool:
+        """True when final entities are restricted to the effective labels (entity_labels is set)."""
+        return self.entity_labels is not None
+
+    @property
+    def validator_examples(self) -> dict[str, tuple[str, ...]]:
+        """Built-in plus configured examples per effective label, in resolution order."""
+        return {label: tuple(examples) for label, examples in self._resolved().validator_examples.items()}
+
+    @property
+    def augmenter_examples(self) -> dict[str, tuple[str, ...]]:
+        """Configured examples per effective label, in resolution order."""
+        return {label: tuple(examples) for label, examples in self._resolved().augmenter_examples.items()}
+
+    def _resolved(self) -> ResolvedEntityLabelConfig:
+        return resolve_entity_label_config(
+            entity_labels=self.entity_labels,
+            excluded_entity_labels=self.excluded_entity_labels,
+            entity_label_examples=self.entity_label_examples,
+        )
 
     def detector_declaration_conflicts(self) -> list[str]:
         """Conflicts between the declared detector facts and this configuration; empty when consistent."""
         conflicts = []
-        if self.detector_offset_unit is not None and self.detector_offset_unit != "code_point":
+        detector = self.detector or DetectorDeclaration()
+        if detector.offset_unit is not None and detector.offset_unit != "code_point":
             conflicts.append(
-                f"detector_offset_unit {self.detector_offset_unit!r} is not supported; the pipeline consumes "
+                f"detector.offset_unit {detector.offset_unit!r} is not supported; the pipeline consumes "
                 "'code_point' offsets."
             )
-        if self.detector_labels_fixed:
-            if self.detector_labels is None:
-                conflicts.append("detector_labels_fixed=True requires detector_labels.")
+        if detector.labels_fixed:
+            if detector.labels is None:
+                conflicts.append("detector.labels_fixed=True requires detector.labels.")
             else:
                 effective = set(self.entity_labels or DEFAULT_ENTITY_LABELS) - set(self.excluded_entity_labels or [])
-                missing = sorted(effective - {normalize_label(x) for x in self.detector_labels})
+                missing = sorted(effective - {normalize_label(x) for x in detector.labels})
                 if missing:
-                    conflicts.append(f"Effective labels outside the fixed detector_labels: {missing}.")
+                    conflicts.append(f"Effective labels outside the fixed detector.labels: {missing}.")
         return conflicts
 
     @field_validator("entity_labels")
@@ -287,13 +344,21 @@ class Detect(BaseModel):
         return self
 
 
+INSTRUCTIONS_REMOVED = (
+    "Rewrite.instructions was removed in v1; it never reached the rewrite model. "
+    "Put the guidance in privacy_goal.protect and privacy_goal.preserve."
+)
+
+
 class Rewrite(BaseModel):
     """Configuration for rewrite-mode execution."""
 
-    privacy_goal: PrivacyGoal | None = Field(
-        default=None, description="Structured privacy goal. Auto-populated with defaults if not provided."
+    model_config = ConfigDict(frozen=True)
+
+    privacy_goal: PrivacyGoal = Field(
+        default_factory=default_privacy_goal,
+        description="Structured privacy goal. None or omitted uses the default goal.",
     )
-    instructions: str | None = Field(default=None, description="Additional instructions for the rewrite LLM.")
     risk_tolerance: RiskTolerance = Field(
         default=RiskTolerance.low,
         description="Preset controlling repair thresholds and review flagging.",
@@ -312,14 +377,17 @@ class Rewrite(BaseModel):
         description="If True, requires every entity to receive a protective disposition during sensitivity analysis.",
     )
 
-    @model_validator(mode="after")
-    def populate_default_privacy_goal(self) -> Rewrite:
-        if self.privacy_goal is None:
-            self.privacy_goal = PrivacyGoal(
-                protect=DEFAULT_PROTECT_TEXT,
-                preserve=DEFAULT_PRESERVE_TEXT,
-            )
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def reject_instructions(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("instructions") is not None:
+            raise ValueError(INSTRUCTIONS_REMOVED)
+        return data
+
+    @field_validator("privacy_goal", mode="before")
+    @classmethod
+    def default_goal_for_none(cls, value: Any) -> Any:
+        return default_privacy_goal() if value is None else value
 
     @property
     def evaluation(self) -> EvaluationCriteria:
@@ -346,7 +414,7 @@ class Rewrite(BaseModel):
 class AnonymizerConfig(BaseModel):
     """Primary user-facing config for anonymization behavior."""
 
-    model_config = ConfigDict(hide_input_in_errors=True)
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
 
     detect: Detect = Field(default_factory=Detect, description="Entity detection configuration.")
     replace: ReplaceMethod | None = Field(

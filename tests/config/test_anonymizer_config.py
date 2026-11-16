@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import logging
+import pickle
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -13,6 +15,7 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
     Detect,
+    DetectorDeclaration,
     Rewrite,
     TextRecord,
     TextRecordsInput,
@@ -24,7 +27,9 @@ from anonymizer.config.replace_strategies import (
     Redact,
     Substitute,
 )
+from anonymizer.config.rewrite import PrivacyGoal, RiskTolerance, default_privacy_goal
 from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
+from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 
 
 def test_hash_is_deterministic() -> None:
@@ -515,3 +520,140 @@ def test_replace_json_schema_declares_kind_discriminator() -> None:
     replace_schema = AnonymizerConfig.model_json_schema()["properties"]["replace"]["anyOf"][0]
     assert replace_schema["discriminator"]["propertyName"] == "kind"
     assert set(replace_schema["discriminator"]["mapping"]) == {"annotate", "redact", "hash", "substitute"}
+
+
+# ── frozen models and derived values ──────────────────────────────────────────
+
+
+_FROZEN_FIELDS: list[tuple[Any, str, Any]] = [
+    (AnonymizerConfig(replace=Redact()), "emit_telemetry", False),
+    (AnonymizerConfig(replace=Redact()), "detect", Detect()),
+    (Detect(), "gliner_threshold", 0.5),
+    (Detect(), "entity_labels", ["first_name"]),
+    (Detect(), "detector", DetectorDeclaration()),
+    (DetectorDeclaration(), "labels_fixed", True),
+    (Rewrite(), "privacy_goal", None),
+    (Rewrite(), "max_repair_iterations", 1),
+    (default_privacy_goal(), "protect", "Something else entirely"),
+    (Substitute(), "instructions", "x"),
+    (Redact(), "format_template", "[{label}]"),
+    (Annotate(), "format_template", "<{text}|{label}>"),
+    (Hash(), "digest_length", 8),
+]
+
+
+@pytest.mark.parametrize(("model", "field", "value"), _FROZEN_FIELDS)
+def test_config_models_reject_field_assignment(model: Any, field: str, value: Any) -> None:
+    with pytest.raises(ValidationError, match="frozen"):
+        setattr(model, field, value)
+
+
+def test_frozen_assignment_is_a_type_error() -> None:
+    config = AnonymizerConfig(replace=Redact())
+    with pytest.raises(ValidationError):
+        config.detect.gliner_threshold = 0.5  # ty: ignore[invalid-assignment]
+
+
+_PICKLED: list[Any] = [
+    AnonymizerConfig(
+        detect=Detect(
+            entity_labels=["first_name", "email", "vendor_key"],
+            entity_label_examples={"vendor_key": ["acme_live_1"]},
+            excluded_entity_labels=["email"],
+            gliner_threshold=0.4,
+            detector=DetectorDeclaration(labels=["first_name", "vendor_key"], labels_fixed=True),
+        ),
+        replace=Redact(),
+    ),
+    AnonymizerConfig(
+        rewrite=Rewrite(
+            privacy_goal=PrivacyGoal(protect="Names and street addresses", preserve="Clinical meaning of the note"),
+            risk_tolerance=RiskTolerance.minimal,
+        )
+    ),
+    Substitute(instructions="Keep it short"),
+    Redact(),
+    Annotate(),
+    Hash(digest_length=8),
+    default_privacy_goal(),
+    DetectorDeclaration(offset_unit="code_point"),
+]
+
+
+@pytest.mark.parametrize("original", _PICKLED, ids=lambda m: type(m).__name__)
+def test_frozen_config_models_pickle_round_trip(original: Any) -> None:
+    restored = pickle.loads(pickle.dumps(original))
+    assert type(restored) is type(original)
+    assert restored == original
+    field = next(iter(type(original).model_fields))
+    with pytest.raises(ValidationError, match="frozen"):
+        setattr(restored, field, getattr(restored, field))
+    if isinstance(original, AnonymizerConfig):
+        assert restored.detect.scope == original.detect.scope
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"entity_labels": None},
+        {"entity_labels": ["non_default_label"]},
+        {"entity_labels": ["FIRST_NAME", " email "]},
+        {"entity_labels": None, "entity_label_examples": {"api_key": ["sk-ant-api03-abc123"]}},
+        {"entity_labels": ["vendor_api_key"], "entity_label_examples": {"vendor_api_key": ["acme_live_abc123"]}},
+        {"entity_labels": ["first_name", "email", "city"], "excluded_entity_labels": ["email"]},
+        {"entity_labels": ["first_name", " Email "], "excluded_entity_labels": [" EMAIL "]},
+        {"entity_labels": None, "excluded_entity_labels": ["ssn", "first_name"]},
+    ],
+)
+def test_detect_derivation_matches_resolve_entity_label_config(kwargs: dict[str, Any]) -> None:
+    detect = Detect(**kwargs)
+    resolved = resolve_entity_label_config(
+        entity_labels=detect.entity_labels,
+        excluded_entity_labels=detect.excluded_entity_labels,
+        entity_label_examples=detect.entity_label_examples,
+    )
+    scope = detect.scope
+    assert scope.effective_labels == tuple(sorted(resolved.labels))
+    assert scope.allowed_labels == (tuple(sorted(resolved.labels)) if resolved.strict_labels else None)
+    assert scope.excluded_labels == tuple(detect.excluded_entity_labels or [])
+    assert detect.strict_labels is resolved.strict_labels
+    assert [(k, list(v)) for k, v in detect.validator_examples.items()] == list(resolved.validator_examples.items())
+    assert [(k, list(v)) for k, v in detect.augmenter_examples.items()] == list(resolved.augmenter_examples.items())
+
+
+def test_detect_derivation_is_not_cached() -> None:
+    detect = Detect(entity_labels=["a_label"])
+    assert detect.entity_labels is not None
+    assert "b_label" not in detect.scope.effective_labels
+    detect.entity_labels.append("b_label")
+    assert "b_label" in detect.scope.effective_labels
+
+
+def test_detector_declarations_live_under_detect_detector() -> None:
+    detect = Detect(detector={"labels": ["first_name"], "labels_fixed": True})
+    assert detect.detector == DetectorDeclaration(labels=["first_name"], labels_fixed=True)
+    with pytest.raises(ValidationError, match=r"detect\.detector\.labels_fixed"):
+        Detect.model_validate({"detector_labels_fixed": True})
+    with pytest.raises(ValidationError, match="extra"):
+        DetectorDeclaration.model_validate({"label": ["first_name"]})
+
+
+def test_rewrite_instructions_is_removed_with_a_message() -> None:
+    with pytest.raises(ValidationError, match=r"Rewrite\.instructions was removed in v1.*privacy_goal\.protect"):
+        Rewrite(instructions="x")  # ty: ignore[pydantic-discarded-extra-argument]
+
+
+def test_rewrite_loads_dumps_that_carry_instructions_none() -> None:
+    config = AnonymizerConfig.model_validate({"rewrite": {"instructions": None}})
+    assert config.rewrite == Rewrite()
+    assert "instructions" not in Rewrite().model_dump()
+
+
+def test_rewrite_none_goal_yields_the_default() -> None:
+    assert Rewrite(privacy_goal=None).privacy_goal == default_privacy_goal()
+    assert Rewrite.model_validate({"privacy_goal": None}).privacy_goal == default_privacy_goal()
+
+    def _protect(rewrite: Rewrite) -> str:
+        return rewrite.privacy_goal.protect
+
+    assert _protect(Rewrite()) == default_privacy_goal().protect

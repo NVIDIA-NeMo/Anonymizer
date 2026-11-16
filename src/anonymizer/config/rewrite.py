@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class RiskTolerance(str, Enum):
@@ -119,6 +119,8 @@ _RISK_TOLERANCE_BUNDLES: dict[RiskTolerance, _RiskToleranceBundle] = {
 class PrivacyGoal(BaseModel):
     """Structured privacy and utility goal for rewrite mode."""
 
+    model_config = ConfigDict(frozen=True)
+
     protect: str = Field(
         min_length=10, max_length=1000, description="What to protect (e.g. direct identifiers, quasi-identifiers)."
     )
@@ -200,3 +202,8 @@ class EvaluationCriteria(BaseModel):
     def sensitivity_weights(self) -> dict[str, float]:
         """Weights for high/medium/low sensitivity levels in leakage mass computation."""
         return dict(SENSITIVITY_WEIGHTS)
+
+
+def default_privacy_goal() -> PrivacyGoal:
+    """The privacy goal a Rewrite uses when none is given."""
+    return PrivacyGoal(protect=DEFAULT_PROTECT_TEXT, preserve=DEFAULT_PRESERVE_TEXT)

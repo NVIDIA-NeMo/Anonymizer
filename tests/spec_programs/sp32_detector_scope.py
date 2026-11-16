@@ -9,7 +9,13 @@ from unittest.mock import Mock
 
 import pandas as pd
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, Detect, TextRecord, TextRecordsInput
+from anonymizer.config.anonymizer_config import (
+    AnonymizerConfig,
+    Detect,
+    DetectorDeclaration,
+    TextRecord,
+    TextRecordsInput,
+)
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT, DEFAULT_ENTITY_LABELS
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
@@ -26,7 +32,8 @@ def program() -> list[dict[str, str]]:
     def e1() -> tuple[bool, str]:
         detector = Mock(spec=EntityDetectionWorkflow)
         detect = Detect(
-            entity_labels=["first_name", "email"], detector_labels=["first_name"], detector_labels_fixed=True
+            entity_labels=["first_name", "email"],
+            detector=DetectorDeclaration(labels=["first_name"], labels_fixed=True),
         )
         try:
             Anonymizer(detection_workflow=detector).run(

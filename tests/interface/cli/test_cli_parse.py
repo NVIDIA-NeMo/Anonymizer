@@ -170,10 +170,10 @@ def test_build_rewrite_max_repair_iterations() -> None:
 
 
 def test_build_rewrite_instructions() -> None:
-    """--instructions is forwarded to Rewrite config."""
+    """--instructions under --rewrite is rejected: Rewrite.instructions was removed."""
     opts = CliOpts(rewrite=True, instructions="Keep dates approximate")
-    rewrite = _build_rewrite_config(opts)
-    assert rewrite.instructions == "Keep dates approximate"
+    with pytest.raises(InvalidConfigError, match=r"Rewrite\.instructions was removed in v1"):
+        _build_rewrite_config(opts)
 
 
 # ---------------------------------------------------------------------------

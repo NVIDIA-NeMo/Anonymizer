@@ -25,7 +25,6 @@ from data_designer.interface.data_designer import DataDesigner
 from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
-    DetectionScope,
     EvaluateConfig,
     Rewrite,
     TextRecordsInput,
@@ -59,7 +58,6 @@ from anonymizer.engine.constants import (
     DEFAULT_ENTITY_LABELS,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
-from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
@@ -430,6 +428,7 @@ class Anonymizer:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
             data: File-backed or in-memory records and optional dataset context.
         """
+        config = config.model_copy(deep=True)
         self._validate_preflight_config(config)
         context = read_input(data)
         input_df = context.dataframe
@@ -478,6 +477,7 @@ class Anonymizer:
             data: Input source (the records to detect over).
             seed_path: Destination parquet path for the seed dataset.
         """
+        config = config.model_copy(deep=True)
         self._validate_preflight_config(config)
         context = read_input(data)
         return self._detection_workflow.build_detection_config(
@@ -516,6 +516,7 @@ class Anonymizer:
         and ``seed_path`` must resolve to an existing file when the worker reconstructs
         the config. Runtime model providers remain external to the serialized config.
         """
+        config = config.model_copy(deep=True)
         self._validate_preflight_config(config)
         return self._detection_workflow.build_detection_builder_for_seed(
             seed_path=seed_path,
@@ -552,6 +553,7 @@ class Anonymizer:
             data: File-backed or in-memory records and optional dataset context.
             num_records: Maximum records to process (default 10).
         """
+        config = config.model_copy(deep=True)
         self._validate_preflight_config(config)
         context = read_input(data, nrows=num_records)
         input_df = context.dataframe
@@ -907,15 +909,11 @@ class Anonymizer:
             preview_num_records = effective_records
         else:
             logger.info("🔍 Running entity detection on %d records", num_records)
-        label_config = resolve_entity_label_config(
-            entity_labels=config.detect.entity_labels,
-            excluded_entity_labels=config.detect.excluded_entity_labels,
-            entity_label_examples=config.detect.entity_label_examples,
-        )
+        scope = config.detect.scope
         configured_label_count = len(
             config.detect.entity_labels if config.detect.entity_labels is not None else DEFAULT_ENTITY_LABELS
         )
-        effective_label_count = len(label_config.labels)
+        effective_label_count = len(scope.effective_labels)
         removed_label_count = configured_label_count - effective_label_count
         if logger.isEnabledFor(logging.DEBUG):
             text_lengths = input_df[COL_TEXT].astype(str).str.len()
@@ -943,13 +941,8 @@ class Anonymizer:
                 removed_label_count,
             )
 
-        # The privacy goal admitted for this run: Rewrite, the result's rewrite_config and evaluate() all use this
-        # copy. Caller detectors still receive the caller's own object, as in the release.
-        admitted_goal = (
-            config.rewrite.privacy_goal.model_copy(deep=True)
-            if config.rewrite is not None and config.rewrite.privacy_goal is not None
-            else None
-        )
+        # config is the per-call copy taken at entry: detectors (injected ones included), Rewrite, the result's
+        # rewrite_config and evaluate() all receive the copy's goal, equal in value to the caller's, not the same object.
         detection_options: dict[str, Any] = dict(
             gliner_detection_threshold=config.detect.gliner_threshold,
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
@@ -1017,9 +1010,6 @@ class Anonymizer:
             outcomes = replace_result.outcomes
         else:
             assert config.rewrite is not None
-            privacy_goal = admitted_goal
-            if privacy_goal is None:
-                raise InvalidConfigError("rewrite.privacy_goal must not be None")
             rewrite_runner = (
                 self._combined_rewrite_runner if config.rewrite.use_combined_graph else self._rewrite_runner
             )
@@ -1027,7 +1017,7 @@ class Anonymizer:
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.rewrite,
                 replace_model_selection=self._selected_models.replace,
-                privacy_goal=privacy_goal,
+                privacy_goal=config.rewrite.privacy_goal,
                 evaluation=config.rewrite.evaluation,
                 data_summary=data.data_summary,
                 preview_num_records=preview_num_records,
@@ -1102,23 +1092,16 @@ class Anonymizer:
             failed_records=all_failures,
             id_column=context.resolved_id_column,
             replace_method=config.replace,
-            rewrite_config=admitted_goal,
+            rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
-            detection_scope=DetectionScope(
-                effective_labels=sorted(label_config.labels),
-                allowed_labels=sorted(label_config.labels) if label_config.strict_labels else None,
-                excluded_labels=config.detect.excluded_entity_labels or [],
-                gliner_threshold=config.detect.gliner_threshold,
-            ),
+            detection_scope=scope,
             data_summary=data.data_summary,
             _outcomes=outcomes,
         )
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
         """Run semantic preflight checks shared by validate, run, and preview."""
-        if config.rewrite is not None and config.rewrite.privacy_goal is None:
-            raise InvalidConfigError("rewrite.privacy_goal must not be None")
         if conflicts := config.detect.detector_declaration_conflicts():
             raise InvalidConfigError(" ".join(conflicts))
         try:
@@ -1441,10 +1424,9 @@ def _transformation_type_string(config: AnonymizerConfig) -> str:
 def _custom_privacy_goal_provided(rewrite: Rewrite | None) -> bool:
     """Detect whether the user supplied a non-default privacy_goal.
 
-    ``Rewrite.populate_default_privacy_goal`` always populates a default if the
-    user passed None, so we treat the default protect/preserve text as "not custom".
+    A goal equal to the default protect/preserve text counts as "not custom".
     """
-    if rewrite is None or rewrite.privacy_goal is None:
+    if rewrite is None:
         return False
     from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT, DEFAULT_PROTECT_TEXT
 

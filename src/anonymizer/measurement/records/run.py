@@ -83,7 +83,6 @@ def _rewrite_config_metadata(rewrite_config: Any | None) -> dict[str, Any] | Non
         "max_repair_iterations": getattr(rewrite_config, "max_repair_iterations", None),
         "strict_entity_protection": getattr(rewrite_config, "strict_entity_protection", None),
         "has_privacy_goal": bool(getattr(rewrite_config, "privacy_goal", None)),
-        "has_instructions": bool(getattr(rewrite_config, "instructions", None)),
     }
 
 

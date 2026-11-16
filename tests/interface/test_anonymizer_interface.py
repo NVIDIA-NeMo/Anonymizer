@@ -4,15 +4,14 @@
 from __future__ import annotations
 
 import contextvars
-import dataclasses
 import functools
 import inspect
 import sys
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
-from unittest.mock import Mock, patch
+from typing import Any, cast
+from unittest.mock import Mock, PropertyMock, patch
 
 import pandas as pd
 import pytest
@@ -22,6 +21,8 @@ from anonymizer import RunConfig
 from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
+    Detect,
+    DetectionScope,
     EvaluateConfig,
     Rewrite,
     TextRecord,
@@ -29,6 +30,7 @@ from anonymizer.config.anonymizer_config import (
 )
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Redact, Substitute
+from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_DETECTION_VALID,
@@ -50,7 +52,6 @@ from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
     _build_entities_by_value,
 )
-from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import FailedRecord
@@ -1146,19 +1147,6 @@ def test_run_rewrite_uses_combined_runner_when_enabled(stub_input: AnonymizerInp
     combined_runner.run_with_detection.assert_called_once()
 
 
-def test_run_rewrite_rejects_missing_privacy_goal_before_workflows(stub_input: AnonymizerInput) -> None:
-    config = AnonymizerConfig(rewrite=Rewrite())
-    assert config.rewrite is not None
-    config.rewrite.privacy_goal = None
-    anonymizer, detection_workflow, _, rewrite_runner = _make_anonymizer()
-
-    with pytest.raises(InvalidConfigError, match="privacy_goal"):
-        anonymizer.run(config=config, data=stub_input)
-
-    detection_workflow.run.assert_not_called()
-    rewrite_runner.run_with_detection.assert_not_called()
-
-
 def test_run_rewrite_output_columns(stub_input: AnonymizerInput) -> None:
     config = AnonymizerConfig(rewrite=Rewrite())
     anonymizer, _, _, _ = _make_anonymizer()
@@ -1561,14 +1549,29 @@ def test_evaluate_rewrite_flags_rows_with_missed_entities(
 @pytest.mark.parametrize(
     "detect",
     [
-        {"entity_labels": ["first_name", "email"], "detector_labels": ["first_name"], "detector_labels_fixed": True},
-        {"detector_labels_fixed": True},
-        {"detector_offset_unit": "utf16_code_unit"},
+        {"entity_labels": ["first_name", "email"], "detector": {"labels": ["first_name"], "labels_fixed": True}},
+        {"detector": {"labels_fixed": True}},
+        {"detector": {"offset_unit": "utf16_code_unit"}},
     ],
 )
 def test_conflicting_detector_declarations_rejected_before_detection(stub_input: AnonymizerInput, detect: dict) -> None:
     anonymizer, detection_wf, _, _ = _make_anonymizer()
     with pytest.raises(InvalidConfigError):
+        anonymizer.run(config=AnonymizerConfig(detect=detect, replace=Redact()), data=stub_input)
+    detection_wf.run.assert_not_called()
+
+
+def test_fixed_detector_labels_missing_a_reserved_label_raise_invalid_config_at_preflight(
+    stub_input: AnonymizerInput,
+) -> None:
+    detect = {
+        "entity_labels": ["first_name", "nagroup_g1"],
+        "detector": {"labels": ["first_name"], "labels_fixed": True},
+    }
+    anonymizer, detection_wf, _, _ = _make_anonymizer()
+    with pytest.raises(InvalidConfigError, match="nagroup_g1"):
+        anonymizer.validate_config(AnonymizerConfig(detect=detect, replace=Redact()))
+    with pytest.raises(InvalidConfigError, match="nagroup_g1"):
         anonymizer.run(config=AnonymizerConfig(detect=detect, replace=Redact()), data=stub_input)
     detection_wf.run.assert_not_called()
 
@@ -1588,9 +1591,7 @@ def test_matching_detector_declaration_runs_and_reports_scope(stub_input: Anonym
     detect = {
         "entity_labels": ["first_name", "email"],
         "excluded_entity_labels": ["email"],
-        "detector_labels": ["first_name", "email", "city"],
-        "detector_labels_fixed": True,
-        "detector_offset_unit": "code_point",
+        "detector": {"labels": ["first_name", "email", "city"], "labels_fixed": True, "offset_unit": "code_point"},
     }
     anonymizer, _, _, _ = _make_anonymizer()
 
@@ -1603,17 +1604,95 @@ def test_matching_detector_declaration_runs_and_reports_scope(stub_input: Anonym
     assert not hasattr(result.detection_scope, "augmentation_may_add_labels")
 
 
-def test_detection_scope_reports_the_run_label_policy(stub_input: AnonymizerInput) -> None:
-    resolved = resolve_entity_label_config(entity_labels=None)
-    patched = dataclasses.replace(resolved, labels=[*resolved.labels, "zz_extra"])
+def test_result_scope_is_the_config_scope(stub_input: AnonymizerInput) -> None:
+    sentinel = DetectionScope(
+        effective_labels=("zz_extra",), allowed_labels=None, excluded_labels=(), gliner_threshold=0.3
+    )
     anonymizer, _, _, _ = _make_anonymizer()
 
-    with patch("anonymizer.interface.anonymizer.resolve_entity_label_config", return_value=patched):
+    with patch.object(Detect, "scope", new_callable=PropertyMock, return_value=sentinel):
         scope = anonymizer.preview(config=AnonymizerConfig(replace=Redact()), data=stub_input).detection_scope
 
-    assert scope is not None
-    assert scope.allowed_labels is None
-    assert scope.effective_labels == tuple(sorted(patched.labels))
+    assert scope == sentinel
+
+
+@pytest.mark.parametrize("method", ["run", "preview"])
+def test_in_place_edit_after_call_start_does_not_change_the_call(stub_input: AnonymizerInput, method: str) -> None:
+    config = AnonymizerConfig(
+        detect=Detect(entity_labels=["first_name", "email"], entity_label_examples={"email": ["a@b.example"]}),
+        replace=Redact(),
+    )
+    scope_before = config.detect.scope
+    anonymizer, detection_workflow, _, _ = _make_anonymizer()
+    original_side_effect = detection_workflow.run.side_effect
+    original_return = detection_workflow.run.return_value
+    received: dict[str, Any] = {}
+
+    def edit_mid_call(*args: Any, **kwargs: Any) -> Any:
+        received["entity_labels"] = kwargs["entity_labels"]
+        assert config.detect.entity_labels is not None
+        config.detect.entity_labels.append("zz_late")
+        config.detect.entity_label_examples["first_name"] = ["Zed"]
+        if original_side_effect is not None:
+            return original_side_effect(*args, **kwargs)
+        return original_return
+
+    detection_workflow.run.side_effect = edit_mid_call
+    result = getattr(anonymizer, method)(config=config, data=stub_input)
+
+    assert "zz_late" in (config.detect.entity_labels or [])
+    assert "zz_late" not in received["entity_labels"]
+    assert result.entity_labels is not None and "zz_late" not in result.entity_labels
+    assert result.detection_scope == scope_before
+
+
+@pytest.mark.parametrize("method", ["run", "preview", "export_detection_config", "export_detection_builder_for_seed"])
+def test_workflow_cannot_change_the_caller_config(stub_input: AnonymizerInput, method: str, tmp_path: Path) -> None:
+    config = AnonymizerConfig(
+        detect=Detect(entity_labels=["first_name", "email"], entity_label_examples={"email": ["a@b.example"]}),
+        replace=Redact(),
+    )
+    snapshot = config.model_dump()
+    anonymizer, detection_workflow, _, _ = _make_anonymizer()
+    target = {
+        "run": detection_workflow.run,
+        "preview": detection_workflow.run,
+        "export_detection_config": detection_workflow.build_detection_config,
+        "export_detection_builder_for_seed": detection_workflow.build_detection_builder_for_seed,
+    }[method]
+    original_side_effect = target.side_effect
+    original_return = target.return_value
+
+    def mutate(*args: Any, **kwargs: Any) -> Any:
+        kwargs["entity_labels"].append("zz_workflow")
+        for examples in kwargs.get("entity_label_examples", {}).values():
+            examples.append("zz_workflow")
+        if original_side_effect is not None:
+            return original_side_effect(*args, **kwargs)
+        return original_return
+
+    target.side_effect = mutate
+    if method in ("run", "preview"):
+        getattr(anonymizer, method)(config=config, data=stub_input)
+    elif method == "export_detection_config":
+        anonymizer.export_detection_config(config=config, data=stub_input, seed_path=tmp_path / "seed.parquet")
+    else:
+        anonymizer.export_detection_builder_for_seed(config=config, seed_path=tmp_path / "seed.parquet")
+
+    assert target.call_count == 1
+    assert config.model_dump() == snapshot
+
+
+def test_rewrite_goal_reaching_the_detector_matches_the_caller_goal(stub_input: AnonymizerInput) -> None:
+    goal = PrivacyGoal(protect="Names and street addresses", preserve="Clinical meaning of the note")
+    config = AnonymizerConfig(rewrite=Rewrite(privacy_goal=goal))
+    anonymizer, detection_workflow, _, rewrite_runner = _make_anonymizer()
+
+    anonymizer.run(config=config, data=stub_input)
+
+    received = detection_workflow.run.call_args.kwargs["privacy_goal"]
+    assert received == goal
+    assert rewrite_runner.run_with_detection.call_args.kwargs["privacy_goal"] == goal
 
 
 class _FirstWordDetector:
