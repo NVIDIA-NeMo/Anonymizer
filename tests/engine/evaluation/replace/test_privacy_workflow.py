@@ -245,7 +245,8 @@ async def _stub_privacy_generation(
                 for idx, category, sensitivity in [(1, "direct_identifier", "high"), (2, "quasi_identifier", "low")]
             ]
         }
-    elif "You are a privacy auditor." in prompt:
+    elif "<answer_template>" in prompt:
+        assert "text that has undergone entity replacement or redaction" in prompt
         if "<text>\nMODEL_FAILURE\n</text>" in prompt:
             raise RuntimeError("Synthetic privacy answer failure")
         leaked = "<text>\nMaya lives in USA.\n</text>" in prompt

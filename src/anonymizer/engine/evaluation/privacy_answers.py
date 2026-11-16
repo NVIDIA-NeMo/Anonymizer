@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Privacy auditor prompt and model call shared by Replace and Rewrite."""
+"""Default Rewrite privacy prompt and model-call helper shared by both modes."""
 
 from __future__ import annotations
 
@@ -87,8 +87,11 @@ async def answer_privacy_qa(
     model: Any,
     recipe: PydanticResponseRecipe,
     parser: Any,
+    prompt: str | None = None,
 ) -> Any:
-    """Answer using caller-selected parsing policy and the model correction loop."""
-    prompt = recipe.apply_recipe_to_user_prompt(render_privacy_answer_prompt(qa, text))
+    """Answer with shared correction/parsing; default to Rewrite's existing prompt."""
+    prompt = recipe.apply_recipe_to_user_prompt(
+        prompt if prompt is not None else render_privacy_answer_prompt(qa, text)
+    )
     result, _ = await model.agenerate(prompt=prompt, parser=parser, max_correction_steps=3)
     return result

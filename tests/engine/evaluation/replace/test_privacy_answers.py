@@ -200,6 +200,8 @@ def test_batching_preserves_ids_full_text_and_question_order(
         assert "ORIGINAL CONTEXT MUST NOT BE INCLUDED" not in prompt
         template = json.loads(prompt.split("<answer_template>")[1].split("</answer_template>")[0])
         assert [item["id"] for item in template["answers"]] == ids
+        assert all(item["confidence"] is None for item in template["answers"])
+        assert "text that has undergone entity replacement or redaction" in prompt
         assert call.kwargs["max_correction_steps"] == 3
         assert call.kwargs["parser"](json.dumps({"answers": [_answer(item_id) for item_id in ids]})).answers
         with pytest.raises(ParserException):
@@ -228,3 +230,32 @@ def test_later_batch_failure_discards_partial_answers() -> None:
 def test_batch_size_requires_a_positive_integer(batch_size: object) -> None:
     with pytest.raises(ValidationError):
         EvaluateConfig.model_validate({"privacy_qa_batch_size": batch_size})
+
+
+def test_replace_uses_dedicated_prompt_and_unfilled_confidence() -> None:
+    model = _CorrectingModel([json.dumps({"answers": [_answer()]})])
+    asyncio.run(_make_privacy_answer_column("judge")(_row(), None, {"judge": model}))
+    assert "text that has undergone entity replacement or redaction" in model.prompt
+    assert "It does not reveal the hidden value." in model.prompt
+    assert "A matching string used in a clearly different role is not sufficient." in model.prompt
+    assert '"North America" alone does not establish US.' in model.prompt
+    assert "citizenship, or nationality. Those require evidence" in model.prompt
+    template = json.loads(model.prompt.split("<answer_template>")[1].split("</answer_template>")[0])
+    assert template["answers"][0]["confidence"] is None
+    assert template["answers"][0]["id"] == 1
+
+
+def test_rewrite_still_uses_original_prompt_and_template() -> None:
+    from anonymizer.engine.constants import COL_REWRITTEN_TEXT
+    from anonymizer.engine.rewrite.evaluate import _make_privacy_reanswer_column
+
+    row = _row()
+    row[COL_REWRITTEN_TEXT] = "Maya arrived."
+    model = _CorrectingModel([json.dumps({"answers": [_answer()]})])
+    asyncio.run(_make_privacy_reanswer_column("judge")(row, None, {"judge": model}))
+    assert 'You are a privacy auditor. Read the text and answer each question with "yes" or "no".' in model.prompt
+    assert "Weak or indirect signals still count" in model.prompt
+    assert "undergo" not in model.prompt
+    template = json.loads(model.prompt.split("<answer_template>")[1].split("</answer_template>")[0])
+    assert template["answers"][0]["confidence"] == 1.0
+    assert "ORIGINAL CONTEXT MUST NOT BE INCLUDED" not in model.prompt

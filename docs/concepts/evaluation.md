@@ -206,6 +206,18 @@ are unchanged. If any batch fails, the record's privacy answers and leakage scor
 remain unavailable; partial answers are not scored. Smaller batches increase
 request count and repeat the text in each request. The option does not affect Rewrite.
 
+Replace uses its own privacy-answering prompt. It requires evidence for the
+specific target value in the requested semantic role, treats placeholders as
+removed information rather than recoverable values, and checks residual original
+clues even when synthetic values conflict. Equivalent forms and geographic
+containment are supported without equating residence with citizenship or other
+personal attributes. Confidence means confidence in the selected yes/no answer;
+evidence must be verbatim from the anonymized text. The template leaves confidence
+unfilled for the model to supply. Rewrite retains its existing answering prompt.
+Both modes share the model-call helper; their parsing and scoring policies are
+unchanged. Re-evaluate Replace output to obtain answers under the new prompt;
+displaying an existing report continues to use its saved answers.
+
 For Replace, this option resolves to off by default and works with Substitute, Redact, Hash, and Annotate.
 It assigns category and sensitivity to each detected
 value/label pair, generates privacy questions, and answers them using the replaced
