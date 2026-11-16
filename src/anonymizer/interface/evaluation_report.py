@@ -11,7 +11,7 @@ from typing import Any
 
 import pandas as pd
 
-from anonymizer.interface.privacy_report import render_privacy_report_sections
+from anonymizer.interface.privacy_report import PRIVACY_INFERENCE_DESCRIPTION, render_privacy_report_sections
 
 
 def render_evaluation_report_html(
@@ -28,7 +28,9 @@ def render_evaluation_report_html(
         privacy_summary, privacy_issues, heading="Privacy Inference Summary"
     )
     if privacy_summary["records_evaluated"] == 0 and privacy_summary["records_unavailable"] == 0:
-        inference = "<h3>Privacy Inference Summary</h3><p>Not evaluated.</p>"
+        inference = (
+            "<h3>Privacy Inference Summary</h3><p>" + PRIVACY_INFERENCE_DESCRIPTION + "</p><p>Not evaluated.</p>"
+        )
         inference_issues = "<p>Not evaluated.</p>"
     with pd.option_context("display.max_colwidth", None):
         judges = (

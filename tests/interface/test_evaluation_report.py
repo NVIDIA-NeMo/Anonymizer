@@ -202,3 +202,16 @@ def test_rubric_explanation_only_appears_with_saved_rewrite_ratings(tmp_path: Pa
     result = _result(pd.DataFrame([row]), replace_method=None if rewrite_ratings else Substitute())
     document = result.export_evaluation_report(tmp_path / "report.html").read_text()
     assert ("Rewrite rubric ratings are categorical" in document) is rewrite_ratings
+
+
+@pytest.mark.parametrize("evaluated", [False, True])
+def test_inference_summary_defines_inference(tmp_path: Path, evaluated: bool) -> None:
+    row = {}
+    if evaluated:
+        row = {cols.COL_ENTITIES_BY_VALUE: {"entities_by_value": []}, cols.COL_LEAKAGE_MASS: 0}
+    result = _result(pd.DataFrame([row]), replace_method=Redact())
+    document = result.export_evaluation_report(tmp_path / "report.html").read_text()
+    definition = "Privacy inference checks whether each original entity value can still be identified or inferred"
+    assert definition in document
+    assert document.index("Privacy Inference Summary") < document.index(definition)
+    assert "including direct mentions and contextual clues." in document

@@ -24,6 +24,11 @@ from anonymizer.engine.constants import (
     COL_FINDING_SENSITIVITY,
 )
 
+PRIVACY_INFERENCE_DESCRIPTION = (
+    "Privacy inference checks whether each original entity value can still be identified or inferred "
+    "from the anonymized text, including direct mentions and contextual clues."
+)
+
 
 def render_privacy_report_sections(
     summary: dict[str, Any], problems: pd.DataFrame, *, heading: str = "Privacy evaluation summary"
@@ -119,7 +124,13 @@ def render_privacy_report_sections(
         "</style>"
     )
     inference_summary = (
-        "<h3>" + html.escape(heading) + "</h3><table>" + metrics + "</table>"
+        "<h3>"
+        + html.escape(heading)
+        + "</h3><p>"
+        + PRIVACY_INFERENCE_DESCRIPTION
+        + "</p><table>"
+        + metrics
+        + "</table>"
         "<p><strong>Weighted entity recovery rate</strong> = leakage mass divided by the total "
         "sensitivity weight of evaluated entity targets. Each reported recoverable entity contributes "
         "its sensitivity weight × the judge's confidence; negative answers contribute zero. "
