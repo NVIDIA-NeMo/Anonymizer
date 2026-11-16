@@ -56,6 +56,7 @@ input_df
             → merge + finalize  → COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES
       substitute-map (Substitute only)             → LlmReplaceWorkflow → NddAdapter
       replace → verify-patches (per row)           # Redact / Annotate / Hash apply locally, no LLM
+        → verify-no-original (not Annotate)        # advisory check, not required
   → output: {text_col}_replaced, {text_col}_with_spans, final_entities
 ```
 

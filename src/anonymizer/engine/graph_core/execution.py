@@ -289,6 +289,18 @@ class Reason:
 
 
 @dataclass(frozen=True)
+class Advisory:
+    """A check the workflow does not require, as a final-text verifier assessed it: ``passed``, ``failed`` or
+    ``could_not_assess``; ``cause`` is the verifier's stated cause for ``failed`` and ``could_not_assess``. It never
+    changes qualification or release. Fields hold codes and declared names, never record text."""
+
+    check: str
+    verifier: str
+    status: Literal["passed", "failed", "could_not_assess"]
+    cause: str = ""
+
+
+@dataclass(frozen=True)
 class TargetOutcome:
     """Execution terminal, criteria satisfaction and output availability, kept separate.
 
@@ -303,6 +315,7 @@ class TargetOutcome:
     reasons: tuple[Reason, ...] = ()
     error: BaseException | None = field(default=None, repr=False, compare=False)
     withheld_by: tuple[Datum, ...] = ()
+    advisories: tuple[Advisory, ...] = ()
 
     @property
     def reason(self) -> str:
@@ -661,6 +674,8 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
     g = p.graph
     requires = p.workflow.requires
     checks_of = [[c for c in op.checks if c in requires] for _, op in p.workflow.flatten()]
+    advisory_of = [[c for c in op.checks if c not in requires] for _, op in p.workflow.flatten()]
+    advice: list[tuple[Advisory, ...]] = []
     consistent = True
     verdicts: list[tuple[Terminal, Qualification, list[Reason]]] = []
     failures: dict[int, k.Entry] = {}
@@ -678,6 +693,15 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
         # Unattributed, foreign or swapped evidence from any verifier destroys attribution.
         assessments = [v for out in row.outputs.values() for v in out.values() if isinstance(v, Assessment)]
         consistent = consistent and all(a.target == d for a in assessments)
+        found: list[Advisory] = []
+        for i in sorted(p.covering_verifiers):
+            a = row.outputs.get(i, {}).get("assessment")
+            if a is None or not advisory_of[i]:
+                continue
+            status = "passed" if a.satisfied is True else "could_not_assess" if a.satisfied is None else "failed"
+            cause = "" if status == "passed" else a.reason
+            found += [Advisory(c, p.names[i], status, cause) for c in advisory_of[i]]
+        advice.append(tuple(found))
         qual: Qualification
         if terminal != "success":
             qual = "not_met"
@@ -739,5 +763,5 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
         failed = failures.get(u)
         error = failed.error if failed is not None and terminal != "success" else None
         by = shared.get(d) or tuple(withheld_by.get(d, ()))
-        outcomes.append(TargetOutcome(terminal, qual, available, d in released, tuple(reasons), error, by))
+        outcomes.append(TargetOutcome(terminal, qual, available, d in released, tuple(reasons), error, by, advice[u]))
     return ProtectionResult(p, state, retrievals, tuple(outcomes), consistent)

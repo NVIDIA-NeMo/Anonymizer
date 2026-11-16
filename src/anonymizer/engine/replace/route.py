@@ -5,8 +5,10 @@
 
 Each row lowers to one target datum whose exact, non-overlapping entity spans are its mentions. A row is a transform
 (``replace``: the 0.4.0 per-row replacement) followed by a verifier (``verify-patches``: one patch per accepted
-mention, checked by source-plus-patches reconstruction). The legacy DataFrame projection derives from
-the canonical result without rerunning work; Annotate output is an annotation result and is never Protected.
+mention, checked by source-plus-patches reconstruction). Except under Annotate, a second verifier
+(``verify-no-original``) reports the non-required check ``no_replaced_value_remains`` as an advisory. The legacy
+DataFrame projection derives from the canonical result without rerunning work; Annotate output is an annotation
+result and is never Protected.
 
 Substitute runs as one invocation. Its phase-scoped ``substitute-map`` step makes one ``LlmReplaceWorkflow`` call
 over the whole frame (DataDesigner batches it) and returns each row's replacement map; a row DataDesigner dropped gets
@@ -67,6 +69,7 @@ from anonymizer.engine.replace.strategies import (
 )
 from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
+from anonymizer.engine.value_matching import any_value_occurs
 from anonymizer.logging import ProgressTracker
 from anonymizer.measurement import record_stage
 
@@ -324,6 +327,15 @@ def _protect_rows(
             subject=("text",),
         ),
     )
+    if not annotate:  # Annotate keeps each original inside its label by design
+        no_original = Operation.verifier(
+            "verify-no-original",
+            _verify_no_original,
+            {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "replacement_map": REPLACEMENT_MAP, "target": DATUM},
+            checks=("no_replaced_value_remains",),
+            subject=("text",),
+        )
+        operations = (*operations, no_original)
     operations = (*(s for s in (detect_op, map_step) if s is not None), *operations)
     release = "annotation" if annotate else "protected"
     workflow = Workflow(name, operations, release=release, requires=("replacements_applied",))
@@ -358,11 +370,9 @@ def _verify_patches(
     target: Datum,
 ) -> Assessment:
     """Reconstruct source-plus-patches, one patch per accepted mention, and compare with the candidate."""
-    patches = {(r.original, r.label): r.synthetic for r in _parse_replacements(replacement_map)}
     parts: list[str] = []
     cursor = 0
-    for m in mentions:
-        synthetic = patches.get((source[m.start : m.end], m.label))
+    for m, synthetic in zip(mentions, _patches(source, mentions, replacement_map)):
         if synthetic is None:
             return Assessment(False, target, "unpatched_mention")
         parts += [source[cursor : m.start], synthetic]
@@ -370,6 +380,37 @@ def _verify_patches(
     parts.append(source[cursor:])
     satisfied = "".join(parts) == text and application.get("skipped_span_count") == 0
     return Assessment(satisfied, target, "" if satisfied else "reconstruction_mismatch")
+
+
+def _patches(source: str, mentions: tuple[Mention, ...], replacement_map: dict) -> list[str | None]:
+    """Each mention's substitute in ``replacement_map`` (``None`` when the map has none): the verifiers' one read of
+    the map."""
+    patches = {(r.original, r.label): r.synthetic for r in _parse_replacements(replacement_map)}
+    return [patches.get((source[m.start : m.end], m.label)) for m in mentions]
+
+
+def _verify_no_original(
+    text: str, source: str, mentions: tuple[Mention, ...], replacement_map: dict, target: Datum
+) -> Assessment:
+    """Whether no accepted mention's value occurs in the kept text (the source outside every patch), under the rule
+    Rewrite's ``replacements_applied`` uses. Never raises: an error or a candidate that is not source-plus-patches
+    could not be assessed. Each kept part is scanned separately, so a patch edge counts as a word boundary."""
+    try:
+        parts: list[str] = []
+        cursor = 0
+        for m, synthetic in zip(mentions, _patches(source, mentions, replacement_map)):
+            if synthetic is None:
+                continue  # an unpatched mention stays in the kept text
+            parts += [source[cursor : m.start], synthetic]
+            cursor = m.end
+        parts.append(source[cursor:])
+        if "".join(parts) != text:
+            return Assessment(None, target, "reconstruction_mismatch")
+        values = {source[m.start : m.end] for m in mentions}
+        found = any(any_value_occurs(values, part) for part in parts[::2])  # the kept parts
+        return Assessment(not found, target)
+    except Exception:
+        return Assessment(None, target, "check_error")
 
 
 def _log_stats(maps: pd.Series) -> None:

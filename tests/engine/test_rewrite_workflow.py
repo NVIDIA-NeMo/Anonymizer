@@ -1899,6 +1899,7 @@ def test_replacements_applied_assesses_the_final_text(
 
     assert outcome.qualification == ("not_met" if reasons else "met")
     assert [(r.code, r.check, r.cause) for r in outcome.reasons] == reasons
+    assert outcome.advisories == ()
 
 
 @pytest.mark.parametrize(

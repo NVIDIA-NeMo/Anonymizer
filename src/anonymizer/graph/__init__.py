@@ -28,6 +28,7 @@ from anonymizer.engine.graph_core.authoring import (
     Workflow,
 )
 from anonymizer.engine.graph_core.execution import (
+    Advisory,
     InspectionSummary,
     PreparedProtection,
     ProtectionResult,
@@ -39,6 +40,7 @@ from anonymizer.engine.graph_core.execution import (
 from anonymizer.engine.graph_core.kernel import CancelToken, GraphRejection, register_kind
 
 __all__ = [
+    "Advisory",
     "Assessment",
     "CancelToken",
     "ContextScope",
