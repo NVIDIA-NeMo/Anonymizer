@@ -6,12 +6,13 @@ from __future__ import annotations
 import inspect
 import ipaddress
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from functools import lru_cache
 from hashlib import sha256
 from importlib.metadata import entry_points
 from itertools import islice
+from time import monotonic
 from typing import Any
 from unicodedata import normalize
 from urllib.parse import urlsplit
@@ -36,6 +37,7 @@ DEFAULT_MAX_MATCHES_PER_RULE = 1000
 REGEX_VALIDATOR_ENTRYPOINT_GROUP = "nemo_anonymizer.regex_validators"
 _REGEX_SCORE = 1.0
 _CONTEXT_WINDOW = 64
+_EMAIL_LOCAL_PART = regex.compile(r"[\p{L}\p{N}.!#$%&'*+/=?^_`{|}~-]+", regex.REVERSE)
 _URL_SCHEMES = ("http", "https", "ftp", "ftps", "sftp", "ws", "wss")
 _URL_TRAILING_PUNCTUATION = ".,;:!?>'\"。，、；：！？"
 _URL_DELIMITER_PAIRS = {
@@ -200,11 +202,13 @@ def detect_regex_entities(
         pattern = _compile_pattern(rule.pattern)
         match_count = 0
         try:
-            # Finish the timed scan without GIL release or Python validation
-            # between matches: parallel row work can otherwise exhaust its budget.
+            # Collect before local validation and keep regex scans non-concurrent:
+            # parallel row work can otherwise exhaust their wall-clock budget.
             matches = list(
                 islice(
-                    pattern.finditer(
+                    _iter_email_matches(pattern, text, timeout_seconds)
+                    if rule.source == "regex_builtin" and rule.label == "email"
+                    else pattern.finditer(
                         text,
                         timeout=timeout_seconds,
                         concurrent=False,
@@ -287,6 +291,29 @@ def detect_regex_entities(
 @lru_cache(maxsize=256)
 def _compile_pattern(pattern: str) -> Any:
     return regex.compile(pattern)
+
+
+def _iter_email_matches(pattern: Any, text: str, timeout_seconds: float) -> Iterator[Any]:
+    deadline = monotonic() + timeout_seconds
+    position = 0
+    while (at := text.find("@", position)) >= 0:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        # Anchor to the complete local token rather than retrying every start
+        # in the record. Do not truncate either side: even a rejected overlong
+        # address must consume its domain before looking for the next match.
+        local = _EMAIL_LOCAL_PART.match(text, position, at, timeout=remaining, concurrent=False)
+        position = at + 1
+        if local is None:
+            continue
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        match = pattern.match(text, local.start(), timeout=remaining, concurrent=False)
+        if match is not None and match.start() <= at < match.end():
+            position = match.end()
+            yield match
 
 
 def build_regex_detection_results(
@@ -611,7 +638,7 @@ _BUILTIN_RULES: tuple[ResolvedRegexRule, ...] = (
         rule_id="nemo-anonymizer.email.v1",
         label="email",
         pattern=(
-            r"(?<![A-Za-z0-9.!#$%&'*+/=?^_`{|}~-])"
+            r"(?<![\p{L}\p{N}.!#$%&'*+/=?^_`{|}~-])"
             r"[\p{L}\p{N}!#$%&'*+/=?^_`{|}~-]+(?:\.[\p{L}\p{N}!#$%&'*+/=?^_`{|}~-]+)*@"
             r"[\p{L}\p{N}](?:[\p{L}\p{N}\p{M}-]{0,61}[\p{L}\p{N}\p{M}])?"
             r"(?:\.[\p{L}\p{N}](?:[\p{L}\p{N}\p{M}-]{0,61}[\p{L}\p{N}\p{M}])?)+"

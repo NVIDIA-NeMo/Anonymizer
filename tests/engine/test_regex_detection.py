@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import gc
+import random
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -25,6 +26,62 @@ from anonymizer.engine.detection.regex_detection import (
 @dataclass
 class _FakeDistribution:
     name: str
+
+
+@pytest.mark.parametrize("prefix", ["ordinary prose " * 22000, "漢字仮名交じり文" * 1000])
+@pytest.mark.parametrize("validate_with_llm", [False, True])
+def test_builtin_email_search_handles_long_records(prefix: str, validate_with_llm: bool) -> None:
+    text = prefix + "\nContact: support@example.org"
+    rules = resolve_regex_rules(
+        labels=["email"],
+        builtin_regexes=True,
+        rules=[BuiltinRegex(label="email", validate_matches_with_llm=validate_with_llm)],
+    )
+    result = detect_regex_entities(text, rules=rules)
+    entities = result.llm_entities if validate_with_llm else result.accepted_entities
+    assert [(entity.value, entity.start_position, entity.end_position) for entity in entities] == [
+        ("support@example.org", len(prefix) + 10, len(text))
+    ]
+
+
+def test_builtin_email_anchored_search_matches_full_scan_spans() -> None:
+    rule = resolve_regex_rules(labels=["email"], builtin_regexes=True, rules=[])[0]
+    full_scan = rule.model_copy(update={"source": "regex_user"})
+    rng = random.Random(42)
+    fragments = [
+        "a@example.org",
+        "用户@example.公司",
+        "x@उदाहरण.भारत",
+        "x@e\u0301xample.com",
+        "a" * 64 + "@example.org",
+        "a" * 65 + "@example.org",
+        "漢" * 70 + "@example.org",
+        "..a@example.org",
+        "a..b@example.org",
+        "x@" + "a." * 160 + "org",
+        "@",
+        "x@a",
+        "a@b@example.org",
+        "plain text",
+        "漢" * 70 + "@example.orgx@उदाहरण.भारत; x@उदाहरण.भारत",
+    ]
+    texts = fragments + [
+        "".join(rng.choice(fragments) + rng.choice([" ", "\n", ";", "", "，"]) for _ in range(8)) for _ in range(100)
+    ]
+    for text in texts:
+        expected = detect_regex_entities(text, rules=[full_scan], timeout_seconds=1)
+        actual = detect_regex_entities(text, rules=[rule], timeout_seconds=1)
+        assert [(e.value, e.start_position, e.end_position) for e in actual.llm_entities] == [
+            (e.value, e.start_position, e.end_position) for e in expected.llm_entities
+        ], text
+
+
+def test_builtin_email_search_shares_timeout_across_addresses(monkeypatch: pytest.MonkeyPatch) -> None:
+    times = iter([0.0, 0.01, 0.02, 0.06])
+    monkeypatch.setattr(regex_detection, "monotonic", lambda: next(times))
+    rules = resolve_regex_rules(labels=["email"], builtin_regexes=True, rules=[])
+    with pytest.raises(RuntimeError, match="timed out"):
+        detect_regex_entities("a@example.org b@example.org", rules=rules, timeout_seconds=0.05)
 
 
 @dataclass
