@@ -34,7 +34,11 @@ from anonymizer.engine.detection.custom_columns import (
     prepare_detector_source,
     prepare_validation_inputs,
 )
-from anonymizer.engine.detection.regex_detection import build_regex_detection_results, detect_regex_entities
+from anonymizer.engine.detection.regex_detection import (
+    build_regex_detection_results,
+    calculate_regex_timeout,
+    detect_regex_entities,
+)
 from anonymizer.engine.schemas import EntitiesSchema, SourceTextRef
 from anonymizer.engine.workflow_columns.detection.config import (
     AugmentationConfig,
@@ -133,7 +137,11 @@ class RegexDetectionGenerator(ColumnGeneratorCellByCell[RegexDetectionConfig]):
         result = detect_regex_entities(
             text,
             rules=self.config.rules,
-            timeout_seconds=self.config.timeout_seconds,
+            timeout_seconds=calculate_regex_timeout(
+                len(text),
+                min_timeout_seconds=self.config.timeout_seconds,
+                timeout_seconds_per_million_characters=self.config.timeout_seconds_per_million_characters,
+            ),
             max_matches_per_rule=self.config.max_matches_per_rule,
         )
         data[COL_REGEX_ENTITIES] = EntitiesSchema(

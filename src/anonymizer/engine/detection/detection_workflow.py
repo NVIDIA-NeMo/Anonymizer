@@ -21,7 +21,7 @@ from pydantic import Field
 from anonymizer.config.anonymizer_config import Detect as AnonymizerDetectConfig
 from anonymizer.config.anonymizer_config import resolve_effective_detection_labels
 from anonymizer.config.models import DetectionModelSelection
-from anonymizer.config.regex import BuiltinRegex, RegexRule
+from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
@@ -55,8 +55,6 @@ from anonymizer.engine.detection.postprocess import (
     normalize_labels,
 )
 from anonymizer.engine.detection.regex_detection import (
-    DEFAULT_MAX_MATCHES_PER_RULE,
-    DEFAULT_REGEX_TIMEOUT_SECONDS,
     resolve_regex_constrained_labels,
     resolve_regex_rules,
     validate_exportable_regex_rules,
@@ -126,6 +124,7 @@ class EntityDetectionWorkflow:
         entity_label_examples: dict[str, list[str]] | None = None,
         builtin_regexes: bool = True,
         regex_rules: list[BuiltinRegex | RegexRule] | None = None,
+        regex_limits: RegexLimits | None = None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
         _resolved_label_config: ResolvedEntityLabelConfig | None = None,
@@ -151,6 +150,7 @@ class EntityDetectionWorkflow:
             builtin_regexes=builtin_regexes,
             regex_rules=regex_rules,
             data_summary=data_summary,
+            regex_limits=regex_limits,
             _resolved_label_config=_resolved_label_config,
         )
         detection_result = self._adapter.run_workflow(
@@ -177,6 +177,7 @@ class EntityDetectionWorkflow:
         entity_label_examples: dict[str, list[str]] | None = None,
         builtin_regexes: bool = True,
         regex_rules: list[BuiltinRegex | RegexRule] | None = None,
+        regex_limits: RegexLimits | None = None,
         data_summary: str | None = None,
         _resolved_label_config: ResolvedEntityLabelConfig | None = None,
     ) -> tuple[list[ModelConfig], list[ColumnConfigT]]:
@@ -187,6 +188,7 @@ class EntityDetectionWorkflow:
         so both paths run exactly the same workflow.
         """
         custom_rules = regex_rules or []
+        limits = regex_limits or RegexLimits()
         labels = _resolve_detection_labels(
             entity_labels,
             regex_rules=custom_rules,
@@ -250,8 +252,9 @@ class EntityDetectionWorkflow:
                 RegexDetectionConfig(
                     name=COL_REGEX_ENTITIES,
                     rules=resolved_regex_rules,
-                    timeout_seconds=DEFAULT_REGEX_TIMEOUT_SECONDS,
-                    max_matches_per_rule=DEFAULT_MAX_MATCHES_PER_RULE,
+                    timeout_seconds=limits.min_timeout_seconds,
+                    timeout_seconds_per_million_characters=limits.timeout_seconds_per_million_characters,
+                    max_matches_per_rule=limits.max_matches_per_rule,
                 ),
                 DetectionTransformConfig(
                     name=COL_DETECTOR_SOURCE,
@@ -349,6 +352,7 @@ class EntityDetectionWorkflow:
         entity_label_examples: dict[str, list[str]] | None = None,
         builtin_regexes: bool = True,
         regex_rules: list[BuiltinRegex | RegexRule] | None = None,
+        regex_limits: RegexLimits | None = None,
         data_summary: str | None = None,
     ) -> DataDesignerConfigBuilder:
         """Build (without executing) the core detection workflow as a DataDesigner
@@ -375,6 +379,7 @@ class EntityDetectionWorkflow:
             builtin_regexes=builtin_regexes,
             regex_rules=regex_rules,
             data_summary=data_summary,
+            regex_limits=regex_limits,
         )
         return self._adapter.build_config(
             dataframe,
@@ -398,6 +403,7 @@ class EntityDetectionWorkflow:
         entity_label_examples: dict[str, list[str]] | None = None,
         builtin_regexes: bool = True,
         regex_rules: list[BuiltinRegex | RegexRule] | None = None,
+        regex_limits: RegexLimits | None = None,
         data_summary: str | None = None,
         job_index: int = 0,
         num_jobs: int = 1,
@@ -429,6 +435,7 @@ class EntityDetectionWorkflow:
             builtin_regexes=builtin_regexes,
             regex_rules=regex_rules,
             data_summary=data_summary,
+            regex_limits=regex_limits,
         )
         return self._adapter.build_config_for_seed(
             model_configs=workflow_model_configs,
@@ -511,6 +518,7 @@ class EntityDetectionWorkflow:
         entity_label_examples: dict[str, list[str]] | None = None,
         builtin_regexes: bool = True,
         regex_rules: list[BuiltinRegex | RegexRule] | None = None,
+        regex_limits: RegexLimits | None = None,
         privacy_goal: PrivacyGoal | None = None,
         data_summary: str | None = None,
         tag_latent_entities: bool = True,
@@ -557,6 +565,7 @@ class EntityDetectionWorkflow:
                 builtin_regexes=builtin_regexes,
                 regex_rules=regex_rules,
                 data_summary=data_summary,
+                regex_limits=regex_limits,
                 preview_num_records=preview_num_records,
                 _resolved_label_config=label_config,
             )

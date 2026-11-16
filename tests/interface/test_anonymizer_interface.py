@@ -28,7 +28,7 @@ from anonymizer.config.anonymizer_config import (
     TextRecordsInput,
 )
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection
-from anonymizer.config.regex import RegexRule
+from anonymizer.config.regex import RegexLimits, RegexRule
 from anonymizer.config.replace_strategies import Redact, Substitute
 from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
@@ -410,7 +410,17 @@ def test_legacy_detection_workflow_rejects_configured_examples(
 
 @pytest.mark.parametrize("mode", ["run", "preview", "export_detection_config", "export_detection_builder_for_seed"])
 @pytest.mark.parametrize(
-    "detect", [Detect(), Detect(builtin_regexes=False, regex_rules=[RegexRule(label="ticket", pattern=r"TKT-\d+")])]
+    "detect",
+    [
+        Detect(),
+        Detect(
+            builtin_regexes=False,
+            regex_rules=[RegexRule(label="ticket", pattern=r"TKT-\d+")],
+            regex_limits=RegexLimits(
+                max_matches_per_rule=1234, min_timeout_seconds=0.2, timeout_seconds_per_million_characters=2
+            ),
+        ),
+    ],
 )
 def test_detection_entrypoints_forward_supported_regex_options(
     stub_input: AnonymizerInput, tmp_path: Path, mode: str, detect: Detect
@@ -430,6 +440,7 @@ def test_detection_entrypoints_forward_supported_regex_options(
 
     assert call.kwargs["builtin_regexes"] is detect.builtin_regexes
     assert call.kwargs["regex_rules"] == detect.regex_rules
+    assert call.kwargs["regex_limits"] == detect.regex_limits
 
 
 @pytest.mark.parametrize("mode", ["run", "preview", "export_detection_config", "export_detection_builder_for_seed"])

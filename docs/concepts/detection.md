@@ -234,6 +234,30 @@ timeout and match-count limit; exceeding either fails the record rather than
 silently omitting detections. This is not a sandbox for arbitrary validator
 code.
 
+Configure shared built-in/custom regex limits with `Detect.regex_limits`:
+
+```python
+from anonymizer import Detect, RegexLimits
+
+detect = Detect(regex_limits=RegexLimits(
+    max_matches_per_rule=10_000,
+    min_timeout_seconds=0.05,
+    timeout_seconds_per_million_characters=1.0,
+))
+```
+
+These are the defaults. The cap counts matches that pass local validation, before
+any LLM validation; rejected candidates do not count. Each rule gets one budget per
+record: `max(min_timeout_seconds, len(text) / 1_000_000 * timeout_seconds_per_million_characters)`.
+Length is measured in Unicode code points, not UTF-8 bytes or model tokens.
+For example, 10,000 characters get 50 ms; 300,000 get 300 ms. Limits apply equally
+to run, preview and exported workflows. Errors identify the rule, the exhausted
+limit and the setting to review without including record text. No partial regex
+result is returned after a limit failure. Review inefficient custom patterns or
+validators before increasing limits. One shared search budget is consumed across
+bounded matching batches; Python validation callbacks and time between batches
+do not consume it. This is not a sandbox or execution timeout for validator code.
+
 ## Chunked validation
 
 When a row has many detected entities, Anonymizer splits validation across LLM calls using `validation_max_entities_per_call`. Detections that cover some of the same text stay together so the validator can compare them—for example, `San Diego` detected as a city and `Diego` detected as a first name. If keeping related detections together requires exceeding the limit, Anonymizer sends them in a separate call and logs a warning. The call must still fit the model's context window.

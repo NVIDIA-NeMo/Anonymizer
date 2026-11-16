@@ -23,6 +23,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from anonymizer.config.entity_labels import normalize_entity_label
 from anonymizer.config.regex import (
+    DEFAULT_MAX_MATCHES_PER_RULE,
+    DEFAULT_REGEX_TIMEOUT_SECONDS,
+    DEFAULT_REGEX_TIMEOUT_SECONDS_PER_MILLION_CHARACTERS,
     BuiltinRegex,
     RegexCandidate,
     RegexRule,
@@ -32,8 +35,6 @@ from anonymizer.config.regex import (
 from anonymizer.engine.detection.postprocess import EntitySpan
 from anonymizer.engine.schemas import AdmissionRoute, DetectionResult, Observation, SourceTextRef, SourceView
 
-DEFAULT_REGEX_TIMEOUT_SECONDS = 0.05
-DEFAULT_MAX_MATCHES_PER_RULE = 1000
 REGEX_VALIDATOR_ENTRYPOINT_GROUP = "nemo_anonymizer.regex_validators"
 _REGEX_SCORE = 1.0
 _CONTEXT_WINDOW = 64
@@ -190,47 +191,27 @@ def detect_regex_entities(
     text: str,
     *,
     rules: list[ResolvedRegexRule],
-    timeout_seconds: float = DEFAULT_REGEX_TIMEOUT_SECONDS,
+    timeout_seconds: float | None = None,
     max_matches_per_rule: int = DEFAULT_MAX_MATCHES_PER_RULE,
 ) -> RegexDetectionResult:
     """Match, locally validate, and route regex entity candidates."""
     llm_entities: list[EntitySpan] = []
     accepted_entities: list[EntitySpan] = []
     validation_trace: list[RegexValidationTrace] = []
+    if timeout_seconds is None:
+        timeout_seconds = calculate_regex_timeout(len(text))
 
     for rule in rules:
         pattern = _compile_pattern(rule.pattern)
         match_count = 0
         try:
-            # Collect before local validation and keep regex scans non-concurrent:
-            # parallel row work can otherwise exhaust their wall-clock budget.
-            matches = list(
-                islice(
-                    _iter_email_matches(pattern, text, timeout_seconds)
-                    if rule.source == "regex_builtin" and rule.label == "email"
-                    else pattern.finditer(
-                        text,
-                        timeout=timeout_seconds,
-                        concurrent=False,
-                        # A failed layout starting at an adjacent ID must not
-                        # consume the real card's complete digit-group start.
-                        overlapped=rule.source == "regex_builtin" and rule.label == "credit_debit_card",
-                    ),
-                    max_matches_per_rule + 1,
-                )
-            )
+            matches = _iter_rule_matches(pattern, text, rule, timeout_seconds, min(256, max_matches_per_rule + 1))
             for match in matches:
                 start, end = match.span()
                 if end <= start:
                     raise RuntimeError(
                         f"Regex rule {rule.rule_id!r} produced a zero-width match at offset {start}. "
                         "Regex rules must consume at least one character."
-                    )
-                match_count += 1
-                if match_count > max_matches_per_rule:
-                    raise RuntimeError(
-                        f"Regex rule {rule.rule_id!r} exceeded the maximum of "
-                        f"{max_matches_per_rule} matches for one record."
                     )
                 if rule.source == "regex_builtin" and rule.label == "url":
                     trimmed = _trim_url_trailing_punctuation(text[start:end])
@@ -260,6 +241,14 @@ def detect_regex_entities(
                     )
                 if not validation.valid:
                     continue
+                match_count += 1
+                if match_count > max_matches_per_rule:
+                    raise RuntimeError(
+                        f"Regex rule {rule.rule_id!r} exceeded the maximum of {max_matches_per_rule} "
+                        "locally validated matches for one record. If this volume is expected, increase "
+                        "detect.regex_limits.max_matches_per_rule. The record failed; "
+                        "no partial regex result was returned."
+                    )
                 entity = EntitySpan(
                     entity_id=f"{rule.label}_{start}_{end}",
                     value=value,
@@ -274,7 +263,13 @@ def detect_regex_entities(
                 else:
                     accepted_entities.append(entity)
         except TimeoutError as exc:
-            raise RuntimeError(f"Regex rule {rule.rule_id!r} timed out after {timeout_seconds} seconds.") from exc
+            raise RuntimeError(
+                f"Regex rule {rule.rule_id!r} timed out after {timeout_seconds:g} seconds "
+                f"for a {len(text)}-character record (Unicode code points). Review custom pattern "
+                "efficiency; if more time is expected, adjust detect.regex_limits.min_timeout_seconds or "
+                "detect.regex_limits.timeout_seconds_per_million_characters. The record failed; "
+                "no partial regex result was returned."
+            ) from exc
 
     return RegexDetectionResult(
         llm_entities=sorted(
@@ -293,9 +288,43 @@ def _compile_pattern(pattern: str) -> Any:
     return regex.compile(pattern)
 
 
-def _iter_email_matches(pattern: Any, text: str, timeout_seconds: float) -> Iterator[Any]:
-    deadline = monotonic() + timeout_seconds
+def calculate_regex_timeout(
+    character_count: int,
+    *,
+    min_timeout_seconds: float = DEFAULT_REGEX_TIMEOUT_SECONDS,
+    timeout_seconds_per_million_characters: float = DEFAULT_REGEX_TIMEOUT_SECONDS_PER_MILLION_CHARACTERS,
+) -> float:
+    """Calculate a per-rule budget from Unicode code points, not encoded bytes."""
+    return max(min_timeout_seconds, character_count / 1_000_000 * timeout_seconds_per_million_characters)
+
+
+def _iter_rule_matches(
+    pattern: Any, text: str, rule: ResolvedRegexRule, timeout: float, batch_size: int
+) -> Iterator[Any]:
+    # Bound temporary candidate storage without counting rejected matches toward
+    # the accepted-match cap. Do not release the GIL during regex scans.
+    remaining = timeout
     position = 0
+    overlapped = rule.source == "regex_builtin" and rule.label == "credit_debit_card"
+    while position <= len(text):
+        started = monotonic()
+        matches = (
+            _iter_email_matches(pattern, text, remaining, position)
+            if rule.source == "regex_builtin" and rule.label == "email"
+            else pattern.finditer(text, pos=position, timeout=remaining, concurrent=False, overlapped=overlapped)
+        )
+        batch = list(islice(matches, batch_size))
+        remaining -= monotonic() - started
+        if remaining <= 0:
+            raise TimeoutError
+        if not batch:
+            return
+        yield from batch
+        position = batch[-1].start() + 1 if overlapped else batch[-1].end()
+
+
+def _iter_email_matches(pattern: Any, text: str, timeout_seconds: float, position: int = 0) -> Iterator[Any]:
+    deadline = monotonic() + timeout_seconds
     while (at := text.find("@", position)) >= 0:
         remaining = deadline - monotonic()
         if remaining <= 0:

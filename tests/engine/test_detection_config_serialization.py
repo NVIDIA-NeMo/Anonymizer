@@ -21,7 +21,7 @@ from data_designer.interface.data_designer import DataDesigner
 from data_designer.plugins import Plugin
 
 from anonymizer.config.models import DetectionModelSelection
-from anonymizer.config.regex import BuiltinRegex, RegexCandidate, RegexRule
+from anonymizer.config.regex import BuiltinRegex, RegexCandidate, RegexLimits, RegexRule
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
@@ -43,6 +43,7 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+from anonymizer.engine.detection.regex_detection import detect_regex_entities
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy
@@ -53,7 +54,7 @@ from anonymizer.engine.workflow_columns.detection.config import (
     DetectionTransformOperation,
     RegexDetectionConfig,
 )
-from anonymizer.engine.workflow_columns.detection.impl import AugmentationGenerator
+from anonymizer.engine.workflow_columns.detection.impl import AugmentationGenerator, RegexDetectionGenerator
 from anonymizer.engine.workflow_columns.detection.plugins import (
     augmentation_plugin,
     chunked_validation_plugin,
@@ -336,6 +337,43 @@ Path(sys.argv[2]).write_text(json.dumps(columns))
     assert ("anonymizer-chunked-validation", "ChunkedValidationConfig") in restored_types
     assert ("anonymizer-augmentation", "AugmentationConfig") in restored_types
     assert ("anonymizer-regex-detection", "RegexDetectionConfig") in restored_types
+
+
+@pytest.mark.parametrize("seed_only", [False, True])
+def test_regex_limits_survive_exports_and_are_enforced(tmp_path: Path, seed_only: bool) -> None:
+    dataframe = pd.DataFrame({COL_TEXT: ["192.0.2.1"]})
+    seed_path = tmp_path / "seed.parquet"
+    dataframe.to_parquet(seed_path, index=False)
+    models = parse_model_configs(None)
+    workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
+    limits = RegexLimits(max_matches_per_rule=1, min_timeout_seconds=0.2, timeout_seconds_per_million_characters=2)
+    method = workflow.build_detection_builder_for_seed if seed_only else workflow.build_detection_config
+    dataframe_kwargs: dict[str, Any] = {} if seed_only else {"dataframe": dataframe}
+    builder = method(
+        **dataframe_kwargs,
+        seed_path=seed_path,
+        model_configs=models.model_configs,
+        selected_models=models.selected_models.detection,
+        gliner_detection_threshold=0.3,
+        entity_labels=["ipv4"],
+        regex_limits=limits,
+    )
+    payload = builder.get_builder_config().to_json()
+    assert payload is not None
+    restored = DataDesignerConfigBuilder.from_config(payload)
+    config = next(c for c in restored.get_column_configs() if isinstance(c, RegexDetectionConfig))
+    assert config.timeout_seconds == 0.2
+    assert config.timeout_seconds_per_million_characters == 2
+    assert config.max_matches_per_rule == 1
+    generator = RegexDetectionGenerator(config, resource_provider=Mock())
+    with patch(
+        "anonymizer.engine.workflow_columns.detection.impl.detect_regex_entities", wraps=detect_regex_entities
+    ) as detect:
+        generator.generate({RECORD_ID_COLUMN: "synthetic-row", COL_TEXT: "漢" * 300_000})
+    assert detect.call_args.kwargs["timeout_seconds"] == pytest.approx(0.6)
+    assert detect.call_args.kwargs["max_matches_per_rule"] == 1
+    with pytest.raises(RuntimeError, match="detect.regex_limits.max_matches_per_rule"):
+        generator.generate({RECORD_ID_COLUMN: "synthetic-row", COL_TEXT: "192.0.2.1 192.0.2.2"})
 
 
 @pytest.mark.parametrize("validate_matches", [False, True])

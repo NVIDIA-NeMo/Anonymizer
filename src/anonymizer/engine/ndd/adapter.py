@@ -31,7 +31,7 @@ from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
-from anonymizer.engine.constants import RECORD_ID_COLUMN
+from anonymizer.engine.constants import COL_REGEX_ENTITIES, RECORD_ID_COLUMN
 from anonymizer.engine.ndd.storage import prepare_json_storage_column, prepare_json_storage_seed
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
@@ -767,6 +767,15 @@ def _failure_reasons_by_record(
 def _failure_reason(trace: _TaskTrace) -> str:
     """Classify untrusted trace text into fixed diagnostics, never echoing the underlying exception message."""
     prefix = f"{_MISSING_RECORD_REASON}: {_trace_attr(trace, 'column')}: "
+    if _trace_attr(trace, "column") == COL_REGEX_ENTITIES:
+        # Trace strings are untrusted, including custom-validator exceptions.
+        # Give fixed guidance without echoing exception text into public results.
+        return (
+            f"{prefix}Regex detection failed; review detect.regex_limits.max_matches_per_rule, "
+            "detect.regex_limits.min_timeout_seconds, detect.regex_limits.timeout_seconds_per_million_characters "
+            "and custom rule/validator efficiency. See diagnostics for the specific cause. "
+            "No partial regex result was returned."
+        )
     error = str(_trace_attr(trace, "error") or "")
     cause_match = _CAUSE_LINE.search(error)
     if cause_match is None:

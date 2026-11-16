@@ -77,8 +77,8 @@ def test_builtin_email_anchored_search_matches_full_scan_spans() -> None:
 
 
 def test_builtin_email_search_shares_timeout_across_addresses(monkeypatch: pytest.MonkeyPatch) -> None:
-    times = iter([0.0, 0.01, 0.02, 0.06])
-    monkeypatch.setattr(regex_detection, "monotonic", lambda: next(times))
+    times = iter([0.0, 0.001, 0.002, 0.003, 0.004, 0.06])
+    monkeypatch.setattr(regex_detection, "monotonic", lambda: next(times, 0.06))
     rules = resolve_regex_rules(labels=["email"], builtin_regexes=True, rules=[])
     with pytest.raises(RuntimeError, match="timed out"):
         detect_regex_entities("a@example.org b@example.org", rules=rules, timeout_seconds=0.05)
@@ -127,11 +127,11 @@ def test_matching_finishes_before_local_validation(monkeypatch: pytest.MonkeyPat
 
     class Pattern:
         def finditer(
-            self, text: str, *, timeout: float, concurrent: bool | None = None, overlapped: bool = False
+            self, text: str, *, pos: int = 0, timeout: float, concurrent: bool | None = None, overlapped: bool = False
         ) -> Iterator[Any]:
             nonlocal finished
             assert overlapped is False
-            yield from compiled.finditer(text, timeout=timeout, concurrent=concurrent, overlapped=overlapped)
+            yield from compiled.finditer(text, pos=pos, timeout=timeout, concurrent=concurrent, overlapped=overlapped)
             finished = True
 
     monkeypatch.setattr(regex_detection, "_compile_pattern", lambda _pattern: Pattern())
@@ -147,18 +147,20 @@ def test_match_collection_is_bounded_and_keeps_scan_nonconcurrent(monkeypatch: p
 
     class Pattern:
         def finditer(
-            self, text: str, *, timeout: float, concurrent: bool | None = None, overlapped: bool = False
+            self, text: str, *, pos: int = 0, timeout: float, concurrent: bool | None = None, overlapped: bool = False
         ) -> Iterator[Any]:
             nonlocal visited
             assert concurrent is False
             assert overlapped is False
-            for match in compiled.finditer(text, timeout=timeout, concurrent=concurrent, overlapped=overlapped):
+            for match in compiled.finditer(
+                text, pos=pos, timeout=timeout, concurrent=concurrent, overlapped=overlapped
+            ):
                 visited += 1
                 assert visited <= 4, "Collected beyond the overflow-detection match"
                 yield match
 
     monkeypatch.setattr(regex_detection, "_compile_pattern", lambda _pattern: Pattern())
-    with pytest.raises(RuntimeError, match="exceeded the maximum of 3 matches"):
+    with pytest.raises(RuntimeError, match="exceeded the maximum of 3 locally validated matches"):
         detect_regex_entities(" ".join(["TKT-123"] * 20), rules=rules, max_matches_per_rule=3)
     assert visited == 4
 

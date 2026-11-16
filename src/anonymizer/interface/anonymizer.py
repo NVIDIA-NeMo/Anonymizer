@@ -28,7 +28,7 @@ from anonymizer.config.anonymizer_config import (
     TextRecordsInput,
     resolve_effective_detection_labels,
 )
-from anonymizer.config.regex import BuiltinRegex, RegexRule
+from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
 from anonymizer.config.replace_strategies import ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
@@ -190,18 +190,28 @@ def _accepts_entity_label_examples(method: Callable[..., object]) -> bool:
 class _DetectionRegexKwargs(TypedDict, total=False):
     builtin_regexes: bool
     regex_rules: list[BuiltinRegex | RegexRule]
+    regex_limits: RegexLimits
 
 
 def _detection_regex_kwargs(method: Callable[..., object], detect: Detect) -> _DetectionRegexKwargs:
     """Forward supported regex options without dropping explicitly requested behavior."""
+    kwargs: _DetectionRegexKwargs = {}
+    if _accepts_keyword(method, "regex_limits"):
+        kwargs["regex_limits"] = detect.regex_limits
+    elif detect.regex_limits != RegexLimits():
+        raise InvalidConfigError(
+            "The configured detection_workflow does not accept regex_limits. Update the workflow "
+            "to accept this keyword or remove the non-default detect.regex_limits."
+        )
     if _accepts_keyword(method, "builtin_regexes") and _accepts_keyword(method, "regex_rules"):
-        return {"builtin_regexes": detect.builtin_regexes, "regex_rules": detect.regex_rules}
+        kwargs.update(builtin_regexes=detect.builtin_regexes, regex_rules=detect.regex_rules)
+        return kwargs
     if detect.regex_rules or ("builtin_regexes" in detect.model_fields_set and detect.builtin_regexes):
         raise InvalidConfigError(
             "The configured detection_workflow does not accept builtin_regexes and regex_rules. "
             "Update the workflow to accept these keywords or remove the regex options from detect."
         )
-    return {}
+    return kwargs
 
 
 def _detection_example_kwargs(method: Callable[..., object], examples: dict[str, list[str]]) -> _DetectionExampleKwargs:
@@ -254,6 +264,8 @@ class Anonymizer:
                 detection behavior, without gaining built-in regex recognition.
                 Explicitly enabling built-ins or supplying regex rules requires keyword
                 support, otherwise ``InvalidConfigError`` is raised. Methods without
+                ``regex_limits`` may omit defaults, but non-default limits require
+                support and otherwise raise ``InvalidConfigError``. Methods without
                 ``entity_label_examples`` remain supported when no examples are configured;
                 configuring unsupported examples raises ``InvalidConfigError`` too.
             replace_runner: Custom replacement workflow (advanced/testing).

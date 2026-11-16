@@ -14,6 +14,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_valid
 from anonymizer.config.entity_labels import normalize_entity_label
 
 MAX_REGEX_PATTERN_LENGTH = 4096
+DEFAULT_REGEX_TIMEOUT_SECONDS = 0.05
+DEFAULT_REGEX_TIMEOUT_SECONDS_PER_MILLION_CHARACTERS = 1.0
+DEFAULT_MAX_MATCHES_PER_RULE = 10_000
 BUILTIN_REGEX_LABELS: tuple[str, ...] = (
     "credit_debit_card",
     "email",
@@ -52,6 +55,18 @@ class RegexValidationResult:
 
 RegexValidatorReturn: TypeAlias = bool | RegexValidationResult
 RegexValidatorCallable: TypeAlias = Callable[[RegexCandidate], RegexValidatorReturn]
+
+
+class RegexLimits(BaseModel):
+    """Per-record, per-rule bounds shared by built-in and custom regex rules."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    max_matches_per_rule: int = Field(default=DEFAULT_MAX_MATCHES_PER_RULE, gt=0, strict=True)
+    min_timeout_seconds: float = Field(default=DEFAULT_REGEX_TIMEOUT_SECONDS, gt=0, allow_inf_nan=False)
+    timeout_seconds_per_million_characters: float = Field(
+        default=DEFAULT_REGEX_TIMEOUT_SECONDS_PER_MILLION_CHARACTERS, gt=0, allow_inf_nan=False
+    )
 
 
 class BuiltinRegex(BaseModel):

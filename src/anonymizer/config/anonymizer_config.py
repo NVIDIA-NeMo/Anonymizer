@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from anonymizer.config.entity_labels import normalize_entity_label
-from anonymizer.config.regex import BuiltinRegex, RegexRule
+from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
 from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import (
     DEFAULT_PRESERVE_TEXT,
@@ -191,6 +191,10 @@ class Detect(BaseModel):
     regex_rules: list[BuiltinRegex | RegexRule] = Field(
         default_factory=list,
         description="Per-label built-in settings and user-defined regex candidate rules.",
+    )
+    regex_limits: RegexLimits = Field(
+        default_factory=RegexLimits,
+        description="Per-record, per-rule validated-match cap and character-scaled timeout for all regex rules.",
     )
 
     @field_validator("entity_labels")

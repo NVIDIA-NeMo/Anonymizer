@@ -9,7 +9,7 @@ import time
 from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pandas as pd
@@ -25,10 +25,12 @@ from pydantic import BaseModel
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.replace_strategies import Redact
-from anonymizer.engine.constants import COL_TEXT
+from anonymizer.engine.constants import COL_REGEX_ENTITIES, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
+from anonymizer.engine.detection.regex_detection import resolve_regex_rules
 from anonymizer.engine.ndd import adapter
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter, WorkflowRunResult
+from anonymizer.engine.workflow_columns.detection.config import RegexDetectionConfig
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.measurement import MeasurementConfig, configured_measurement_session
 from tests.engine.ndd.stub_provider import COMPLETE, Script, cut_off, stub_provider
@@ -306,6 +308,29 @@ def _fail_echoing_input_with_marker(row: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("bad row: " + row[COL_TEXT])
     row["checked"] = "yes"
     return row
+
+
+def test_regex_limit_failure_has_safe_actionable_public_reason(tmp_path: Path) -> None:
+    df = pd.DataFrame({COL_TEXT: ["no matches", "192.0.2.1 192.0.2.2"]})
+    columns = cast(
+        list[ColumnConfigT],
+        [
+            RegexDetectionConfig(
+                name=COL_REGEX_ENTITIES,
+                rules=resolve_regex_rules(labels=["ipv4"], builtin_regexes=True, rules=[]),
+                timeout_seconds=0.2,
+                max_matches_per_rule=1,
+            )
+        ],
+    )
+    tagged, result = _run(tmp_path, lambda *_: COMPLETE, df, columns=columns)
+    reasons = _reasons_by_position(tagged, result)
+    assert list(reasons) == [1]
+    assert "detect.regex_limits.max_matches_per_rule" in reasons[1]
+    assert "detect.regex_limits.min_timeout_seconds" in reasons[1]
+    assert "detect.regex_limits.timeout_seconds_per_million_characters" in reasons[1]
+    assert "No partial regex result" in reasons[1]
+    assert "192.0.2" not in reasons[1]
 
 
 def test_provider_error_echoing_a_cause_marker_cannot_steer_the_reason(tmp_path: Path) -> None:

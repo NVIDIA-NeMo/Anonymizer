@@ -9,6 +9,7 @@ from typing import ClassVar, Literal
 from data_designer.config.base import SingleColumnConfig
 from pydantic import Field
 
+from anonymizer.config.regex import DEFAULT_REGEX_TIMEOUT_SECONDS_PER_MILLION_CHARACTERS
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
     COL_ADMITTED_CANDIDATES,
@@ -195,7 +196,10 @@ class RegexDetectionConfig(SingleColumnConfig):
 
     column_type: Literal["anonymizer-regex-detection"] = "anonymizer-regex-detection"
     rules: list[ResolvedRegexRule]
-    timeout_seconds: float = Field(gt=0)
+    timeout_seconds: float = Field(gt=0, allow_inf_nan=False)
+    timeout_seconds_per_million_characters: float = Field(
+        default=DEFAULT_REGEX_TIMEOUT_SECONDS_PER_MILLION_CHARACTERS, gt=0, allow_inf_nan=False
+    )
     max_matches_per_rule: int = Field(gt=0)
 
     @staticmethod
