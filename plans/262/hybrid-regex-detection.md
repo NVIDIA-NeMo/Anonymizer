@@ -3,681 +3,220 @@
 
 # Hybrid Regex Detection
 
-## Status
+## Scope
 
-Implementation plan for
-[issue #262](https://github.com/NVIDIA-NeMo/Anonymizer/issues/262).
+[Issue #262](https://github.com/NVIDIA-NeMo/Anonymizer/issues/262) covers the
+detection foundation delivered in [PR #305](https://github.com/NVIDIA-NeMo/Anonymizer/pull/305)
+and regex recognition in [PR #265](https://github.com/NVIDIA-NeMo/Anonymizer/pull/265).
+This consolidated design replaces the separate foundation, integration, GLiNER
+recall, resource-limit, and evaluation-scope plans. It describes the contract,
+not a claim that every review or quality gate is complete. See the
+[detection guide](../../docs/concepts/detection.md) for user-facing details.
 
-The original workflow and overlap implementation below predates PR #305.
-Its integration is superseded by
-[Rebuild regex detection on PR #305](regex-on-detection-semantics.md):
-independent observations are admitted once, regex claims are not coalesced
-before validation, and occurrence propagation is not restored. Public rule
-configuration, local matching safeguards, and validator contracts remain in scope.
+Provide built-in and custom deterministic recognition alongside GLiNER, with one
+shared admission/reconciliation lifecycle and equivalent local/exported behavior.
+The later graph/SDK implementation should preserve these semantics rather than
+introduce a second detection or merge policy.
 
-## Summary
-
-Add deterministic entity detection as a second seed source alongside GLiNER.
-Anonymizer will provide curated built-in regex rules for structured entity
-types and allow users to configure a custom entity label and regex. Built-in
-rules may apply trusted local structural checks such as IP parsing or a Luhn
-checksum. Each rule controls whether surviving candidates enter the existing
-chunked LLM validation path or are accepted deterministically before
-augmentation and finalization.
-
-The target user experience is:
+## Configuration and scope
 
 ```python
 from anonymizer import AnonymizerConfig, Detect, Redact, RegexRule
 
 config = AnonymizerConfig(
     detect=Detect(
-        entity_labels=["email", "support_case_id"],
-        regex_rules=[
-            RegexRule(
-                label="support_case_id",
-                pattern=r"(?<![A-Z0-9])CASE-[0-9]{8}(?![A-Z0-9])",
-            )
-        ],
+        regex_rules=[RegexRule(label="ticket", pattern=r"TICKET-[0-9]{8}")],
     ),
     replace=Redact(),
 )
 ```
 
-Built-in rules are enabled by default and run only when their output label is
-in the effective detection label set.
+- Built-ins are enabled by default, only for labels in the effective scope.
+  `builtin_regexes=False` disables built-ins, not custom rules.
+- With `entity_labels=None`, start from defaults and add enabled custom labels.
+  An explicit label list is authoritative; enabled custom labels must belong to it.
+  Apply normalized exclusions last using `resolve_effective_detection_labels()`.
+- `regex_rules` holds custom `RegexRule` entries and per-label `BuiltinRegex`
+  overrides. `BUILTIN_REGEX_LABELS` exposes the built-in labels.
+- `validate_matches_with_llm` selects contextual validation or direct acceptance
+  after local checks. `detect_additional_matches` allows or excludes additional
+  model-origin claims for that label. Both default to `True`.
+- A regex-only label requires accepted, unchanged-label regex evidence at the
+  exact span. Reclassification, fallback, and another occurrence cannot grant it.
 
-## Motivation
+Export the public regex types from `anonymizer`; keep configuration, documentation,
+and the bundled agent skill consistent.
 
-GLiNER and LLM augmentation are valuable for contextual and weakly structured
-entities, but several entity types have strong syntactic structure and, in some
-cases, deterministic validity checks. Examples include email addresses, URLs,
-IP addresses, MAC addresses, and payment-card numbers.
-
-A deterministic seed source can:
-
-- improve recall for well-structured values;
-- reduce dependence on model behavior for exact formats;
-- provide explainable local rejection of structurally invalid candidates;
-- support organization-specific identifiers without retraining a model;
-- preserve contextual review by routing candidates through the existing LLM
-  validator;
-- create a stable recognizer boundary for deterministic detector integrations.
-
-## Goals
-
-1. Detect a conservative initial set of structured entity types locally.
-2. Apply parser, checksum, or structural guards to built-in candidates where a
-   stable validation algorithm exists.
-3. Let users add a custom entity label and regex through serializable public
-   configuration.
-4. Let users attach a local validator callable and select contextual LLM
-   validation independently for each rule.
-5. Preserve identical behavior between in-process execution and exported
-   DataDesigner workflows for built-ins and registered custom validators.
-6. Make candidate provenance and stable rule identity visible in trace artifacts.
-7. Fail safely on invalid, pathological, or excessively productive regexes.
-8. Preserve current behavior when deterministic built-ins are disabled and no
-   custom rules are configured.
-
-## Product Semantics
-
-### Built-In Activation
-
-Built-in rules run only for labels in the effective detection scope:
-
-```python
-Detect()
-# Uses the default entity labels and activates matching built-in rules.
-
-Detect(entity_labels=["email", "first_name"])
-# Activates the built-in email rule, but not unrelated built-ins.
-
-Detect(entity_labels=["first_name"], builtin_regexes=False)
-# Runs no built-in regex rules.
-```
-
-`builtin_regexes` controls curated built-ins only. User-provided
-`regex_rules` remain active when `builtin_regexes=False`.
-
-### Custom Label Semantics
-
-- When `entity_labels=None`, custom regex labels are added to the effective
-  label set. GLiNER and augmentation use that label unless its enabled rules
-  set `detect_additional_matches=False`.
-- When `entity_labels` is explicit, each custom regex label must appear in the
-  list. Configuration fails if it does not.
-- Explicit labels retain the existing strict final-label and augmenter
-  semantics.
-- A custom regex matches the entire regular-expression match. Named capture
-  groups are exposed to custom validators without changing the entity span.
-
-### Relationship With GLiNER
-
-By default, regex-covered labels remain in the GLiNER request. This gives model
-detection a chance to recover valid but unusual formats and provides
-disagreement data for measurement. Setting `detect_additional_matches=False`
-removes the label from GLiNER and augmentation. Exact duplicate candidates are
-removed before validation.
-
-### Validation Layers
-
-The feature has two independent validation layers:
-
-1. **Local guard:** a deterministic structural, parser, or checksum check for a
-   built-in rule or a user-provided validator callable. Invalid candidates are
-   rejected before an LLM call.
-2. **Contextual validation:** rules with `validate_matches_with_llm=True` pass
-   surviving candidates to the existing chunked LLM validator for
-   keep/drop/reclass.
-
-Both `validate_matches_with_llm` and `detect_additional_matches` default to
-`True`. The former controls the handling of regex-produced matches; the latter
-controls whether GLiNER and augmentation may find other spans for the label.
-Every final entity for a label with `detect_additional_matches=False` must match
-regex evidence at the same character span; reclassification and derived spans
-cannot bypass this requirement.
-
-Direct regex acceptance authorizes only the matched span. A coincident GLiNER
-candidate remains a separate admission route and must pass contextual
-validation before it can grant document-wide occurrence propagation.
-
-## Public API
-
-Add a public Pydantic model next to `Detect`:
-
-```python
-class RegexRule(BaseModel):
-    """A user-defined regex entity candidate rule."""
-
-    label: str
-    pattern: str
-    validator: RegexValidatorCallable | str | None = None
-    enabled: bool = True
-    validate_matches_with_llm: bool = True
-    detect_additional_matches: bool = True
-
-
-class BuiltinRegex(BaseModel):
-    label: str
-    enabled: bool = True
-    validate_matches_with_llm: bool = True
-    detect_additional_matches: bool = True
-
-
-class Detect(BaseModel):
-    # Existing fields omitted.
-    builtin_regexes: bool = True
-    regex_rules: list[BuiltinRegex | RegexRule] = Field(default_factory=list)
-```
-
-`regex_rules` is the single collection for per-label built-in settings
-and custom recognizers. Users can disable one built-in and provide a custom rule
-with the same label while the rest of the built-in registry remains active.
-
-`RegexRule` validation must:
-
-- trim and Unicode-casefold `label` using the same canonical identity as
-  `entity_labels`;
-- reject an empty label or pattern;
-- compile the pattern during configuration validation;
-- reject patterns that match an empty string;
-- preserve the pattern string, not a compiled regex object, for serialization;
-- accept a direct synchronous callable for local use or a stable validator name;
-- report the offending label and pattern in configuration errors.
-
-`Detect` validation must:
-
-- reject duplicate rules with the same normalized label and pattern;
-- reject custom labels omitted from an explicit `entity_labels` list;
-- preserve the current `None` versus explicit-label contract.
-
-Re-export `BuiltinRegex`, `RegexRule`, `RegexCandidate`, and `RegexValidationResult` from
-`anonymizer.__init__`. A custom validator accepts `RegexCandidate` and returns
-either `bool` or `RegexValidationResult`. A result may include a `reason`, which
-is retained in PII-minimized internal trace metadata for accepted and rejected
-candidates without changing detection behavior. Because this changes the public
-detection surface, update the bundled agent skill template and detection
-documentation in the same release.
-
-Direct callables are the primary Python API. An exported workflow stores a
-stable validator name and resolves it through the
-`nemo_anonymizer.regex_validators` entry-point group on each execution host.
-The plugin need not be installed where the configuration is authored, but its
-entry-point name must resolve uniquely on every worker.
-
-## Built-In Rule Model
-
-Use a richer private rule definition than the public custom-rule model:
-
-```python
-class ResolvedRegexRule(BaseModel):
-    rule_id: str
-    label: str
-    pattern: str
-    validator_id: str | None = None
-    source: Literal["regex_builtin", "regex_user"]
-    validate_matches_with_llm: bool = True
-    detect_additional_matches: bool = True
-```
-
-The built-in rule registry should live under `anonymizer.engine.detection`, not
-public configuration. Built-in validator IDs resolve through a closed internal
-registry. Direct user callables are registered for in-process runs. Exported
-workflows require stable names exposed by an installed validator package through
-the `nemo_anonymizer.regex_validators` entry-point group, avoiding arbitrary
-imports from serialized configuration.
-
-The initial built-ins are jurisdiction-neutral and do not require a geography
-selector.
-
-## Initial Built-In Scope
-
-### Initial Default Candidates
-
-| Output label | Scope | Candidate strategy | Local guard |
-| --- | --- | --- | --- |
-| `email` | Global-format | Conservative address pattern with safe boundaries | Address syntax validation |
-| `url` | Global-format | HTTP(S) or `www.` candidate pattern | Host/scheme validation and trailing-punctuation trimming |
-| `ipv4` | Global | IPv4-like token | `ipaddress.IPv4Address` |
-| `ipv6` | Global | IPv6-like token | `ipaddress.IPv6Address` |
-| `mac_address` | Global | Six hexadecimal octets | Consistent separator and octet validation |
-| `credit_debit_card` | International | 13-19 digits with permitted separators | Luhn and repeated-digit rejection |
-Use the existing canonical label `credit_debit_card`, not the shorter
-`credit_debit` wording used in the source presentation.
-
-## Runtime Representation
-
-Accepted matches become the existing canonical `EntitySpan` shape:
-
-```python
-EntitySpan(
-    entity_id=f"{label}_{start}_{end}",
-    value=text[start:end],
-    label=label,
-    start_position=start,
-    end_position=end,
-    score=1.0,
-    source=f"regex_builtin:{rule_id}",  # or regex_user:{rule_id}
-)
-```
-
-The score is source-local evidence, not a calibrated probability across
-GLiNER, regex, and augmentation. Source and rule ID are the authoritative
-provenance fields for measurement.
-
-The matcher should use a private result shape capable of representing span
-normalization and rejection explanations:
-
-```python
-@dataclass(frozen=True)
-class GuardResult:
-    accepted: bool
-    start_position: int
-    end_position: int
-    reason: str | None = None
-```
-
-This is needed for rules such as URLs, where trailing punctuation may need to
-be removed while preserving exact source offsets.
-
-## Workflow Architecture
-
-Both producers run inside the DataDesigner workflow through `NddAdapter`:
+## Shared detection lifecycle
 
 ```text
-COL_TEXT -> GLiNER -> COL_SEED_DETECTION_RESULT
-COL_TEXT -> regex recognition -> COL_REGEX_DETECTION_RESULTS
-                              + regex entities and local-validator trace
-
-independent source-bound observations
-  -> request inventories for LLM-route observations only
-  -> COL_VALIDATION_DECISIONS
-  -> COL_ADMISSION_RESULTS            # label and regex-only evidence gates
-  -> COL_ADMITTED_CANDIDATES          # exact candidates coalesced after admission
-  -> conflict-aware augmentation prompt
-  -> grounded augmentation + direct admission under the same gates
-  -> exact-candidate coalescing + one overlap reconciliation
-  -> COL_DETECTED_ENTITIES
-  -> COL_FINAL_ENTITIES
+GLiNER observations + locally valid regex observations
+  -> request-scoped validation of LLM-route observations
+  -> admission and label/route eligibility
+  -> independently grounded augmentation
+  -> exact-candidate coalescing
+  -> one final overlap reconciliation
+  -> final entities and downstream replacement/rewrite
 ```
 
-A `DetectionResultBatch` combines independent GLiNER and per-rule regex
-results over the same source view without weakening each result's provenance
-invariants. Direct regex observations do not enter validator inventories.
-Every terminal admission still receives the explicit configured label policy,
-including rows with no validation inventories.
+The foundation corrects decision replay, premature overlap suppression, and lost
+provenance. Preserve these invariants:
 
-`COL_REGEX_ENTITIES`, `COL_REGEX_ACCEPTED_ENTITIES`, and
-`COL_REGEX_VALIDATION_TRACE` remain diagnostic projections. The authoritative
-input is `COL_REGEX_DETECTION_RESULTS`. Public final-entity schemas are unchanged.
+1. **Canonical evidence:** values equal `text[start:end]`. Half-open Unicode
+   character offsets refer to a canonical record field (`SourceTextRef`);
+   `SourceView` translates view-relative offsets into that source.
+2. **Separate identities:** immutable result/observation references preserve
+   lineage, request-local aliases correlate validation responses, and normalized
+   source/label/bounds identify equivalent candidates. Reclassification does not
+   change observation identity. Serialized lifecycle state is frozen and strict.
+3. **Independent admission:** retain overlaps and duplicates until each completes
+   its configured route. Consume each decision once, against its dispatched
+   inventory. A detector drop cannot veto independent direct regex acceptance or
+   grounded augmentation. Rejected origins never contribute accepted provenance.
+4. **Fallback is not acceptance:** an omitted/unusable decision in a successful,
+   semantically valid response may protect the original eligible span only.
+   Terminal request failures remain `FailedRecord`s, not implicit acceptance.
+5. **Eligibility before suppression:** allowed/excluded labels and route restrictions
+   apply before coalescing or overlap selection, including direct-only rows.
+6. **Occurrence-bound protection:** no global value propagation or name splitting.
+   An accepted `full_name` cannot authorize standalone name parts elsewhere.
+   Every protected occurrence requires source-bound evidence.
 
-### DataDesigner Plugin
+### Validation, augmentation, and final selection
 
-Implement a new serializable workflow column rather than preprocessing the
-DataFrame outside `NddAdapter`:
+Connected overlapping LLM-route candidates form atomic validation groups. Render
+each region once with neutral `NAGROUP_gN` markup and an authoritative inventory.
+Pack whole groups toward `validation_max_entities_per_call` (default 100); send
+oversized groups alone with a value-free warning. Unknown/wrong-request aliases
+have no authority. Duplicate assigned aliases invalidate the entire response;
+bounded retries retain the same inventory, aliases, context, and policy. Exhausted
+attempts fail the record rather than applying partial or arbitrary decisions.
 
-```python
-class RegexDetectionConfig(SingleColumnConfig):
-    column_type: Literal["anonymizer-regex-detection"]
-    rules: list[ResolvedRegexRule]
-    timeout_seconds: float
-    max_matches_per_rule: int
+Augmentation admission is independent of seed-aware versus plain-text prompting.
+Ground each suggestion against copied source value and adjacent context; never
+expand by value alone. Retain grounded items while retrying unsuccessful suggestions
+once, then drop remaining ungroundable items. Transport/schema failures remain
+record failures. Prompt changes such as [PR #267](https://github.com/NVIDIA-NeMo/Anonymizer/pull/267)
+need separate quality evidence; they do not redefine admission.
+
+After admission, coalesce exact source/normalized-label/bounds identities, retaining
+accepted origins and fallback lineage separately. Run one deterministic greedy
+overlap selection: longer spans first, then earlier positions. At identical bounds,
+explicit acceptance outranks fallback, then
+`regex_user > regex_builtin > initial_detector > augmenter`. Compare native scores
+only within their calibration domain; use stable label/lineage tie-breakers.
+Touching intervals survive. Partial overlaps do not create union spans, and this
+is not an optimizer for maximum aggregate covered characters.
+
+## Built-ins and validators
+
+| Label | Recognition and local checks |
+| --- | --- |
+| `email` | Conservative Unicode-aware address syntax and normalized IDNA domains; search at each `@` using the complete local token, without artificial truncation windows. |
+| `url` | HTTP(S), FTP(S), SFTP, WS(S), and `www.`; scheme/host/port validation and balance-aware, linear-time punctuation trimming. No network verification. |
+| `ipv4` | Complete tokens validated by `IPv4Address`. |
+| `ipv6` | IPv6 including dotted IPv4 tails, validated by `IPv6Address`; Unicode boundaries prevent matches inside identifiers such as `std::vector`. |
+| `mac_address` | Six hexadecimal octets with consistent supported separators. |
+| `credit_debit_card` | 13–19 contiguous digits, consistently space/hyphen-separated 4-4-4-n (n=1–7), or 4-6-4/5 layouts; Luhn and repeated-digit rejection. |
+
+URL candidates stop at backticks and literal backslashes, preserving Markdown
+wrappers and JSON quote escapes. Percent-encoded backslashes remain supported.
+A standalone case-insensitive `url:` prefix is allowed without whitespace, not
+arbitrary colon prefixes. Bare domains, slash-escaped schemes (`https:\/\/`), file
+URLs, and cloud-storage schemes remain outside built-in scope. Custom rules can
+broaden recognition; regex-only mode cannot rely on model recovery.
+
+Only the built-in card matcher searches overlapping starts, recovering a card
+after a leading numeric ID without starting inside a contiguous digit run.
+Explicit layouts replace prefix trimming and exclude adjacent codes/expiry dates.
+Luhn does not prove a number is a payment card. A custom rule can support irregular
+layouts with the exportable `validator="nemo-anonymizer.credit-card-luhn.v1"`.
+
+Custom validators receive `RegexCandidate` (including named groups) and return
+`bool` or `RegexValidationResult`; reject malformed return types and asynchronous
+validators. Direct callables use process-local object identity. Exports require
+unique stable names from trusted installed `nemo_anonymizer.regex_validators`
+entry points. Check exportability only for active, in-scope rules. Validator code
+is trusted code, not sandboxed configuration.
+
+## Resource limits and failures
+
+Use the timeout-capable `regex` engine with non-concurrent scans. Validate syntax,
+pattern length, and non-empty match width at configuration time; reject unsupported
+fuzzy constructs and retain a runtime zero-width guard.
+
+`Detect.regex_limits=RegexLimits(...)` applies to built-in and custom rules:
+
+- `max_matches_per_rule=10_000` locally accepted candidates before LLM validation,
+  not rejected raw matches or final reconciled entities;
+- `min_timeout_seconds=0.05`;
+- `timeout_seconds_per_million_characters=1.0`.
+
+The per-rule/per-record search budget, in seconds, is:
+
+```text
+max(min_timeout_seconds,
+    len(text) / 1_000_000 * timeout_seconds_per_million_characters)
 ```
 
-Add an `anonymizer-regex-detection` DataDesigner entry point. The plugin
-generator should compile resolved patterns once when it is initialized on the
-worker and reuse them across rows. Configuration contains pattern strings,
-validation-route flags, and validator IDs. Direct local callables resolve in
-the invoking runtime; exported builders require a stable validator name
-provided by an installed package.
-
-Keep matching and guard functions pure and independently testable. The plugin
-generator should only adapt row input/output and error behavior.
-
-### Workflow Integration Points
-
-Thread the resolved rules through all current construction paths:
-
-- `EntityDetectionWorkflow.detect_and_validate_entities()`;
-- `_build_detection_spec()`;
-- `build_detection_config()`;
-- `build_detection_builder_for_seed()`;
-- `EntityDetectionWorkflow.run()`;
-- `Anonymizer` run and preview paths;
-- exported builder interfaces.
-
-This plumbing is required for local/exported parity and must not be implemented
-only in the interface layer.
-
-## Safe Regex Execution
-
-Use a regex engine that supports execution timeouts. The Python standard
-library `re` module does not provide a per-match timeout. The third-party
-`regex` package is a reasonable candidate and is also used by Presidio, but the
-dependency and supported syntax must be reviewed before implementation.
-
-Required safeguards:
-
-1. Compile patterns during Pydantic validation and again when reconstructing a
-   worker-side generator.
-2. Enforce a per-rule/per-record timeout.
-3. Enforce a maximum match count per rule and record.
-4. Reject zero-width matches during configuration and fail the row
-   defensively if a context-dependent zero-width match reaches runtime.
-5. Bound pattern length and document the supported regex dialect.
-6. Avoid silently skipping a rule after timeout or match-limit exhaustion.
-7. Convert runtime failures into the normal failed-record path for detection.
-
-Failing the row is safer than treating a timed-out privacy rule as though it
-found no sensitive data.
-
-## Merge and Overlap Policy
-
-Reuse PR #305's admission, coalescing and reconciliation. Do not restore the
-removed value-only augmentation matcher, name splitting, document-wide
-occurrence propagation, or repeated application of validation decisions.
-
-1. Preserve each rule's exact source match and its independent admission route.
-2. Validate overlapping GLiNER and LLM-route regex observations together using
-   request-local aliases and neutral conflict-group markup.
-3. Consume keep/drop/reclass decisions once. Missing decisions protect only
-   the original occurrence, without accepted provenance.
-4. Apply label eligibility and regex-only evidence restrictions before overlap
-   selection. A constrained label requires accepted, unchanged-label regex
-   evidence at the exact span. Original regex fallback protection cannot grant
-   authority to a model-derived claim.
-5. Coalesce identical normalized label/span candidates only after admission,
-   retaining accepted source identities and fallback lineage separately.
-6. Use the existing longest-span, then earliest-position overlap policy. For
-   identical bounds, explicit acceptance outranks fallback protection, followed
-   by `regex_user > regex_builtin > initial_detector > augmenter`.
-7. Direct acceptance protects only the rule's own matched occurrences. A
-   validator drop against an independent detector claim cannot remove it.
-
-An exact regex/GLiNER duplicate therefore retains both accepted origins only
-when both routes accept. Scores are source-local evidence, not calibrated
-probabilities across regex, GLiNER, and augmentation.
-
-## Error Semantics
-
-### Configuration Errors
-
-Raise Pydantic validation errors for:
-
-- invalid regex syntax;
-- empty or zero-width patterns;
-- empty labels;
-- duplicate custom rules;
-- custom labels missing from explicit `entity_labels`;
-- unsupported pattern length or options.
-
-### Runtime Errors
-
-The following conditions should fail the affected row through the existing
-detection `FailedRecord` mechanism:
-
-- regex timeout;
-- match-count limit exceeded;
-- internal validator failure;
-- malformed rule configuration reconstructed on a worker.
-
-Do not log full matched sensitive values in warning or error messages. Include
-the rule ID, label, text length, and safe exception details.
-
-## Provenance and Measurement
-
-Preserve `COL_REGEX_ENTITIES` in the trace DataFrame and record:
-
-- candidate count by rule ID and source;
-- local-guard acceptance and rejection counts;
-- exact duplicates against GLiNER;
-- overlap losses by source and label;
-- LLM keep/drop/reclass counts for regex candidates;
-- accepted candidate counts by validation and additional-detection route;
-- final entity counts by source and label;
-- local detection duration;
-- regex timeout and match-limit failures;
-- validation token/call changes relative to baseline.
-
-Avoid logging raw entity values in aggregate telemetry.
-
-Data Designer schedules the regex and GLiNER columns concurrently because both
-depend only on `COL_TEXT`. `COL_SEED_ENTITIES` is their fan-in barrier: it waits
-for both producer columns and merges their results deterministically, regardless
-of which producer completes first.
-
-## Testing Strategy
-
-### Configuration Tests
-
-- Defaults and `builtin_regexes=False`.
-- Label and pattern normalization.
-- Invalid syntax and zero-width patterns.
-- Duplicate rules.
-- Custom labels under `entity_labels=None`.
-- Missing custom labels under explicit `entity_labels`.
-- Public serialization and re-export.
-- all four combinations of `validate_matches_with_llm` and
-  `detect_additional_matches`.
-- Direct callable and installed-name validator forms.
-
-### Matcher and Guard Tests
-
-For each built-in rule:
-
-- canonical valid examples;
-- international variants supported by the rule;
-- invalid checksums and impossible structured values;
-- substring and boundary false positives;
-- punctuation at document and sentence boundaries;
-- mixed case and Unicode surrounding text;
-- values directly adjacent to Han characters without whitespace;
-- named capture groups passed to user validators;
-- boolean and `RegexValidationResult` return values;
-- custom validator failures without logging candidate values;
-- repeated-digit and test-number cases where relevant;
-- large and adversarial input;
-- timeout and maximum-match behavior.
-
-### Merge Tests
-
-- GLiNER-only candidate.
-- Regex-only candidate.
-- Exact duplicate from GLiNER and a built-in rule.
-- Exact duplicate whose regex route bypasses LLM validation.
-- Exact-span conflict between model, built-in, and user rule.
-- Partial overlap, including an IP address inside a URL.
-- Longer overlapping candidate is kept when both candidates pass validation.
-- Shorter overlapping fallback survives when the longer candidate is dropped.
-- Stable ordering and IDs.
-- Source and rule provenance after exact-candidate coalescing.
-
-### Workflow Tests
-
-- Regex candidates appear in seed validation candidates.
-- Deterministically accepted candidates bypass the LLM candidate payload.
-- LLM decisions can keep, drop, and reclass regex candidates.
-- Locally invalid candidates never reach the LLM validator.
-- Augmentation receives tagged, validated regex entities.
-- Replace and rewrite modes consume unchanged final schemas.
-- No-regex configurations preserve baseline behavior.
-
-### Serialization Tests
-
-- Detection builder JSON contains the new plugin type and resolved rules.
-- Reconstructing the builder restores user and built-in patterns.
-- No compiled regex or Python callback is serialized.
-- Local callable validators resolve in-process.
-- Installed validator names reconstruct on workers; missing or duplicate names
-  fail when detection begins on an execution host.
-- In-process and reconstructed/exported workflows produce equivalent spans.
-- Plugin discovery works when `nemo-anonymizer` is installed on a worker.
-
-### Quality Evaluation
-
-Compare current and hybrid detection on representative positive and hard
-negative datasets. Report per label:
-
-- precision, recall, and F1;
-- regex-constrained recoveries;
-- GLiNER/regex agreement;
-- locally rejected candidates;
-- validator reversals;
-- latency, validation candidate count, and token usage.
-- language, script, region, and locale slices where source metadata permits.
-
-Default-enable a built-in rule only when it demonstrates very high precision
-(target at least 99% on the agreed evaluation sets), useful recall, and no
-material end-to-end privacy regression. Evaluate each rule independently;
-passing one rule does not justify enabling the whole registry.
-
-## Documentation
-
-Update:
-
-- `docs/concepts/detection.md` with the hybrid pipeline and configuration;
-- the generated API reference for `Detect` and `RegexRule`;
-- `skills/anonymizer/SKILL.md` because the public detection surface changes;
-- examples showing default built-ins, an explicit label subset, and a custom
-  organization identifier;
-- security guidance for regex timeouts, match limits, and trusted
-  configuration.
-
-Document the three regex modes, including whether each mode sends regex matches
-to contextual validation and whether GLiNER and augmentation remain enabled for
-the label.
-
-## Implementation Map
-
-Expected files and responsibilities:
-
-| Area | Expected changes |
-| --- | --- |
-| `config/anonymizer_config.py` | Add `RegexRule`, `Detect` fields, and cross-field validation |
-| `anonymizer/__init__.py` | Re-export regex rule and validator public types |
-| `engine/constants.py` | Add GLiNER and regex intermediate column constants |
-| `engine/detection/regex_rules.py` | Built-in registry, rule resolution, and activation |
-| `engine/detection/regex_validators.py` | Built-in validators and custom callable contract |
-| `engine/detection/regex_detection.py` | Safe matching and canonical candidate creation |
-| `engine/detection/postprocess.py` | Source-aware seed fan-in helper |
-| `engine/detection/custom_columns.py` | GLiNER parse/fan-in transform integration |
-| `engine/detection/detection_workflow.py` | Add regex column and thread configuration |
-| `engine/workflow_columns/detection/` | Add regex config, generator, and plugin |
-| `interface/anonymizer.py` | Thread public configuration through all run/export paths |
-| `pyproject.toml` | Add regex runtime dependency and DataDesigner plugin entry point |
-| `tests/config/` | Public configuration tests |
-| `tests/engine/` | Matcher, guards, merge, workflow, and serialization tests |
-| `tests/interface/` | Replace/rewrite and preview/run plumbing tests |
-| `docs/` and `skills/anonymizer/` | Public documentation and skill updates |
-
-Exact module names may change during implementation, but matching, validation,
-rule resolution, workflow adaptation, and merging should remain separate
-responsibilities.
-
-## Delivery Plan
-
-### Stage 0: Contract and Measurement
-
-1. Finalize public names (`RegexRule`, `builtin_regexes`, `regex_rules`).
-2. Add source-aware baseline measurement needed for comparison.
-3. Assemble per-rule positive, negative, and adversarial evaluation fixtures.
-4. Confirm dependency and regex-dialect choice.
-
-Exit criteria:
-
-- The public configuration and activation truth table are approved.
-- Baseline metrics can attribute current candidates and final entities.
-- Evaluation datasets and rule-level success criteria are agreed.
-
-### Stage 1: Safe Custom Regex Path
-
-1. Add `RegexRule` and configuration validation.
-2. Implement safe matching, timeouts, and match limits.
-3. Add direct callable and installed-name custom validator resolution.
-4. Add the serializable DataDesigner regex column.
-5. Merge custom candidates with GLiNER seeds according to each rule's mode.
-6. Add local/exported parity and CJK-boundary tests.
-
-Exit criteria:
-
-- A user-provided label and regex work in replace and rewrite modes.
-- Invalid and pathological patterns fail safely.
-- Exported workflow reconstruction preserves the rule.
-- Baseline behavior is unchanged with no rules and built-ins disabled.
-
-### Stage 2: Initial Built-In Registry
-
-1. Add the six benchmark-backed initial rules and pure validators.
-2. Add rule provenance and aggregate measurement.
-3. Run per-rule precision/recall and performance evaluation.
-4. Revise patterns and guards based on hard negatives.
-5. Enable only rules that meet their individual quality gates.
-
-Exit criteria:
-
-- Every enabled built-in passes its unit, adversarial, serialization, and
-  quality gates.
-- Hybrid detection does not materially regress end-to-end privacy outcomes.
-- Default behavior and migration impact are documented.
-
-## Risks and Mitigations
-
-| Risk | Mitigation |
-| --- | --- |
-| Catastrophic regex runtime | Timeout-capable engine, pattern validation, and match limits |
-| False confidence from syntax alone | Default to `validate_matches_with_llm=True` and document both independent settings |
-| Numeric false positives | Conservative patterns, checksums, hard-negative datasets, per-rule rollout |
-| Duplicate model and regex candidates | Explicit deduplication and source precedence |
-| Exported workflow divergence | Dedicated serializable plugin and reconstruction tests |
-| Hidden PII in logs | Aggregate telemetry without raw values |
-| Public API growth | Keep one `RegexRule` object for pattern and validation policy |
-| Validator code injection | Resolve serialized names only from trusted installed registrations |
-| Default behavior change | Per-rule quality gates and staged default-on rollout |
-
-## Decisions Made for Version 1
-
-1. Implement deterministic detection natively rather than depending on
-   Presidio.
-2. Provide custom `label` + `pattern` with an optional direct validator
-   callable or trusted installed validator name.
-3. Keep GLiNER active for regex-covered labels by default, with
-   `detect_additional_matches=False` available when regex must supply every
-   candidate span.
-4. Default to contextual validation and additional detection; expose the two
-   decisions independently through `validate_matches_with_llm` and
-   `detect_additional_matches`.
-5. Use internal named validators for curated built-ins.
-6. Fail a row on regex timeout or match-limit exhaustion.
-7. Preserve the current public final-entity schema.
-8. Activate built-in rules by default only when their labels are in the
-   effective detection scope; `Detect(builtin_regexes=False)` opts out.
-9. Start with `credit_debit_card`, `email`, `ipv4`, `ipv6`, `mac_address`, and
-   `url`.
-10. Derive versioned custom rule IDs from normalized label and pattern content,
-    so reordering configuration does not change provenance or result ordering.
-11. Keep per-label built-in settings and custom recognizers in one
-    `regex_rules` collection.
-
-## Open Questions
-
-1. Should an optional decorator attach stable name/version metadata to reusable
-   validators, or should installed package registration be the only naming
-   mechanism?
-
-## External Design References
-
-- [Presidio recognizers](https://presidio.dataprivacystack.org/analyzer/adding_recognizers/):
-  regex patterns, context, confidence, country metadata, and code-based
-  validator hooks.
-- [Microsoft Purview sensitive information types](https://learn.microsoft.com/en-us/purview/sit-sensitive-information-type-learn-about):
-  primary matches, checksums/functions, supporting evidence, proximity, and
-  confidence tiers.
-- [Google Sensitive Data Protection hotword rules](https://cloud.google.com/sensitive-data-protection/docs/creating-custom-infotypes-likelihood):
-  proximity-aware contextual likelihood adjustment.
-- [Amazon Macie custom data identifiers](https://docs.aws.amazon.com/macie/latest/user/cdis-options.html):
-  regex safety checks, keywords, proximity, exclusions, and pre-deployment
-  testing.
-- [TruffleHog custom detectors](https://github.com/trufflesecurity/trufflehog/blob/main/pkg/custom_detectors/CUSTOM_DETECTORS.md):
-  regex candidates, keywords, exclusions, entropy, validations, and optional
-  verification for machine credentials.
+Length means Unicode code points, not bytes or model tokens. Collect bounded
+batches under one cumulative search-time budget; Python validators and time between
+batches are excluded. This does not bound arbitrary callbacks. Repeated cards can
+produce Luhn-valid overlapping rotations, so candidate counts can exceed card counts.
+
+Timeouts, cap exhaustion, zero-width matches, and validator exceptions fail the
+record without returning partial regex results. Diagnostics identify the rule,
+limit, and exact configuration knob without source text. Public failed-record
+reasons use fixed, sanitized guidance, not arbitrary validator/trace text.
+
+## Execution and evaluation integration
+
+Declare recognition as a serializable `anonymizer-regex-detection` workflow column;
+compile patterns on workers and execute through `NddAdapter`, not interface-only
+preprocessing. Forward rules, routes, limits, and provenance through run, preview,
+and both exports. Serialize pattern strings and stable validator names, not
+compiled objects or Python callables.
+
+Injected workflows receive optional regex keywords when supported. Unsupported
+implicit defaults retain existing behavior; explicit regex requests or non-default
+limits they cannot honor raise `InvalidConfigError`. Before adding further detector
+backends/alternate models, replace these compatibility shims with a documented
+detector/options contract and deliberate breaking-change migration guidance.
+
+Persist `effective_entity_labels` on run/preview results and forward it through
+replace/rewrite evaluation into coverage taxonomy guidance. Preserve the original
+`entity_labels` as scope policy: `None` remains permissive, the taxonomy is explicitly
+non-exhaustive, and novel non-excluded categories remain eligible. Explicit lists
+stay strict; old/manual results without this metadata keep default guidance.
+
+GLiNER recall remains a foundation concern: retain threshold 0.3, native word
+windows (128 words, 32 overlap), overlapping alternatives, and canonical offsets.
+Preserve explicit window settings; otherwise let the server choose defaults.
+Translate equivalent labels only at the native server boundary and restore requested
+labels on return. Older separately managed servers require their own update;
+client changes cannot recover candidates discarded during inference.
+
+## Validation and delivery
+
+Use synthetic, behavior-focused tests for configuration/normalization, active scope,
+public exports and JSON parity; built-in valid/invalid values and exact spans through
+redaction; independent admission, fallback, reclassification and deterministic
+overlaps; bounded matching and sanitized failures; and run/preview/evaluation scope
+forwarding. Cover native GLiNER window boundaries, source offsets, and label mapping.
+
+Run focused suites, full unit tests for behavioral changes, `make check`, and strict
+docs validation where relevant. Use offline scaling probes rather than fragile
+wall-clock CI thresholds. Keep docs/skill source aligned and regenerate/sign skill
+artifacts through trusted CI.
+
+Quality evidence requires fixed records, models/providers/settings, and independent
+annotations for repeated mentions, standalone name parts, and ambiguous homographs.
+Report missed/exposed mentions, false positives, record/schema/grounding failures,
+candidate counts, tokens, and latency by dataset/model. Distinguish seed rediscovery
+from new recovery, and measure augmentation rediscovery of validator-dropped claims.
+
+Removing propagation can reduce false positives but lose repeated-mention coverage.
+Targeted diagnostics and incomplete known-target annotations do not establish
+precision, exhaustive recall, or safety of that removal. Historical benchmark targets
+and exploratory timings are not release guarantees. This plan does not authorize
+experiment launches, model changes, or benchmark reruns.

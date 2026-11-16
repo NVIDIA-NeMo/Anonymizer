@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TypeVar
 
+from anonymizer.config.entity_labels import normalize_entity_label as normalize_label
 from anonymizer.engine.schemas import DetectionResult
 
 VALIDATION_CONTEXT_WINDOW = 32
@@ -64,11 +65,6 @@ class EntitySpan:
             "score": self.score,
             "source": self.source,
         }
-
-
-def normalize_label(label: str) -> str:
-    """Canonical normalization for entity label comparisons: strip + casefold."""
-    return label.strip().casefold()
 
 
 def normalize_labels(labels: Iterable[str] | None) -> set[str]:
