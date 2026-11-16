@@ -10,31 +10,31 @@
       
       
       
-        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/reference/anonymizer/notebooks/local_inference/gliner2/server/">
+        <link rel="canonical" href="https://nvidia-nemo.github.io/Anonymizer/latest/concepts/inference-services/">
       
       
-        <link rel="prev" href="../backend/">
+        <link rel="prev" href="../self-hosting-gliner/">
       
       
-        <link rel="next" href="../../../../telemetry/">
+        <link rel="next" href="../../tuning/">
       
       
         
       
       
-      <link rel="icon" href="../../../../../../assets/favicon.svg">
+      <link rel="icon" href="../../assets/favicon.svg">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
     
     
       
-        <title>server - NeMo Anonymizer</title>
+        <title>Deploy Local Models - NeMo Anonymizer</title>
       
     
     
-      <link rel="stylesheet" href="../../../../../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../../../../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -53,13 +53,13 @@
       
     
     
-      <link rel="stylesheet" href="../../../../../../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
-      <link rel="stylesheet" href="../../../../../../css/style.css">
+      <link rel="stylesheet" href="../../css/style.css">
     
-      <link rel="stylesheet" href="../../../../../../css/mkdocstrings.css">
+      <link rel="stylesheet" href="../../css/mkdocstrings.css">
     
-    <script>__md_scope=new URL("../../../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#anonymizer.notebooks.local_inference.gliner2.server" class="md-skip">
+        <a href="#deploy-local-models" class="md-skip">
           Skip to content
         </a>
       
@@ -104,7 +104,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../../../../.." title="NeMo Anonymizer" class="md-header__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
+    <a href="../.." title="NeMo Anonymizer" class="md-header__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.06 13c-1.86 0-3.42 1.33-3.82 3.1-.95-.41-1.82-.3-2.48-.01C10.35 14.31 8.79 13 6.94 13 4.77 13 3 14.79 3 17s1.77 4 3.94 4c2.06 0 3.74-1.62 3.9-3.68.34-.24 1.23-.69 2.32.02.18 2.05 1.84 3.66 3.9 3.66 2.17 0 3.94-1.79 3.94-4s-1.77-4-3.94-4M6.94 19.86c-1.56 0-2.81-1.28-2.81-2.86s1.26-2.86 2.81-2.86c1.56 0 2.81 1.28 2.81 2.86s-1.25 2.86-2.81 2.86m10.12 0c-1.56 0-2.81-1.28-2.81-2.86s1.25-2.86 2.81-2.86 2.82 1.28 2.82 2.86-1.27 2.86-2.82 2.86M22 10.5H2V12h20zm-6.47-7.87c-.22-.49-.78-.75-1.31-.58L12 2.79l-2.23-.74-.05-.01c-.53-.15-1.09.13-1.29.64L6 9h12l-2.44-6.32z"/></svg>
@@ -124,7 +124,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              server
+              Deploy Local Models
             
           </span>
         </div>
@@ -242,7 +242,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../../../../.." title="NeMo Anonymizer" class="md-nav__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
+    <a href="../.." title="NeMo Anonymizer" class="md-nav__button md-logo" aria-label="NeMo Anonymizer" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.06 13c-1.86 0-3.42 1.33-3.82 3.1-.95-.41-1.82-.3-2.48-.01C10.35 14.31 8.79 13 6.94 13 4.77 13 3 14.79 3 17s1.77 4 3.94 4c2.06 0 3.74-1.62 3.9-3.68.34-.24 1.23-.69 2.32.02.18 2.05 1.84 3.66 3.9 3.66 2.17 0 3.94-1.79 3.94-4s-1.77-4-3.94-4M6.94 19.86c-1.56 0-2.81-1.28-2.81-2.86s1.26-2.86 2.81-2.86c1.56 0 2.81 1.28 2.81 2.86s-1.25 2.86-2.81 2.86m10.12 0c-1.56 0-2.81-1.28-2.81-2.86s1.25-2.86 2.81-2.86 2.82 1.28 2.82 2.86-1.27 2.86-2.82 2.86M22 10.5H2V12h20zm-6.47-7.87c-.22-.49-.78-.75-1.31-.58L12 2.79l-2.23-.74-.05-.01c-.53-.15-1.09.13-1.29.64L6 9h12l-2.44-6.32z"/></svg>
@@ -272,7 +272,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../.." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -296,8 +296,10 @@
       
   
   
+    
   
   
+  
     
     
       
@@ -315,15 +317,17 @@
       
         
       
+        
+      
     
     
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
@@ -344,7 +348,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -362,7 +366,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../concepts/models/" class="md-nav__link">
+      <a href="../models/" class="md-nav__link">
         
   
   
@@ -390,7 +394,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../concepts/detection/" class="md-nav__link">
+      <a href="../detection/" class="md-nav__link">
         
   
   
@@ -418,7 +422,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../concepts/replace/" class="md-nav__link">
+      <a href="../replace/" class="md-nav__link">
         
   
   
@@ -446,7 +450,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../concepts/rewrite/" class="md-nav__link">
+      <a href="../rewrite/" class="md-nav__link">
         
   
   
@@ -474,7 +478,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../concepts/choosing-a-strategy/" class="md-nav__link">
+      <a href="../choosing-a-strategy/" class="md-nav__link">
         
   
   
@@ -502,7 +506,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../concepts/evaluation/" class="md-nav__link">
+      <a href="../evaluation/" class="md-nav__link">
         
   
   
@@ -530,7 +534,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../concepts/self-hosting-gliner/" class="md-nav__link">
+      <a href="../self-hosting-gliner/" class="md-nav__link">
         
   
   
@@ -551,6 +555,236 @@
 
               
             
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy Local Models
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy Local Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#choose-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose models
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#understand-the-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Understand the lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deploy-on-the-gpu-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deploy on the GPU host
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deploy on the GPU host">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compile-and-launch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compile and launch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#operate-the-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operate the service
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deploy-in-a-gpu-container" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deploy in a GPU container
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deploy in a GPU container">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-the-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build the image
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#start-the-deployment-container" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Start the deployment container
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compile-and-launch-inside-the-container" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compile and launch inside the container
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stop-cleanly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stop cleanly
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connect-anonymizer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect Anonymizer
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -565,7 +799,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../tuning/" class="md-nav__link">
+      <a href="../../tuning/" class="md-nav__link">
         
   
   
@@ -592,7 +826,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../troubleshooting/" class="md-nav__link">
+      <a href="../../troubleshooting/" class="md-nav__link">
         
   
   
@@ -647,7 +881,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../../../../tutorials/" class="md-nav__link ">
+            <a href="../../tutorials/" class="md-nav__link ">
               
   
   
@@ -691,7 +925,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../notebooks/01_your_first_anonymization/" class="md-nav__link">
+      <a href="../../notebooks/01_your_first_anonymization/" class="md-nav__link">
         
   
   
@@ -719,7 +953,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../notebooks/02_inspecting_detected_entities/" class="md-nav__link">
+      <a href="../../notebooks/02_inspecting_detected_entities/" class="md-nav__link">
         
   
   
@@ -747,7 +981,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../notebooks/03_choosing_a_replacement_strategy/" class="md-nav__link">
+      <a href="../../notebooks/03_choosing_a_replacement_strategy/" class="md-nav__link">
         
   
   
@@ -775,7 +1009,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../notebooks/04_rewriting_biographies/" class="md-nav__link">
+      <a href="../../notebooks/04_rewriting_biographies/" class="md-nav__link">
         
   
   
@@ -803,7 +1037,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../notebooks/05_rewriting_legal_documents/" class="md-nav__link">
+      <a href="../../notebooks/05_rewriting_legal_documents/" class="md-nav__link">
         
   
   
@@ -889,7 +1123,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../development/observability/" class="md-nav__link">
+      <a href="../../development/observability/" class="md-nav__link">
         
   
   
@@ -921,14 +1155,10 @@
       
   
   
-    
   
   
-  
     
     
-      
-        
       
         
       
@@ -944,11 +1174,11 @@
     
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
         
           
           <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
@@ -969,7 +1199,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_7">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1044,7 +1274,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../config/anonymizer_config/" class="md-nav__link">
+      <a href="../../reference/anonymizer/config/anonymizer_config/" class="md-nav__link">
         
   
   
@@ -1072,7 +1302,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../config/models/" class="md-nav__link">
+      <a href="../../reference/anonymizer/config/models/" class="md-nav__link">
         
   
   
@@ -1100,7 +1330,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../config/replace_strategies/" class="md-nav__link">
+      <a href="../../reference/anonymizer/config/replace_strategies/" class="md-nav__link">
         
   
   
@@ -1128,7 +1358,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../config/rewrite/" class="md-nav__link">
+      <a href="../../reference/anonymizer/config/rewrite/" class="md-nav__link">
         
   
   
@@ -1165,6 +1395,8 @@
   
     
     
+      
+        
       
         
       
@@ -1223,7 +1455,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../interface/anonymizer/" class="md-nav__link">
+      <a href="../../reference/anonymizer/interface/anonymizer/" class="md-nav__link">
         
   
   
@@ -1302,7 +1534,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../interface/cli/main/" class="md-nav__link">
+      <a href="../../reference/anonymizer/interface/cli/main/" class="md-nav__link">
         
   
   
@@ -1338,7 +1570,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../interface/display/" class="md-nav__link">
+      <a href="../../reference/anonymizer/interface/display/" class="md-nav__link">
         
   
   
@@ -1366,7 +1598,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../interface/errors/" class="md-nav__link">
+      <a href="../../reference/anonymizer/interface/errors/" class="md-nav__link">
         
   
   
@@ -1394,7 +1626,35 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../interface/results/" class="md-nav__link">
+      <a href="../../reference/anonymizer/interface/factory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    factory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/anonymizer/interface/results/" class="md-nav__link">
         
   
   
@@ -1430,7 +1690,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../logging/" class="md-nav__link">
+      <a href="../../reference/anonymizer/logging/" class="md-nav__link">
         
   
   
@@ -1525,7 +1785,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../measurement/collector/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/collector/" class="md-nav__link">
         
   
   
@@ -1553,7 +1813,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../measurement/config/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/config/" class="md-nav__link">
         
   
   
@@ -1581,7 +1841,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../measurement/constants/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/constants/" class="md-nav__link">
         
   
   
@@ -1609,7 +1869,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../measurement/fields/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/fields/" class="md-nav__link">
         
   
   
@@ -1694,7 +1954,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../measurement/metrics/entities/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/metrics/entities/" class="md-nav__link">
         
   
   
@@ -1722,7 +1982,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../measurement/metrics/llm_calls/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/metrics/llm_calls/" class="md-nav__link">
         
   
   
@@ -1750,7 +2010,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../measurement/metrics/replacements/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/metrics/replacements/" class="md-nav__link">
         
   
   
@@ -1778,7 +2038,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../measurement/metrics/rewrite/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/metrics/rewrite/" class="md-nav__link">
         
   
   
@@ -1814,7 +2074,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../measurement/recorders/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/recorders/" class="md-nav__link">
         
   
   
@@ -1897,7 +2157,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../measurement/records/model/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/records/model/" class="md-nav__link">
         
   
   
@@ -1925,7 +2185,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../measurement/records/row/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/records/row/" class="md-nav__link">
         
   
   
@@ -1953,7 +2213,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../measurement/records/run/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/records/run/" class="md-nav__link">
         
   
   
@@ -1989,7 +2249,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../measurement/session/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/session/" class="md-nav__link">
         
   
   
@@ -2017,7 +2277,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../measurement/sinks/" class="md-nav__link">
+      <a href="../../reference/anonymizer/measurement/sinks/" class="md-nav__link">
         
   
   
@@ -2050,388 +2310,10 @@
                 
   
   
-    
-  
-  
-  
-    
-    
-      
-        
-      
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_5" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_7_5" id="__nav_7_5_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    notebooks
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_5_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_7_5">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    notebooks
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-    
-  
-  
-  
-    
-    
-      
-        
-      
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_5_1" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_7_5_1" id="__nav_7_5_1_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    local_inference
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_7_5_1_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_7_5_1">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    local_inference
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-    
-  
-  
-  
-    
-    
-      
-        
-      
-        
-      
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_5_1_1" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_7_5_1_1" id="__nav_7_5_1_1_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    gliner2
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="4" aria-labelledby="__nav_7_5_1_1_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_7_5_1_1">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    gliner2
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
   
   
     <li class="md-nav__item">
-      <a href="../backend/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    backend
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-    
-  
-  
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    server
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    server
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#anonymizer.notebooks.local_inference.gliner2.server" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-module"></code>&nbsp;server
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label=" server">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.notebooks.local_inference.gliner2.server.DetectParams" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;DetectParams
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.notebooks.local_inference.gliner2.server.DetectJob" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;DetectJob
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.notebooks.local_inference.gliner2.server.BatchDetector" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;BatchDetector
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.notebooks.local_inference.gliner2.server.lifespan" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;lifespan
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.notebooks.local_inference.gliner2.server.list_models" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;list_models
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.notebooks.local_inference.gliner2.server.chat_completions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;chat_completions
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.notebooks.local_inference.gliner2.server.main" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;main
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../../telemetry/" class="md-nav__link">
+      <a href="../../reference/anonymizer/telemetry/" class="md-nav__link">
         
   
   
@@ -2496,7 +2378,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../../../../devnotes/" class="md-nav__link ">
+            <a href="../../devnotes/" class="md-nav__link ">
               
   
   
@@ -2540,7 +2422,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../devnotes/hybrid-entity-detection-why-one-model-shouldnt-do-everything/" class="md-nav__link">
+      <a href="../../devnotes/hybrid-entity-detection-why-one-model-shouldnt-do-everything/" class="md-nav__link">
         
   
   
@@ -2568,7 +2450,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../devnotes/after-anonymization--part-ii-evaluating-rewrite-mode/" class="md-nav__link">
+      <a href="../../devnotes/after-anonymization--part-ii-evaluating-rewrite-mode/" class="md-nav__link">
         
   
   
@@ -2596,7 +2478,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../devnotes/after-anonymization--part-i-evaluating-replace-mode/" class="md-nav__link">
+      <a href="../../devnotes/after-anonymization--part-i-evaluating-replace-mode/" class="md-nav__link">
         
   
   
@@ -2624,7 +2506,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../devnotes/running-nemo-anonymizer-fully-self-hosted-on-one-b300/" class="md-nav__link">
+      <a href="../../devnotes/running-nemo-anonymizer-fully-self-hosted-on-one-b300/" class="md-nav__link">
         
   
   
@@ -2652,7 +2534,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../devnotes/introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
+      <a href="../../devnotes/introducing-nemo-anonymizer-text-anonymization-for-the-reasoning-era/" class="md-nav__link">
         
   
   
@@ -2733,7 +2615,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../../../devnotes/archive/2026/" class="md-nav__link">
+      <a href="../../devnotes/archive/2026/" class="md-nav__link">
         
   
   
@@ -2786,6 +2668,8 @@
   
   
   
+    
+  
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
@@ -2794,22 +2678,44 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#anonymizer.notebooks.local_inference.gliner2.server" class="md-nav__link">
+  <a href="#choose-models" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-module"></code>&nbsp;server
+        Choose models
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label=" server">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#understand-the-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Understand the lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deploy-on-the-gpu-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deploy on the GPU host
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deploy on the GPU host">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#anonymizer.notebooks.local_inference.gliner2.server.DetectParams" class="md-nav__link">
+  <a href="#install" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;DetectParams
+        Install
       
     </span>
   </a>
@@ -2817,10 +2723,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#anonymizer.notebooks.local_inference.gliner2.server.DetectJob" class="md-nav__link">
+  <a href="#compile-and-launch" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;DetectJob
+        Compile and launch
       
     </span>
   </a>
@@ -2828,54 +2734,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#anonymizer.notebooks.local_inference.gliner2.server.BatchDetector" class="md-nav__link">
+  <a href="#operate-the-service" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;BatchDetector
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.notebooks.local_inference.gliner2.server.lifespan" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;lifespan
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.notebooks.local_inference.gliner2.server.list_models" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;list_models
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.notebooks.local_inference.gliner2.server.chat_completions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;chat_completions
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#anonymizer.notebooks.local_inference.gliner2.server.main" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;main
+        Operate the service
       
     </span>
   </a>
@@ -2884,6 +2746,89 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deploy-in-a-gpu-container" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deploy in a GPU container
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deploy in a GPU container">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-the-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build the image
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#start-the-deployment-container" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Start the deployment container
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compile-and-launch-inside-the-container" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compile and launch inside the container
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stop-cleanly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stop cleanly
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connect-anonymizer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect Anonymizer
+      
+    </span>
+  </a>
   
 </li>
       
@@ -2912,7 +2857,7 @@
   
   
     <li class="md-path__item">
-      <a href="../../../../../.." class="md-path__link">
+      <a href="../.." class="md-path__link">
         
   <span class="md-ellipsis">
     Home
@@ -2929,97 +2874,11 @@
   
     
     
-      
-  
-  
-    
-    
       <li class="md-path__item">
-        <a href="../../../../config/anonymizer_config/" class="md-path__link">
+        <a href="../models/" class="md-path__link">
           
   <span class="md-ellipsis">
-    API Reference
-  </span>
-
-        </a>
-      </li>
-    
-  
-
-    
-  
-
-      
-        
-  
-  
-    
-    
-      
-  
-  
-    
-    
-      
-  
-  
-    
-    
-      <li class="md-path__item">
-        <a href="../backend/" class="md-path__link">
-          
-  <span class="md-ellipsis">
-    notebooks
-  </span>
-
-        </a>
-      </li>
-    
-  
-
-    
-  
-
-    
-  
-
-      
-        
-  
-  
-    
-    
-      
-  
-  
-    
-    
-      <li class="md-path__item">
-        <a href="../backend/" class="md-path__link">
-          
-  <span class="md-ellipsis">
-    local_inference
-  </span>
-
-        </a>
-      </li>
-    
-  
-
-    
-  
-
-      
-        
-  
-  
-    
-    
-      <li class="md-path__item">
-        <a href="../backend/" class="md-path__link">
-          
-  <span class="md-ellipsis">
-    gliner2
+    Concepts
   </span>
 
         </a>
@@ -3041,489 +2900,373 @@
   
 
 
-  <h1>server</h1>
-
-<div class="doc doc-object doc-module">
-
-
-
-<h2 id="anonymizer.notebooks.local_inference.gliner2.server" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-module"></code>            <code>server</code>
-
-
-<a href="#anonymizer.notebooks.local_inference.gliner2.server" class="headerlink" title="Permanent link">&para;</a></h2>
-
-    <div class="doc doc-contents first">
-
-        <p>OpenAI-compatible GLiNER2 server for notebook and development use.</p>
-
-
-
-
-
-
-
-
-
-
-<p><span class="doc-section-title">Classes:</span></p>
-    <table>
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Description</th>
-        </tr>
-      </thead>
-      <tbody>
-          <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="              DetectParams(labels, threshold, chunk_length, overlap, flat_ner, inference_batch_size)
-
-  
-      dataclass
-   (anonymizer.notebooks.local_inference.gliner2.server.DetectParams)" href="#anonymizer.notebooks.local_inference.gliner2.server.DetectParams">DetectParams</a></code></td>
-            <td>
-              <div class="doc-md-description">
-                <p>Inference settings used to group compatible concurrent requests.</p>
-              </div>
-            </td>
-          </tr>
-          <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="              DetectJob(text, params, future)
-
-  
-      dataclass
-   (anonymizer.notebooks.local_inference.gliner2.server.DetectJob)" href="#anonymizer.notebooks.local_inference.gliner2.server.DetectJob">DetectJob</a></code></td>
-            <td>
-              <div class="doc-md-description">
-                <p>One queued detection request.</p>
-              </div>
-            </td>
-          </tr>
-          <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="              BatchDetector(*, max_requests=32, wait_seconds=0.01) (anonymizer.notebooks.local_inference.gliner2.server.BatchDetector)" href="#anonymizer.notebooks.local_inference.gliner2.server.BatchDetector">BatchDetector</a></code></td>
-            <td>
-              <div class="doc-md-description">
-                <p>Coalesce requests and serialize model access through one worker.</p>
-              </div>
-            </td>
-          </tr>
-      </tbody>
-    </table>
-
-
-
-
-<p><span class="doc-section-title">Functions:</span></p>
-    <table>
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Description</th>
-        </tr>
-      </thead>
-      <tbody>
-            <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            lifespan(_)
-
-  
-      async
-   (anonymizer.notebooks.local_inference.gliner2.server.lifespan)" href="#anonymizer.notebooks.local_inference.gliner2.server.lifespan">lifespan</a></code></td>
-              <td>
-                <div class="doc-md-description">
-                  <p>Load the model and own the batching worker for the server lifespan.</p>
-                </div>
-              </td>
-            </tr>
-            <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            list_models(request) (anonymizer.notebooks.local_inference.gliner2.server.list_models)" href="#anonymizer.notebooks.local_inference.gliner2.server.list_models">list_models</a></code></td>
-              <td>
-                <div class="doc-md-description">
-                  <p>Return readiness and immutable checkpoint identity.</p>
-                </div>
-              </td>
-            </tr>
-            <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            chat_completions(request)
-
-  
-      async
-   (anonymizer.notebooks.local_inference.gliner2.server.chat_completions)" href="#anonymizer.notebooks.local_inference.gliner2.server.chat_completions">chat_completions</a></code></td>
-              <td>
-                <div class="doc-md-description">
-                  <p>Run GLiNER2 through the detector chat-completion contract.</p>
-                </div>
-              </td>
-            </tr>
-            <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            main() (anonymizer.notebooks.local_inference.gliner2.server.main)" href="#anonymizer.notebooks.local_inference.gliner2.server.main">main</a></code></td>
-              <td>
-                <div class="doc-md-description">
-                  <p>Run the lightweight notebook/development server.</p>
-                </div>
-              </td>
-            </tr>
-      </tbody>
-    </table>
-
-
-
-
-
-<div class="doc doc-children">
-
-
-
-
-
-
-
-
-
-<div class="doc doc-object doc-class">
-
-
-
-<h3 id="anonymizer.notebooks.local_inference.gliner2.server.DetectParams" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">DetectParams(labels, threshold, chunk_length, overlap, flat_ner, inference_batch_size)</code>
-
-  <span class="doc doc-labels">
-      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
-  </span>
-
-<a href="#anonymizer.notebooks.local_inference.gliner2.server.DetectParams" class="headerlink" title="Permanent link">&para;</a></h3>
-
-
-    <div class="doc doc-contents ">
-
-
-
-        <p>Inference settings used to group compatible concurrent requests.</p>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<div class="doc doc-children">
-
-
-
-
-
-
-
-
-
-
-
-
-  </div>
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-class">
-
-
-
-<h3 id="anonymizer.notebooks.local_inference.gliner2.server.DetectJob" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">DetectJob(text, params, future)</code>
-
-  <span class="doc doc-labels">
-      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
-  </span>
-
-<a href="#anonymizer.notebooks.local_inference.gliner2.server.DetectJob" class="headerlink" title="Permanent link">&para;</a></h3>
-
-
-    <div class="doc doc-contents ">
-
-
-
-        <p>One queued detection request.</p>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<div class="doc doc-children">
-
-
-
-
-
-
-
-
-
-
-
-
-  </div>
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-class">
-
-
-
-<h3 id="anonymizer.notebooks.local_inference.gliner2.server.BatchDetector" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">BatchDetector(*, max_requests=32, wait_seconds=0.01)</code>
-
-<a href="#anonymizer.notebooks.local_inference.gliner2.server.BatchDetector" class="headerlink" title="Permanent link">&para;</a></h3>
-
-
-    <div class="doc doc-contents ">
-
-
-
-        <p>Coalesce requests and serialize model access through one worker.</p>
-
-
-
-
-
-
-
-
-
-
-
-
-
-                  <details class="mkdocstrings-source">
-                    <summary>Source code in <code>src/anonymizer/notebooks/local_inference/gliner2/server.py</code></summary>
-                    <pre class="highlight"><code class="language-python">def __init__(self, *, max_requests: int = 32, wait_seconds: float = 0.01) -&gt; None:
-    self._max_requests = max_requests
-    self._wait_seconds = wait_seconds
-    self._queue: asyncio.Queue[DetectJob | None] = asyncio.Queue()
-    self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gliner2-infer")
-    self._worker_task: asyncio.Task[None] | None = None</code></pre>
-                  </details>
-
-
-
-<div class="doc doc-children">
-
-
-
-
-
-
-
-
-
-
-
-
-  </div>
-
-    </div>
-
-</div>
-
-
-<div class="doc doc-object doc-function">
-
-
-<h3 id="anonymizer.notebooks.local_inference.gliner2.server.lifespan" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">lifespan(_)</code>
-
-  <span class="doc doc-labels">
-      <small class="doc doc-label doc-label-async"><code>async</code></small>
-  </span>
-
-<a href="#anonymizer.notebooks.local_inference.gliner2.server.lifespan" class="headerlink" title="Permanent link">&para;</a></h3>
-
-
-    <div class="doc doc-contents ">
-
-        <p>Load the model and own the batching worker for the server lifespan.</p>
-
-
-            <details class="mkdocstrings-source">
-              <summary>Source code in <code>src/anonymizer/notebooks/local_inference/gliner2/server.py</code></summary>
-              <pre class="highlight"><code class="language-python">@asynccontextmanager
-async def lifespan(_: FastAPI) -&gt; AsyncIterator[None]:
-    """Load the model and own the batching worker for the server lifespan."""
-    global model, selected_device
-    selected_device = resolve_device(os.getenv(DEVICE_ENV, "auto"))
-    logger.info("Loading %s at revision %s on %s", MODEL_ID, MODEL_REVISION, selected_device)
-    model = await asyncio.to_thread(load_model, selected_device)
-    detector.start()
-    logger.info("Local GLiNER2 is ready")
-    try:
-        yield
-    finally:
-        await detector.stop()</code></pre>
-            </details>
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-function">
-
-
-<h3 id="anonymizer.notebooks.local_inference.gliner2.server.list_models" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">list_models(request)</code>
-
-<a href="#anonymizer.notebooks.local_inference.gliner2.server.list_models" class="headerlink" title="Permanent link">&para;</a></h3>
-
-
-    <div class="doc doc-contents ">
-
-        <p>Return readiness and immutable checkpoint identity.</p>
-
-
-            <details class="mkdocstrings-source">
-              <summary>Source code in <code>src/anonymizer/notebooks/local_inference/gliner2/server.py</code></summary>
-              <pre class="highlight"><code class="language-python">@app.get("/v1/models")
-def list_models(request: Request) -&gt; dict[str, Any]:
-    """Return readiness and immutable checkpoint identity."""
-    _authorize(request)
-    return {
-        "object": "list",
-        "data": [
-            {
-                "id": MODEL_ID,
-                "object": "model",
-                "revision": MODEL_REVISION,
-                "device": selected_device,
-            }
-        ],
-    }</code></pre>
-            </details>
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-function">
-
-
-<h3 id="anonymizer.notebooks.local_inference.gliner2.server.chat_completions" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">chat_completions(request)</code>
-
-  <span class="doc doc-labels">
-      <small class="doc doc-label doc-label-async"><code>async</code></small>
-  </span>
-
-<a href="#anonymizer.notebooks.local_inference.gliner2.server.chat_completions" class="headerlink" title="Permanent link">&para;</a></h3>
-
-
-    <div class="doc doc-contents ">
-
-        <p>Run GLiNER2 through the detector chat-completion contract.</p>
-
-
-            <details class="mkdocstrings-source">
-              <summary>Source code in <code>src/anonymizer/notebooks/local_inference/gliner2/server.py</code></summary>
-              <pre class="highlight"><code class="language-python">@app.post("/v1/chat/completions")
-async def chat_completions(request: Request) -&gt; dict[str, Any]:
-    """Run GLiNER2 through the detector chat-completion contract."""
-    _authorize(request)
-    if model is None:
-        raise HTTPException(status_code=503, detail="GLiNER2 is not loaded")
-    body = await request.json()
-    text = _extract_text(body.get("messages", []))
-    labels = body.get("labels") or []
-    params = DetectParams(
-        labels=tuple(str(label) for label in labels),
-        threshold=float(body.get("threshold", 0.3)),
-        chunk_length=int(body.get("chunk_length", DEFAULT_CHUNK_LENGTH)),
-        overlap=int(body.get("overlap", DEFAULT_OVERLAP)),
-        flat_ner=bool(body.get("flat_ner", DEFAULT_FLAT_NER)),
-        inference_batch_size=int(body.get("batch_size", DEFAULT_INFERENCE_BATCH_SIZE)),
+<!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+<h1 id="deploy-local-models">Deploy Local Models<a class="headerlink" href="#deploy-local-models" title="Permanent link">&para;</a></h1>
+<p>NeMo Anonymizer can run its detector and generation roles against models on
+your own NVIDIA GPU. The repository includes pinned profiles and a lifecycle
+tool for this purpose. The tool compiles a profile into a frozen, checksummed
+plan, starts the service, checks readiness, and records the local process handle
+it observed so it can later report status or request cleanup.</p>
+<p>This path suits development workstations, on-premises servers, and isolated
+environments where text must stay on local infrastructure. It manages one
+deployment shape: a local process on the machine where the tool runs, either
+vLLM for generation or Anonymizer's native GLiNER2 server for detection. You can
+run vLLM directly on the host or inside the supplied GPU container.</p>
+<p>The tool lives under <code>tools/</code> and is not installed with the
+<code>nemo-anonymizer</code> wheel. Start from a source checkout.</p>
+<h2 id="choose-models">Choose models<a class="headerlink" href="#choose-models" title="Permanent link">&para;</a></h2>
+<p>Eleven profiles ship in <code>tools/inference_service_profiles/</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Profile</th>
+<th>Port</th>
+<th>Endpoint model name</th>
+<th>Role and hardware guidance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vllm-local-test.toml</code></td>
+<td>8000</td>
+<td><code>anonymizer-local</code></td>
+<td>TinyLlama lifecycle smoke test</td>
+</tr>
+<tr>
+<td><code>gliner2-native.toml</code></td>
+<td>8001</td>
+<td><code>fastino/gliner2-privacy-filter-PII-multi</code></td>
+<td>Multilingual PII detector served by Anonymizer's native GLiNER2 server</td>
+</tr>
+<tr>
+<td><code>gemma-4-12b-it.toml</code></td>
+<td>8010</td>
+<td><code>gemma-4-12b-it</code></td>
+<td>Instruction-tuned Gemma 4 generation; requires an NVIDIA GPU with at least 40 GB of memory</td>
+</tr>
+<tr>
+<td><code>gemma-4-26b-a4b-it.toml</code></td>
+<td>8011</td>
+<td><code>gemma-4-26b-a4b-it</code></td>
+<td>Gemma 4 26B-A4B MoE generation, text only, 48K context; one 80 GB GPU</td>
+</tr>
+<tr>
+<td><code>gpt-oss-20b.toml</code></td>
+<td>8012</td>
+<td><code>gpt-oss-20b</code></td>
+<td>Compact GPT-OSS generation</td>
+</tr>
+<tr>
+<td><code>gpt-oss-120b.toml</code></td>
+<td>8013</td>
+<td><code>gpt-oss-120b</code></td>
+<td>GPT-OSS generation on a dedicated 80 GB GPU</td>
+</tr>
+<tr>
+<td><code>nemotron-3.5-lightning.toml</code></td>
+<td>8014</td>
+<td><code>nemotron-3.5-lightning</code></td>
+<td>High-throughput generation on an 80 GB GPU</td>
+</tr>
+<tr>
+<td><code>nemotron-3.5-lightning-nvfp4.toml</code></td>
+<td>8015</td>
+<td><code>nemotron-3.5-lightning-nvfp4</code></td>
+<td>Official NVFP4 checkpoint with a conservative single-H100 configuration</td>
+</tr>
+<tr>
+<td><code>nemotron-3.5-super-vl.toml</code></td>
+<td>8016</td>
+<td><code>nemotron-3.5-super-vl</code></td>
+<td>Nemotron 3.5 Super VL 120B-A12B (BF16), text only, 48K context; four 80 GB GPUs with tensor parallelism and <code>trust-remote-code</code></td>
+</tr>
+<tr>
+<td><code>qwen3-30b-a3b-instruct.toml</code></td>
+<td>8017</td>
+<td><code>qwen3-30b-a3b-instruct</code></td>
+<td>Multilingual generation</td>
+</tr>
+<tr>
+<td><code>qwen3.8-27b.toml</code></td>
+<td>8018</td>
+<td><code>qwen3.8-27b</code></td>
+<td>Qwen3.8 27B generation, text only, 32K context; one 80 GB GPU</td>
+</tr>
+</tbody>
+</table>
+<p>Each generation profile pins its Hugging Face revision and runs stock vLLM.
+The detector profile starts from the main project environment
+(<code>.venv/bin/python -m anonymizer.engine.local_inference.serve</code>), which runs
+Anonymizer's native GLiNER2 server from a cached, dependency-isolated
+environment; the server pins the GLiNER2 checkpoint and revision itself.
+<code>validate</code> builds or reuses that environment (a one-time install with pip, or <code>uv pip</code> when pip is absent), so run
+it before the first <code>launch</code>.</p>
+<p>The generation profiles select vLLM reasoning parsers through
+<code>[backend.options].reasoning-parser</code>: <code>openai_gptoss</code> for GPT-OSS, <code>nemotron_v3</code> for
+Nemotron, and <code>gemma4</code> for Gemma. These parsers separate reasoning from the
+answer and allow JSON-schema constraints to apply to the answer after
+reasoning ends. The Qwen3 Instruct profile supports only non-thinking mode
+and does not set a reasoning parser.
+Recompile saved plans after updating the tool or changing a profile.</p>
+<p>GPT-OSS clients set <code>reasoning_effort</code> at the top level of each chat-completion
+request, for example <code>reasoning_effort="low"</code> in the OpenAI client. Putting
+this field inside <code>chat_template_kwargs</code> does not control GPT-OSS effort.
+The readiness probe sends only the fields in the profile's
+<code>[backend.probe_extra_body]</code>; the GPT-OSS profiles request low effort there and
+the Nemotron, Gemma, and Qwen3.8 profiles disable thinking. This does not set a default for
+subsequent client requests. vLLM ignores OpenRouter's <code>reasoning</code> field; to
+switch thinking per request, set <code>chat_template_kwargs.enable_thinking</code> in the
+model's <code>inference_parameters.extra_body</code>.</p>
+<p>The <code>gpt-oss-120b</code>, <code>nemotron-3.5-lightning</code>, Gemma 4 26B-A4B, Qwen3.8, and
+Nemotron Super VL profiles allow 32K-49K tokens of context so that requests
+with large <code>max_tokens</code> budgets (16,384 to 32,768) fit; vLLM rejects a request
+whose prompt plus <code>max_tokens</code> exceeds the profile's <code>max-model-len</code>.</p>
+<p>The Gemma 4 12B profile uses the instruction-tuned
+<a href="https://huggingface.co/google/gemma-4-12B-it"><code>google/gemma-4-12B-it</code></a>
+checkpoint and bounds its larger native context window to 8,192 tokens. The
+Nemotron NVFP4 profile uses NVIDIA's
+<a href="https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"><code>NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4</code></a>
+checkpoint. vLLM detects its ModelOpt quantization from the checkpoint, so the
+profile does not request online quantization.</p>
+<p>GPU memory also depends on the architecture, context length, concurrency, and
+other processes. Lower <code>max-model-len</code>, <code>max-num-seqs</code>, or
+<code>gpu-memory-utilization</code> when vLLM cannot reserve its KV cache. Do not co-host
+the GPT-OSS 120B profile with another model on an 80 GB GPU.</p>
+<h2 id="understand-the-lifecycle">Understand the lifecycle<a class="headerlink" href="#understand-the-lifecycle" title="Permanent link">&para;</a></h2>
+<p>The workflow has two durable files:</p>
+<pre class="highlight"><code class="language-text">profile.toml -&gt; compile -&gt; plan.json -&gt; validate -&gt; launch -&gt; launch.json
+                              |                                |
+                              +-&gt; probe                        +-&gt; status / stop</code></pre>
+<p><code>compile</code> has no runtime effects. The plan contains the profile's spec, the
+process arguments compiled from it, and a SHA-256 digest. Runtime commands
+verify the digest and that compiling the embedded spec reproduces the plan
+before acting. This developer tool trusts whoever can write the profile and
+plan: it does not authenticate the plan's author or sign the plan.</p>
+<p><code>validate</code> checks the serving environment without starting a server. For vLLM
+it runs vLLM's own argument parser and pre-load checks in the serving
+interpreter; for GLiNER2 it builds or reuses the isolated server environment without importing the model stack. It does not
+establish model or hardware compatibility; startup and task probes provide
+additional checks.</p>
+<p><code>launch</code> starts the process, then requires a launch-scoped ownership proof from
+it and waits for <code>/v1/models</code> and a task-specific request. The ownership check
+prevents an existing compatible service on the target port from satisfying a
+new launch. A generation service must return a chat completion. The detector
+must return a labelled entity with character offsets and a score. The launch
+receipt records the process group, the Linux start marker, and a digest of the
+launch token so later commands do not signal a reused PID or an unrelated
+process group.</p>
+<p>A v3 profile sets the endpoint at the top level and the serving backend in
+<code>[backend]</code>:</p>
+<ul>
+<li>Top level: <code>schema_version = "inference-service.spec/v3"</code>, <code>port</code> (1024 or
+  higher), optional <code>host</code> (default <code>127.0.0.1</code>), <code>python_executable</code>,
+  <code>api_key_env</code>, <code>startup_timeout_seconds</code>, and <code>shutdown_timeout_seconds</code>.</li>
+<li><code>[backend]</code> with <code>kind = "vllm"</code>: <code>model</code> (Hugging Face model ID), <code>revision</code>
+  (pinned commit), <code>served_model_name</code>, optional <code>[backend.adapter]</code> (LoRA
+  <code>path</code> and <code>name</code>), <code>[backend.options]</code>, and <code>[backend.probe_extra_body]</code>.</li>
+<li><code>[backend]</code> with <code>kind = "gliner2"</code>: <code>device</code> (<code>auto</code>, <code>cuda</code>, <code>mps</code>, or <code>cpu</code>).</li>
+</ul>
+<p><code>[backend.options]</code> supplies vLLM serve options by their long flag names, such
+as <code>reasoning-parser</code> and <code>gpu-memory-utilization</code>. <code>true</code> passes the flag,
+<code>false</code> passes its <code>--no-</code> form, a list passes several values, and a table
+passes one JSON value. vLLM's parser matches each name exactly, so an
+abbreviated or misspelled option fails validation. Omitted options use the
+pinned vLLM defaults. Names must be lowercase kebab-case, and empty lists are
+rejected.</p>
+<p>The tool derives <code>model</code>, <code>revision</code>, <code>tokenizer-revision</code>,
+<code>served-model-name</code>, <code>host</code>, <code>port</code>, <code>uds</code>, <code>config</code>, <code>middleware</code>, and the LoRA options
+from the rest of the profile, so <code>[backend.options]</code> cannot set them. Supply the
+endpoint bearer token through the environment variable named by <code>api_key_env</code>;
+the launcher passes it to the child as <code>VLLM_API_KEY</code> or
+<code>ANONYMIZER_LOCAL_GLINER2_TOKEN</code>. Use <code>HF_TOKEN</code> for Hugging Face access.
+Literal <code>api-key</code> and <code>hf-token</code> options are rejected so credentials do not
+enter plans or process arguments.</p>
+<h2 id="deploy-on-the-gpu-host">Deploy on the GPU host<a class="headerlink" href="#deploy-on-the-gpu-host" title="Permanent link">&para;</a></h2>
+<h3 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h3>
+<p>Install <a href="https://docs.astral.sh/uv/">uv</a> and sync the independent serving project
+with Python 3.12. Run these commands from the repository root:</p>
+<pre class="highlight"><code class="language-bash">uv sync --project tools/inference-service-runtime --locked
+nvidia-smi</code></pre>
+<p>The serving project's lockfile pins vLLM 0.33.0 and the CUDA compiler wheels
+that FlashInfer uses to JIT-compile kernels (sampling for GPT-OSS, Mamba for
+Nemotron). Its environment does
+not install Anonymizer or DataDesigner. Install Anonymizer separately for client
+code; the native notebook runtime uses the notebook extra.</p>
+<p>vLLM profiles default to <code>tools/inference-service-runtime/.venv/bin/python</code>
+and the GLiNER2 profile to the root <code>.venv/bin/python</code>. You can run the
+controller from either environment; it starts the serving interpreter directly.
+To use another serving environment, set <code>python_executable</code> in your profile. The launcher clears inherited <code>PYTHONHOME</code>,
+<code>PYTHONPATH</code>, and <code>VIRTUAL_ENV</code> before starting the child, and removes variables
+ending in <code>_API_KEY</code>, <code>_ACCESS_TOKEN</code>, <code>_AUTH_TOKEN</code>, <code>_PASSWORD</code>, or <code>_SECRET</code>; GPU,
+Hugging Face, and other runtime settings remain inherited. Avoid setting <code>UV_PROJECT_ENVIRONMENT</code>
+to the root <code>.venv</code> when syncing the serving project.</p>
+<h3 id="compile-and-launch">Compile and launch<a class="headerlink" href="#compile-and-launch" title="Permanent link">&para;</a></h3>
+<p>Run all commands from the repository root. This example starts the native
+GLiNER2 detector on <code>127.0.0.1:8001</code>:</p>
+<pre class="highlight"><code class="language-bash">uv run --project tools/inference-service-runtime --locked python tools/inference_service.py compile \
+  --profile tools/inference_service_profiles/gliner2-native.toml \
+  --output gliner-plan.json
+
+uv run --project tools/inference-service-runtime --locked python tools/inference_service.py validate \
+  --plan gliner-plan.json
+
+uv run --project tools/inference-service-runtime --locked python tools/inference_service.py launch \
+  --plan gliner-plan.json \
+  --output gliner-launch.json \
+  --log-directory .inference-service-runs</code></pre>
+<p>The command returns after the ownership and readiness checks pass. Keep
+<code>gliner-launch.json</code>: it is an unsigned durable operation record containing the
+observed handle and its consistency fingerprint. The tool validates the output
+destination before launch and publishes file receipts with atomic replacement.
+If publication still fails, it makes a bounded attempt to stop the launched
+process. Later status and stop operations re-check the exact PID, Linux start
+marker, and process group. If the leader has exited but workers remain, <code>stop</code>
+signals the group only when every remaining process carries the launch token;
+otherwise it refuses with <code>process-group-ownership-unverified</code> and <code>status</code>
+reports <code>ownership-unverified</code>.</p>
+<p>Read the non-secret client values from the compiled plan, then connect through the public factory:</p>
+<pre class="highlight"><code class="language-bash">uv run --project tools/inference-service-runtime --locked python tools/inference_service.py connection \
+  --plan gliner-plan.json</code></pre>
+<pre class="highlight"><code class="language-python">from anonymizer import GlinerEndpoint, create_anonymizer
+
+anonymizer = create_anonymizer(
+    gliner=GlinerEndpoint(
+        url="http://127.0.0.1:8001/v1",
+        model="fastino/gliner2-privacy-filter-PII-multi",
+        api_key_env=None,
     )
-    try:
-        entities = await detector.detect(text, params)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    content = json.dumps({"entities": entities})
-    return {
-        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": body.get("model", MODEL_ID),
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": content},
-                "finish_reason": "stop",
-            }
-        ],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-    }</code></pre>
-            </details>
-    </div>
+)</code></pre>
+<p>Use the URL, model, and credential environment-variable name printed by <code>connection</code>; profile values
+can differ from this unauthenticated loopback example. The command never prints a credential value or
+a process handle. Pass <code>api_key_env=None</code> when <code>connection</code> prints <code>null</code>.
+<code>create_anonymizer()</code> connects to the endpoint but does not own its process. Use the receipt commands
+below for status and shutdown.</p>
+<h3 id="operate-the-service">Operate the service<a class="headerlink" href="#operate-the-service" title="Permanent link">&para;</a></h3>
+<pre class="highlight"><code class="language-bash">uv run --project tools/inference-service-runtime --locked python tools/inference_service.py status \
+  --receipt gliner-launch.json
 
-</div>
+uv run --project tools/inference-service-runtime --locked python tools/inference_service.py probe \
+  --plan gliner-plan.json
 
-<div class="doc doc-object doc-function">
+curl -sf http://127.0.0.1:8001/v1/models | python -m json.tool
 
+uv run --project tools/inference-service-runtime --locked python tools/inference_service.py stop \
+  --receipt gliner-launch.json</code></pre>
+<p><code>stop</code> checks the recorded PID, start marker, and live process group before
+sending <code>SIGTERM</code>, waits for the profile's shutdown timeout, and uses <code>SIGKILL</code>
+if the process remains alive.</p>
+<h2 id="deploy-in-a-gpu-container">Deploy in a GPU container<a class="headerlink" href="#deploy-in-a-gpu-container" title="Permanent link">&para;</a></h2>
+<p>The supplied container image installs the same locked vLLM serving environment.
+It does not install Anonymizer, so it serves the vLLM generation profiles; run
+the GLiNER2 detector on the host. The examples below use <code>gpt-oss-20b.toml</code>.
+The container stays alive as the deployment boundary. The lifecycle tool still
+manages a local process inside that boundary, so plans and receipts keep the
+same schema as a host deployment.</p>
+<h3 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h3>
+<p>Install Docker, the NVIDIA driver, and
+<a href="https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html">NVIDIA Container Toolkit</a>.
+Confirm that Docker can expose the GPU:</p>
+<pre class="highlight"><code class="language-bash">docker run --rm --gpus all \
+  nvidia/cuda:13.0.2-base-ubuntu24.04 nvidia-smi</code></pre>
+<h3 id="build-the-image">Build the image<a class="headerlink" href="#build-the-image" title="Permanent link">&para;</a></h3>
+<p>From the repository root:</p>
+<pre class="highlight"><code class="language-bash">docker build \
+  --file tools/inference_service.Dockerfile \
+  --tag nemo-anonymizer-local-models:dev \
+  .</code></pre>
+<p>The build uses the serving project's lockfile (<code>tools/inference-service-runtime/uv.lock</code>). It downloads several large GPU wheels,
+so allow enough disk space for the image and model cache.</p>
+<h3 id="start-the-deployment-container">Start the deployment container<a class="headerlink" href="#start-the-deployment-container" title="Permanent link">&para;</a></h3>
+<p>Create host directories for receipts, logs, and the Hugging Face cache:</p>
+<pre class="highlight"><code class="language-bash">mkdir -p .local-model-deployment/state
+mkdir -p "$HOME/.cache/huggingface"
 
-<h3 id="anonymizer.notebooks.local_inference.gliner2.server.main" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">main()</code>
+docker run --detach \
+  --name anonymizer-local-models \
+  --gpus all \
+  --ipc host \
+  --network host \
+  --volume "$PWD/.local-model-deployment/state:/state" \
+  --volume "$HOME/.cache/huggingface:/models/huggingface" \
+  nemo-anonymizer-local-models:dev</code></pre>
+<p>Host networking is required because the pinned profiles bind to <code>127.0.0.1</code>.
+It is supported by Docker Engine on Linux. The profile port must be free on the
+host. The default profiles do not authenticate requests, so keep the bind local
+or place the service behind authenticated TLS before exposing it.</p>
+<h3 id="compile-and-launch-inside-the-container">Compile and launch inside the container<a class="headerlink" href="#compile-and-launch-inside-the-container" title="Permanent link">&para;</a></h3>
+<pre class="highlight"><code class="language-bash">docker exec anonymizer-local-models \
+  python tools/inference_service.py compile \
+  --profile tools/inference_service_profiles/gpt-oss-20b.toml \
+  --output /state/gpt-oss-plan.json
 
-<a href="#anonymizer.notebooks.local_inference.gliner2.server.main" class="headerlink" title="Permanent link">&para;</a></h3>
+docker exec anonymizer-local-models \
+  python tools/inference_service.py validate \
+  --plan /state/gpt-oss-plan.json
 
+docker exec anonymizer-local-models \
+  python tools/inference_service.py launch \
+  --plan /state/gpt-oss-plan.json \
+  --output /state/gpt-oss-launch.json \
+  --log-directory /state/logs</code></pre>
+<p>The mounted <code>/state</code> directory makes the plan, launch receipt, and logs visible
+on the host. Operate the service through <code>docker exec</code>:</p>
+<pre class="highlight"><code class="language-bash">docker exec anonymizer-local-models \
+  python tools/inference_service.py status \
+  --receipt /state/gpt-oss-launch.json
 
-    <div class="doc doc-contents ">
+docker exec anonymizer-local-models \
+  python tools/inference_service.py probe \
+  --plan /state/gpt-oss-plan.json
 
-        <p>Run the lightweight notebook/development server.</p>
+curl -sf http://127.0.0.1:8012/v1/models | python -m json.tool</code></pre>
+<h3 id="stop-cleanly">Stop cleanly<a class="headerlink" href="#stop-cleanly" title="Permanent link">&para;</a></h3>
+<p>Stop each managed service before removing the container:</p>
+<pre class="highlight"><code class="language-bash">docker exec anonymizer-local-models \
+  python tools/inference_service.py stop \
+  --receipt /state/gpt-oss-launch.json
 
+docker stop anonymizer-local-models
+docker rm anonymizer-local-models</code></pre>
+<p>Stopping the container first removes the runtime boundary before the tool can
+write a stop receipt. Use <code>stop</code> first when lifecycle evidence or
+graceful model shutdown matters.</p>
+<h2 id="connect-anonymizer">Connect Anonymizer<a class="headerlink" href="#connect-anonymizer" title="Permanent link">&para;</a></h2>
+<p>Add the local endpoint to a provider file:</p>
+<p>```yaml title="providers.yaml"
+providers:
+  - name: local-gliner2
+    endpoint: http://127.0.0.1:8001/v1
+    provider_type: openai
+    api_key: EMPTY
+<pre class="highlight"><code>
+Then route the detector alias to that provider in your model configuration:
 
-            <details class="mkdocstrings-source">
-              <summary>Source code in <code>src/anonymizer/notebooks/local_inference/gliner2/server.py</code></summary>
-              <pre class="highlight"><code class="language-python">def main() -&gt; None:
-    """Run the lightweight notebook/development server."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    parser = argparse.ArgumentParser(description="Notebook/development GLiNER2 server for Anonymizer.")
-    parser.add_argument("--host", default=DEFAULT_HOST)
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--fd", type=int, default=None, help=argparse.SUPPRESS)
-    args = parser.parse_args()
-    if args.fd is None:
-        uvicorn.run(app, host=args.host, port=args.port)
-        return
-    with socket.socket(fileno=args.fd) as inherited_listener:
-        config = uvicorn.Config(app)
-        uvicorn.Server(config).run(sockets=[inherited_listener])</code></pre>
-            </details>
-    </div>
-
-</div>
-
-
-
-  </div>
-
-    </div>
-
-</div>
+```yaml title="models.yaml"
+model_configs:
+  - alias: gliner-pii-detector
+    model: fastino/gliner2-privacy-filter-PII-multi
+    provider: local-gliner2
+    inference_parameters:
+      max_parallel_requests: 8
+      timeout: 120</code></pre></p>
+<p>Custom <code>model_configs</code> replaces the full bundled model pool. Copy the bundled
+configuration and change only the roles you are deploying locally, or define
+every alias needed by the selected pipeline. See
+<a href="../models/#custom-models">Custom models</a> for role mapping and complete examples.</p>
+<p><a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/tools/inference_service_profiles/examples/local-models.yaml"><code>tools/inference_service_profiles/examples/local-models.yaml</code></a>
+is a complete role configuration that uses only the shipped profiles: GLiNER2
+detection with Gemma 4 26B-A4B, Qwen3.8 27B, Nemotron 3.5 Lightning, and
+Nemotron 3.5 Super VL for the LLM roles.
+<a href="https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/tools/inference_service_profiles/examples/local-providers.yaml"><code>local-providers.yaml</code></a>
+beside it points each provider at its profile's port. Each profile listens on its
+own port, so the servers can run side by side on one host.</p>
+<p>For the detector request and response contract, chunking behavior, and a live
+PII request, see <a href="../self-hosting-gliner/">Self-hosting GLiNER</a>.</p>
+<p>Validation checks the serving arguments. The launch probe observes
+the endpoint shape and required task behavior. Run Anonymizer preview and
+evaluation before accepting a model for a privacy-sensitive workload.</p>
 
 
 
@@ -3561,7 +3304,7 @@ async def chat_completions(request: Request) -&gt; dict[str, Any]:
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../backend/" class="md-footer__link md-footer__link--prev" aria-label="Previous: backend">
+          <a href="../self-hosting-gliner/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Self-hosting GLiNER">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -3571,20 +3314,20 @@ async def chat_completions(request: Request) -&gt; dict[str, Any]:
                 Previous
               </span>
               <div class="md-ellipsis">
-                backend
+                Self-hosting GLiNER
               </div>
             </div>
           </a>
         
         
           
-          <a href="../../../../telemetry/" class="md-footer__link md-footer__link--next" aria-label="Next: telemetry">
+          <a href="../../tuning/" class="md-footer__link md-footer__link--next" aria-label="Next: Tuning Quality and Throughput">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                telemetry
+                Tuning Quality and Throughput
               </div>
             </div>
             <div class="md-footer__button md-icon">
@@ -3621,16 +3364,16 @@ async def chat_completions(request: Request) -&gt; dict[str, Any]:
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../../../../..", "features": ["content.code.copy", "content.tabs.link", "navigation.path", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "toc.follow"], "search": "../../../../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "content.tabs.link", "navigation.path", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
     
     
-      <script src="../../../../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
-        <script src="../../../../../../js/mathjax.js"></script>
+        <script src="../../js/mathjax.js"></script>
       
         <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
       
-        <script src="../../../../../../js/toc-toggle.js"></script>
+        <script src="../../js/toc-toggle.js"></script>
       
     
   </body>
