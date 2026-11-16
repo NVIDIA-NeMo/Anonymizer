@@ -1,0 +1,21 @@
+schema_version = "inference-service.spec/v3"
+port = 8013
+startup_timeout_seconds = 1800
+shutdown_timeout_seconds = 60
+
+[backend]
+kind = "vllm"
+model = "openai/gpt-oss-120b"
+revision = "b5c939de8f754692c1647ca79fbf85e8c1e70f8a"
+served_model_name = "gpt-oss-120b"
+
+[backend.options]
+reasoning-parser = "openai_gptoss"
+gpu-memory-utilization = 0.95
+max-model-len = 49152
+max-num-seqs = 8
+enable-prefix-caching = true
+async-scheduling = true
+
+[backend.probe_extra_body]
+reasoning_effort = "low"
