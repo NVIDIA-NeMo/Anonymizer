@@ -36,6 +36,13 @@ if TYPE_CHECKING:
         InvalidConfigError,
         InvalidInputError,
     )
+    from anonymizer.interface.factory import (
+        GlinerEndpoint,
+        NativeGliner,
+        NativeRuntimeSession,
+        create_anonymizer,
+        native_runtime,
+    )
     from anonymizer.logging import LoggingConfig, configure_logging
 
 _EXPORTS = {
@@ -61,6 +68,11 @@ _EXPORTS = {
     "ModelProvider": "data_designer.config.models",
     "RunConfig": "data_designer.config.run_config",
     "Anonymizer": "anonymizer.interface.anonymizer",
+    "GlinerEndpoint": "anonymizer.interface.factory",
+    "NativeGliner": "anonymizer.interface.factory",
+    "NativeRuntimeSession": "anonymizer.interface.factory",
+    "create_anonymizer": "anonymizer.interface.factory",
+    "native_runtime": "anonymizer.interface.factory",
 }
 
 
@@ -89,11 +101,14 @@ __all__ = [
     "DEFAULT_ENTITY_LABELS",
     "Detect",
     "EvaluateConfig",
+    "GlinerEndpoint",
     "Hash",
     "InvalidConfigError",
     "InvalidInputError",
     "LoggingConfig",
     "ModelProvider",
+    "NativeGliner",
+    "NativeRuntimeSession",
     "PrivacyGoal",
     "Redact",
     "Rewrite",
@@ -103,5 +118,7 @@ __all__ = [
     "TextRecord",
     "TextRecordsInput",
     "configure_logging",
+    "create_anonymizer",
     "graph",
+    "native_runtime",
 ]
