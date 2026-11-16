@@ -42,6 +42,21 @@ from anonymizer.logging import LoggingConfig, configure_logging
 
 if TYPE_CHECKING:
     from anonymizer.interface.anonymizer import Anonymizer as Anonymizer
+    from anonymizer.interface.factory import (
+        GlinerEndpoint as GlinerEndpoint,
+    )
+    from anonymizer.interface.factory import (
+        NativeGliner as NativeGliner,
+    )
+    from anonymizer.interface.factory import (
+        NativeRuntimeSession as NativeRuntimeSession,
+    )
+    from anonymizer.interface.factory import (
+        create_anonymizer as create_anonymizer,
+    )
+    from anonymizer.interface.factory import (
+        native_runtime as native_runtime,
+    )
 
 # Export as an immutable public constant so callers can inspect defaults
 # without mutating the internal source-of-truth list.
@@ -53,6 +68,10 @@ def __getattr__(name: str) -> object:
         from anonymizer.interface.anonymizer import Anonymizer
 
         return Anonymizer
+    if name in {"GlinerEndpoint", "NativeGliner", "NativeRuntimeSession", "create_anonymizer", "native_runtime"}:
+        from anonymizer.interface import factory
+
+        return getattr(factory, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -68,11 +87,14 @@ __all__ = [
     "DEFAULT_ENTITY_LABELS",
     "Detect",
     "EvaluateConfig",
+    "GlinerEndpoint",
     "Hash",
     "InvalidConfigError",
     "InvalidInputError",
     "LoggingConfig",
     "ModelProvider",
+    "NativeGliner",
+    "NativeRuntimeSession",
     "PrivacyGoal",
     "Redact",
     "RegexCandidate",
@@ -86,4 +108,6 @@ __all__ = [
     "TextRecord",
     "TextRecordsInput",
     "configure_logging",
+    "create_anonymizer",
+    "native_runtime",
 ]
