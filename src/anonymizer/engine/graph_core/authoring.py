@@ -136,6 +136,9 @@ class ContextScope:
     target: Datum
     items: tuple[Datum | ContextView | ContextSource, ...]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "items", tuple(self.items))
+
 
 @dataclass(frozen=True)
 class Dependency:
@@ -150,6 +153,9 @@ class OutputGroup:
     """All-or-none release group; groups form a flat partition."""
 
     members: tuple[Datum, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "members", tuple(self.members))
 
 
 @dataclass(frozen=True, eq=False)
@@ -189,6 +195,9 @@ class ProtectionGraph:
     _record_of: ClassVar[dict[Datum, Record]]
 
     def __post_init__(self) -> None:
+        # Copied before validation, so the caller's lists cannot change the graph once it is checked and prepared.
+        for name in ("targets", "mentions", "context", "dependencies", "groups"):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
         targets = set(self.targets)
         if len(targets) != len(self.targets):
             raise GraphRejection("duplicate_target")
@@ -383,6 +392,7 @@ class Operation:
         _reject_bare_string("checks", self.checks, "check names")
         _reject_bare_string("subject", self.subject, "input port names")
         object.__setattr__(self, "subject", tuple(self.subject))
+        object.__setattr__(self, "checks", tuple(self.checks))
         if self.scope == "invocation":  # older spelling of "phase_scoped"
             object.__setattr__(self, "scope", "phase_scoped")
         # The caller keeps its own mappings; the admitted ports cannot change after preparation.
@@ -456,6 +466,8 @@ class Workflow:
 
     def __post_init__(self) -> None:
         _reject_bare_string("requires", self.requires, "check names")
+        object.__setattr__(self, "steps", tuple(self.steps))
+        object.__setattr__(self, "requires", tuple(self.requires))
 
     def flatten(self, prefix: str = "") -> tuple[tuple[str, Operation], ...]:
         out: list[tuple[str, Operation]] = []
