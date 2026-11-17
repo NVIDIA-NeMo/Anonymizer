@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
@@ -88,7 +88,7 @@ class WorkflowSourceFrame:
         return returned.iloc[order].drop(columns=self.key_column).reset_index(drop=True), positions
 
     @contextmanager
-    def bind_generators(self, designer: Any) -> Iterator[None]:
+    def bind_generators(self, designer: Any) -> Generator[None]:
         """Carry source keys through DD's artifact storage without exposing them in public output."""
         from anonymizer.engine.ndd._graph_requests import (
             require_dataset_builder_capabilities,
@@ -101,6 +101,7 @@ class WorkflowSourceFrame:
             return
         require_source_frame_capabilities(designer)
         storage_bindings = ExitStack()
+        builders: list[Any] = []
         original_builder = designer._create_dataset_builder
 
         def builder(*args: Any, **kwargs: Any) -> Any:
@@ -120,17 +121,23 @@ class WorkflowSourceFrame:
                 BuilderConfig(data_designer=public).to_json(storage.base_dataset_path / SDG_CONFIG_FILENAME)
 
             result._write_builder_config = write_config
+            builders.append(result)
             return result
 
+        designer_owned_builder = "_create_dataset_builder" in vars(designer)
         designer._create_dataset_builder = builder
         try:
             yield
         finally:
-            designer._create_dataset_builder = original_builder
+            # Restoring the class's bound method as an instance attribute would tie the designer to itself.
+            _restore_attribute(designer, "_create_dataset_builder", original_builder, owned=designer_owned_builder)
             storage_bindings.close()
+            for built in builders:
+                # The override closes over the builder; drop it so the run's builder is freed by refcount.
+                vars(built).pop("_write_builder_config", None)
 
     @contextmanager
-    def _bind_storage(self, storage: Any) -> Iterator[None]:
+    def _bind_storage(self, storage: Any) -> Generator[None]:
         """Keep only batch-order identity in memory across DD's parquet round trip."""
         from data_designer.engine.storage.artifact_storage import BatchStage
 
@@ -138,18 +145,20 @@ class WorkflowSourceFrame:
         load = storage.load_dataset
         write_metadata = storage.write_metadata
         batches: dict[str, tuple[str, ...]] = {}
+        source_keys = frozenset(self.keys)
 
         def write_file(
             parquet_file_name: str,
             dataframe: pd.DataFrame,
             batch_stage: Any,
             subfolder: str | None = None,
+            **kwargs: Any,
         ) -> Any:
             if batch_stage in {BatchStage.PARTIAL_RESULT, BatchStage.FINAL_RESULT}:
                 if subfolder or list(dataframe.columns).count(self.key_column) != 1:
                     raise AnonymizerWorkflowError("Workflow storage has no source correspondence")
                 keys = tuple(dataframe[self.key_column])
-                if any(type(key) is not str or key not in self.keys for key in keys) or len(set(keys)) != len(keys):
+                if any(type(key) is not str or key not in source_keys for key in keys) or len(set(keys)) != len(keys):
                     raise AnonymizerWorkflowError("Workflow storage has invalid source correspondence")
                 batches[parquet_file_name] = keys
             return write(
@@ -157,6 +166,7 @@ class WorkflowSourceFrame:
                 dataframe.drop(columns=self.key_column, errors="ignore"),
                 batch_stage,
                 subfolder=subfolder,
+                **kwargs,
             )
 
         def load_dataset(batch_stage: Any = BatchStage.FINAL_RESULT) -> pd.DataFrame:
@@ -173,7 +183,7 @@ class WorkflowSourceFrame:
             return dataframe
 
         def public_metadata(metadata: dict[str, Any]) -> Any:
-            # DD 0.9.4 persists seed-column statistics alongside the public dataset.
+            # DataDesigner persists seed-column statistics alongside the public dataset.
             if "column_statistics" in metadata:
                 metadata = {
                     **metadata,
@@ -183,15 +193,24 @@ class WorkflowSourceFrame:
                 }
             return write_metadata(metadata)
 
+        originals = {"write_parquet_file": write, "write_metadata": write_metadata, "load_dataset": load}
+        owned = {name: name in vars(storage) for name in originals}
         object.__setattr__(storage, "write_parquet_file", write_file)
         object.__setattr__(storage, "write_metadata", public_metadata)
         object.__setattr__(storage, "load_dataset", load_dataset)
         try:
             yield
         finally:
-            object.__setattr__(storage, "write_parquet_file", write)
-            object.__setattr__(storage, "write_metadata", write_metadata)
-            object.__setattr__(storage, "load_dataset", load)
+            for name, original in originals.items():
+                _restore_attribute(storage, name, original, owned=owned[name])
+
+
+def _restore_attribute(target: Any, name: str, original: Any, *, owned: bool) -> None:
+    """Undo an instance-level override without leaving a bound method that refers back to ``target``."""
+    if owned:
+        object.__setattr__(target, name, original)
+    else:
+        vars(target).pop(name, None)
 
 
 def _is_data_designer(designer: Any) -> bool:

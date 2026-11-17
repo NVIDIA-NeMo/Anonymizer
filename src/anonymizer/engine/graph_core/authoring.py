@@ -12,7 +12,7 @@ import secrets
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from anonymizer.engine.graph_core.kernel import GraphRejection, register_kind
 
@@ -21,6 +21,9 @@ MENTIONS = register_kind("mentions", lambda v: isinstance(v, tuple))
 CONTEXT = register_kind("context", lambda v: isinstance(v, tuple))
 DATUM = register_kind("datum", lambda v: isinstance(v, Datum))
 ASSESSMENT = register_kind("assessment", lambda v: isinstance(v, Assessment))
+RECORD = register_kind("record", lambda v: isinstance(v, Record))
+# Seeds an operation may not shadow with an output; a subset of ``execution.SEEDS``.
+_RESERVED_SEED_OUTPUTS = ("record",)
 
 
 def utf8_size(text: str) -> int:
@@ -61,6 +64,14 @@ class GraphScope:
         if not isinstance(text, str):
             raise GraphRejection("datum_not_text", type(text).__name__)
         return Datum(text=text, _scope=self._token, _id=secrets.token_hex(8))
+
+    def record(self, members: tuple[Datum, ...]) -> Record:
+        """A Record grouping ``members``, kept in the caller's order; the graph checks they are its targets."""
+        if not isinstance(members, tuple) or not all(isinstance(m, Datum) for m in members):
+            raise GraphRejection("invalid_record")
+        if not members:
+            raise GraphRejection("empty_record")
+        return Record(members=members, _scope=self._token, _id=secrets.token_hex(8))
 
 
 @dataclass(frozen=True, eq=False)
@@ -125,6 +136,9 @@ class ContextScope:
     target: Datum
     items: tuple[Datum | ContextView | ContextSource, ...]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "items", tuple(self.items))
+
 
 @dataclass(frozen=True)
 class Dependency:
@@ -140,6 +154,31 @@ class OutputGroup:
 
     members: tuple[Datum, ...]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "members", tuple(self.members))
+
+
+@dataclass(frozen=True, eq=False)
+class Record:
+    """A caller-declared group of targets with opaque, graph-scoped identity, made by ``GraphScope.record``.
+
+    Each target belongs to exactly one Record: a target in no declared Record is its own singleton Record, and a
+    declared Record of one member is allowed. Equality and hashing use identity only, never the members' text.
+    """
+
+    members: tuple[Datum, ...] = field(repr=False)
+    _scope: str = field(repr=False)
+    _id: str = field(repr=False)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Record) and (self._scope, self._id) == (other._scope, other._id)
+
+    def __hash__(self) -> int:
+        return hash((self._scope, self._id))
+
+    def __repr__(self) -> str:
+        return f"Record(<opaque>, {len(self.members)} members)"
+
 
 @dataclass(frozen=True)
 class ProtectionGraph:
@@ -151,8 +190,14 @@ class ProtectionGraph:
     context: tuple[ContextScope, ...] = ()
     dependencies: tuple[Dependency, ...] = ()
     groups: tuple[OutputGroup, ...] = ()
+    records: tuple[Record, ...] = field(default=(), kw_only=True)
+    # Set per instance by ``_check_records``; ClassVar keeps it out of the dataclass fields.
+    _record_of: ClassVar[dict[Datum, Record]]
 
     def __post_init__(self) -> None:
+        # Copied before validation, so the caller's lists cannot change the graph once it is checked and prepared.
+        for name in ("targets", "mentions", "context", "dependencies", "groups"):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
         targets = set(self.targets)
         if len(targets) != len(self.targets):
             raise GraphRejection("duplicate_target")
@@ -189,6 +234,7 @@ class ProtectionGraph:
                 if self._own(m, targets, "group_member") in seen:
                     raise GraphRejection("group_overlap")
                 seen.add(m)
+        self._check_records(targets)
 
     def _own(self, d: Datum, allowed: set[Datum] | None, what: str) -> Datum:
         if not isinstance(d, Datum) or d._scope != self.scope._token:
@@ -221,6 +267,42 @@ class ProtectionGraph:
                     ready.append(on)
         if len(ready) != len(waiting):
             raise GraphRejection("dependency_cycle")
+
+    def _check_records(self, targets: set[Datum]) -> None:
+        if not isinstance(self.records, tuple):
+            raise GraphRejection("invalid_record")
+        record_of: dict[Datum, Record] = {}
+        for r in self.records:
+            if not isinstance(r, Record) or not isinstance(r.members, tuple):
+                raise GraphRejection("invalid_record")
+            if not all(isinstance(m, Datum) for m in r.members):
+                raise GraphRejection("invalid_record")
+            if not r.members:
+                raise GraphRejection("empty_record")
+            if r._scope != self.scope._token:
+                raise GraphRejection("foreign_record")
+            for m in r.members:
+                if self._own(m, targets, "record_member") in record_of:
+                    raise GraphRejection("record_overlap")
+                record_of[m] = r
+        for d in self.targets:
+            # A singleton's id cannot equal a declared one, and is the same in every copy of the graph.
+            record_of.setdefault(d, Record((d,), d._scope, "t" + d._id))
+        # Derived from the fields, so not a field: equality, repr and the prepared seal are unchanged.
+        object.__setattr__(self, "_record_of", record_of)
+
+    def record_of(self, target: Datum) -> Record:
+        """The declared Record holding ``target``, else its own singleton Record."""
+        self._own(target, None, "target")
+        record = self._record_of.get(target)
+        if record is None:
+            raise GraphRejection("unknown_reference", "target")
+        return record
+
+    @property
+    def all_records(self) -> tuple[Record, ...]:
+        """Every target's Record once, ordered by each Record's earliest target."""
+        return tuple(dict.fromkeys(self._record_of[d] for d in self.targets))
 
 
 # ---------------------------------------------------------------- operations and workflows
@@ -276,13 +358,25 @@ class Assessment:
     reason: str = ""
 
 
+def _reject_bare_string(field_name: str, value: object, what: str) -> None:
+    # tuple("text") would silently split a single name into characters.
+    if isinstance(value, str):
+        raise GraphRejection(
+            "names_not_tuple",
+            f"{field_name} must be a tuple of {what}, such as {field_name}=({value!r},); got the string {value!r}",
+        )
+
+
 @dataclass(frozen=True)
 class Operation:
     """A caller-supplied local operation with typed ports and declared requests.
 
     Input ports bind by name to the latest earlier output, else to the per-target seeds ``text`` (current candidate),
-    ``source`` (original text), ``mentions``, ``context`` and ``target``. An operation whose output kind is
-    ``assessment`` is a verifier; ``checks`` names the workflow requirements its assessment answers.
+    ``source`` (original text), ``mentions``, ``context``, ``target`` and ``record`` (the target's Record). An
+    operation whose output kind is ``assessment`` is a verifier; ``checks`` names the workflow requirements its assessment answers and ``subject``
+    names the input ports the assessment is about (required with ``checks``; there is no default). A verifier's outputs
+    are exactly ``{"assessment": "assessment"}``; any other layout with an ``assessment`` kind or port name is rejected
+    with ``GraphRejection("verifier_ports")``.
     """
 
     name: str
@@ -292,13 +386,25 @@ class Operation:
     requests: Requests = Requests()
     scope: Literal["target", "phase_scoped"] = "target"
     checks: tuple[str, ...] = ()
+    subject: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        _reject_bare_string("checks", self.checks, "check names")
+        _reject_bare_string("subject", self.subject, "input port names")
+        object.__setattr__(self, "subject", tuple(self.subject))
+        object.__setattr__(self, "checks", tuple(self.checks))
         if self.scope == "invocation":  # older spelling of "phase_scoped"
             object.__setattr__(self, "scope", "phase_scoped")
         # The caller keeps its own mappings; the admitted ports cannot change after preparation.
         object.__setattr__(self, "inputs", MappingProxyType(dict(self.inputs)))
         object.__setattr__(self, "outputs", MappingProxyType(dict(self.outputs)))
+        # Reconciliation reads the port named "assessment" as an Assessment, so a verifier declares only that port.
+        standard = {"assessment": ASSESSMENT}
+        if (ASSESSMENT in self.outputs.values() or "assessment" in self.outputs) and self.outputs != standard:
+            raise GraphRejection("verifier_ports", f"{self.name}: outputs must be {standard}; got {dict(self.outputs)}")
+        # These seeds carry caller declarations; an output of the same name would replace them.
+        if reserved := [p for p in _RESERVED_SEED_OUTPUTS if p in self.outputs]:
+            raise GraphRejection("seed_output_reserved", f"{self.name}: {', '.join(reserved)}")
 
     @classmethod
     def verifier(
@@ -308,9 +414,11 @@ class Operation:
         inputs: Mapping[str, str] | None = None,
         requests: Requests = Requests(),
         checks: tuple[str, ...] = (),
+        subject: tuple[str, ...] = (),
     ) -> Operation:
         inputs = MappingProxyType(dict(inputs or {"text": TEXT}))
-        return cls(name, fn, inputs, {"assessment": ASSESSMENT}, requests, checks=tuple(checks))
+        _reject_bare_string("checks", checks, "check names")
+        return cls(name, fn, inputs, {"assessment": ASSESSMENT}, requests, checks=tuple(checks), subject=subject)
 
     @classmethod
     def phase_scoped(
@@ -355,6 +463,11 @@ class Workflow:
     steps: tuple[Operation | Workflow, ...]
     release: Literal["protected", "annotation"] = "protected"
     requires: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _reject_bare_string("requires", self.requires, "check names")
+        object.__setattr__(self, "steps", tuple(self.steps))
+        object.__setattr__(self, "requires", tuple(self.requires))
 
     def flatten(self, prefix: str = "") -> tuple[tuple[str, Operation], ...]:
         out: list[tuple[str, Operation]] = []

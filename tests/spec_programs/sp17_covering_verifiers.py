@@ -32,7 +32,7 @@ def _verifier(name: str, verdicts: dict[str, bool | None], reason: str) -> Opera
         verdict = verdicts[text.lower()]
         return Assessment(verdict, target, "" if verdict else reason)
 
-    return Operation.verifier(name, assess, {"text": TEXT, "target": DATUM}, checks=(name,))
+    return Operation.verifier(name, assess, {"text": TEXT, "target": DATUM}, checks=(name,), subject=("text",))
 
 
 def _body(name: str, port: str, tag: str) -> Operation:
@@ -100,7 +100,7 @@ def program() -> list[dict[str, str]]:
         f"qualification={[o.qualification for o in o2]}, reason={o2[1].reason}, terminal={o2[1].terminal}",
     )
 
-    # E17.3 only a verifier whose text input binds to the final text producer is covering; requiring a check that no
+    # E17.3 only a verifier whose subject derives from the final text is covering; requiring a check that no
     # covering verifier answers is rejected at prepare.
     early = _verifier("early", dict.fromkeys(("alpha", "beta", "gamma"), True), "")
     tail = Operation("tail", lambda text: text + "!")

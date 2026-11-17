@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from data_designer.config import SkipConfig, custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig, ModelProvider
 from data_designer.interface.data_designer import DataDesigner
@@ -22,11 +22,13 @@ from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_ENTITIES_BY_VALUE,
+    COL_ENTITY_CLASSIFICATION,
     COL_FULL_REWRITE,
     COL_LATENT_ENTITIES,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
+    COL_RAW_SENSITIVITY_DISPOSITION,
     COL_REPAIR_ITERATIONS,
     COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
@@ -35,13 +37,15 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
     COL_REWRITTEN_TEXT_NEXT,
+    COL_SENSITIVITY_DISPOSITION,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.engine.rewrite.combined_rewrite_workflow import (
     CombinedRewriteGraph,
     CombinedRewriteWorkflow,
@@ -282,7 +286,12 @@ def test_conditional_repairs_execute_independently_per_row(
 
     with measurement_session(collector):
         result = adapter.run_workflow(
-            pd.DataFrame({_REPAIRS_NEEDED: [0, 1, 2, 3], COL_REWRITE_REPLACEMENT_READY: replacement_ready}),
+            pd.DataFrame(
+                {
+                    _REPAIRS_NEEDED: [0, 1, 2, 3],
+                    COL_REWRITE_REPLACEMENT_READY: replacement_ready,
+                }
+            ),
             model_configs=[],
             columns=columns,
             workflow_name="rewrite-combined",
@@ -344,7 +353,11 @@ def test_run_executes_one_data_designer_workflow(
     adapter.run_workflow.assert_called_once()
     assert adapter.run_workflow.call_args.kwargs["workflow_name"] == "rewrite-combined"
     assert result.dataframe[COL_REWRITTEN_TEXT].tolist() == ["Maria works at a company"]
-    stage_records = [record for record in collector.records if record["record_type"] == "stage"]
+    stage_records = [
+        record
+        for record in collector.records
+        if record["record_type"] == "stage" and not record["stage"].startswith("graph_")
+    ]
     assert len(stage_records) == 1
     assert stage_records[0]["stage"] == "CombinedRewriteWorkflow.run"
     assert stage_records[0]["input_row_count"] == 1
@@ -364,6 +377,9 @@ def test_run_keeps_review_flag_for_unavailable_utility(
     output = dataframe.copy()
     output[COL_REWRITTEN_TEXT] = ["Maria works at a company", "Maria works at a firm"]
     output[COL_UTILITY_SCORE] = [np.nan, 0.9]
+    entry = {"id": 1, "sensitivity": "high", "protection_method_suggestion": "replace", "source": "tagged"}
+    entry |= {"category": "direct_identifier", "entity_label": "first_name", "entity_value": "Alice"}
+    output[COL_SENSITIVITY_DISPOSITION] = [{"sensitivity_disposition": [entry]}] * 2
     output[COL_LEAKAGE_MASS] = 0.1
     output[COL_WEIGHTED_LEAKAGE_RATE] = 0.05
     output[COL_ANY_HIGH_LEAKED] = False
@@ -607,7 +623,12 @@ def test_conditional_graph_handles_larger_mixed_batches(
     )
 
     result = adapter.run_workflow(
-        pd.DataFrame({_REPAIRS_NEEDED: repairs_needed, COL_REWRITE_REPLACEMENT_READY: True}),
+        pd.DataFrame(
+            {
+                _REPAIRS_NEEDED: repairs_needed,
+                COL_REWRITE_REPLACEMENT_READY: True,
+            }
+        ),
         model_configs=[],
         columns=_deterministic_columns(graph),
         workflow_name="rewrite-combined-scale-test",
@@ -731,6 +752,7 @@ def test_graph_validates_with_data_designer(
             COL_TAGGED_TEXT: ["[[Alice|first_name]] works at Acme"],
             COL_TAG_NOTATION: ["bracket"],
             COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
+            COL_ENTITY_CLASSIFICATION: [{"first_name": "direct_identifier"}],
             COL_LATENT_ENTITIES: [{"latent_entities": []}],
         }
     )
@@ -770,3 +792,37 @@ def test_filter_step_folds_substitutes_against_row_originals(replacements: list[
     replacements = _filter_replacement_map(row)[COL_REPLACEMENT_MAP]["replacements"]
 
     assert {r["synthetic"].casefold() for r in replacements}.isdisjoint({"alice", "maya"})
+
+
+def test_filter_step_lets_two_values_of_a_row_share_a_substitute() -> None:
+    row = {
+        COL_REPLACEMENT_MAP_RAW: {
+            "replacements": [
+                {"original": "Paris", "label": "city", "synthetic": "Lyon"},
+                {"original": "Berlin", "label": "city", "synthetic": "Lyon"},
+            ]
+        },
+        COL_ENTITIES_BY_VALUE: {
+            "entities_by_value": [{"value": "Paris", "labels": ["city"]}, {"value": "Berlin", "labels": ["city"]}]
+        },
+    }
+
+    replacements = _filter_replacement_map(row)[COL_REPLACEMENT_MAP]["replacements"]
+
+    assert [r["synthetic"] for r in replacements] == ["Lyon", "Lyon"]
+
+
+def test_combined_graph_passes_summary_to_disposition(
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    graph = CombinedRewriteWorkflow(adapter=Mock()).build_graph(
+        selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(max_repair_iterations=0),
+        data_summary="Customer support conversations",
+    )
+    disposition = next(column for column in graph.columns if column.name == COL_RAW_SENSITIVITY_DISPOSITION)
+    assert isinstance(disposition, LLMStructuredColumnConfig)
+    assert "<data_summary>\nCustomer support conversations\n</data_summary>" in disposition.prompt

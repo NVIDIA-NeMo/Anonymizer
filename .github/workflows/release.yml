@@ -13,17 +13,20 @@
 name: "Release NeMo Anonymizer"
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
-      release-ref:
-        description: Full SHA (not short) or tag of the commit to build
-        required: true
-        type: string
       dry-run:
-        description: "Dry Run: only publish to Test PyPI"
+        description: "Dry run: never publishes to PyPI, creates a release, or deploys docs"
         required: true
         default: true
         type: boolean
+      version:
+        description: "Branch runs only, and required there: the version to build and validate (for example 0.5.0rc1). Nothing is uploaded."
+        required: false
+        type: string
       create-gh-release:
         description: Create a GitHub release
         required: true
@@ -39,36 +42,52 @@ permissions:
 
 jobs:
   publish-wheel:
-    name: Publish wheel (${{ inputs.dry-run && 'Test PyPI' || 'PyPI' }})
+    name: Build and publish wheel
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.build.outputs.version }}
     steps:
-      - name: Checkout at release ref
+      - name: Checkout triggering ref
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.release-ref }}
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
+      - uses: ./.github/actions/setup-python-env
         with:
-          enable-cache: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version-file: ".python-version"
+          checkout: "false"
+          dependency-profile: "runtime"
 
       - name: Build wheel
         id: build
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          make build-wheel
-          WHEEL=$(ls dist/*.whl)
-          VERSION=$(echo "$WHEEL" | sed -n 's/.*-\([0-9][^-]*\)-.*/\1/p')
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [ -n "$INPUT_VERSION" ]; then
+              echo "::error::The version input is for branch runs; on a tag the version comes from the tag"
+              exit 1
+            fi
+            case "$GITHUB_REF_NAME" in
+              v*) ;;
+              *)
+                echo "::error::Release tag ${GITHUB_REF_NAME} must start with v"
+                exit 1
+                ;;
+            esac
+            VERSION="${GITHUB_REF_NAME#v}"
+            mise run build:wheel
+            mise run release:verify "$VERSION"
+          else
+            if [ -z "$INPUT_VERSION" ] || [ "${{ inputs.dry-run }}" != "true" ]; then
+              echo "::error::Running from a branch requires dry-run enabled and the version input"
+              exit 1
+            fi
+            VERSION="$INPUT_VERSION"
+            mise run release:check "$VERSION"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Built: $WHEEL (version $VERSION)"
+          echo "Built: $(ls dist/*.whl) (version $VERSION)"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -76,7 +95,8 @@ jobs:
           path: dist/*.whl
           retention-days: 90
 
-      - name: Publish to Test PyPI (always, as pre-flight)
+      - name: Publish to Test PyPI (pre-flight)
+        if: ${{ github.ref_type == 'tag' }}
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.TEST_PYPI_PERSONAL_TOKEN }}
@@ -89,7 +109,7 @@ jobs:
             dist/*.whl
 
       - name: Publish to PyPI
-        if: ${{ !inputs.dry-run }}
+        if: ${{ github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.dry-run) }}
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_PERSONAL_TOKEN }}
@@ -102,13 +122,12 @@ jobs:
   create-gh-release:
     name: Create GitHub release
     needs: publish-wheel
-    if: ${{ inputs.create-gh-release }}
+    if: ${{ github.event_name == 'push' || (!inputs.dry-run && inputs.create-gh-release) }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout at release ref
+      - name: Checkout triggering ref
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.release-ref }}
           fetch-depth: 0
 
       - name: Download wheel artifact
@@ -120,6 +139,7 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ github.sha }}
           VERSION: ${{ needs.publish-wheel.outputs.version }}
         run: |
           PRERELEASE_FLAG=""
@@ -131,29 +151,26 @@ jobs:
             dist/*.whl \
             --generate-notes \
             --title "v${VERSION}" \
+            --target "$TARGET_SHA" \
             $PRERELEASE_FLAG
 
   deploy-release-docs:
     name: Deploy release docs
     needs: [publish-wheel, create-gh-release]
-    if: ${{ inputs.create-gh-release }}
+    if: ${{ github.event_name == 'push' || (!inputs.dry-run && inputs.create-gh-release) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout at release ref
+      - name: Checkout triggering ref
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.release-ref }}
           fetch-depth: 0
 
       - uses: ./.github/actions/setup-python-env
         with:
-          ref: ${{ inputs.release-ref }}
-          fetch-depth: "0"
-
-      - name: Install docs dependencies
-        run: uv sync --group dev --group docs
+          checkout: "false"
+          dependency-profile: "docs"
 
       - name: Configure git for mike
         run: |
@@ -161,9 +178,9 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Build docs
-        run: make docs-build
+        run: mise run docs:build
 
       - name: Deploy release docs with mike
         env:
           VERSION: ${{ needs.publish-wheel.outputs.version }}
-        run: uv run --group docs mike deploy --push --update-aliases "$VERSION" latest
+        run: mise run docs:deploy "$VERSION"

@@ -33,7 +33,9 @@ def _nested(inner_fn=None):
         seen["verifier_var"] = VAR.get()
         return Assessment(NAME not in text, target)
 
-    verifier = Operation.verifier("verifier", inner_verify, {"text": "text", "target": "datum"}, checks=("name",))
+    verifier = Operation.verifier(
+        "verifier", inner_verify, {"text": "text", "target": "datum"}, checks=("name",), subject=("text",)
+    )
     inner_ops = (Operation("transform", inner_transform), verifier)
     inner = prepare(inner_g, Workflow("inner", inner_ops, requires=("name",)))
 
@@ -92,7 +94,7 @@ def program() -> list[dict[str, str]]:
     try:
         _, seen4, outer4, ia4, oa4 = _nested(boom)
         raised = None
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raised = type(exc).__name__
     ok4 = raised is None and seen4["inner_result"].outcome(ia4).terminal == "failed"
     c.check(

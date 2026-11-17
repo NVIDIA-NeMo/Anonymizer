@@ -49,7 +49,16 @@ class Substitute(ReplaceMethodBase):
         default=None, description="Additional instructions for the LLM replacement generator."
     )
     consistency: Literal["record", "run"] = Field(
-        default="record", description="Share one substitute per value within each record, or across the whole run."
+        default="record",
+        description=(
+            "'record' gives each value (with its case and whitespace variants) one substitute within its record;"
+            " two different values of a record can get the same substitute. 'run' gives each value one substitute"
+            " across the whole run, and two different values never share one. A substitute equal to a real value"
+            " of the record is replaced by [SUBSTITUTE_<LABEL>_<n>]; in 'run', so is a substitute another value"
+            " already uses. A mention can still get a different substitute where the shared one would clash with"
+            " another value, or another value's substitute, in the same record; in 'record' this happens only to"
+            " case or whitespace variants."
+        ),
     )
 
 

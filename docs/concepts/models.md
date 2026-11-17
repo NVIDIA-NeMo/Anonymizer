@@ -12,8 +12,8 @@ Anonymizer uses LLMs for entity detection, replacement, and rewriting. Models ar
 Plain `Anonymizer()` uses Anonymizer's bundled provider and model configs — not DataDesigner's machine-local defaults from `~/.data-designer/model_providers.yaml`. Bundled providers live at [`providers.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/providers.yaml); bundled models at [`models.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/models.yaml).
 
 The bundled GLiNER2 detector points to a loopback endpoint. Start a compatible local server before
-calling `Anonymizer.run()`, or use the notebook helper described in
-[Local notebook runtime](self-hosting-gliner.md#local-notebook-runtime). Set your API key for the
+calling `Anonymizer.run()`, or construct a client with `create_anonymizer()` and either `NativeGliner`
+or `GlinerEndpoint`. See [Self-hosting GLiNER2](self-hosting-gliner.md). Set your API key for the
 remaining models hosted on [OpenRouter](https://openrouter.ai):
 
 ```bash
@@ -31,7 +31,7 @@ export OPENROUTER_API_KEY="your-openrouter-api-key"
 | `nemotron-30b-thinking` | [`nvidia/nemotron-3-nano-30b-a3b`](https://openrouter.ai/nvidia/nemotron-3-nano-30b-a3b) | Latent detection, rewrite evaluation, final judge |
 | `nemotron-super` | [`nvidia/nemotron-3-super-120b-a12b`](https://openrouter.ai/nvidia/nemotron-3-super-120b-a12b) | Entity coverage evaluation |
 
-Each pipeline stage has a **role** mapped to one of these aliases. See the full role list in the default configs: [`detection.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/detection.yaml), [`replace.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/replace.yaml), [`rewrite.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/rewrite.yaml).
+Each pipeline stage has a **role** mapped to one of these aliases. See the full role list in the bundled configs: [`detection.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/detection.yaml), [`replace.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/replace.yaml), [`rewrite.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/rewrite.yaml).
 
 ---
 
@@ -41,6 +41,11 @@ Pass `model_providers` when you need non-default endpoints—for example OpenAI,
 GLiNER2 service, or an internal inference deployment. Plain `Anonymizer()` uses the bundled loopback
 detector and [OpenRouter](https://openrouter.ai) LLM settings; override when your models point
 at different provider names or URLs.
+
+For managed local GLiNER2 and vLLM generation endpoints, see
+[Deploy local models](inference-services.md). That guide covers host and GPU
+container deployment, immutable plans, launch receipts, cleanup, and
+provider configuration.
 
 Set your API keys first:
 
@@ -153,7 +158,21 @@ You can pass `model_configs` as either a YAML file path or a YAML string.
 
 Reasoning models need a larger `max_tokens` than non-reasoning ones because hidden reasoning spends the budget before the answer is written; the bundled configs use 8192-16384. Raise `inference_parameters.max_tokens` for an alias when dropped rows' `failed_records` reason names `max_tokens`. A larger budget also takes longer to generate: the bundled configs pair it with `timeout: 300` (seconds). Without `inference_parameters.timeout`, a request times out after 60 seconds, and dropped rows' reason says the request `timed out`.
 
+Schema-constrained output has not been measured on reasoning models with thinking enabled. Anonymizer sends the augmenter's constraint the same way; the `_augmentation_response_format` trace column records, per row, whether the reply was constrained, fell back, or appears to have ignored the constraint. See [Detection](detection.md#how-it-works).
+
 Roles you don't override keep their default alias selections, but those aliases must still exist in your `model_configs` pool.
+
+The rewrite role `entity_classifier` is an exception: when omitted, it uses your effective
+`disposition_analyzer` selection. It classifies custom explicit entity labels as direct or
+quasi-identifiers; records containing only default labels skip this LLM call. To select a
+separate classifier, add both aliases to your model pool and configure:
+
+```yaml
+selected_models:
+  rewrite:
+    disposition_analyzer: my-rewrite-model
+    entity_classifier: my-classification-model
+```
 
 !!! tip "Validate your config"
 

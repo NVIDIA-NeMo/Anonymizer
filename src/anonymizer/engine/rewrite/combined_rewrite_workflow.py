@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -39,9 +40,10 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT_NEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
+from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
@@ -76,6 +78,8 @@ from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 from anonymizer.measurement import stage_timer
+
+logger = logging.getLogger("anonymizer.rewrite.combined_workflow")
 
 
 @dataclass(frozen=True)
@@ -404,8 +408,8 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
             SensitivityDispositionWorkflow().columns(
                 selected_models=selected_models,
                 privacy_goal=privacy_goal,
-                data_summary=data_summary,
                 strict_entity_protection=strict_entity_protection,
+                data_summary=data_summary,
             )
         )
         columns.extend(QAGenerationWorkflow().columns(selected_models=selected_models))
@@ -545,17 +549,21 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
         preview_num_records: int | None = None,
         strict_entity_protection: bool = False,
     ) -> Callable[[], None]:
-        """One combined workflow call over ``rows``, leaving the final candidates in ``rows.frame``."""
-        graph = self.build_graph(
-            selected_models=selected_models,
-            replace_model_selection=replace_model_selection,
-            privacy_goal=privacy_goal,
-            evaluation=evaluation,
-            data_summary=data_summary,
-            strict_entity_protection=strict_entity_protection,
-        )
+        """Label classification, then one combined workflow call over ``rows``, leaving the final candidates in
+        ``rows.frame``."""
 
         def generate() -> None:
+            self._entity_classification_wf.classify_rows(
+                rows.frame, adapter=self._adapter, model_configs=model_configs, selected_models=selected_models
+            )
+            graph = self.build_graph(
+                selected_models=selected_models,
+                replace_model_selection=replace_model_selection,
+                privacy_goal=privacy_goal,
+                evaluation=evaluation,
+                data_summary=data_summary,
+                strict_entity_protection=strict_entity_protection,
+            )
             seed = select_seed_cols(rows.frame, derive_seed_columns(graph.columns, rows.frame))
             run_result = self._adapter.run_workflow(
                 seed,

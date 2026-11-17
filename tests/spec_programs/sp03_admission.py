@@ -27,7 +27,7 @@ def program() -> list[dict[str, str]]:
     try:
         r = run(g, Operation("transform", boom))
         raised = None
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         r, raised = None, type(exc).__name__
     o = r.outcome(a) if r else None
     failed = [x for x in r.attempts if x.status != "succeeded"] if r else []

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from anonymizer.config.anonymizer_config import DetectionScope
 from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.graph_core.execution import TargetOutcome
@@ -25,8 +26,9 @@ class _DisplayMixin:
     def outcome(self, row: int) -> TargetOutcome:
         """The protection outcome of output row ``row``: its ``qualification`` and the ``reasons`` behind it.
 
-        ``qualification`` is ``"met"`` when every required check passed for the row, ``"not_met"`` when one
-        failed (its reasons name the check), and ``"not_assessed"`` when a check could not decide.
+        ``qualification`` is ``"met"`` when every required check passed for the row, ``"not_met"`` when the
+        row did not finish or a required check failed, could not decide (a ``could_not_assess`` reason) or gave
+        no assessment, and ``"not_assessed"`` only when no check is required.
 
         On an ``evaluate()`` result the outcome only reports and is never protected: its ``reasons`` hold one
         ``passed``, ``scored``, ``could_not_assess`` or ``failed`` reason per judge check, in that order (worst last),
@@ -104,6 +106,11 @@ class AnonymizerResult(_DisplayMixin):
         id_column: Record identifier column retained in ``dataframe`` for
             in-memory record input. File-backed input currently leaves this as
             ``None``.
+        detection_scope: The resolved detection scope the run used: effective
+            labels, allowed labels (``None`` when ``entity_labels`` is unset),
+            exclusions, and GLiNER threshold. ``None`` on ``evaluate()`` and hand-built results.
+        effective_entity_labels: Resolved detection labels used as coverage-prompt
+            guidance, without restricting permissive evaluation.
     """
 
     dataframe: pd.DataFrame
@@ -116,6 +123,8 @@ class AnonymizerResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
+    detection_scope: DetectionScope | None = None
+    effective_entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
 
@@ -165,6 +174,11 @@ class PreviewResult(_DisplayMixin):
         id_column: Record identifier column retained in ``dataframe`` for
             in-memory record input. File-backed input currently leaves this as
             ``None``.
+        detection_scope: The resolved detection scope the run used: effective
+            labels, allowed labels (``None`` when ``entity_labels`` is unset),
+            exclusions, and GLiNER threshold. ``None`` on ``evaluate()`` and hand-built results.
+        effective_entity_labels: Resolved detection labels used as coverage-prompt
+            guidance, without restricting permissive evaluation.
     """
 
     dataframe: pd.DataFrame
@@ -178,6 +192,8 @@ class PreviewResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
+    detection_scope: DetectionScope | None = None
+    effective_entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
 

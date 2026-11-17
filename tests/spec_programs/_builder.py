@@ -35,7 +35,8 @@ class Checks:
         """Run one check body; an exception escaping it is a FAIL with its type (never content)."""
         try:
             ok, detail = fn()
-        except Exception as exc:  # noqa: BLE001 - a check must report, not crash the program
+        # A check must report, not crash the program.
+        except Exception as exc:
             ok, detail = False, f"unexpected {type(exc).__name__}"
         self.check(check, ok, detail)
 
@@ -72,7 +73,7 @@ class Recorder:
             self.calls.append((name, text, threading.get_ident()))
             return Assessment(needle not in text, target)
 
-        return Operation.verifier(name, call, {"text": "text", "target": "datum"}, checks=(name,))
+        return Operation.verifier(name, call, {"text": "text", "target": "datum"}, checks=(name,), subject=("text",))
 
 
 def graph(*texts: str) -> tuple[ProtectionGraph, tuple]:

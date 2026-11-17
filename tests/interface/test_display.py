@@ -22,7 +22,10 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.rewrite.final_judge import PRIVACY_RUBRIC, QUALITY_RUBRIC, STYLE_RUBRIC
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
-from anonymizer.engine.schemas.rewrite import EntityDispositionSchema, SensitivityDispositionSchema
+from anonymizer.engine.schemas.rewrite import (
+    EntityDispositionSchema,
+    SensitivityDispositionSchema,
+)
 from anonymizer.interface.display import (
     _build_replaced_entities,
     _extract_judge_scores,
@@ -458,10 +461,10 @@ def test_display_record_explicit_index_does_not_advance_cycle() -> None:
 
 
 def test_build_replaced_entities_no_drift_with_case_mismatch() -> None:
-    """Regression for #15: case-insensitive expanded entities must resolve correctly.
+    """Regression for #15: case variants in source-bound entities resolve correctly.
 
-    expand_entity_occurrences stores value=text[start:end] which may differ in case
-    from the replacement map key (e.g. "the Lantern" vs "The Lantern"). The old
+    An occurrence's source-bound value may differ in case from the replacement
+    map key (e.g. "the Lantern" vs "The Lantern"). The old
     cursor-replay approach missed the map entry and used a wrong-length fallback,
     causing cumulative drift on all subsequent entities.
     """
@@ -630,11 +633,9 @@ def test_render_record_html_rewrite_mode_with_disposition() -> None:
                 sensitivity="high",
                 entity_label="first_name",
                 entity_value="Alice",
-                protection_reason="Direct identifier that uniquely identifies the subject.",
                 protection_method_suggestion="replace",
-                combined_risk_level="high",
             ),
-        ]
+        ],
     ).model_dump()
     row = pd.Series(
         {

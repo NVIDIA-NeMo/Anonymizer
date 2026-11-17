@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import contextvars
+import functools
 import inspect
 import logging
 import os
@@ -14,7 +16,7 @@ from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TypedDict, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, ParamSpec, Protocol, TypedDict, TypeGuard, TypeVar, cast
 
 import pandas as pd
 from data_designer.config.models import ModelProvider
@@ -24,10 +26,14 @@ from data_designer.interface.data_designer import DataDesigner
 from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
+    Detect,
+    DetectionScope,
     EvaluateConfig,
     Rewrite,
     TextRecordsInput,
+    resolve_effective_detection_labels,
 )
+from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
 from anonymizer.config.replace_strategies import ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
@@ -54,7 +60,6 @@ from anonymizer.engine.constants import (
     COL_TYPE_FIDELITY_VALID,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
-    DEFAULT_ENTITY_LABELS,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
@@ -78,6 +83,7 @@ from anonymizer.engine.graph_core.execution import ProtectionResult, Reason, Tar
 from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
 from anonymizer.engine.ndd.model_loader import (
     parse_model_configs,
     parse_model_providers,
@@ -89,6 +95,7 @@ from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+from anonymizer.engine.row_partitioning import try_resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
@@ -182,7 +189,14 @@ def _evaluate_on_graph(
             current, failed = judge.run(current)
             failures.extend(failed)
             present = [c for c in judge.columns if c in current.columns]
-            return current[present].to_dict("records") if present else [{} for _ in range(len(current))]
+            rows = current[present].to_dict("records") if present else [{} for _ in range(len(current))]
+            if len(rows) == len(target):
+                return rows
+            # A judge dropped rows: map the survivors back to their targets; an unmatched target reads as unavailable.
+            positions = try_resolve_source_positions(frame, current, None)
+            if positions is None:
+                return [{} for _ in target]
+            return [row or {} for row in per_target(rows, positions, len(target))]
 
         return judge_rows
 
@@ -204,12 +218,11 @@ def _evaluate_on_graph(
     workflow = Workflow("evaluate", operations)
     limits = Limits(max_operations=len(operations), max_targets=len(graph.targets), max_mentions=0, max_context_items=0)
     result = protect(prepare(graph, workflow, limits=limits))
-    if not graph.targets:  # no targets: the bodies never ran, but the judges still see the (empty) frame
-        for operation in bodies:
-            operation.fn(target=())
+    call_on_empty_input(graph, *bodies)
     for entry in result.state.entries:
         if entry.error is not None and not operations[entry.node].is_verifier:
             raise entry.error
+    raise_if_cancelled(result)
     return current, failures, result
 
 
@@ -302,7 +315,7 @@ class _DetectionExampleKwargs(TypedDict, total=False):
     entity_label_examples: dict[str, list[str]]
 
 
-def _accepts_entity_label_examples(method: Callable[..., object]) -> bool:
+def _accepts_keyword(method: Callable[..., object], name: str) -> bool:
     """Check keyword support; preserve forwarding when a callable cannot be inspected."""
     try:
         if sys.version_info >= (3, 14):
@@ -313,11 +326,42 @@ def _accepts_entity_label_examples(method: Callable[..., object]) -> bool:
         parameters = signature.parameters
     except (TypeError, ValueError):
         return True
-    parameter = parameters.get("entity_label_examples")
+    parameter = parameters.get(name)
     return any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()) or (
         parameter is not None
         and parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
     )
+
+
+def _accepts_entity_label_examples(method: Callable[..., object]) -> bool:
+    return _accepts_keyword(method, "entity_label_examples")
+
+
+class _DetectionRegexKwargs(TypedDict, total=False):
+    builtin_regexes: bool
+    regex_rules: list[BuiltinRegex | RegexRule]
+    regex_limits: RegexLimits
+
+
+def _detection_regex_kwargs(method: Callable[..., object], detect: Detect) -> _DetectionRegexKwargs:
+    """Forward supported regex options without dropping explicitly requested behavior."""
+    kwargs: _DetectionRegexKwargs = {}
+    if _accepts_keyword(method, "regex_limits"):
+        kwargs["regex_limits"] = detect.regex_limits
+    elif detect.regex_limits != RegexLimits():
+        raise InvalidConfigError(
+            "The configured detection_workflow does not accept regex_limits. Update the workflow "
+            "to accept this keyword or remove the non-default detect.regex_limits."
+        )
+    if _accepts_keyword(method, "builtin_regexes") and _accepts_keyword(method, "regex_rules"):
+        kwargs.update(builtin_regexes=detect.builtin_regexes, regex_rules=detect.regex_rules)
+        return kwargs
+    if detect.regex_rules or ("builtin_regexes" in detect.model_fields_set and detect.builtin_regexes):
+        raise InvalidConfigError(
+            "The configured detection_workflow does not accept builtin_regexes and regex_rules. "
+            "Update the workflow to accept these keywords or remove the regex options from detect."
+        )
+    return kwargs
 
 
 def _detection_example_kwargs(method: Callable[..., object], examples: dict[str, list[str]]) -> _DetectionExampleKwargs:
@@ -330,6 +374,21 @@ def _detection_example_kwargs(method: Callable[..., object], examples: dict[str,
             "Update the workflow to accept this keyword or remove detect.entity_label_examples."
         )
     return {}
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _in_copied_context(fn: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Run ``fn`` in a copy of the caller's context: it sees the caller's context values, and values it sets,
+    including a caller-supplied runner's, do not leak back to the caller."""
+
+    @functools.wraps(fn)
+    def call(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        return contextvars.copy_context().run(fn, *args, **kwargs)
+
+    return call
 
 
 class Anonymizer:
@@ -365,9 +424,15 @@ class Anonymizer:
                 instance. Use this for DataDesigner execution knobs such as
                 ``buffer_size`` and ``max_in_flight_tasks``.
             detection_workflow: Custom detection workflow (advanced/testing). Methods
-                without an ``entity_label_examples`` keyword remain supported when no
-                examples are configured; configuring examples raises ``InvalidConfigError``
-                if the method does not accept them.
+                without the regex keywords remain supported when regex options are
+                implicit or built-ins are explicitly disabled; they retain their own
+                detection behavior, without gaining built-in regex recognition.
+                Explicitly enabling built-ins or supplying regex rules requires keyword
+                support, otherwise ``InvalidConfigError`` is raised. Methods without
+                ``regex_limits`` may omit defaults, but non-default limits require
+                support and otherwise raise ``InvalidConfigError``. Methods without
+                ``entity_label_examples`` remain supported when no examples are configured;
+                configuring unsupported examples raises ``InvalidConfigError`` too.
             replace_runner: Custom replacement workflow (advanced/testing).
             rewrite_runner: Custom rewrite workflow (advanced/testing).
             combined_rewrite_runner: Custom combined rewrite workflow (advanced/testing).
@@ -422,6 +487,7 @@ class Anonymizer:
         self._rewrite_runner = rewrite_runner or RewriteWorkflow(adapter=self._adapter)
         self._combined_rewrite_runner = combined_rewrite_runner or CombinedRewriteWorkflow(adapter=self._adapter)
 
+    @_in_copied_context
     def run(
         self,
         *,
@@ -500,6 +566,7 @@ class Anonymizer:
             **_detection_example_kwargs(
                 self._detection_workflow.build_detection_config, config.detect.entity_label_examples
             ),
+            **_detection_regex_kwargs(self._detection_workflow.build_detection_config, config.detect),
             data_summary=data.data_summary,
         )
 
@@ -536,11 +603,13 @@ class Anonymizer:
             **_detection_example_kwargs(
                 self._detection_workflow.build_detection_builder_for_seed, config.detect.entity_label_examples
             ),
+            **_detection_regex_kwargs(self._detection_workflow.build_detection_builder_for_seed, config.detect),
             data_summary=data_summary,
             job_index=job_index,
             num_jobs=num_jobs,
         )
 
+    @_in_copied_context
     def preview(
         self,
         *,
@@ -572,11 +641,13 @@ class Anonymizer:
                 resolved_text_column=result.resolved_text_column,
                 failed_records=result.failed_records,
                 preview_num_records=num_records,
+                effective_entity_labels=result.effective_entity_labels,
                 id_column=result.id_column,
                 replace_method=config.replace,
                 rewrite_config=result.rewrite_config,
                 entity_labels=config.detect.entity_labels,
                 excluded_entity_labels=config.detect.excluded_entity_labels,
+                detection_scope=result.detection_scope,
                 data_summary=result.data_summary,
                 _outcomes=result._outcomes,
             )
@@ -597,6 +668,7 @@ class Anonymizer:
                 duration_sec=time.perf_counter() - t_start,
             )
 
+    @_in_copied_context
     def evaluate(
         self,
         output: AnonymizerResult | PreviewResult,
@@ -660,6 +732,7 @@ class Anonymizer:
             raise InvalidConfigError(str(exc)) from exc
 
         entity_labels = getattr(output, "entity_labels", None)
+        effective_entity_labels = getattr(output, "effective_entity_labels", None)
         excluded_entity_labels = getattr(output, "excluded_entity_labels", None)
         data_summary = getattr(output, "data_summary", None)
         num_records = len(output.trace_dataframe)
@@ -726,6 +799,7 @@ class Anonymizer:
             def run_coverage(df: pd.DataFrame) -> tuple[pd.DataFrame, list[FailedRecord]]:
                 coverage_wf = EntityCoverageWorkflow(
                     adapter=self._adapter,
+                    effective_entity_labels=effective_entity_labels,
                     entity_labels=entity_labels,
                     excluded_entity_labels=excluded_entity_labels,
                     data_summary=data_summary,
@@ -772,6 +846,7 @@ class Anonymizer:
                 stage_start = time.perf_counter()
                 replace_result = self._replace_runner.evaluate(
                     df,
+                    effective_entity_labels=effective_entity_labels,
                     replace_method=replace_method,
                     model_configs=self._model_configs,
                     selected_models=self._selected_models.evaluate,
@@ -829,6 +904,7 @@ class Anonymizer:
             id_column=output.id_column,
             replace_method=None if is_rewrite else replace_method,
             rewrite_config=rewrite_config,
+            effective_entity_labels=effective_entity_labels,
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
@@ -912,14 +988,22 @@ class Anonymizer:
             preview_num_records = effective_records
         else:
             logger.info("🔍 Running entity detection on %d records", num_records)
+        configured_labels = resolve_effective_detection_labels(
+            config.detect.entity_labels,
+            regex_rules=config.detect.regex_rules,
+        )
+        effective_labels = resolve_effective_detection_labels(
+            config.detect.entity_labels,
+            regex_rules=config.detect.regex_rules,
+            excluded_entity_labels=config.detect.excluded_entity_labels,
+        )
         label_config = resolve_entity_label_config(
-            entity_labels=config.detect.entity_labels,
+            entity_labels=effective_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
             entity_label_examples=config.detect.entity_label_examples,
         )
-        configured_label_count = len(
-            config.detect.entity_labels if config.detect.entity_labels is not None else DEFAULT_ENTITY_LABELS
-        )
+        label_config.strict_labels = config.detect.entity_labels is not None
+        configured_label_count = len(configured_labels)
         effective_label_count = len(label_config.labels)
         removed_label_count = configured_label_count - effective_label_count
         if logger.isEnabledFor(logging.DEBUG):
@@ -962,6 +1046,7 @@ class Anonymizer:
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
             **_detection_example_kwargs(self._detection_workflow.run, config.detect.entity_label_examples),
+            **_detection_regex_kwargs(self._detection_workflow.run, config.detect),
             privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
             data_summary=data.data_summary,
             tag_latent_entities=config.rewrite is not None,
@@ -1110,14 +1195,23 @@ class Anonymizer:
             rewrite_config=admitted_goal,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
+            detection_scope=DetectionScope(
+                effective_labels=sorted(label_config.labels),
+                allowed_labels=sorted(label_config.labels) if label_config.strict_labels else None,
+                excluded_labels=config.detect.excluded_entity_labels or [],
+                gliner_threshold=config.detect.gliner_threshold,
+            ),
             data_summary=data.data_summary,
             _outcomes=outcomes,
+            effective_entity_labels=effective_labels,
         )
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
         """Run semantic preflight checks shared by validate, run, and preview."""
         if config.rewrite is not None and config.rewrite.privacy_goal is None:
             raise InvalidConfigError("rewrite.privacy_goal must not be None")
+        if conflicts := config.detect.detector_declaration_conflicts():
+            raise InvalidConfigError(" ".join(conflicts))
         try:
             validate_model_alias_references(
                 self._model_configs,
@@ -1170,7 +1264,8 @@ class Anonymizer:
                 session_id=uuid.uuid4().hex,
             ) as handler:
                 handler.enqueue(event)
-        except Exception:  # noqa: BLE001 - best-effort
+        # Best-effort telemetry must not affect anonymization.
+        except Exception:
             logger.debug("Failed to emit telemetry event")
 
     def _build_telemetry_event(
@@ -1481,13 +1576,13 @@ def _collect_step_models(
 def _step_to_field(step: str) -> str:
     """Map a FailedRecord.step (workflow_name) to a schema failure-count field key."""
     match step:
-        case "entity-detection":
+        case "entity-detection" | "detect":
             return "entity_detection"
         case "latent-entity-detection":
             return "latent_detection"
-        case "replace-map-generation":
+        case "replace-map-generation" | "substitute-map":
             return "replace_map_generation"
-        case "rewrite-pipeline" | "rewrite-combined":
+        case "rewrite-pipeline" | "rewrite-combined" | "rewrite-label-classification":
             return "rewrite_pipeline"
         case "rewrite-final-judge":
             return "rewrite_final_judge"

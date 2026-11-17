@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
+from collections.abc import Container
 from dataclasses import dataclass
 from typing import Literal
 
@@ -30,6 +31,7 @@ from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
+from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
 REPLACEMENT_MAP_SOURCE_LLM = "llm"
@@ -80,6 +82,15 @@ class LlmReplaceWorkflow:
         passthrough_rows[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
 
         if entity_rows.empty:
+            record_stage(
+                "LlmReplaceWorkflow.fold",
+                elapsed_sec=0.0,
+                consistency=consistency,
+                input_row_count=len(dataframe),
+                entry_count=0,
+                records_with_placeholder=0,
+                fallback_counts={},
+            )
             return LlmReplaceResult(
                 dataframe=merge_and_reorder(passthrough_rows).drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
                 failed_records=[],
@@ -120,9 +131,16 @@ class LlmReplaceWorkflow:
         positions = tuple(sorted((*passthrough_rows[ROW_ORDER_COL], *output_df[ROW_ORDER_COL])))
         combined = merge_and_reorder(output_df, passthrough_rows)
         requested = [_requested_values(EntitiesByValueSchema.from_raw(v)) for v in combined[entities_column]]
-        combined[COL_REPLACEMENT_MAP] = _fold_replacement_maps(
-            combined[COL_REPLACEMENT_MAP].tolist(), consistency, requested
-        )
+        tally: Counter[tuple[str, ...]] = Counter()
+        with stage_timer("LlmReplaceWorkflow.fold", consistency=consistency, input_row_count=len(combined)) as fields:
+            maps = _fold_replacement_maps(combined[COL_REPLACEMENT_MAP].tolist(), consistency, requested, tally)
+            fields["entry_count"] = sum(len(m.get("replacements", [])) for m in maps)
+            fields["records_with_placeholder"] = tally.pop(("records_with_placeholder",), 0)
+            fallbacks: dict[str, dict[str, int]] = {}
+            for (label, step), n in sorted(tally.items()):
+                fallbacks.setdefault(label, {})[step] = n
+            fields["fallback_counts"] = fallbacks
+        combined[COL_REPLACEMENT_MAP] = maps
         return LlmReplaceResult(
             dataframe=combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
             failed_records=run_result.failed_records,
@@ -145,17 +163,35 @@ def _recase(synthetic: str, *, like: str, source: str) -> str:
 
 
 def _fold_replacement_maps(
-    maps: list[dict], consistency: Literal["record", "run"], requested: list[set[str]] | None = None
+    maps: list[dict],
+    consistency: Literal["record", "run"],
+    requested: list[set[str]] | None = None,
+    tally: Counter[tuple[str, ...]] | None = None,
 ) -> list[dict]:
     """Give entries with the same (label, case- and whitespace-folded value) one substitute, re-cased to each original.
 
-    ``"record"`` shares within each record; ``"run"`` also gives each key the first record's substitute. An emitted
-    substitute collides when its folded form equals a value in its record (its map's originals and ``requested``) or a substitute another key already emitted
-    there; a shared substitute also collides with another key's own proposal. A colliding entry falls back to its own
-    substitute, then to a placeholder. The first entry of a key fixes the record's shared substitute; a later
-    colliding variant falls back for itself only, so a third variant still tries the shared one.
+    ``"record"`` shares within each record; ``"run"`` also gives each key the first record's substitute. A shared
+    substitute collides when its folded form equals a value in its record (its map's originals and ``requested``), a
+    substitute another key already emitted there, or another key's own proposal; a colliding entry falls back to its own
+    substitute. In ``"record"`` mode that fallback is kept unless it equals a value in its record, so two keys of a
+    record can share a substitute; otherwise it becomes a placeholder. The first entry of a key fixes the record's
+    shared substitute; a later colliding variant falls back for itself only, so a third variant still tries the shared
+    one.
+
+    In ``"run"`` mode the fallback also collides with a substitute another key emitted in the record, and a substitute
+    emitted for one key anywhere in the run collides for every other key, so two keys never share one; placeholders are
+    numbered across the run. A key holding a run-wide mapping ignores other keys' proposals, so its run-wide substitute
+    wins over them. When that substitute collides in a record and the key falls back, its fallback is checked like any
+    other key's: a key earlier in the record that already emitted the same value keeps it, and the holder moves on to a
+    placeholder.
+
+    When given, ``tally`` counts each fallback as ``(label, step)`` with step ``own``, ``placeholder_taken``
+    (``"run"`` only) or ``placeholder_protected`` (its own proposal folds to a value in its record), plus
+    ``("records_with_placeholder",)``.
     """
     run_wide: dict[tuple[str, str], tuple[str, str]] = {}
+    taken: dict[str, set[tuple[str, str]]] = {}
+    run_placeholders: Counter[str] = Counter()
     folded: list[dict] = []
     for index, raw in enumerate(maps):
         keyed = [((e["label"], _fold(e["original"])), e) for e in raw.get("replacements", [])]
@@ -166,11 +202,13 @@ def _fold_replacement_maps(
         emitted: dict[str, set[tuple[str, str]]] = {}
 
         def collides(value: str, key: tuple[str, str], *, shared: bool) -> bool:
-            others = (proposed.get(value, set()) if shared else set()) | emitted.get(value, set())
+            rivals = proposed.get(value, set()) if shared and key not in run_wide else set()
+            others = rivals | emitted.get(value, set()) | taken.get(value, set())
             return value in originals or bool(others - {key})
 
         record: dict[tuple[str, str], tuple[str, str]] = {}
-        placeholders: Counter[str] = Counter()
+        placeholders: Counter[str] = run_placeholders if consistency == "run" else Counter()
+        used = 0
         out = []
         for key, entry in keyed:
             own = (entry["original"], entry["synthetic"])
@@ -178,26 +216,36 @@ def _fold_replacement_maps(
             source = record.setdefault(key, run_wide.get(key, own))
             synthetic = _recase(source[1], like=entry["original"], source=source[0])
             if collides(_fold(synthetic), key, shared=True):
+                step = "own" if entry["synthetic"] != synthetic else None
                 source = own
                 synthetic = entry["synthetic"]
-                if collides(_fold(synthetic), key, shared=False):
+                value = _fold(synthetic)
+                if value in originals if consistency == "record" else collides(value, key, shared=False):
+                    in_record = value in originals
+                    step = "placeholder_protected" if in_record else "placeholder_taken"
                     placeholders[entry["label"]] += 1
-                    taken = originals | proposed.keys() | emitted.keys()
+                    used += 1
                     synthetic = _collision_safe_synthetic(
-                        entry["label"], index=placeholders[entry["label"]], protected_original_values=taken
+                        entry["label"],
+                        index=placeholders[entry["label"]],
+                        protected_original_values=(originals, proposed, emitted, taken),
                     )
                     source = (entry["original"], synthetic)
                 if first:
                     record[key] = source
+                if tally is not None and step:
+                    tally[(entry["label"], step)] += 1
             emitted.setdefault(_fold(synthetic), set()).add(key)
             out.append({**entry, "synthetic": synthetic})
-        if placeholders:
-            logger.warning(
-                "Replacement map used placeholder substitutes to avoid collisions; replaced=%d", placeholders.total()
-            )
+        if used and tally is not None:
+            tally[("records_with_placeholder",)] += 1
+        if used:
+            logger.warning("Replacement map used placeholder substitutes to avoid collisions; replaced=%d", used)
         if consistency == "run":
             for key, source in record.items():
                 run_wide.setdefault(key, source)
+            for value, keys in emitted.items():
+                taken.setdefault(value, set()).update(keys)
         folded.append({**raw, "replacements": out})
     return folded
 
@@ -277,11 +325,11 @@ def _filter_replacement_map_to_input_entities(
     return {"replacements": filtered}
 
 
-def _collision_safe_synthetic(label: str, *, index: int, protected_original_values: set[str]) -> str:
+def _collision_safe_synthetic(label: str, *, index: int, protected_original_values: tuple[Container[str], ...]) -> str:
     label_token = "".join(char.upper() if char.isalnum() else "_" for char in label).strip("_") or "VALUE"
     while True:
         candidate = f"[SUBSTITUTE_{label_token}_{index}]"
-        if _fold(candidate) not in protected_original_values:
+        if not any(_fold(candidate) in values for values in protected_original_values):
             return candidate
         index += 1
 

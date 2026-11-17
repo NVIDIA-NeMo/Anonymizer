@@ -27,6 +27,14 @@ if TYPE_CHECKING:
         TextRecord,
         TextRecordsInput,
     )
+    from anonymizer.config.regex import (
+        BUILTIN_REGEX_LABELS,
+        BuiltinRegex,
+        RegexCandidate,
+        RegexLimits,
+        RegexRule,
+        RegexValidationResult,
+    )
     from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
     from anonymizer.config.rewrite import PrivacyGoal
     from anonymizer.interface.anonymizer import Anonymizer as Anonymizer
@@ -35,6 +43,13 @@ if TYPE_CHECKING:
         AnonymizerIOError,
         InvalidConfigError,
         InvalidInputError,
+    )
+    from anonymizer.interface.factory import (
+        GlinerEndpoint,
+        NativeGliner,
+        NativeRuntimeSession,
+        create_anonymizer,
+        native_runtime,
     )
     from anonymizer.logging import LoggingConfig, configure_logging
 
@@ -47,6 +62,12 @@ _EXPORTS = {
     "RiskTolerance": "anonymizer.config.anonymizer_config",
     "TextRecord": "anonymizer.config.anonymizer_config",
     "TextRecordsInput": "anonymizer.config.anonymizer_config",
+    "BUILTIN_REGEX_LABELS": "anonymizer.config.regex",
+    "BuiltinRegex": "anonymizer.config.regex",
+    "RegexCandidate": "anonymizer.config.regex",
+    "RegexLimits": "anonymizer.config.regex",
+    "RegexRule": "anonymizer.config.regex",
+    "RegexValidationResult": "anonymizer.config.regex",
     "Annotate": "anonymizer.config.replace_strategies",
     "Hash": "anonymizer.config.replace_strategies",
     "Redact": "anonymizer.config.replace_strategies",
@@ -61,6 +82,11 @@ _EXPORTS = {
     "ModelProvider": "data_designer.config.models",
     "RunConfig": "data_designer.config.run_config",
     "Anonymizer": "anonymizer.interface.anonymizer",
+    "GlinerEndpoint": "anonymizer.interface.factory",
+    "NativeGliner": "anonymizer.interface.factory",
+    "NativeRuntimeSession": "anonymizer.interface.factory",
+    "create_anonymizer": "anonymizer.interface.factory",
+    "native_runtime": "anonymizer.interface.factory",
 }
 
 
@@ -86,16 +112,25 @@ __all__ = [
     "AnonymizerInput",
     "AnonymizerIOError",
     "Annotate",
+    "BUILTIN_REGEX_LABELS",
+    "BuiltinRegex",
     "DEFAULT_ENTITY_LABELS",
     "Detect",
     "EvaluateConfig",
+    "GlinerEndpoint",
     "Hash",
     "InvalidConfigError",
     "InvalidInputError",
     "LoggingConfig",
     "ModelProvider",
+    "NativeGliner",
+    "NativeRuntimeSession",
     "PrivacyGoal",
     "Redact",
+    "RegexCandidate",
+    "RegexLimits",
+    "RegexRule",
+    "RegexValidationResult",
     "Rewrite",
     "RiskTolerance",
     "RunConfig",
@@ -103,5 +138,7 @@ __all__ = [
     "TextRecord",
     "TextRecordsInput",
     "configure_logging",
+    "create_anonymizer",
     "graph",
+    "native_runtime",
 ]

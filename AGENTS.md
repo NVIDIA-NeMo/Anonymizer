@@ -56,6 +56,7 @@ input_df
             → merge + finalize  → COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES
       substitute-map (Substitute only)             → LlmReplaceWorkflow → NddAdapter
       replace → verify-patches (per row)           # Redact / Annotate / Hash apply locally, no LLM
+        → verify-no-original (not Annotate)        # advisory check, not required
   → output: {text_col}_replaced, {text_col}_with_spans, final_entities
 ```
 
@@ -135,14 +136,16 @@ and expected vs actual.
 ## Development
 
 ```bash
-make test          # run all tests
-make bootstrap     # install dev dependencies
-make format        # ruff format + sort imports
-make format-check  # read-only lint check (used in CI)
-make typecheck     # blocking ty type check (warnings fail too)
-make docs-serve    # local MkDocs server at http://127.0.0.1:8000
+mise run setup         # install pinned tools, dev dependencies, and hooks
+mise run setup all     # install pinned tools, every dependency group, and hooks
+mise run test          # run all unit tests
+mise run test:all      # run unit and opt-in end-to-end tests
+mise run format        # format and safely fix Python files and notebooks
+mise run check         # run all read-only static checks
+mise run check ::: test # run static checks and unit tests before opening a PR
+mise run docs:serve    # local MkDocs server at http://127.0.0.1:8000
 ```
 
 For contributor workflow and branch naming see [CONTRIBUTING.md](CONTRIBUTING.md). For local setup, tests, docs, and day-to-day development tasks see [DEVELOPMENT.md](DEVELOPMENT.md). For code style and naming conventions see [STYLEGUIDE.md](STYLEGUIDE.md).
 
-Reference GLiNER server for self-hosted detection: [`tools/serve_gliner.py`](tools/serve_gliner.py) — see [`docs/concepts/self-hosting-gliner.md`](docs/concepts/self-hosting-gliner.md).
+Local vLLM and native GLiNER2 services are compiled and managed through [`tools/inference_service.py`](tools/inference_service.py), and [`tools/serve_gliner.py`](tools/serve_gliner.py) runs the native GLiNER2 server directly — see [`docs/concepts/inference-services.md`](docs/concepts/inference-services.md) and [`docs/concepts/self-hosting-gliner.md`](docs/concepts/self-hosting-gliner.md).

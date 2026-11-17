@@ -3,13 +3,16 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import anonymizer.graph as graph
 
 PUBLIC_NAMES = {
+    "Advisory",
     "Assessment",
     "CancelToken",
     "ContextScope",
@@ -28,6 +31,7 @@ PUBLIC_NAMES = {
     "ProtectionGraph",
     "ProtectionResult",
     "Reason",
+    "Record",
     "Requests",
     "TargetOutcome",
     "Workflow",
@@ -72,6 +76,28 @@ def test_import_loads_only_allowed_modules() -> None:
     assert unexpected == []
 
 
+def test_graph_core_imports_nothing_else_from_anonymizer() -> None:
+    package = Path(graph.__file__).parent.parent / "engine" / "graph_core"
+    outside = []
+    for path in sorted(package.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                names = [node.module]
+            else:
+                continue
+            outside += [
+                f"{path.name}: {name}"
+                for name in names
+                if name.split(".")[0] == "anonymizer"
+                and name != "anonymizer.engine.graph_core"
+                and not name.startswith("anonymizer.engine.graph_core.")
+            ]
+    # The measurement hook is imported lazily, only while a measurement session is loaded.
+    assert outside == ["execution.py: anonymizer.measurement.recorders"]
+
+
 def test_required_check_must_be_answered_by_a_final_text_verifier() -> None:
     calls: list[str] = []
 
@@ -84,7 +110,9 @@ def test_required_check_must_be_answered_by_a_final_text_verifier() -> None:
             ok = ("Alice" not in text and "Smith" not in text) if verdict is None else verdict
             return graph.Assessment(ok, target, "" if ok else "name_present")
 
-        return graph.Operation.verifier(name, assess, {"text": "text", "target": "datum"}, checks=(check,))
+        return graph.Operation.verifier(
+            name, assess, {"text": "text", "target": "datum"}, checks=(check,), subject=("text",)
+        )
 
     def attempt(steps: tuple, requires: tuple[str, ...]) -> tuple[str, str]:
         scope = graph.GraphScope()

@@ -8,8 +8,10 @@ Anonymizer owns identity, accounting and qualification here; the kernel owns top
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import secrets
+import sys
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
@@ -22,6 +24,7 @@ from anonymizer.engine.graph_core.authoring import (
     CONTEXT,
     DATUM,
     MENTIONS,
+    RECORD,
     TEXT,
     Assessment,
     ContextSource,
@@ -31,6 +34,7 @@ from anonymizer.engine.graph_core.authoring import (
     Operation,
     ProtectionGraph,
     Workflow,
+    _reject_bare_string,
     mention_problem,
     utf8_size,
 )
@@ -39,16 +43,16 @@ Terminal = Literal["success", "failed", "cancelled", "blocked"]
 Qualification = Literal["met", "not_met", "not_assessed"]
 AttemptStatus = Literal["running", "succeeded", "failed", "blocked", "cancelled"]
 
-SEEDS = {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "context": CONTEXT, "target": DATUM}
+SEEDS = {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "context": CONTEXT, "target": DATUM, "record": RECORD}
 _SEAL_KEY = secrets.token_bytes(32)
 
 
 @dataclass(frozen=True)
 class Count:
-    """A count that is known exactly, known as an upper bound, or explicitly unknown (never confused with 0)."""
+    """A count that is known exactly, as an upper or lower bound, or explicitly unknown (never confused with 0)."""
 
     value: int | None
-    bound: str = "exact"  # exact | upper | unknown
+    bound: str = "exact"  # exact | upper | lower | unknown
 
     def __str__(self) -> str:
         return "unknown" if self.value is None else f"{self.bound} {self.value}"
@@ -87,13 +91,35 @@ def prepare(
     """Validate everything before effects and compile an immutable plan. No callback runs here.
 
     ``capabilities`` names the operation implementations admitted for this invocation (default: the workflow's);
-    ``request_budget`` selects a hard external-request budget.
+    ``request_budget`` rejects the workflow here when its planned external-request count is unknown, opaque or
+    above the budget; it is not enforced while the workflow runs.
     """
+    _reject_bare_string("capabilities", capabilities, "operation names")
+    with _measure("graph_prepare", operation_count=None, target_count=len(graph.targets)) as m:
+        prepared = _prepare(graph, workflow, limits, capabilities, request_budget)
+        m["operation_count"] = len(prepared.names)
+    return prepared
+
+
+def _prepare(
+    graph: ProtectionGraph,
+    workflow: Workflow,
+    limits: Limits | None,
+    capabilities: tuple[str, ...] | None,
+    request_budget: int | None,
+) -> PreparedProtection:
     limits = limits or Limits()
 
     def requirements(w: Workflow) -> tuple[str, ...]:
         return (*w.requires, *(c for s in w.steps if isinstance(s, Workflow) for c in requirements(s)))
 
+    def annotates(w: Workflow) -> bool:
+        return any(isinstance(s, Workflow) and (s.release != "protected" or annotates(s)) for s in w.steps)
+
+    # A nested annotation keeps source text; releasing it as protected would drop that restriction. Any nested
+    # release other than "protected" is refused, so a misspelled one cannot slip through.
+    if workflow.release == "protected" and annotates(workflow):
+        raise k.GraphRejection("annotation_in_protected", workflow.name)
     # A nested workflow's requirements are requirements of the invocation.
     workflow = replace(workflow, requires=tuple(dict.fromkeys(requirements(workflow))))
     ops = workflow.flatten()
@@ -107,11 +133,9 @@ def prepare(
     nodes = tuple(k.Node(name, op.inputs, op.outputs, op.fn, op.scope) for name, op in ops)
     plan = k.compile_sequence(nodes, {**SEEDS, "context": _context_kind(graph)})
     final_text = max((i for i, n in enumerate(nodes) if "text" in n.outputs), default=None)
-    covering = frozenset(
-        i
-        for i, (_, op) in enumerate(ops)
-        if op.is_verifier and plan.sources[i].get("text") == k.Source(final_text, "text")
-    )
+    if final_text is not None and nodes[final_text].outputs["text"] != TEXT:
+        raise k.GraphRejection("final_text_not_text", nodes[final_text].name)
+    covering = _covering(ops, plan, -1 if final_text is None else final_text)
     answered = {c for i in covering for c in ops[i][1].checks}
     if unanswered := [c for c in workflow.requires if c not in answered]:
         # Evidence on earlier text is a diagnostic; a requirement only it answers could never be met.
@@ -121,6 +145,40 @@ def prepare(
     names = tuple(n for n, _ in ops)
     prepared = PreparedProtection(graph, workflow, limits, plan, names, planned, covering, admitted, final_text)
     return replace(prepared, seal=_seal(prepared))
+
+
+def _covering(ops: tuple[tuple[str, Operation], ...], plan: k.Plan, final: int) -> frozenset[int]:
+    """The verifiers whose every declared subject derives from the final candidate, from declared ports only.
+
+    A candidate version is the index of the operation whose ``text`` output it is, or -1 for the source text. The
+    seeds ``text``, ``source``, ``mentions`` and ``target`` derive from the source text; ``context`` and ``record``
+    from none.
+    Interim rule: every output of a text-producing operation derives from the version it emits, so evidence it
+    returns beside its text counts as about that text. Any other operation's outputs derive from all its inputs.
+    """
+    outputs: list[dict[str, frozenset[int]]] = []
+    covering = set()
+    for i, (name, op) in enumerate(ops):
+        read = {
+            port: (frozenset() if port in ("context", "record") else frozenset({-1}))
+            if source.node is None
+            else outputs[source.node][source.port]
+            for port, source in plan.sources[i].items()
+        }
+        if op.subject and not op.is_verifier:
+            raise k.GraphRejection("verifier_subject_invalid", f"{name}: not a verifier")
+        if op.is_verifier and op.checks and not op.subject:
+            raise k.GraphRejection("verifier_subject_invalid", f"{name}: undeclared")
+        for port in op.subject:
+            if port not in read:
+                raise k.GraphRejection("verifier_subject_invalid", f"{name}.{port}: not an input")
+            if not read[port]:
+                raise k.GraphRejection("verifier_subject_invalid", f"{name}.{port}: about no candidate")
+        if op.subject and all(final in read[port] for port in op.subject):
+            covering.add(i)
+        derived = frozenset({i}) if "text" in op.outputs else frozenset().union(*read.values())
+        outputs.append(dict.fromkeys(op.outputs, derived))
+    return frozenset(covering)
 
 
 def _seal(p: PreparedProtection) -> str:
@@ -233,6 +291,18 @@ class Reason:
 
 
 @dataclass(frozen=True)
+class Advisory:
+    """A check the workflow does not require, as a final-text verifier assessed it: ``passed``, ``failed`` or
+    ``could_not_assess``; ``cause`` is the verifier's stated cause for ``failed`` and ``could_not_assess``. It never
+    changes qualification or release. Fields hold codes and declared names, never record text."""
+
+    check: str
+    verifier: str
+    status: Literal["passed", "failed", "could_not_assess"]
+    cause: str = ""
+
+
+@dataclass(frozen=True)
 class TargetOutcome:
     """Execution terminal, criteria satisfaction and output availability, kept separate.
 
@@ -247,6 +317,7 @@ class TargetOutcome:
     reasons: tuple[Reason, ...] = ()
     error: BaseException | None = field(default=None, repr=False, compare=False)
     withheld_by: tuple[Datum, ...] = ()
+    advisories: tuple[Advisory, ...] = ()
 
     @property
     def reason(self) -> str:
@@ -266,6 +337,7 @@ class InspectionSummary:
     observed: tuple[tuple[str, Count], ...] = ()
     protected: int | None = None
     consistent: bool | None = None
+    budget: str | None = None  # exceeded | within | unknown: observed requests against planned_requests
 
     def render(self) -> str:
         ops = ", ".join(name[:64] for name in self.operations)
@@ -276,11 +348,11 @@ class InspectionSummary:
         if self.terminals is None:
             lines.append("terminals: none (not executed)")
         else:
-            fmt = lambda pairs: ", ".join(f"{a}={b}" for a, b in pairs) or "-"  # noqa: E731
+            fmt = lambda pairs: ", ".join(f"{a}={b}" for a, b in pairs) or "-"
             lines += [
                 f"terminals: {fmt(self.terminals)}; qualification: {fmt(self.qualifications or ())}",
                 f"reasons: {fmt(self.reasons)}; protected: {self.protected}; consistent: {self.consistent}",
-                f"observed: {fmt(self.observed)}",
+                f"observed: {fmt(self.observed)}; budget: {self.budget}",
             ]
         return "\n".join(lines)
 
@@ -339,6 +411,23 @@ class ProtectionResult:
             raise k.GraphRejection("missing_source_part", str(min(missing)))
         return self.compose([taken[i] for i in sorted(taken)])
 
+    def assemble_regions(self, source: str, regions: Sequence[tuple[int, int, Datum]]) -> str:
+        """Region assembly: ``source`` with each ``(start, end, target)`` range replaced by that target's candidate.
+
+        Ranges index the original ``source`` whatever the replacement lengths; text outside them is kept. A range
+        outside ``source`` (``region_out_of_bounds``) or overlapping another (``overlapping_region``) is rejected,
+        and a target without an available candidate is ``unavailable_input``, never filled with source text.
+        """
+        out, at = [], 0
+        for start, end, d in sorted(regions, key=lambda r: (r[0], r[1])):
+            if not 0 <= start <= end <= len(source):
+                raise k.GraphRejection("region_out_of_bounds", f"{start}:{end}")
+            if start < at:
+                raise k.GraphRejection("overlapping_region", f"{start}:{end}")
+            out += [source[at:start], d]
+            at = end
+        return "".join(x if isinstance(x, str) else self._available(x) for x in [*out, source[at:]])
+
     def _available(self, target: Datum) -> str:
         o = self.outcome(target)
         if o.terminal != "success" or not o.available:
@@ -348,7 +437,9 @@ class ProtectionResult:
     @property
     def protected(self) -> dict[Datum, str]:
         """Only qualified, releasable output."""
-        return {d: self._final(d) for d, o in zip(self.targets, self.outcomes) if o.protected}
+        # With no text-producing operation, the verified text is the source text.
+        verified = (lambda d: d.text) if self.prepared.final_text is None else self._final
+        return {d: verified(d) for d, o in zip(self.targets, self.outcomes) if o.protected}
 
     @property
     def attempts(self) -> tuple[Attempt, ...]:
@@ -379,9 +470,21 @@ class ProtectionResult:
         dispatched = {e.node for e in self.state.entries}
         silent = all(p.workflow.flatten()[i][1].requests.bound == "none" for i in dispatched)
         zero_or_unknown = Count(0 if silent else None, "exact" if silent else "unknown")
-        binding = Count(sum(r.status != "not_started" for r in self.retrievals))
-        total = binding if silent else Count(None, "unknown")
-        requests = self._observed_requests()
+        retrieved = sum(r.status != "not_started" for r in self.retrievals)
+        binding = Count(retrieved)
+        requests, seen = self._observed_requests()
+        # Context retrievals plus the requests steps reported; only as exact as the reports are complete.
+        total = requests if requests.value is None else Count(retrieved + seen, requests.bound)
+        plan = p.planned_requests.value
+        budget = (
+            "unknown"
+            if plan is None
+            else "exceeded"
+            if seen > plan
+            else "within"
+            if requests.bound == "exact"
+            else "unknown"
+        )
         return InspectionSummary(
             p.names,
             len(self.targets),
@@ -398,20 +501,25 @@ class ProtectionResult:
             ),
             sum(o.protected for o in self.outcomes),
             self.consistent,
+            budget,
         )
 
-    def _observed_requests(self) -> Count:
-        """Exact total when every dispatched step declared ``none`` or reported (an invocation step once), else unknown."""
+    def _observed_requests(self) -> tuple[Count, int]:
+        """The reported sum: exact when every dispatched step declared ``none`` or reported (an invocation step
+        once), a lower bound when only some reported, unknown when none did; and the sum itself."""
         ops = self.prepared.workflow.flatten()
-        total, covered = 0, True
+        total, covered, reported = 0, True, False
         for node in {e.node for e in self.state.entries}:
             entries = [e for e in self.state.entries if e.node == node]
             reports = [e.observed_requests for e in entries if e.observed_requests is not None]
             total += sum(reports)
+            reported = reported or bool(reports)
             _, op = ops[node]
             needed = 1 if op.scope == "phase_scoped" else len(entries)
             covered = covered and (op.requests.bound == "none" or len(reports) >= needed)
-        return Count(total) if covered else Count(None, "unknown")
+        if covered:
+            return Count(total), total
+        return (Count(total, "lower") if reported else Count(None, "unknown")), total
 
     def _final(self, target: Datum) -> Any:
         """The final candidate: the last text operation's own output; earlier text is never substituted."""
@@ -441,7 +549,24 @@ def protect(prepared: PreparedProtection, *, cancel: k.CancelToken | None = None
     if not isinstance(prepared, PreparedProtection) or prepared.seal != _seal(prepared):
         raise k.GraphRejection("not_prepared")
     _admit(prepared.graph, prepared.workflow.flatten(), prepared.limits, prepared.capabilities)
-    return k.run_in_frame(_protect, prepared, token=cancel)
+    with _measure("graph_protect", **_counts(prepared)) as m:
+        result = k.run_in_frame(_protect, prepared, token=cancel)
+        m["terminal_counts"] = dict(Counter(o.terminal for o in result.outcomes))
+    return result
+
+
+def _measure(stage: str, **fields: Any) -> contextlib.AbstractContextManager[dict[str, Any]]:
+    """A measurement stage when a measurement session can be active (its module is loaded), else a no-op."""
+    if "anonymizer.measurement.session" not in sys.modules:
+        return contextlib.nullcontext(fields)
+    from anonymizer.measurement.recorders import stage_timer
+
+    return stage_timer(stage, **fields)
+
+
+def _counts(p: PreparedProtection) -> dict[str, int]:
+    """The content-free sizes a boundary measurement carries."""
+    return {"operation_count": len(p.names), "target_count": len(p.graph.targets)}
 
 
 def _protect(p: PreparedProtection) -> ProtectionResult:
@@ -468,12 +593,24 @@ def _protect(p: PreparedProtection) -> ProtectionResult:
                     ContextItem("datum" if isinstance(item, Datum) else "view", len(items), _static_text(item))
                 )
         m = tuple(mentions.get(d, ()))
-        seeds.append({"text": d.text, "source": d.text, "mentions": m, "context": tuple(items), "target": d})
+        seeds.append(
+            {
+                "text": d.text,
+                "source": d.text,
+                "mentions": m,
+                "context": tuple(items),
+                "target": d,
+                "record": g.record_of(d),
+            }
+        )
     state = k.initial_state(p.plan, seeds)
     for u in closed:
         k.apply(state, k.Closed(u, "binding_failed"))
     k.execute(p.plan, state, cancelled, _mention_review(p))
-    return _reconcile(p, state, tuple(retrievals))
+    with _measure("graph_reconcile", **_counts(p)) as m:
+        result = _reconcile(p, state, tuple(retrievals))
+        m["terminal_counts"] = dict(Counter(o.terminal for o in result.outcomes))
+    return result
 
 
 def _mention_review(p: PreparedProtection) -> k.Review:
@@ -504,7 +641,9 @@ def _bind(g: ProtectionGraph, limits: Limits, cancelled: Any) -> tuple[list[Retr
     """Initial context binding: one retrieval per declared source; no truncation, no silent empty context."""
     retrievals: list[Retrieval] = []
     bound: dict[str, tuple | None] = {}
-    total_bytes = 0
+    static = (_static_text(i) for cs in g.context for i in cs.items if not isinstance(i, ContextSource))
+    # retrieved bytes count on top of the static context, measured only under a ceiling as at admission
+    total_bytes = sum(map(utf8_size, static)) if limits.max_context_bytes is not None else 0
     for src in dict.fromkeys(i for cs in g.context for i in cs.items if isinstance(i, ContextSource)):
         if cancelled():
             retrievals.append(Retrieval(src.name, "not_started", src.max_items, None, None))
@@ -546,6 +685,8 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
     g = p.graph
     requires = p.workflow.requires
     checks_of = [[c for c in op.checks if c in requires] for _, op in p.workflow.flatten()]
+    advisory_of = [[c for c in op.checks if c not in requires] for _, op in p.workflow.flatten()]
+    advice: list[tuple[Advisory, ...]] = []
     consistent = True
     verdicts: list[tuple[Terminal, Qualification, list[Reason]]] = []
     failures: dict[int, k.Entry] = {}
@@ -563,6 +704,15 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
         # Unattributed, foreign or swapped evidence from any verifier destroys attribution.
         assessments = [v for out in row.outputs.values() for v in out.values() if isinstance(v, Assessment)]
         consistent = consistent and all(a.target == d for a in assessments)
+        found: list[Advisory] = []
+        for i in sorted(p.covering_verifiers):
+            a = row.outputs.get(i, {}).get("assessment")
+            if a is None or not advisory_of[i]:
+                continue
+            status = "passed" if a.satisfied is True else "could_not_assess" if a.satisfied is None else "failed"
+            cause = "" if status == "passed" else a.reason
+            found += [Advisory(c, p.names[i], status, cause) for c in advisory_of[i]]
+        advice.append(tuple(found))
         qual: Qualification
         if terminal != "success":
             qual = "not_met"
@@ -608,14 +758,14 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
             if nxt in released:
                 released.discard(nxt)
                 withheld.append(nxt)
-    # A group member withheld only by its group names every member withheld for another cause.
+    # A group member withheld only by its group names every member withheld for another cause. Those members
+    # share one tuple; each has no entry yet, since a member with an entry is itself a cause.
+    shared: dict[Datum, tuple[Datum, ...]] = {}
     for i in spent - {-1}:
         members = g.groups[i].members
-        causes = [m for m in members if m not in releasable or m in withheld_by]
+        causes = tuple(m for m in members if m not in releasable or m in withheld_by)
         cause_set = set(causes)
-        for m in members:
-            if m not in cause_set:
-                withheld_by.setdefault(m, []).extend(causes)
+        shared.update((m, causes) for m in members if m not in cause_set)
     outcomes = []
     for u, (d, (terminal, qual, reasons)) in enumerate(zip(g.targets, verdicts)):
         available = "text" in state.rows[u].outputs.get(p.final_text, {})
@@ -623,9 +773,6 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
             reasons.append(Reason("withheld" if p.workflow.release == "protected" else "annotation"))
         failed = failures.get(u)
         error = failed.error if failed is not None and terminal != "success" else None
-        outcomes.append(
-            TargetOutcome(
-                terminal, qual, available, d in released, tuple(reasons), error, tuple(withheld_by.get(d, ()))
-            )
-        )
+        by = shared.get(d) or tuple(withheld_by.get(d, ()))
+        outcomes.append(TargetOutcome(terminal, qual, available, d in released, tuple(reasons), error, by, advice[u]))
     return ProtectionResult(p, state, retrievals, tuple(outcomes), consistent)

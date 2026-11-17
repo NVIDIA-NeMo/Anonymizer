@@ -104,6 +104,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     out_dir = Path(args.out)
+    if out_dir.exists() and any(out_dir.iterdir()):
+        print(f"--out {out_dir} is not empty; choose a new or empty directory", file=sys.stderr)
+        return 2
     out_dir.mkdir(parents=True, exist_ok=True)
 
     import anonymizer
@@ -207,7 +210,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.call == "run"
             else anon.preview(config=config, data=data, num_records=args.n)
         )
-    except BaseException as exc:  # noqa: BLE001 - this is a diagnostic harness, not library code
+    # This is a diagnostic harness, not library code.
+    except BaseException as exc:
         exc_type = type(exc)
         error_type = f"{exc_type.__module__}.{exc_type.__qualname__}"
         # Module-qualified so e.g. an engine-internal rejection type can't be confused with a
@@ -248,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
     df.to_csv(out_dir / "result.csv", index=False)
     try:
         df.to_parquet(out_dir / "result.parquet")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         meta["parquet_error"] = str(exc)[:200]
 
     meta["columns"] = list(df.columns)
@@ -267,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
         trace_df.to_csv(out_dir / "trace.csv", index=False)
         meta["trace_columns"] = list(trace_df.columns)
         meta["trace_rows"] = int(len(trace_df))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         meta["trace_error"] = str(exc)[:200]
 
     failed = [{"record_id": r.record_id, "step": r.step, "reason": r.reason[:300]} for r in result.failed_records]

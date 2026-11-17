@@ -29,6 +29,7 @@ from anonymizer.config.rewrite import (
     PrivacyGoal,
     RiskTolerance,
 )
+from anonymizer.engine.graph_core.kernel import GraphRejection
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.cli._output import write_result
@@ -158,6 +159,8 @@ def _cli_error_handler(fn):
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
+        except GraphRejection:
+            raise  # a graph wiring fault keeps its traceback
         except (ValidationError, ValueError, InvalidConfigError, AnonymizerIOError, OSError) as exc:
             print(f"Error: {exc}", file=sys.stderr)
             raise SystemExit(1)

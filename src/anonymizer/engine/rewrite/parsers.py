@@ -21,6 +21,7 @@ from anonymizer.engine.schemas.rewrite import (
     QualityQAPairsSchema,
     SensitivityDispositionSchema,
 )
+from anonymizer.engine.schemas.shared import to_python
 
 logger = logging.getLogger("anonymizer.rewrite.parsers")
 
@@ -43,25 +44,7 @@ def normalize_payload(raw: Any) -> Any:
             raw = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
             return raw
-    return _to_python(raw)
-
-
-def _to_python(raw: Any) -> Any:
-    """Recursively normalize nested model/array/scalar payloads to plain Python."""
-    if isinstance(raw, BaseModel):
-        return _to_python(raw.model_dump(mode="python"))
-    if isinstance(raw, dict):
-        return {key: _to_python(value) for key, value in raw.items()}
-    if isinstance(raw, (list, tuple)):
-        return [_to_python(value) for value in raw]
-    if hasattr(raw, "tolist") and callable(raw.tolist):
-        return _to_python(raw.tolist())
-    if hasattr(raw, "item") and callable(raw.item):
-        try:
-            return raw.item()
-        except (TypeError, ValueError):
-            pass
-    return raw
+    return to_python(raw)
 
 
 def parse_privacy_answers(raw: Any) -> list[PrivacyAnswerItemSchema]:

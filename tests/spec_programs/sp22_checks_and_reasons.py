@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-22 required checks and per-target reasons (E22.1-E22.7)."""
+"""SP-22 required checks and per-target reasons (E22.1-E22.8)."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ import numpy as np
 import pandas as pd
 
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_LEAKAGE_MASS, COL_TEXT
-from anonymizer.engine.graph_core.authoring import DATUM, TEXT, Assessment, Operation
-from anonymizer.engine.graph_core.execution import Reason
+from anonymizer.engine.graph_core.authoring import DATUM, TEXT, Assessment, Operation, Workflow
+from anonymizer.engine.graph_core.execution import Advisory, Reason, prepare, protect
 from anonymizer.engine.replace.route import _lower, _protect_rows
 from anonymizer.engine.rewrite.rewrite_workflow import _protect_rewrite
 from tests.spec_programs._builder import Checks, graph, run
@@ -22,11 +22,11 @@ from tests.spec_programs.sp18_release import _run
 CANARY = "canary-7f3e"
 
 
-def _check(name: str, satisfied: Any, *, attributed: bool = True) -> Operation:
+def _check(name: str, satisfied: Any, *, attributed: bool = True, cause: str = "") -> Operation:
     def assess(text: str, target: Any) -> Assessment:
-        return Assessment(satisfied, target if attributed else None)
+        return Assessment(satisfied, target if attributed else None, cause)
 
-    return Operation.verifier(name, assess, {"text": TEXT, "target": DATUM}, checks=(name,))
+    return Operation.verifier(name, assess, {"text": TEXT, "target": DATUM}, checks=(name,), subject=("text",))
 
 
 def program() -> list[dict[str, str]]:
@@ -55,7 +55,7 @@ def program() -> list[dict[str, str]]:
 
     # E22.4 a Rewrite row whose leakage is NaN could not be assessed and is flagged for review.
     def rewrite(target: tuple) -> list[Any]:
-        metrics = {"any_high_leaked": False, "replacement_ready": True, "leakage_mass": float("nan")}
+        metrics = {"any_high_leaked": False, "replacements_applied": True, "leakage_mass": float("nan")}
         return [{"text": "r", "metrics": metrics} for _ in target]
 
     evaluation: Any = type("E", (), {"flag_leakage_above": 0.5})()
@@ -68,10 +68,10 @@ def program() -> list[dict[str, str]]:
 
     # E22.5 a Replace row with a span the map does not cover fails replacements_applied.
     entities = {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
-    lowered = _lower(
+    graph5 = _lower(
         pd.DataFrame({COL_TEXT: ["Alice met Bob"], COL_FINAL_ENTITIES: [entities]}), COL_TEXT, COL_FINAL_ENTITIES
     )
-    graph5, r5 = _protect_rows(lowered, "replace", lambda i, rows: {}, False)
+    r5 = _protect_rows(graph5, "replace", lambda i, rows: {}, False)
     o5 = r5.outcome(graph5.targets[0])
     want5 = (Reason("failed", "replacements_applied", "verify-patches"),)
     c.check("E22.5", o5.qualification == "not_met" and o5.reasons == want5, f"reasons={o5.reasons}")
@@ -84,4 +84,33 @@ def program() -> list[dict[str, str]]:
     r7, ts7 = _run(("bad", "bad", "a"), groups=((0, 1, 2),))
     by = r7.outcome(ts7[2]).withheld_by
     c.check("E22.7", by == (ts7[0], ts7[1]), f"withheld_by={len(by)} targets")
+
+    # E22.8 a final-text check the workflow does not require is an advisory, never a reason.
+    def advised(*ops: Operation, requires: tuple[str, ...] = ()) -> Any:
+        return protect(prepare(g, Workflow("w", ops, requires=requires))).outcome(a)
+
+    o8a = advised(_check("adv", False))
+    o8b = advised(_check("adv", None, cause="x"))
+    o8c = advised(_check("adv", True))
+    o8t = advised(_check("adv", np.True_))
+    upper = Operation("upper", lambda text: text.upper(), {"text": TEXT}, {"text": TEXT})
+    r8d = protect(prepare(g, Workflow("w", (_check("adv", False), upper))))
+    o8e = advised(_check("req", False), _check("adv", True), requires=("req",))
+    want8 = (
+        o8a.qualification == "not_assessed"
+        and o8a.reasons == ()
+        and o8a.advisories == (Advisory("adv", "adv", "failed"),)
+        and o8b.advisories == (Advisory("adv", "adv", "could_not_assess", "x"),)
+        and o8c.advisories == (Advisory("adv", "adv", "passed"),)
+        and o8t.advisories == (Advisory("adv", "adv", "failed"),)
+        and r8d.outcome(a).advisories == ()
+        and r8d.value(a, "assessment", producer="adv") is not None
+        and o8e.reasons == (Reason("failed", "req", "req"),)
+        and o8e.advisories == (Advisory("adv", "adv", "passed"),)
+    )
+    c.check(
+        "E22.8",
+        want8,
+        f"advisories={o8a.advisories}, {o8b.advisories}, {o8c.advisories}, {o8t.advisories}, {o8e.advisories}",
+    )
     return c.lines

@@ -16,17 +16,18 @@ from anonymizer.engine.graph_core.authoring import (
     Requests,
     Workflow,
 )
-from anonymizer.engine.graph_core.execution import prepare, protect
+from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
 
 STAGE_DONE = register_kind("stage-done", lambda v: v is True)
 
 
-def run_stages(name: str, stages: Sequence[tuple[str, Callable[[], None]]]) -> None:
+def run_stages(name: str, stages: Sequence[tuple[str, Callable[[], None]]]) -> ProtectionResult:
     """Run ``stages`` in order as one kernel invocation, each an opaque operation over a single frame target.
 
     The first error a stage raised is raised, as when the stages were called directly. If an enclosing frame is
-    cancelled, the stages not yet started are skipped and nothing is raised.
+    cancelled, the stages not yet started are skipped and the result records the target as cancelled; the caller
+    decides what a cancel means for it.
     """
 
     def operation(stage_name: str, stage: Callable[[], None]) -> Operation:
@@ -40,6 +41,8 @@ def run_stages(name: str, stages: Sequence[tuple[str, Callable[[], None]]]) -> N
     graph = ProtectionGraph(scope, (scope.datum(""),))
     workflow = Workflow(name, tuple(operation(*stage) for stage in stages))
     limits = Limits(max_operations=len(stages), max_targets=1, max_mentions=0, max_context_items=0)
-    for entry in protect(prepare(graph, workflow, limits=limits)).state.entries:
+    result = protect(prepare(graph, workflow, limits=limits))
+    for entry in result.state.entries:
         if entry.error is not None:
             raise entry.error
+    return result

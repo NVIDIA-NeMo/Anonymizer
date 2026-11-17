@@ -16,8 +16,8 @@ file's pandas metadata, and that reconstruction does not handle nested structs:
 not hit this — only pandas' own ArrowDtype struct columns do, which is what NDD
 produces.) Reading the Arrow table directly and converting each column with
 `to_pylist()` sidesteps the pandas dtype reconstruction and keeps nested
-structs usable; falls back to result.csv (with best-effort literal parsing of
-the stringified struct) if no parquet file is present.
+structs usable; falls back to result.csv if no parquet file is present, where a
+cell is parsed as JSON or a Python literal only (any other cell yields no entities).
 """
 
 from __future__ import annotations
@@ -117,7 +117,7 @@ def _entities(df: pd.DataFrame) -> list[list[dict[str, Any]]]:
                 parsed = json.loads(cell)
             except (json.JSONDecodeError, TypeError):
                 try:
-                    parsed = ast.literal_eval(re.sub(r"\barray\(", "list(", cell))
+                    parsed = ast.literal_eval(cell)
                 except (ValueError, SyntaxError):
                     parsed = {}
         entities = parsed.get("entities") if isinstance(parsed, dict) else parsed

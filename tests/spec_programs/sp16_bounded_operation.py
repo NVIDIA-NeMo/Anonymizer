@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
@@ -20,6 +21,7 @@ from anonymizer.engine.constants import (
     COL_NEEDS_HUMAN_REVIEW,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
+    COL_SENSITIVITY_DISPOSITION,
     COL_TEXT,
     COL_UTILITY_SCORE,
 )
@@ -64,10 +66,32 @@ def _verifier(seen: list[str]) -> Operation:
         seen.append(text)
         return Assessment("BAD" not in text, target)
 
-    return Operation.verifier("assess", assess, {"text": TEXT, "target": DATUM}, Requests.none(), ("assess",))
+    return Operation.verifier(
+        "assess", assess, {"text": TEXT, "target": DATUM}, Requests.none(), ("assess",), ("text",)
+    )
 
 
-_METRICS = {COL_UTILITY_SCORE: 0.9, COL_LEAKAGE_MASS: 0.0, COL_ANY_HIGH_LEAKED: False}
+_METRICS = {
+    COL_UTILITY_SCORE: 0.9,
+    COL_LEAKAGE_MASS: 0.0,
+    COL_ANY_HIGH_LEAKED: False,
+    # A JSON string: frame cells here are assigned positionally, which a list value would spread.
+    COL_SENSITIVITY_DISPOSITION: json.dumps(
+        {
+            "sensitivity_disposition": [
+                {
+                    "id": 1,
+                    "sensitivity": "high",
+                    "protection_method_suggestion": "replace",
+                    "source": "tagged",
+                    "category": "direct_identifier",
+                    "entity_label": "first_name",
+                    "entity_value": "t0",
+                }
+            ]
+        }
+    ),
+}
 
 
 def _lowered(
@@ -271,9 +295,14 @@ def program() -> list[dict[str, str]]:
     c.guard("E16.8", source_positions)
 
     def ready_default() -> tuple[bool, str]:
-        absent = _reviews([{}], leak=0.5, util=0.1)
+        # The final text decides: an absent disposition is not a pass, the readiness flag is not read.
+        absent = _reviews([{COL_SENSITIVITY_DISPOSITION: None}], leak=0.5, util=0.1)
         no = _reviews([{"ready": False, COL_REWRITE_REPLACEMENT_READY: False}], leak=0.5, util=0.1)
-        return absent == [False] and no == [True], f"ready absent review={absent}, ready false review={no}"
+        kept = _reviews([{COL_REWRITTEN_TEXT: "T0 stays"}], leak=0.5, util=0.1)
+        return (
+            absent == [True] and no == [False] and kept == [True],
+            f"disposition absent review={absent}, ready false review={no}, original kept review={kept}",
+        )
 
     c.guard("E16.9", ready_default)
 
@@ -290,30 +319,7 @@ def program() -> list[dict[str, str]]:
 
     c.guard("E16.10", fan_out_order)
 
-    def ready_coercion() -> tuple[bool, str]:
-        got = []
-        for value in (np.True_, np.False_, 1, 0):
-            got.append(_reviews([{"ready": 1, COL_REWRITE_REPLACEMENT_READY: value}], leak=0.5, util=0.1))
-        arrow = pd.array([True, False], dtype="bool[pyarrow]")
-        got.append(
-            _reviews(
-                [
-                    {"ready": 1, COL_REWRITE_REPLACEMENT_READY: arrow[0]},
-                    {"ready": 1, COL_REWRITE_REPLACEMENT_READY: arrow[1]},
-                ],
-                leak=0.5,
-                util=0.1,
-            )
-        )
-        return got == [
-            [False],
-            [True],
-            [False],
-            [True],
-            [False, True],
-        ], f"numpy, integer and arrow readiness review={got}"
-
-    c.guard("E16.11", ready_coercion)
+    c.retired("E16.11", "retired 2026-11-13; the readiness flag no longer decides the check")
 
     def dropped_row() -> tuple[bool, str]:
         out = _lowered([{}, {}, {}], leak=0.5, util=0.1, drop=1).dataframe
@@ -393,7 +399,7 @@ def program() -> list[dict[str, str]]:
         workflow = _stubbed(CombinedRewriteWorkflow(Mock()))
         with measurement_session() as collector:
             workflow.run_with_detection(pd.DataFrame({COL_TEXT: ["a", "b"]}), detect=lambda _: detection, **_OPTIONS)
-        stages = [r["stage"] for r in collector.records if "stage" in r]
+        stages = [r["stage"] for r in collector.records if not r.get("stage", "graph_").startswith("graph_")]
         return stages == ["CombinedRewriteWorkflow.run"], f"recorded stages={stages}"
 
     c.guard("E16.18", combined_stage_name)

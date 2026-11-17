@@ -15,9 +15,10 @@ import copy
 import itertools
 import logging
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Callable, cast
+from typing import Annotated, Any, cast
 
 import cyclopts
 import run_benchmarks
@@ -40,7 +41,7 @@ class SweepSpec(BaseModel):
     parameters: dict[str, list[Any]] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def validate_parameters(self) -> "SweepSpec":
+    def validate_parameters(self) -> SweepSpec:
         empty = [name for name, values in self.parameters.items() if not values]
         if empty:
             raise ValueError(f"sweep parameter(s) must have at least one value: {', '.join(sorted(empty))}")
@@ -330,7 +331,8 @@ def _run_arm(
                 fail_fast=fail_fast,
                 wandb_settings=arm_wandb_settings,
             )
-    except Exception as exc:  # noqa: BLE001 -- keep sweeping other arms and report failure
+    # Keep sweeping other arms and report this failure in the result set.
+    except Exception as exc:
         return _arm_error(
             arm,
             suite_path=suite_path,
@@ -439,7 +441,8 @@ def _planned_case_count_if_readable(suite_path: Path) -> int:
         return 0
     try:
         return _planned_case_count(suite_path)
-    except Exception:  # noqa: BLE001 -- keep the original per-arm failure as the reported error
+    # Keep the original per-arm failure as the reported error.
+    except Exception:
         return 0
 
 
@@ -466,7 +469,8 @@ def _maybe_create_view(
             group=wandb_settings.wandb_group or spec.sweep_id,
             expected_run_kind="sweep_arm",
         )
-    except Exception as exc:  # noqa: BLE001 -- remote SDK errors must not expose response contents
+    # Remote SDK errors must not expose response contents.
+    except Exception as exc:
         raise WandbViewCreationError(f"W&B {operation.label} creation failed ({type(exc).__name__})") from None
     return getattr(result, operation.url_attribute)
 

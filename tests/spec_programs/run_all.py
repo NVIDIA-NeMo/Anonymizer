@@ -35,6 +35,8 @@ PROGRAMS = [
     "sp28_typed_context",
     "sp29_assembly_order",
     "sp31_result_correspondence",
+    "sp32_detector_scope",
+    "sp33_records",
 ]
 RETIRED_SP8 = [f"E8.{i}" for i in range(1, 6)]
 
@@ -45,7 +47,8 @@ def collect() -> list[dict[str, str]]:
         module = importlib.import_module(f"tests.spec_programs.{name}")
         try:
             lines.extend(module.program())
-        except Exception as exc:  # noqa: BLE001 - a crashed program is reported, not hidden
+        # A crashed program is reported, not hidden.
+        except Exception as exc:
             lines.append({"program": name, "check": "*", "result": "FAIL", "detail": f"crashed: {type(exc).__name__}"})
         if name == "sp07_offsets":
             lines += [{"program": "SP-8", "check": e, "result": "RETIRED", "detail": "retired"} for e in RETIRED_SP8]

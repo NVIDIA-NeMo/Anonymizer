@@ -24,6 +24,7 @@ from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
     COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
@@ -33,7 +34,7 @@ from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import Attrib
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
 from anonymizer.engine.graph_core.execution import TargetOutcome
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 from anonymizer.engine.row_partitioning import restore_diagnostic_columns
@@ -176,6 +177,7 @@ class ReplacementWorkflow:
         selected_models: EvaluateModelSelection,
         preview_num_records: int | None = None,
         entity_labels: list[str] | None = None,
+        effective_entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         compute_detection_validity: bool = False,
         data_summary: str | None = None,
@@ -212,6 +214,7 @@ class ReplacementWorkflow:
             )
         entity_coverage_judge = EntityCoverageWorkflow(
             adapter=self._adapter,  # type: ignore[arg-type]
+            effective_entity_labels=effective_entity_labels,
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,

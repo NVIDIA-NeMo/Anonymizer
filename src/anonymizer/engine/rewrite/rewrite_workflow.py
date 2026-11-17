@@ -28,12 +28,13 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
-    COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
+    COL_SENSITIVITY_DISPOSITION,
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detect_step import DetectState, detect_step
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
@@ -54,12 +55,13 @@ from anonymizer.engine.graph_core.execution import ProtectionResult, TargetOutco
 from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.backend import per_target
+from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
+from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
-from anonymizer.engine.rewrite.parsers import normalize_payload
+from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
 from anonymizer.engine.rewrite.rewrite_generation import (
@@ -76,6 +78,7 @@ from anonymizer.engine.row_partitioning import (
     split_rows,
 )
 from anonymizer.engine.schemas import EntitiesByValueSchema
+from anonymizer.engine.value_matching import any_value_occurs
 from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.rewrite.workflow")
@@ -274,15 +277,31 @@ def _rewrite_entry(row: dict[str, object]) -> dict[str, object] | RewriteUnavail
     text = row[COL_REWRITTEN_TEXT]
     if not isinstance(text, str):
         return RewriteUnavailable("the rewritten text is not a string")
-    ready = bool(row[COL_REWRITE_REPLACEMENT_READY]) if COL_REWRITE_REPLACEMENT_READY in row else True
     metrics = {
         "utility_score": row.get(COL_UTILITY_SCORE),
         "leakage_mass": row.get(COL_LEAKAGE_MASS),
         "any_high_leaked": row.get(COL_ANY_HIGH_LEAKED),
-        "replacement_ready": ready,
+        "replacements_applied": _no_original_value(text, row.get(COL_SENSITIVITY_DISPOSITION)),
         "weighted_leakage_rate": row.get(COL_WEIGHTED_LEAKAGE_RATE),
     }
     return {"text": text, "metrics": metrics}
+
+
+def _no_original_value(text: str, disposition: object) -> bool | None:
+    """Whether no value the policy replaces appears in ``text``; ``None`` when the disposition is unavailable.
+
+    The values are the non-latent disposition entries whose suggestion is ``replace``. Each is matched on its own by
+    ``_occurs``.
+    """
+    payload = normalize_payload(disposition)
+    if isinstance(payload, dict) and payload.get("sensitivity_disposition") == []:
+        return True  # no detected entities: nothing is replaced
+    try:
+        entries = parse_sensitivity_disposition(payload).sensitivity_disposition
+    except (ValueError, TypeError):
+        return None
+    values = [e.entity_value for e in entries if e.protection_method_suggestion == "replace" and e.source != "latent"]
+    return not any_value_occurs(values, text)
 
 
 def _unavailable(value: Any) -> bool:
@@ -295,7 +314,7 @@ def _high_leak(metrics: dict[str, Any]) -> bool | None:
 
 
 def _replacements_applied(metrics: dict[str, Any]) -> bool | None:
-    value = metrics["replacement_ready"]
+    value = metrics["replacements_applied"]
     return None if _unavailable(value) else bool(value)
 
 
@@ -314,12 +333,13 @@ def _final_checks(evaluation: EvaluationCriteria) -> tuple[Operation, ...]:
     }
 
     def verifier(check: str, predicate: Callable[[dict[str, Any]], bool | None]) -> Operation:
-        def assess(text: str, metrics: dict[str, Any], target: Datum) -> Assessment:
+        def assess(metrics: dict[str, Any], target: Datum) -> Assessment:
             satisfied = predicate(metrics)
-            return Assessment(satisfied, target, "metric_unavailable" if satisfied is None else "")
+            missing = "replacement_policy_unavailable" if check == "replacements_applied" else "metric_unavailable"
+            return Assessment(satisfied, target, missing if satisfied is None else "")
 
-        inputs = {"text": TEXT, "metrics": REWRITE_METRICS, "target": DATUM}
-        return Operation.verifier(f"assess-{check}", assess, inputs, checks=(check,))
+        inputs = {"metrics": REWRITE_METRICS, "target": DATUM}
+        return Operation.verifier(f"assess-{check}", assess, inputs, checks=(check,), subject=("metrics",))
 
     return tuple(verifier(check, predicate) for check, predicate in predicates.items())
 
@@ -330,7 +350,8 @@ def _protect_rewrite(
     evaluation: EvaluationCriteria,
     *leading: Operation,
 ) -> ProtectionResult:
-    """Run ``leading``, the ``rewrite`` operation and the final checks over ``graph``; raise a non-verifier error."""
+    """Run ``leading``, the ``rewrite`` operation and the final checks over ``graph``; raise a non-verifier error,
+    then a cancellation."""
     checks = _final_checks(evaluation)
     operations = (
         *leading,
@@ -355,6 +376,7 @@ def _protect_rewrite(
             and not isinstance(entry.error, RewriteUnavailable)
         ):
             raise entry.error
+    raise_if_cancelled(result)
     return result
 
 
@@ -420,15 +442,16 @@ def _rewrite_lowered(
 class RewriteWorkflow:
     """Top-level orchestrator for the rewrite pipeline.
 
-    Chains all sub-workflows in order: domain classification,
-    sensitivity disposition, QA generation, rewrite generation,
-    and the evaluate-repair loop. The final judge runs separately
-    via evaluate().
+    Chains all sub-workflows in order: domain classification, entity
+    classification, sensitivity disposition, QA generation, rewrite
+    generation, and the evaluate-repair loop. The final judge runs
+    separately via evaluate().
     """
 
     def __init__(self, adapter: NddAdapter) -> None:
         self._adapter = adapter
         self._domain_wf = DomainClassificationWorkflow()
+        self._entity_classification_wf = EntityClassificationWorkflow()
         self._disposition_wf = SensitivityDispositionWorkflow()
         self._qa_wf = QAGenerationWorkflow()
         self._rewrite_gen_wf = RewriteGenerationWorkflow()
@@ -503,9 +526,10 @@ class RewriteWorkflow:
         """Run ``detect``, then ``rewrite`` and the final checks over every input row as one invocation.
 
         ``rewrite`` splits the detection frame on its entities: rows with none take the passthrough defaults and the
-        rest go through ``_produce``, the stages ``run`` uses. A row the detector drops fails at ``detect`` and is
-        absent from the output. A result that is not verifiably one input row per returned row fails every target at
-        ``detect``, and ``run`` rewrites the detection frame as returned. ``stage`` names the measurement.
+        rest go through ``_produce``, the stages ``run`` uses. A row the detector drops, or whose mentions the graph
+        rejects, fails at ``detect`` and is absent from the output. A result that is not verifiably one input row per
+        returned row fails every target at ``detect``, and ``run`` rewrites the detection frame as returned. ``stage``
+        names the measurement.
         """
         started = time.perf_counter()
         evaluation = options["evaluation"]
@@ -516,34 +540,48 @@ class RewriteWorkflow:
         rows = _Rows(pd.DataFrame())
         parts: list[tuple[pd.DataFrame, pd.DataFrame]] = []
 
-        def split() -> tuple[pd.DataFrame, pd.DataFrame]:
-            if not parts:
+        def split(keep: set[Datum]) -> tuple[pd.DataFrame, pd.DataFrame]:
+            if not parts:  # only rows whose target reached ``rewrite``: a target that failed ``detect`` is dropped
+                halves = split_rows(state.detected[0].dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
                 parts.append(
-                    split_rows(state.detected[0].dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
+                    tuple(f[f[ROW_ORDER_COL].map(lambda o: state.owners[o] in keep).astype(bool)] for f in halves)
                 )
                 rows.frame = parts[0][0]
             return parts[0]
 
         def rewrite(target: tuple[Datum, ...]) -> list[dict[str, object] | RewriteUnavailable | None]:
-            entity_rows, passthrough_rows = split()
+            entity_rows, passthrough_rows = split(set(target))
             if not entity_rows.empty:
                 self._produce(rows, **options)()
                 rows.frame = rows.frame.sort_values(ROW_ORDER_COL).reset_index(drop=True)
             entries = {state.owners[r[ROW_ORDER_COL]]: _rewrite_entry(r) for r in rows.frame.to_dict("records")}
             for order in passthrough_rows[ROW_ORDER_COL]:
                 owner = state.owners[order]
-                entries[owner] = _rewrite_entry({COL_REWRITTEN_TEXT: owner.text, **_PASSTHROUGH_DEFAULTS})
+                entries[owner] = _rewrite_entry(
+                    {
+                        COL_REWRITTEN_TEXT: owner.text,
+                        COL_SENSITIVITY_DISPOSITION: {"sensitivity_disposition": []},
+                        **_PASSTHROUGH_DEFAULTS,
+                    }
+                )
             return [entries.get(datum) for datum in target]
 
         result = _protect_rewrite(graph, rewrite, evaluation, detect_op)
-        if not state.detected:  # no targets: the step never ran, but the detector still sees the (empty) input
-            detect_op.fn(())
+        call_on_empty_input(graph, detect_op)
         detection, detection_elapsed = state.detected[0], state.elapsed[0]
         if state.unresolved:
             rerouted = self.run(detection.dataframe, **options)
             failed = [*state.failures, *rerouted.failed_records]
             return RewriteResult(rerouted.dataframe, failed, rerouted.source_positions, detection, detection_elapsed)
-        entity_rows, passthrough_rows = split()
+        entity_rows, passthrough_rows = split(set())  # empty only if ``rewrite`` never ran
+        rejected = {a.target: a.reason for a in result.attempts if a.operation == "detect" and a.status == "failed"}
+        frame = detection.dataframe
+        ids = list((frame[RECORD_ID_COLUMN] if RECORD_ID_COLUMN in frame.columns else frame.index).astype(str))
+        rows.failed.extend(
+            FailedRecord(ids[row], "detect", rejected[datum])
+            for row, datum in enumerate(state.owners)
+            if datum in rejected and rejected[datum] != "missing_output"
+        )
         _apply_passthrough_defaults(passthrough_rows)
         frame = rows.frame
         if entity_rows.empty:
@@ -578,8 +616,16 @@ class RewriteWorkflow:
         preview_num_records: int | None = None,
         strict_entity_protection: bool = False,
     ) -> Callable[[], None]:
-        """The frame stages over ``rows``: replacement map, pipeline, then the evaluate-repair loop."""
+        """The frame stages over ``rows``: label classification, replacement map, pipeline, then the evaluate-repair
+        loop."""
+
+        def classify() -> None:
+            self._entity_classification_wf.classify_rows(
+                rows.frame, adapter=self._adapter, model_configs=model_configs, selected_models=selected_models
+            )
+
         stages = [
+            ("label-classification", classify),
             ("replacement-map", lambda: self._replacement_map(rows, model_configs, replace_model_selection)),
             (
                 "pipeline",
@@ -865,7 +911,7 @@ class RewriteWorkflow:
         stages: list[tuple[str, Callable[[], None]]] = [("final-judge", final_judge)]
         if compute_detection_validity:
             stages.insert(0, ("detection-judge", detection_judge))
-        run_stages("rewrite-evaluate", stages)
+        raise_if_cancelled(run_stages("rewrite-evaluate", stages))
 
         combined = merge_and_reorder(rows.frame, passthrough_rows)
         return RewriteResult(dataframe=combined, failed_records=rows.failed)

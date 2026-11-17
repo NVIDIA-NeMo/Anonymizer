@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import random
+from contextlib import nullcontext
 from typing import Literal
 from unittest.mock import Mock
 
@@ -23,6 +24,7 @@ from anonymizer.engine.replace.llm_replace_workflow import (
     _fold_replacement_maps,
 )
 from anonymizer.engine.schemas.detection import EntitiesByValueSchema
+from anonymizer.measurement import measurement_session
 
 
 def _positional(dataframe: pd.DataFrame, failed_records: list) -> WorkflowRunResult:
@@ -394,6 +396,27 @@ _CASE = _maps([("person", "John Smith", "Mark Lee"), ("person", "JOHN SMITH", "P
 _NNBSP = _maps([("person", "John Smith", "Mark Lee"), ("person", "John\u202fsmith", "Paul Hu")])
 _TWO_LABELS = _maps([("city", "Paris", "Lyon")], [("first_name", "Paris", "Dana")])
 _COLLISION = _maps([("company", "Acme", "Nova")], [("company", "Acme", "Zeta"), ("company", "Initech", "Nova")])
+_COLLISION_RUN = _maps(
+    [("company", "Acme", "Nova")], [("company", "Acme", "Nova"), ("company", "Initech", "[SUBSTITUTE_COMPANY_1]")]
+)
+_NEWCOMER_FIRST = _maps([("company", "Acme", "Nova")], [("company", "Initech", "Nova"), ("company", "Acme", "Zeta")])
+_NEWCOMER_FIRST_RUN = _maps(
+    [("company", "Acme", "Nova")], [("company", "Initech", "[SUBSTITUTE_COMPANY_1]"), ("company", "Acme", "Nova")]
+)
+_HOLDER_AFTER = _maps(
+    [("first_name", "Alice", "Maya")],
+    [("first_name", "Bob", "Nora"), ("first_name", "Alice", "Nora"), ("first_name", "Maya", "Lena")],
+)
+_HOLDER_AFTER_FOLDED = _maps(
+    [("first_name", "Alice", "Maya")],
+    [
+        ("first_name", "Bob", "Nora"),
+        ("first_name", "Alice", "[SUBSTITUTE_FIRST_NAME_1]"),
+        ("first_name", "Maya", "Lena"),
+    ],
+)
+_CROSS_KEY = _maps([("first_name", "Alice", "Maya")], [("first_name", "Carl", "Maya")])
+_CROSS_KEY_RUN = _maps([("first_name", "Alice", "Maya")], [("first_name", "Carl", "[SUBSTITUTE_FIRST_NAME_1]")])
 _SINGLE = _maps([("company", "Acme", "Nova"), ("person", "Bob", "Tim")])
 _VARIANT = _maps([("first_name", "Alice", "Maya"), ("first_name", "ALICE", "NORA"), ("first_name", "MAYA", "LENA")])
 _VARIANT_FOLDED = _maps(
@@ -405,6 +428,20 @@ _VARIANT_FOLDED = _maps(
 )
 _SAME_OWN = _maps([("first_name", "Alice", "Maya"), ("first_name", "Bob", "Maya")])
 _SAME_OWN_FOLDED = _maps([("first_name", "Alice", "Maya"), ("first_name", "Bob", "[SUBSTITUTE_FIRST_NAME_1]")])
+_SHARED = _maps([("city", "Paris", "Lyon"), ("city", "Berlin", "Lyon")])
+_SHARED_RUN = _maps([("city", "Paris", "Lyon"), ("city", "Berlin", "[SUBSTITUTE_CITY_1]")])
+_SHARED_LABELS = _maps([("first_name", "Jordan", "Morgan"), ("last_name", "Smith", "Morgan")])
+_SHARED_LABELS_RUN = _maps([("first_name", "Jordan", "Morgan"), ("last_name", "Smith", "[SUBSTITUTE_LAST_NAME_1]")])
+_SHARED_THREE = _maps([("city", "Paris", "Lyon"), ("city", "Berlin", "Lyon"), ("city", "Rome", "Lyon")])
+_SHARED_THREE_RUN = _maps(
+    [("city", "Paris", "Lyon"), ("city", "Berlin", "[SUBSTITUTE_CITY_1]"), ("city", "Rome", "[SUBSTITUTE_CITY_2]")]
+)
+_SAME_VALUE_LABELS = _maps([("first_name", "Jordan", "Alex"), ("last_name", "Jordan", "Alex")])
+_SAME_VALUE_LABELS_RUN = _maps([("first_name", "Jordan", "Alex"), ("last_name", "Jordan", "[SUBSTITUTE_LAST_NAME_1]")])
+_REAL_VALUE = _maps([("city", "Paris", "London"), ("city", "London", "Berlin")])
+_REAL_VALUE_FOLDED = _maps([("city", "Paris", "[SUBSTITUTE_CITY_1]"), ("city", "London", "Berlin")])
+_SELF = _maps([("city", "Paris", "Paris")])
+_SELF_FOLDED = _maps([("city", "Paris", "[SUBSTITUTE_CITY_1]")])
 _UNMAPPED = _maps([("first_name", "Alice", "Maya")])
 _UNMAPPED_FOLDED = _maps([("first_name", "Alice", "[SUBSTITUTE_FIRST_NAME_1]")])
 _DOTLESS = _maps([("first_name", "Ayşe", "Yıldız"), ("first_name", "AYŞE", "Can"), ("first_name", "YILDIZ", "Deniz")])
@@ -424,12 +461,21 @@ _RUN_VARIANT = _maps(
             (_NNBSP, *[_maps([("person", "John Smith", "Mark Lee"), ("person", "John\u202fsmith", "Mark Lee")])] * 2),
             (_TWO_LABELS, _TWO_LABELS, _TWO_LABELS),
             (_ANN_TWICE, _ANN_TWICE, _maps([("first_name", "Ann", "Bea")], [("first_name", "Ann", "Bea")])),
-            (_COLLISION, _COLLISION, _COLLISION),
+            (_COLLISION, _COLLISION, _COLLISION_RUN),
+            (_CROSS_KEY, _CROSS_KEY, _CROSS_KEY_RUN),
             (_SINGLE, _SINGLE, _SINGLE),
             (_VARIANT, *[_VARIANT_FOLDED] * 2),
             (_RUN_VARIANT, _RUN_VARIANT, _RUN_VARIANT),
             (_DOTLESS, _DOTLESS, _DOTLESS),
-            (_SAME_OWN, *[_SAME_OWN_FOLDED] * 2),
+            (_SAME_OWN, _SAME_OWN, _SAME_OWN_FOLDED),
+            (_NEWCOMER_FIRST, _NEWCOMER_FIRST, _NEWCOMER_FIRST_RUN),
+            (_HOLDER_AFTER, _HOLDER_AFTER, _HOLDER_AFTER_FOLDED),
+            (_SHARED, _SHARED, _SHARED_RUN),
+            (_SHARED_LABELS, _SHARED_LABELS, _SHARED_LABELS_RUN),
+            (_SHARED_THREE, _SHARED_THREE, _SHARED_THREE_RUN),
+            (_SAME_VALUE_LABELS, _SAME_VALUE_LABELS, _SAME_VALUE_LABELS_RUN),
+            (_REAL_VALUE, *[_REAL_VALUE_FOLDED] * 2),
+            (_SELF, *[_SELF_FOLDED] * 2),
         ]
     ]
     + [(_UNMAPPED, *[_UNMAPPED_FOLDED] * 2, [{"Alice", "Maya"}])],
@@ -440,11 +486,20 @@ _RUN_VARIANT = _maps(
         "two-labels",
         "first-name",
         "collision",
+        "cross-key",
         "single",
         "variant",
         "run-variant",
         "dotless-i",
         "same-own",
+        "newcomer-first",
+        "holder-fallback-after-proposer",
+        "shared-substitute",
+        "shared-across-labels",
+        "shared-by-three",
+        "same-value-two-labels",
+        "substitute-is-real-value",
+        "substitute-is-own-value",
         "unmapped-entity",
     ],
 )
@@ -478,6 +533,7 @@ def test_fold_never_emits_a_colliding_substitute(consistency: Literal["record", 
         for _ in range(300)
     ]
     unmapped = [{variant(o) for o in rng.choices(names, k=rng.randint(0, 2))} for _ in maps]
+    run_wide: dict[str, set[tuple[str, str]]] = {}
     for raw, extra, out in zip(maps, unmapped, _fold_replacement_maps(maps, consistency, unmapped), strict=True):
         originals = {_fold(e["original"]) for e in raw["replacements"]} | {_fold(v) for v in extra}
         by_value: dict[str, set[tuple[str, str]]] = {}
@@ -485,4 +541,108 @@ def test_fold_never_emits_a_colliding_substitute(consistency: Literal["record", 
             value = _fold(e["synthetic"])
             assert value not in originals, (raw, out)
             by_value.setdefault(value, set()).add((e["label"], _fold(e["original"])))
-        assert all(len(keys) == 1 for keys in by_value.values()), (raw, out)
+        assert consistency == "record" or all(len(keys) == 1 for keys in by_value.values()), (raw, out)
+        for value, keys in by_value.items():
+            run_wide.setdefault(value, set()).update(keys)
+    if consistency == "run":
+        assert all(len(keys) == 1 for keys in run_wide.values()), run_wide
+
+
+_FALLBACKS = _maps(
+    [("first_name", "Alice", "Maya"), ("first_name", "ALICE", "NORA"), ("first_name", "Bob", "Maya")],
+    [("city", "Paris", "Lyon"), ("city", "LYON", "Nice")],
+)
+_FALLBACK_COUNTS_RECORD = {"city": {"placeholder_protected": 1}, "first_name": {"own": 1}}
+_FALLBACK_COUNTS = {"city": {"placeholder_protected": 1}, "first_name": {"own": 1, "placeholder_taken": 1}}
+# Records 1 and 2 propose one substitute for different names; record 3 repeats record 2's name. In run mode Bob
+# falls back to a run-wide placeholder once and record 3 reuses it without a new count.
+_REUSED = _maps([("first_name", "Alice", "Maya")], [("first_name", "Bob", "Maya")], [("first_name", "Bob", "Zed")])
+
+
+@pytest.mark.parametrize(
+    ("maps", "expected"),
+    [
+        (_FALLBACKS, {"record": (5, 1, _FALLBACK_COUNTS_RECORD), "run": (5, 2, _FALLBACK_COUNTS)}),
+        (_REUSED, {"record": (3, 0, {}), "run": (3, 1, {"first_name": {"placeholder_taken": 1}})}),
+    ],
+    ids=["within_record", "across_records"],
+)
+@pytest.mark.parametrize("measured", [True, False])
+@pytest.mark.parametrize("consistency", ["record", "run"])
+def test_generate_map_only_records_fold_fallbacks(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+    consistency: Literal["record", "run"],
+    measured: bool,
+    maps: list[dict],
+    expected: dict[str, tuple[int, int, dict]],
+) -> None:
+    entities = [
+        {"entities_by_value": [{"value": e["original"], "labels": [e["label"]]} for e in m["replacements"]]}
+        for m in maps
+    ]
+    texts = [str(i) for i in range(len(maps))]
+    adapter = Mock()
+    adapter.run_workflow.return_value = _positional(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: texts,
+                COL_ENTITIES_BY_VALUE: entities,
+                "tagged_text": texts,
+                "_anonymizer_row_order": list(range(len(maps))),
+                COL_REPLACEMENT_MAP: maps,
+            }
+        ),
+        failed_records=[],
+    )
+    input_df = pd.DataFrame({COL_TEXT: texts, COL_ENTITIES_BY_VALUE: entities, "tagged_text": texts})
+    with measurement_session() if measured else nullcontext() as collector:
+        result = LlmReplaceWorkflow(adapter=adapter).generate_map_only(
+            input_df,
+            model_configs=stub_model_configs,
+            selected_models=stub_replace_model_selection,
+            consistency=consistency,
+        )
+
+    assert result.dataframe[COL_REPLACEMENT_MAP].tolist() == _fold_replacement_maps(maps, consistency)
+    if collector is None:
+        return
+    [stage] = [r for r in collector.records if r.get("stage") == "LlmReplaceWorkflow.fold"]
+    entry_count, with_placeholder, fallback_counts = expected[consistency]
+    assert {k: stage[k] for k in ("consistency", "input_row_count", "entry_count", "records_with_placeholder")} == {
+        "consistency": consistency,
+        "input_row_count": len(maps),
+        "entry_count": entry_count,
+        "records_with_placeholder": with_placeholder,
+    }
+    assert stage["fallback_counts"] == fallback_counts
+
+
+@pytest.mark.parametrize("consistency", ["record", "run"])
+def test_generate_map_only_records_fold_when_no_row_has_entities(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+    consistency: Literal["record", "run"],
+) -> None:
+    adapter = Mock()
+    input_df = pd.DataFrame({COL_TEXT: ["a", "b"], COL_ENTITIES_BY_VALUE: [{"entities_by_value": []}] * 2})
+    with measurement_session() as collector:
+        result = LlmReplaceWorkflow(adapter=adapter).generate_map_only(
+            input_df,
+            model_configs=stub_model_configs,
+            selected_models=stub_replace_model_selection,
+            consistency=consistency,
+        )
+
+    adapter.run_workflow.assert_not_called()
+    assert result.failed_records == []
+    assert result.source_positions == (0, 1)
+    assert result.dataframe[COL_REPLACEMENT_MAP].tolist() == [{"replacements": []}] * 2
+    [stage] = [r for r in collector.records if r.get("stage") == "LlmReplaceWorkflow.fold"]
+    assert {k: stage[k] for k in ("consistency", "input_row_count", "entry_count", "records_with_placeholder")} == {
+        "consistency": consistency,
+        "input_row_count": 2,
+        "entry_count": 0,
+        "records_with_placeholder": 0,
+    }
+    assert stage["fallback_counts"] == {}
