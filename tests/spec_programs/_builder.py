@@ -35,7 +35,8 @@ class Checks:
         """Run one check body; an exception escaping it is a FAIL with its type (never content)."""
         try:
             ok, detail = fn()
-        except Exception as exc:  # noqa: BLE001 - a check must report, not crash the program
+        # A check must report, not crash the program.
+        except Exception as exc:
             ok, detail = False, f"unexpected {type(exc).__name__}"
         self.check(check, ok, detail)
 

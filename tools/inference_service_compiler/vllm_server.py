@@ -10,7 +10,7 @@ from pathlib import Path
 TOOLS_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS_ROOT))
 
-from inference_service_compiler.vllm_runtime import run_server  # noqa: E402
+from inference_service_compiler.vllm_runtime import run_server
 
 if __name__ == "__main__":
     run_server(sys.argv[1:])

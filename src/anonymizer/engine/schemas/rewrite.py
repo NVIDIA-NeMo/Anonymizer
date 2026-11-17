@@ -284,8 +284,8 @@ class StrictSensitivityLevel(str, Enum):
 class StrictEntityDispositionSchema(EntityDispositionSchema):
     """Strict variant: every sensitivity level is allowed; leave_as_is is excluded."""
 
-    sensitivity: StrictSensitivityLevel
-    protection_method_suggestion: StrictProtectionMethod
+    sensitivity: StrictSensitivityLevel  # ty: ignore[invalid-attribute-override]
+    protection_method_suggestion: StrictProtectionMethod  # ty: ignore[invalid-attribute-override]
 
     @model_validator(mode="before")
     @classmethod
@@ -307,7 +307,7 @@ class StrictEntityDispositionSchema(EntityDispositionSchema):
 class StrictSensitivityDispositionSchema(SensitivityDispositionSchema):
     """Strict variant container: every entity must be protected."""
 
-    sensitivity_disposition: list[StrictEntityDispositionSchema] = Field(min_length=1)
+    sensitivity_disposition: list[StrictEntityDispositionSchema] = Field(min_length=1)  # ty: ignore[invalid-attribute-override]
 
 
 class RawSensitivityDispositionSchema(BaseModel):
@@ -327,8 +327,8 @@ class RawSensitivityDispositionSchema(BaseModel):
 class StrictRawEntityDispositionSchema(RawEntityDispositionSchema):
     """Compact strict decision: every entity must receive protection."""
 
-    sensitivity: StrictSensitivityLevel
-    protection_method_suggestion: StrictProtectionMethod
+    sensitivity: StrictSensitivityLevel  # ty: ignore[invalid-attribute-override]
+    protection_method_suggestion: StrictProtectionMethod  # ty: ignore[invalid-attribute-override]
 
     @field_validator("protection_method_suggestion", mode="plain", json_schema_input_type=StrictProtectionMethod)
     @classmethod
@@ -341,7 +341,7 @@ class StrictRawEntityDispositionSchema(RawEntityDispositionSchema):
 class StrictRawSensitivityDispositionSchema(RawSensitivityDispositionSchema):
     """Compact strict response with the same authoritative reconstruction."""
 
-    sensitivity_disposition: list[StrictRawEntityDispositionSchema] = Field(min_length=1)
+    sensitivity_disposition: list[StrictRawEntityDispositionSchema] = Field(min_length=1)  # ty: ignore[invalid-attribute-override]
 
 
 # ---------------------------------------------------------------------------

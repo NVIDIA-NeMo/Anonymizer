@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
@@ -88,7 +88,7 @@ class WorkflowSourceFrame:
         return returned.iloc[order].drop(columns=self.key_column).reset_index(drop=True), positions
 
     @contextmanager
-    def bind_generators(self, designer: Any) -> Iterator[None]:
+    def bind_generators(self, designer: Any) -> Generator[None]:
         """Carry source keys through DD's artifact storage without exposing them in public output."""
         from anonymizer.engine.ndd._graph_requests import (
             require_dataset_builder_capabilities,
@@ -135,7 +135,7 @@ class WorkflowSourceFrame:
                 vars(built).pop("_write_builder_config", None)
 
     @contextmanager
-    def _bind_storage(self, storage: Any) -> Iterator[None]:
+    def _bind_storage(self, storage: Any) -> Generator[None]:
         """Keep only batch-order identity in memory across DD's parquet round trip."""
         from data_designer.engine.storage.artifact_storage import BatchStage
 
