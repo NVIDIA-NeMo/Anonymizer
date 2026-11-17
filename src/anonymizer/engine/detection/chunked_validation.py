@@ -38,7 +38,6 @@ from jinja2 import BaseLoader, Environment, StrictUndefined
 from pydantic import BaseModel, Field
 
 from anonymizer.engine.constants import (
-    COL_SEED_DETECTION_RESULT,
     COL_TAG_NOTATION,
     COL_TEXT,
     COL_VALIDATION_DECISIONS,
@@ -46,6 +45,7 @@ from anonymizer.engine.constants import (
     COL_VALIDATION_SKELETON,
 )
 from anonymizer.engine.detection.admission import find_duplicate_assigned_aliases
+from anonymizer.engine.detection.backend import load_seed_detection_results
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     TagNotation,
@@ -55,6 +55,7 @@ from anonymizer.engine.detection.postprocess import (
 from anonymizer.engine.schemas import (
     AdmissionRoute,
     DetectionResult,
+    DetectionResultBatch,
     EffectiveLabelPolicy,
     Observation,
     RawValidationDecisionsSchema,
@@ -235,7 +236,7 @@ def chunk_validation_conflict_groups(
 
 def prepare_validation_requests(
     *,
-    detection_result: DetectionResult,
+    detection_result: DetectionResult | DetectionResultBatch,
     canonical_text: str,
     max_entities_per_call: int,
     excerpt_window_chars: int,
@@ -485,7 +486,7 @@ def _build_lifecycle_dispatch_kwargs(
         )
 
     text = str(row.get(COL_TEXT, ""))
-    detection_result = DetectionResult.model_validate(row[COL_SEED_DETECTION_RESULT])
+    detection_result = load_seed_detection_results(row)
     notation_raw = row.get(COL_TAG_NOTATION) or TagNotation.sentinel.value
     notation = TagNotation(str(notation_raw))
     requests = prepare_validation_requests(

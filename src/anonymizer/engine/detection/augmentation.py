@@ -13,6 +13,7 @@ from jinja2 import BaseLoader, Environment, StrictUndefined
 
 from anonymizer.engine.constants import (
     AUGMENTATION_DETECTION_RESULT_ID,
+    COL_ADMITTED_CANDIDATES,
     COL_AUGMENTATION_ADMISSION_RESULTS,
     COL_AUGMENTATION_ATTEMPTS,
     COL_AUGMENTATION_DETECTION_RESULT,
@@ -211,6 +212,8 @@ def augment_row(
     allowed_entity_labels: list[str] | None,
     excluded_entity_labels: list[str],
     system_prompt: str | None = None,
+    enabled: bool = True,
+    regex_constrained_entity_labels: list[str] | None = None,
 ) -> dict[str, Any]:
     """Generate, ground, and directly admit one row's augmentation output."""
     prepared = _prepare_augmentation(
@@ -219,6 +222,8 @@ def augment_row(
         allowed_entity_labels=allowed_entity_labels,
         excluded_entity_labels=excluded_entity_labels,
     )
+    if not enabled:
+        return _store_disabled_augmentation(row=row, prepared=prepared, model_alias=model_alias)
     grounded_entities, detection_result, attempts = _generate_and_ground(
         facade=facade,
         prompt=prepared.prompt,
@@ -234,6 +239,7 @@ def augment_row(
         canonical_text=prepared.canonical_text,
         policy=prepared.label_policy,
         attempts=attempts,
+        regex_constrained_entity_labels=regex_constrained_entity_labels,
     )
 
 
@@ -246,6 +252,8 @@ async def augment_row_async(
     allowed_entity_labels: list[str] | None,
     excluded_entity_labels: list[str],
     system_prompt: str | None = None,
+    enabled: bool = True,
+    regex_constrained_entity_labels: list[str] | None = None,
 ) -> dict[str, Any]:
     """Async equivalent of :func:`augment_row`."""
     prepared = _prepare_augmentation(
@@ -254,6 +262,8 @@ async def augment_row_async(
         allowed_entity_labels=allowed_entity_labels,
         excluded_entity_labels=excluded_entity_labels,
     )
+    if not enabled:
+        return _store_disabled_augmentation(row=row, prepared=prepared, model_alias=model_alias)
     grounded_entities, detection_result, attempts = await _generate_and_ground_async(
         facade=facade,
         prompt=prepared.prompt,
@@ -269,6 +279,27 @@ async def augment_row_async(
         canonical_text=prepared.canonical_text,
         policy=prepared.label_policy,
         attempts=attempts,
+        regex_constrained_entity_labels=regex_constrained_entity_labels,
+    )
+
+
+def _store_disabled_augmentation(
+    *, row: dict[str, Any], prepared: _PreparedAugmentation, model_alias: str
+) -> dict[str, Any]:
+    """Publish an empty lifecycle when every configured label is regex-only."""
+    return _store_augmentation_lifecycle(
+        row=row,
+        grounded_entities=AugmentedEntitiesSchema(),
+        detection_result=_to_detection_result(
+            canonical_text=prepared.canonical_text,
+            source_view=prepared.source_view,
+            occurrences=(),
+            detection_result_id=AUGMENTATION_DETECTION_RESULT_ID,
+            source_instance=model_alias,
+        ),
+        canonical_text=prepared.canonical_text,
+        policy=prepared.label_policy,
+        attempts=AugmentationAttempts(),
     )
 
 
@@ -450,6 +481,7 @@ def _store_augmentation_lifecycle(
     canonical_text: str,
     policy: EffectiveLabelPolicy,
     attempts: AugmentationAttempts,
+    regex_constrained_entity_labels: list[str] | None = None,
 ) -> dict[str, Any]:
     admissions = AdmissionResults(
         results=apply_validation_admission(
@@ -457,6 +489,10 @@ def _store_augmentation_lifecycle(
             inventories=(),
             decision_sets=ValidationRequestDecisionSets(),
             effective_label_policy=policy,
+            regex_constrained_entity_labels=regex_constrained_entity_labels or (),
+            regex_evidence_candidates=AdmittedCandidates.model_validate(
+                row.get(COL_ADMITTED_CANDIDATES, {"candidates": []})
+            ).candidates,
         )
     )
     candidates = coalesce_exact_candidates(
