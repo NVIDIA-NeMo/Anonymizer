@@ -155,6 +155,21 @@ def test_benchmark_artifact_path_matches_runner_output(tmp_path: Path, output_di
     assert github_output.read_text(encoding="utf-8") == f"dir={expected.format(target=target, absolute=absolute)}\n"
 
 
+@pytest.mark.skipif(shutil.which("make") is None, reason="make is not installed")
+def test_make_help_points_to_setup_before_mise_is_installed(tmp_path: Path) -> None:
+    result = subprocess.run(
+        ["make", "--no-print-directory", "help"],
+        cwd=REPO_ROOT,
+        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "make setup" in result.stdout
+
+
 def test_local_mise_installer_keeps_unsigned_fallback_opt_in() -> None:
     installer = (REPO_ROOT / "tools/install-mise.sh").read_text(encoding="utf-8")
 
