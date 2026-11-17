@@ -22,6 +22,10 @@ Augmenter suggestions must match the source text and their supplied context exac
 
 Unknown fields in augmentation responses are ignored, but required fields and their types are still checked. Passing those checks does not guarantee that a suggestion is grounded in the source or correctly classified.
 
+On OpenAI-compatible providers, the augmenter requests schema-constrained output: each request carries a `response_format` with the response JSON schema, and the prompt no longer asks for a fenced code block. It is not sent to Anthropic providers. Setting `response_format` in an alias's or provider's `extra_body`, even to `null`, turns this off and your setting is sent instead. If the provider rejects the field (an HTTP 400 or 422 that names `response_format`, `json_schema`, `guided`, or `grammar`), Anonymizer retries that request once without it; when the retry succeeds, later augmenter requests in the same run omit it. Any other error is raised as before, and a failed retry raises the original error.
+
+Schema-constrained output has not been measured on reasoning models with thinking enabled. Anonymizer sends the constraint the same way; the `_augmentation_response_format` trace column records, per row, whether the reply was constrained, fell back, or appears to have ignored the constraint.
+
 When rewrite is configured, an additional step identifies **latent entities** -- sensitive information inferable from context but not explicitly stated in the text.
 
 ### Occurrences and boundaries
@@ -300,7 +304,7 @@ See [Validator pools](models.md#validator-pools) for the YAML syntax and caveats
 
 Use `result.dataframe["final_entities"]` for the public entity output. Its representative `source` can be `detector`, `augmenter`, or `fallback`; it is not a full provenance ledger. `score` is the available native score, or `0.0` when none is available, not a universal probability of correctness. Augmenter-only findings are no longer assigned synthetic confidence `1.0`.
 
-For internal debugging, `result.trace_dataframe` can include `_seed_detection_result`, `_validation_request_inventories`, `_validation_decisions`, `_admission_results`, `_admitted_candidates`, `_augmentation_detection_result`, `_augmentation_admission_results`, `_augmentation_attempts`, `_augmented_candidates`, and `_reconciled_candidates`. These underscore-prefixed structures are internal and may change between releases. `_augmentation_attempts` records attempt outcomes and grounding-failure categories without embedding suggested values or context; other trace columns and explicitly enabled raw message traces can contain sensitive source text.
+For internal debugging, `result.trace_dataframe` can include `_seed_detection_result`, `_validation_request_inventories`, `_validation_decisions`, `_admission_results`, `_admitted_candidates`, `_augmentation_detection_result`, `_augmentation_admission_results`, `_augmentation_attempts`, `_augmented_candidates`, `_augmentation_response_format`, and `_reconciled_candidates`. These underscore-prefixed structures are internal and may change between releases. `_augmentation_attempts` records attempt outcomes and grounding-failure categories without embedding suggested values or context; `_augmentation_response_format` is `constrained`, `fallback`, `ignored` (a fenced reply although the schema was sent), `unconstrained` (not sent), or empty when augmentation did not run; other trace columns and explicitly enabled raw message traces can contain sensitive source text.
 
 
 ## Entity labels

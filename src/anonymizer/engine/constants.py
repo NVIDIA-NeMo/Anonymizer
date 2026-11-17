@@ -39,6 +39,8 @@ COL_AUGMENTATION_DETECTION_RESULT = "_augmentation_detection_result"
 COL_AUGMENTATION_ADMISSION_RESULTS = "_augmentation_admission_results"
 COL_AUGMENTATION_ATTEMPTS = "_augmentation_attempts"
 COL_AUGMENTED_CANDIDATES = "_augmented_candidates"
+COL_AUGMENTATION_RESPONSE_FORMAT = "_augmentation_response_format"
+"""Per row: constrained, fallback, ignored or unconstrained; None when augmentation is disabled."""
 
 # Step 3b: prepare_validation_inputs (seed-only, pre-augmentation)
 COL_SEED_VALIDATION_CANDIDATES = "_seed_validation_candidates"

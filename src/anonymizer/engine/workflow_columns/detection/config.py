@@ -16,6 +16,7 @@ from anonymizer.engine.constants import (
     COL_AUGMENTATION_ADMISSION_RESULTS,
     COL_AUGMENTATION_ATTEMPTS,
     COL_AUGMENTATION_DETECTION_RESULT,
+    COL_AUGMENTATION_RESPONSE_FORMAT,
     COL_AUGMENTED_CANDIDATES,
     COL_INITIAL_TAGGED_TEXT,
     COL_RAW_DETECTED,
@@ -69,6 +70,7 @@ class AugmentationConfig(SingleColumnConfig):
             COL_AUGMENTATION_ADMISSION_RESULTS,
             COL_AUGMENTATION_ATTEMPTS,
             COL_AUGMENTED_CANDIDATES,
+            COL_AUGMENTATION_RESPONSE_FORMAT,
         ]
 
     def get_model_aliases(self) -> list[str]:
