@@ -50,11 +50,11 @@ Keep their content equivalent using each renderer's syntax.
 - New prose pages need both formats and matching navigation entries in
   `mkdocs.yml` and `docs/fern/versions/nightly.yml`.
 - For notebooks, edit `docs/notebook_source/*.py` and regenerate `.ipynb` with
-  `make convert-notebooks`. Fern tasks regenerate the ignored MDX companions;
+  `mise run notebooks:execute`. Fern tasks regenerate the ignored MDX companions;
   do not edit them directly.
 - Standalone repository Markdown does not need an MDX counterpart. Do not
   update frozen release snapshots for routine changes.
-- Verify both renderers with `make docs-build` and
+- Verify both renderers with `mise run docs:build` and
   `mise run docs:fern:check`, and preview affected pages in both sites.
 - Retain legacy pages, configuration, and shared assets until cutover. Do not
   rerun the migration copy step over reviewed prose.

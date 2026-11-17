@@ -19,7 +19,7 @@ import tempfile
 import threading
 import time
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -129,7 +129,7 @@ class _RuntimeRegistry:
         self._saved_token: _SavedVariable | None = None
 
     @contextmanager
-    def singleton(self, request: NativeRequest) -> Iterator[_LocalRuntime]:
+    def singleton(self, request: NativeRequest) -> Generator[_LocalRuntime]:
         """Get the persistent singleton, respecting an active scoped runtime."""
         with self.lock:
             if self.context_count and self.context_owned:
@@ -137,7 +137,7 @@ class _RuntimeRegistry:
             yield self.ensure(request)
 
     @contextmanager
-    def borrow(self, request: NativeRequest) -> Iterator[_LocalRuntime]:
+    def borrow(self, request: NativeRequest) -> Generator[_LocalRuntime]:
         """Borrow a singleton or own a runtime until the last nested context exits."""
         with self.lock:
             previous = self.runtime

@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -41,7 +41,7 @@ def test_native_factory_uses_inputs_validated_before_runtime_acquisition(
     runtime = controller._LocalRuntime(Mock(), "http://127.0.0.1:1234/v1", NativeRequest("cpu"), "token")
 
     @contextmanager
-    def acquire(*_: str) -> Iterator[controller._LocalRuntime]:
+    def acquire(*_: str) -> Generator[controller._LocalRuntime]:
         model_path.unlink()
         provider_path.unlink()
         yield runtime

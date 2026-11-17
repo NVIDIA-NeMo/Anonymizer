@@ -8,7 +8,9 @@ from unittest.mock import Mock
 import pandas as pd
 import pytest
 
+from anonymizer.config.anonymizer_config import Detect, resolve_effective_detection_labels
 from anonymizer.config.models import EvaluateModelSelection
+from anonymizer.config.regex import RegexRule
 from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_ENTITY_COVERAGE,
@@ -41,6 +43,34 @@ def test_coverage_prompt_omits_data_summary_context_when_summary_absent() -> Non
 
     assert without_summary == with_blank_summary
     assert "<data_summary_context>" not in without_summary
+
+
+def test_custom_regex_taxonomy_keeps_coverage_permissive() -> None:
+    detect = Detect(
+        regex_rules=[
+            RegexRule(label="ticket", pattern=r"TICKET-\d+"),
+            RegexRule(label="disabled_category", pattern=r"DISABLED-\d+", enabled=False),
+        ],
+        excluded_entity_labels=["email"],
+    )
+    workflow = EntityCoverageWorkflow(
+        adapter=Mock(),
+        entity_labels=detect.entity_labels,
+        excluded_entity_labels=detect.excluded_entity_labels,
+        effective_entity_labels=resolve_effective_detection_labels(
+            detect.entity_labels,
+            regex_rules=detect.regex_rules,
+            excluded_entity_labels=detect.excluded_entity_labels,
+        ),
+    )
+    prompt = workflow.column_config(_stub_evaluate_selection()).prompt
+    taxonomy = prompt.split("<identifier_taxonomy>")[1].split("</identifier_taxonomy>")[0]
+    assert "ticket" in taxonomy
+    assert "email" not in taxonomy
+    assert "disabled_category" not in taxonomy
+    assert "This list is not exhaustive" in taxonomy
+    novel = [{"value": "ABC", "label": "novel_category"}]
+    assert _filter_out_of_scope_entities(novel, detect.entity_labels, detect.excluded_entity_labels) == novel
 
 
 def test_coverage_prompt_includes_data_summary_as_interpretive_context() -> None:

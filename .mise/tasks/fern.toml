@@ -15,4 +15,4 @@ run = "fern docs dev"
 
 ["docs:fern:notebooks"]
 description = "Regenerate Fern tutorial reading pages from saved notebooks and outputs without executing cells."
-run = "uv run --frozen --group docs python docs/fern/scripts/generate_pages.py"
+run = "uv run --locked --group docs python docs/fern/scripts/generate_pages.py"

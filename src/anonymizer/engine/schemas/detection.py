@@ -111,6 +111,30 @@ class DetectionResult(FrozenStrictModel):
         return self
 
 
+class DetectionResultBatch(FrozenStrictModel):
+    """Independent detector results over the same canonical source view."""
+
+    results: tuple[DetectionResult, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_batch(self) -> DetectionResultBatch:
+        if len({result.detection_result_id for result in self.results}) != len(self.results):
+            raise ValueError("detection result IDs must be unique within a batch")
+        if any(result.source_view != self.source_view for result in self.results):
+            raise ValueError("detection results must refer to the same source view")
+        return self
+
+    @property
+    def source_view(self) -> SourceView:
+        """Return the shared canonical source view."""
+        return self.results[0].source_view
+
+    @property
+    def observations(self) -> tuple[Observation, ...]:
+        """Retain every independent claim until terminal admission."""
+        return tuple(observation for result in self.results for observation in result.observations)
+
+
 class EffectiveLabelPolicy(FrozenStrictModel):
     """Resolved label scope attached to a detection or validation request."""
 
@@ -208,6 +232,7 @@ class AdmissionReason(str, Enum):
     direct_acceptance = "direct_acceptance"
     augmenter_output = "augmenter_output"
     ineligible_label = "ineligible_label"
+    missing_regex_evidence = "missing_regex_evidence"
 
 
 class AdmissionResult(FrozenStrictModel):
@@ -230,6 +255,7 @@ class AdmissionResult(FrozenStrictModel):
         rejected_reasons = {
             AdmissionReason.validator_drop,
             AdmissionReason.ineligible_label,
+            AdmissionReason.missing_regex_evidence,
         }
         fallback_reasons = {
             AdmissionReason.missing_decision_fallback,
