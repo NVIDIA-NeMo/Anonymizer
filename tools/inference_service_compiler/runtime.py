@@ -9,7 +9,7 @@ import secrets
 import signal
 import subprocess
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -366,7 +366,7 @@ def _terminate_unmarked_launch(process: subprocess.Popen[bytes]) -> None:
 
 
 @contextmanager
-def _cleanup_on_failure(handle: LocalProcessHandle, timeout_seconds: float) -> Iterator[None]:
+def _cleanup_on_failure(handle: LocalProcessHandle, timeout_seconds: float) -> Generator[None]:
     """Stop the launched group if the body fails, recording the cleanup result in the raised error."""
     try:
         yield

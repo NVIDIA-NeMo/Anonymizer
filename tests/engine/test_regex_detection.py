@@ -637,7 +637,7 @@ def test_custom_rules_only_activate_for_requested_labels() -> None:
 
 @pytest.mark.parametrize("reverse_rule_order", [False, True])
 def test_equivalent_unicode_labels_activate_every_custom_pattern(reverse_rule_order: bool) -> None:
-    configured_rules = [
+    configured_rules: list[BuiltinRegex | RegexRule] = [
         RegexRule(label="straße", pattern=r"ABC"),
         RegexRule(label="STRASSE", pattern=r"DEF"),
     ]
