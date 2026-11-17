@@ -11,7 +11,11 @@ MISE_GPG_KEY := 24853EC9F655CE80B48E6C3A8B81C9D17413A06D
 
 .PHONY: help
 help:
-	@mise tasks
+	@if command -v mise >/dev/null 2>&1; then \
+		mise tasks; \
+	else \
+		echo "Mise is not installed. Run 'make setup' to install it and the development environment."; \
+	fi
 
 .PHONY: install-mise
 install-mise:
