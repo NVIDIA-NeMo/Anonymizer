@@ -3,17 +3,19 @@
 
 from __future__ import annotations
 
+import gc
 import inspect
 import ipaddress
+import threading
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import lru_cache, partial
 from hashlib import sha256
 from importlib.metadata import entry_points
 from itertools import islice
-from time import monotonic
-from typing import Any
+from time import monotonic, thread_time
+from typing import Any, TypeVar
 from unicodedata import normalize
 from urllib.parse import urlsplit
 from weakref import WeakValueDictionary
@@ -26,6 +28,7 @@ from anonymizer.config.regex import (
     DEFAULT_MAX_MATCHES_PER_RULE,
     DEFAULT_REGEX_TIMEOUT_SECONDS,
     DEFAULT_REGEX_TIMEOUT_SECONDS_PER_MILLION_CHARACTERS,
+    REGEX_WALL_CEILING_FACTOR,
     BuiltinRegex,
     RegexCandidate,
     RegexRule,
@@ -41,6 +44,16 @@ _CONTEXT_WINDOW = 64
 _EMAIL_LOCAL_PART = regex.compile(r"[\p{L}\p{N}.!#$%&'*+/=?^_`{|}~-]+", regex.REVERSE)
 _URL_SCHEMES = ("http", "https", "ftp", "ftps", "sftp", "ws", "wss")
 _URL_TRAILING_PUNCTUATION = ".,;:!?>'\"。，、；：！？"
+# A rule's budget is CPU time of the scanning thread, so waits for the GIL or for other threads are not charged,
+# and neither are garbage collections the thread runs: a full one can take longer than the 50 ms default.
+# The wall-clock ceiling only fails a record whose scan the process was too busy to run; like the budget, it is not
+# charged for those collections or for validators and other work done while the scan is suspended between batches.
+# regex 2026.1.15 (the locked version) measures `timeout=` as CPU time of the whole process (C `clock()`),
+# checked every 256 engine iterations. So it stops a runaway call within this thread's budget plus that overshoot,
+# but it can fire early while other threads use CPU outside the GIL; such a call is rerun with the budget still
+# left, at most this many times per rule. A version with another timeout clock gets the same handling.
+_MAX_EARLY_TIMEOUT_RERUNS = 8
+_T = TypeVar("_T")
 _URL_DELIMITER_PAIRS = {
     ")": "(",
     "]": "[",
@@ -262,9 +275,16 @@ def detect_regex_entities(
                     llm_entities.append(entity)
                 else:
                     accepted_entities.append(entity)
+        except _RegexRuleStarved as exc:
+            raise RuntimeError(
+                f"Regex rule {rule.rule_id!r} was starved: it {exc.cause} after using "
+                f"{exc.cpu_used:.3g} of its {_seconds(timeout_seconds, 'CPU ')} for a {len(text)}-character record "
+                "(Unicode code points). The process was too busy to run the scan; reduce concurrent load. "
+                "The record failed; no partial regex result was returned."
+            ) from exc
         except TimeoutError as exc:
             raise RuntimeError(
-                f"Regex rule {rule.rule_id!r} timed out after {timeout_seconds:g} seconds "
+                f"Regex rule {rule.rule_id!r} timed out after {_seconds(timeout_seconds, 'CPU ')} "
                 f"for a {len(text)}-character record (Unicode code points). Review custom pattern "
                 "efficiency; if more time is expected, adjust detect.regex_limits.min_timeout_seconds or "
                 "detect.regex_limits.timeout_seconds_per_million_characters. The record failed; "
@@ -298,51 +318,157 @@ def calculate_regex_timeout(
     return max(min_timeout_seconds, character_count / 1_000_000 * timeout_seconds_per_million_characters)
 
 
+class _RegexRuleStarved(TimeoutError):
+    """The rule had CPU budget left but did not get to use it."""
+
+    def __init__(self, cause: str, cpu_used: float) -> None:
+        super().__init__(cause)
+        self.cause = cause
+        self.cpu_used = cpu_used
+
+
+class _RuleBudget:
+    """One rule's CPU-time budget on one record, with a wall-clock ceiling of ``REGEX_WALL_CEILING_FACTOR`` times it."""
+
+    def __init__(self, cpu_seconds: float) -> None:
+        self.cpu_seconds = cpu_seconds
+        self.cpu_left = cpu_seconds
+        self.wall_ceiling = REGEX_WALL_CEILING_FACTOR * cpu_seconds
+        self.wall_deadline = monotonic() + self.wall_ceiling
+        self.reruns = 0
+        self._gc_seen = _THREAD_GC_TIME.total
+
+    def charge(self, cpu_started: float) -> None:
+        """Charge the CPU time used since ``cpu_started``; raise once the budget or the ceiling is spent."""
+        self.cpu_left -= _rule_cpu_time() - cpu_started
+        if self.cpu_left <= 0:
+            raise TimeoutError
+        self.check_wall()
+
+    def check_wall(self) -> None:
+        """Raise once the wall-clock ceiling has passed."""
+        # The thread's own collections hold the GIL and run, so they are not starvation either.
+        gc_total = _THREAD_GC_TIME.total
+        self.wall_deadline += gc_total - self._gc_seen
+        self._gc_seen = gc_total
+        if monotonic() >= self.wall_deadline:
+            raise _RegexRuleStarved(
+                f"did not finish within its wall-clock ceiling of {_seconds(self.wall_ceiling)}", self.cpu_used
+            )
+
+    def call(self, scan: Callable[..., _T]) -> _T:
+        """Run one regex call with ``timeout=`` set to the CPU time left, rerunning it after an early timeout."""
+        while True:
+            started = _rule_cpu_time()
+            try:
+                result = scan(timeout=self.cpu_left)
+            except TimeoutError:
+                self.charge(started)
+                self.reruns += 1
+                if self.reruns > _MAX_EARLY_TIMEOUT_RERUNS:
+                    raise _RegexRuleStarved(
+                        f"was interrupted {self.reruns} times by CPU use elsewhere in the process", self.cpu_used
+                    ) from None
+                continue
+            self.charge(started)
+            return result
+
+    @property
+    def cpu_used(self) -> float:
+        return self.cpu_seconds - self.cpu_left
+
+    def suspended(self, batch: list[Any]) -> Iterator[Any]:
+        """Yield ``batch`` to the caller without charging its validators' time to the wall-clock ceiling."""
+        started, gc_started = monotonic(), _THREAD_GC_TIME.total
+        yield from batch
+        self.wall_deadline += monotonic() - started
+        # Collections run while suspended are inside that span already; do not extend the deadline for them twice.
+        self._gc_seen += _THREAD_GC_TIME.total - gc_started
+
+
+def _seconds(value: float, kind: str = "") -> str:
+    return f"{value:g} {kind}second{'' if value == 1 else 's'}"
+
+
 def _iter_rule_matches(
     pattern: Any, text: str, rule: ResolvedRegexRule, timeout: float, batch_size: int
 ) -> Iterator[Any]:
     # Bound temporary candidate storage without counting rejected matches toward
     # the accepted-match cap. Do not release the GIL during regex scans.
-    remaining = timeout
+    budget = _RuleBudget(timeout)
     position = 0
     overlapped = rule.source == "regex_builtin" and rule.label == "credit_debit_card"
+    email = rule.source == "regex_builtin" and rule.label == "email"
     while position <= len(text):
-        started = monotonic()
-        matches = (
-            _iter_email_matches(pattern, text, remaining, position)
-            if rule.source == "regex_builtin" and rule.label == "email"
-            else pattern.finditer(text, pos=position, timeout=remaining, concurrent=False, overlapped=overlapped)
-        )
-        batch = list(islice(matches, batch_size))
-        remaining -= monotonic() - started
-        if remaining <= 0:
-            raise TimeoutError
+        if email:
+            batch = list(islice(_iter_email_matches(pattern, text, budget, position), batch_size))
+        else:
+            batch = budget.call(partial(_scan_batch, budget, pattern, text, position, overlapped, batch_size))
         if not batch:
             return
-        yield from batch
+        yield from budget.suspended(batch)
         position = batch[-1].start() + 1 if overlapped else batch[-1].end()
 
 
-def _iter_email_matches(pattern: Any, text: str, timeout_seconds: float, position: int = 0) -> Iterator[Any]:
-    deadline = monotonic() + timeout_seconds
-    while (at := text.find("@", position)) >= 0:
-        remaining = deadline - monotonic()
-        if remaining <= 0:
+def _scan_batch(
+    budget: _RuleBudget, pattern: Any, text: str, position: int, overlapped: bool, batch_size: int, *, timeout: float
+) -> list[Any]:
+    # regex restarts the timeout at each match a scanner yields, so check the batch's total after every match.
+    # The thread can also lose the GIL between matches, so check the wall-clock ceiling there too.
+    started = _rule_cpu_time()
+    batch: list[Any] = []
+    for match in pattern.finditer(text, pos=position, timeout=timeout, concurrent=False, overlapped=overlapped):
+        batch.append(match)
+        if len(batch) >= batch_size:
+            break
+        if _rule_cpu_time() - started > timeout:
             raise TimeoutError
+        budget.check_wall()
+    return batch
+
+
+class _ThreadGcTime(threading.local):
+    started: float | None = None
+    total = 0.0
+
+
+_THREAD_GC_TIME = _ThreadGcTime()
+
+
+def _time_gc(phase: str, info: dict[str, Any]) -> None:
+    # A collection runs in the thread whose allocation triggered it; record its CPU time there.
+    now = thread_time()
+    if phase == "start":
+        _THREAD_GC_TIME.started = now
+    elif _THREAD_GC_TIME.started is not None:
+        _THREAD_GC_TIME.total += now - _THREAD_GC_TIME.started
+        _THREAD_GC_TIME.started = None
+
+
+gc.callbacks.append(_time_gc)
+
+
+def _rule_cpu_time() -> float:
+    """CPU time of the calling thread, less the garbage collections it ran, which are not the rule's work."""
+    return thread_time() - _THREAD_GC_TIME.total
+
+
+def _iter_email_matches(pattern: Any, text: str, budget: _RuleBudget, position: int = 0) -> Iterator[Any]:
+    mark = _rule_cpu_time()
+    while (at := text.find("@", position)) >= 0:
+        budget.charge(mark)
         # Anchor to the complete local token rather than retrying every start
         # in the record. Do not truncate either side: even a rejected overlong
         # address must consume its domain before looking for the next match.
-        local = _EMAIL_LOCAL_PART.match(text, position, at, timeout=remaining, concurrent=False)
+        local = budget.call(partial(_EMAIL_LOCAL_PART.match, text, position, at, concurrent=False))
         position = at + 1
-        if local is None:
-            continue
-        remaining = deadline - monotonic()
-        if remaining <= 0:
-            raise TimeoutError
-        match = pattern.match(text, local.start(), timeout=remaining, concurrent=False)
-        if match is not None and match.start() <= at < match.end():
-            position = match.end()
-            yield match
+        if local is not None:
+            match = budget.call(partial(pattern.match, text, local.start(), concurrent=False))
+            if match is not None and match.start() <= at < match.end():
+                position = match.end()
+                yield match
+        mark = _rule_cpu_time()
+    budget.charge(mark)
 
 
 def build_regex_detection_results(

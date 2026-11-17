@@ -210,7 +210,10 @@ class Detect(BaseModel):
     )
     regex_limits: RegexLimits = Field(
         default_factory=RegexLimits,
-        description="Per-record, per-rule validated-match cap and character-scaled timeout for all regex rules.",
+        description=(
+            "Per-record, per-rule validated-match cap and character-scaled timeout, in CPU seconds, "
+            "for all regex rules."
+        ),
     )
 
     detector_offset_unit: str | None = Field(

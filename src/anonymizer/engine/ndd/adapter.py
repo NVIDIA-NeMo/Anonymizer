@@ -31,6 +31,7 @@ from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
+from anonymizer.config.regex import REGEX_WALL_CEILING_FACTOR
 from anonymizer.engine.constants import COL_REGEX_ENTITIES, RECORD_ID_COLUMN
 from anonymizer.engine.graph_core.observe import report_requests
 from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
@@ -55,6 +56,9 @@ _UNTRACED_REASON = (
     f"{_MISSING_RECORD_REASON}: not completed: no error was recorded for this row; other rows in the run failed"
 )
 _MAX_REASON_CHARS = 500
+# Like the summaries below, these only choose a fixed regex reason; the matched text is never returned.
+_REGEX_CPU_BUDGET_FAILURE = re.compile(r"(?:^|: )Regex rule '[^'\n]*' timed out after \S+ CPU seconds? ")
+_REGEX_STARVED_FAILURE = re.compile(r"(?:^|: )Regex rule '[^'\n]*' was starved: ")
 _CAUSE_LINE = re.compile(r"^\s*\|\s*Cause:\s*(.+)", re.MULTILINE)
 _SOLUTION_LINE = re.compile(r"^\s*\|\s*Solution:\s*(.+)", re.MULTILINE)
 # Task traces retain only strings. Exception text can impersonate even a complete classified error,
@@ -730,6 +734,19 @@ def _failure_reason(trace: _TaskTrace) -> str:
     if _trace_attr(trace, "column") == COL_REGEX_ENTITIES:
         # Trace strings are untrusted, including custom-validator exceptions.
         # Give fixed guidance without echoing exception text into public results.
+        error = str(_trace_attr(trace, "error") or "")
+        if _REGEX_STARVED_FAILURE.search(error):
+            return (
+                f"{prefix}Regex rule was starved: the process was too busy to run its scan within the wall-clock "
+                f"ceiling of {REGEX_WALL_CEILING_FACTOR} times its CPU budget; reduce concurrent load. "
+                "No partial regex result was returned."
+            )
+        if _REGEX_CPU_BUDGET_FAILURE.search(error):
+            return (
+                f"{prefix}Regex rule used its CPU-time budget; review custom pattern efficiency, or raise "
+                "detect.regex_limits.min_timeout_seconds or detect.regex_limits.timeout_seconds_per_million_characters "
+                "(CPU seconds). No partial regex result was returned."
+            )
         return (
             f"{prefix}Regex detection failed; review detect.regex_limits.max_matches_per_rule, "
             "detect.regex_limits.min_timeout_seconds, detect.regex_limits.timeout_seconds_per_million_characters "

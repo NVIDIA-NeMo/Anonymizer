@@ -237,7 +237,7 @@ Patterns use the third-party `regex` dialect, except that fuzzy matching groups
 and match reset (`\K`) are unsupported. Invalid, zero-width, or oversized
 patterns are rejected during configuration, as are constructs whose consumed
 width cannot be established conservatively. Runtime matching has a per-rule
-timeout and match-count limit; exceeding either fails the record rather than
+CPU-time budget and match-count limit; exceeding either fails the record rather than
 silently omitting detections. This is not a sandbox for arbitrary validator
 code.
 
@@ -255,15 +255,29 @@ detect = Detect(regex_limits=RegexLimits(
 
 These are the defaults. The cap counts matches that pass local validation, before
 any LLM validation; rejected candidates do not count. Each rule gets one budget per
-record: `max(min_timeout_seconds, len(text) / 1_000_000 * timeout_seconds_per_million_characters)`.
+record, in CPU seconds: `max(min_timeout_seconds, len(text) / 1_000_000 * timeout_seconds_per_million_characters)`.
 Length is measured in Unicode code points, not UTF-8 bytes or model tokens.
-For example, 10,000 characters get 50 ms; 300,000 get 300 ms. Limits apply equally
-to run, preview and exported workflows. Errors identify the rule, the exhausted
-limit and the setting to review without including record text. No partial regex
-result is returned after a limit failure. Review inefficient custom patterns or
-validators before increasing limits. One shared search budget is consumed across
-bounded matching batches; Python validation callbacks and time between batches
-do not consume it. This is not a sandbox or execution timeout for validator code.
+For example, 10,000 characters get 0.05 CPU seconds; 300,000 get 0.3 CPU seconds.
+The budget counts CPU time used by the thread that scans the record. Time spent
+waiting for other threads or for Python's global interpreter lock is not charged,
+and neither is a garbage collection that happens to run during the scan, so many
+records scanned in parallel do not time each other out. A wall-clock
+ceiling of 20 times the budget (1 second at the default minimum) still fails a
+record whose scan the process was too busy to run, with its own "starved" error.
+Like the budget, the ceiling does not count the thread's own garbage collections or
+the time validators run between batches.
+Limits apply equally to run, preview and exported workflows. Errors identify the
+rule, the exhausted limit and the setting to review without including record text.
+No partial regex result is returned after a limit failure. Review inefficient
+custom patterns or validators before increasing limits. One shared search budget
+is consumed across bounded matching batches; Python validation callbacks and time
+between batches do not consume it. This is not a sandbox or execution timeout for
+validator code.
+
+!!! note
+    The `main` branch measures this budget in wall-clock time until the graph SDK
+    (#319) merges: the same settings there also charge time spent waiting for other
+    threads, so more records time out under parallel load.
 
 ## Chunked validation
 

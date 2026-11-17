@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import gc
 import random
+import threading
+import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -78,9 +80,9 @@ def test_builtin_email_anchored_search_matches_full_scan_spans() -> None:
 
 def test_builtin_email_search_shares_timeout_across_addresses(monkeypatch: pytest.MonkeyPatch) -> None:
     times = iter([0.0, 0.001, 0.002, 0.003, 0.004, 0.06])
-    monkeypatch.setattr(regex_detection, "monotonic", lambda: next(times, 0.06))
+    monkeypatch.setattr(regex_detection, "_rule_cpu_time", lambda: next(times, 0.06))
     rules = resolve_regex_rules(labels=["email"], builtin_regexes=True, rules=[])
-    with pytest.raises(RuntimeError, match="timed out"):
+    with pytest.raises(RuntimeError, match="timed out after 0.05 CPU seconds"):
         detect_regex_entities("a@example.org b@example.org", rules=rules, timeout_seconds=0.05)
 
 
@@ -165,12 +167,31 @@ def test_match_collection_is_bounded_and_keeps_scan_nonconcurrent(monkeypatch: p
     assert visited == 4
 
 
-def test_pathological_regex_still_times_out() -> None:
+@pytest.mark.parametrize("busy_threads", [0, 8])
+def test_pathological_regex_still_times_out(busy_threads: int) -> None:
+    """The CPU budget interrupts a runaway scan within bounded wall time, also while pure-Python threads run."""
     rules = resolve_regex_rules(
         labels=["ticket"], builtin_regexes=False, rules=[RegexRule(label="ticket", pattern=r"(a+)+$")]
     )
-    with pytest.raises(RuntimeError, match="timed out"):
-        detect_regex_entities("a" * 20000 + "!", rules=rules, timeout_seconds=0.005)
+    stop = threading.Event()
+
+    def spin() -> None:
+        while not stop.is_set():
+            sum(range(1000))
+
+    threads = [threading.Thread(target=spin) for _ in range(busy_threads)]
+    for thread in threads:
+        thread.start()
+    try:
+        started = time.perf_counter()
+        with pytest.raises(RuntimeError, match="timed out after 0.005 CPU seconds"):
+            detect_regex_entities("a" * 20000 + "!", rules=rules, timeout_seconds=0.005)
+        elapsed = time.perf_counter() - started
+    finally:
+        stop.set()
+        for thread in threads:
+            thread.join()
+    assert elapsed < 2
 
 
 @pytest.mark.parametrize("workers", [32, 64])
