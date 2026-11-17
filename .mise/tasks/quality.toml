@@ -29,7 +29,9 @@ run = "uv run tools/codestyle/copyright_fixer.py --check ."
 description = "Verify that the root and serving-runtime lockfiles match their pyproject.toml files."
 run = [
   "uv lock --check",
-  "uv lock --project tools/inference-service-runtime --check",
+  # The serving runtime pins Python 3.12 in its own .python-version. Drop a CI
+  # matrix UV_PYTHON (for example 3.11) so it cannot override that pin.
+  "env -u UV_PYTHON uv lock --project tools/inference-service-runtime --check",
 ]
 
 ["lock:update"]

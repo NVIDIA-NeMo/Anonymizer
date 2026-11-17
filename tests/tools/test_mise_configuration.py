@@ -224,7 +224,7 @@ def test_mise_uses_native_task_composition() -> None:
     }
     assert quality_tasks["check:lock"]["run"] == [
         "uv lock --check",
-        "uv lock --project tools/inference-service-runtime --check",
+        "env -u UV_PYTHON uv lock --project tools/inference-service-runtime --check",
     ]
     assert {"task": "build:wheel"} in publish_tasks["publish:pypi"]["run"]
     verify_args = {"task": "release:verify", "args": ["{{usage.version}}"]}
