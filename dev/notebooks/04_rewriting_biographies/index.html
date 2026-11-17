@@ -4670,12 +4670,12 @@ for guidance on diagnosing and resolving flagged records.</li>
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">df</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">dataframe</span>
-<span class="n">flagged</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="n">df</span><span class="p">[</span><span class="s2">"needs_human_review"</span><span class="p">]</span> <span class="o">==</span> <span class="kc">True</span><span class="p">]</span>  <span class="c1"># noqa: E712</span>
+<span class="n">flagged</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="n">df</span><span class="p">[</span><span class="s2">"needs_human_review"</span><span class="p">]</span> <span class="o">==</span> <span class="kc">True</span><span class="p">]</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">flagged</span><span class="p">)</span><span class="si">}</span><span class="s2"> of </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">)</span><span class="si">}</span><span class="s2"> records flagged for human review"</span><span class="p">)</span>
 <span class="n">flagged</span><span class="o">.</span><span class="n">head</span><span class="p">()</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-12">df = result.dataframe
-flagged = df[df["needs_human_review"] == True]  # noqa: E712
+flagged = df[df["needs_human_review"] == True]
 print(f"{len(flagged)} of {len(df)} records flagged for human review")
 flagged.head()</div>
 </div>

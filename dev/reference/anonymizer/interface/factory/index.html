@@ -3299,7 +3299,7 @@ contexts share the process; clients of an owned process expire on exit.</p>
               <pre class="highlight"><code class="language-python">@contextmanager
 def native_runtime(
     *, device: DeviceRequest = "auto", dtype: DtypeRequest = "auto", attention: AttentionRequest = "auto"
-) -&gt; Iterator[NativeRuntimeSession]:
+) -&gt; Generator[NativeRuntimeSession]:
     """Run native GLiNER for the duration of a client session.
 
     An existing singleton is borrowed and remains running after exit. Nested

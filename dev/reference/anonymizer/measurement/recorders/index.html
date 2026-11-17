@@ -2925,7 +2925,7 @@
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/anonymizer/measurement/recorders.py</code></summary>
               <pre class="highlight"><code class="language-python">@contextmanager
-def stage_timer(stage: str, **fields: Any) -&gt; Iterator[dict[str, Any]]:
+def stage_timer(stage: str, **fields: Any) -&gt; Generator[dict[str, Any]]:
     """Record wall time for a stage when collection is active."""
     collector = current_collector()
     if collector is None:
