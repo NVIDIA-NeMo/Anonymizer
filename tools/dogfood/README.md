@@ -228,8 +228,7 @@ string, `category`, `large_string`, zero rows, and a row with odd passthrough-co
 
 ## DataDesigner version
 
-This branch supports the `data-designer` range declared as `SUPPORTED_DATA_DESIGNER_RANGE`
-(`>=0.10.0,<0.11`) in `src/anonymizer/engine/ndd/_graph_requests.py`. The code does not check the
+This branch supports the `data-designer` range declared in `pyproject.toml`. The code does not check the
 version number; before any DataDesigner work it checks that the private DataDesigner hooks it relies
 on exist, and raises `AnonymizerWorkflowError` naming a missing hook. When you set up the two
 comparison environments, install the same `data-designer` version in both, within that range.

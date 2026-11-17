@@ -3,24 +3,19 @@
 """Capability checks for the private DataDesigner hooks the source-frame binding uses.
 
 Every check runs before any DataDesigner work starts and raises one standard error naming the missing hook,
-the installed DataDesigner version and the supported range.
+the installed DataDesigner version and the supported range. The binding checks for the hooks instead of an exact
+version. The supported range is the ``data-designer`` requirement in ``pyproject.toml``, read from the installed
+package metadata so the message cannot drift from it.
 """
 
 from __future__ import annotations
 
 import importlib
-from importlib.metadata import PackageNotFoundError, version
+import re
+from importlib.metadata import PackageNotFoundError, requires, version
 from typing import Any
 
 from anonymizer.interface.errors import AnonymizerWorkflowError
-
-SUPPORTED_DATA_DESIGNER_RANGE = ">=0.10.0,<0.11"
-"""DataDesigner releases the source-frame binding supports.
-
-The binding relies on private DataDesigner hooks, so it checks for them instead of an exact version. Must stay in
-sync with the ``data-designer`` specifier in ``pyproject.toml``; ``tests/engine/test_graph_requests_capabilities.py``
-checks this.
-"""
 
 _ARTIFACT_STORAGE_MODULE = "data_designer.engine.storage.artifact_storage"
 
@@ -32,11 +27,22 @@ def _installed_data_designer() -> str:
         return "unknown"
 
 
+def _supported_data_designer() -> str:
+    """Return the ``data-designer`` requirement from the package metadata, or a pointer to ``pyproject.toml``."""
+    try:
+        requirements = requires("nemo-anonymizer") or []
+    except PackageNotFoundError:
+        requirements = []
+    for requirement in requirements:
+        if re.split(r"[\s<>=!~;\[(]", requirement, maxsplit=1)[0] == "data-designer":
+            return requirement
+    return "see the data-designer requirement in pyproject.toml"
+
+
 def _missing_capability(attribute: str) -> AnonymizerWorkflowError:
     return AnonymizerWorkflowError(
         f"Anonymizer's DataDesigner binding requires DataDesigner's private `{attribute}`, which the installed "
-        f"data-designer {_installed_data_designer()} does not provide (supported: data-designer "
-        f"{SUPPORTED_DATA_DESIGNER_RANGE})"
+        f"data-designer {_installed_data_designer()} does not provide (supported: {_supported_data_designer()})"
     )
 
 
