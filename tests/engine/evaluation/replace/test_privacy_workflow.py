@@ -246,7 +246,7 @@ async def _stub_privacy_generation(
             ]
         }
     elif "<answer_template>" in prompt:
-        assert "text that has undergone entity replacement or redaction" in prompt
+        assert "A placeholder elsewhere NEVER cancels surviving evidence." in prompt
         if "<text>\nMODEL_FAILURE\n</text>" in prompt:
             raise RuntimeError("Synthetic privacy answer failure")
         leaked = "<text>\nMaya lives in USA.\n</text>" in prompt

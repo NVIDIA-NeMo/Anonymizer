@@ -31,80 +31,101 @@ def render_replace_privacy_answer_prompt(qa: PrivacyQAPairsSchema, text: str) ->
         {"id": item.id, "question": item.question, "answer": "", "confidence": None, "reason": "", "evidence": []}
         for item in qa.items
     ]
-    prompt = """You are auditing text that has undergone entity replacement or redaction.
+    prompt = """You are a privacy auditor. For each question, determine whether the
+specified original entity value can still be identified or reasonably
+inferred from the anonymized text.
 
-For each question, determine whether the specified original entity value
-can still be identified or reasonably inferred from the anonymized text.
+The target value in the question is a candidate to assess, not evidence
+that it is recoverable.
 
 <rules>
-Evidence and scope
-- Use the anonymized text as evidence. The target value supplied in the
-  question is a candidate to assess, not evidence that it is recoverable.
-- Search the entire text, including narrative passages, structured fields,
+Search and evidence
+- Before answering each question, search the ENTIRE text for evidence.
+- Check narrative passages, structured fields, tool calls, tool results,
   and repeated occurrences.
+- Do not stop at a redacted occurrence or a weak clue if stronger
+  evidence exists elsewhere. Base your answer on the strongest evidence.
 - Evaluate the target in the semantic role specified by its entity label.
   A matching string used in a clearly different role is not sufficient.
 - Respect the subject and relationship described in the text. Do not
   transfer an attribute from one person, object, or relationship to another.
 
-Replacement and redaction
-- A placeholder reveals that information was removed and may reveal its
-  type. It does not reveal the hidden value.
-- A familiar format, pattern, or broad category does not establish the
-  missing content needed to recover a specific value.
-- A substituted value does not automatically reveal the original value.
-- Conversely, a substituted value does not cancel original information
-  that remains elsewhere. Consider explicit occurrences and contextual
-  clues even when another passage provides a competing value.
+Decision order
+1. Direct recovery:
+   If the target value appears anywhere in the relevant semantic role,
+   answer "yes". One surviving occurrence is sufficient, even if every
+   other occurrence has been redacted or substituted.
 
-Equivalent forms and geographic inference
-- Treat normalized, synonymous, abbreviated, or expanded forms as
-  equivalent when they preserve the meaning relevant to the requested
-  entity label.
-- Geographic containment can support inference of a broader location:
-  evidence of a narrower place may identify its containing region or
+2. Equivalent forms:
+   If a normalized, synonymous, abbreviated, or expanded form identifies
+   the target in the relevant role, answer "yes".
+
+3. Contextual inference:
+   If the value is not explicitly present, consider whether the strongest
+   contextual evidence makes it a reasonable, best-supported inference.
+   Ask: "Using only this text, what value would I infer for this entity?"
+   Do not require certainty or an exact spelling match.
+   Mere compatibility, a generic association, or a guess prompted only
+   by seeing the target in the question is insufficient.
+
+4. No recovery:
+   Answer "no" only after checking direct occurrences, equivalent forms,
+   and contextual evidence throughout the text and finding insufficient
+   support for the target.
+
+Redaction and substitution
+- You are assessing whether the original value remains recoverable
+  anywhere in the text, not whether a particular redacted span can
+  be filled in.
+- A placeholder elsewhere NEVER cancels surviving evidence.
+- Do not answer "no" merely because a relevant field contains a placeholder
+  or substitute. Continue searching the rest of the text.
+- A placeholder alone reveals that information was removed and may reveal
+  its type. It does not reveal the hidden value.
+- A familiar format or broad category alone does not establish a specific
+  hidden value.
+- A substituted value does not automatically reveal the original value.
+  It also does not invalidate original information that survives elsewhere.
+
+Equivalent forms and geography
+- Treat normalized, synonymous, abbreviated, and expanded forms as the
+  same value when context supports the intended meaning.
+- A narrower geographic location can reveal its containing region or
   country. Do not reverse this relationship without additional evidence.
 
 Examples:
 - "United States", "United States of America", "U.S.", "USA", "US",
   and "America" when used to mean the country → country = US.
 - "western United States" → country = US.
+- "NYC" in a city or address context → city = New York City / New York,
+  state = New York / NY, and country = US.
+- "LA" in a context that identifies Los Angeles → city = Los Angeles,
+  state = California / CA, and country = US.
 - "California", "Texas", or "New York City" → country = US,
-  unless context clearly indicates another meaning.
-- "North America" alone does not establish US. Combined with other
-  relevant clues, it may make US a well-supported, most likely inference.
+  unless context clearly indicates otherwise.
+- "North America" alone does not establish US. Surrounding evidence may
+  make US a reasonable, best-supported inference.
 
-- Preserve the requested semantic role: evidence that someone lives in,
-  visits, or works in a country does not by itself establish birthplace,
-  citizenship, or nationality. Those require evidence connecting the
-  location to the attribute being asked about.
-
-Decision
-- Answer "yes" when the text contains the target in the relevant role,
-  contains a meaning-equivalent form, or provides contextual evidence
-  that makes the target a well-supported inference.
-- Match the specificity of the target. Evidence for a broad category
-  does not automatically establish a particular member or subtype.
-- Certainty is not required, but mere compatibility, a generic
-  association, or a guess prompted by seeing the target is insufficient.
-  Consider whether the evidence meaningfully distinguishes the target
-  from plausible alternatives.
-- Answer "no" when the text does not provide sufficient evidence to
-  recover the specific target value in the requested role.
-- Apply the same standard independently to every question.
+- Preserve the requested relationship: living in, visiting, or working
+  in a country does not by itself establish birthplace, citizenship,
+  or nationality.
+- Match the specificity of the target. A broad category does not
+  automatically identify a particular member or subtype.
 
 Answer and confidence
+- Apply these rules independently to every question.
 - Return "yes" or "no" for every question.
-- Confidence is your confidence that the selected answer is correct.
-  It is not the probability that the target is recoverable.
-- A well-supported "no" can have high confidence. Do not use zero merely
-  because the answer is "no".
-- Set confidence from 0.0 to 1.0. Reflect ambiguity and conflicting
-  evidence in the confidence and reason.
-- Give a brief reason explaining the evidence or why it is insufficient.
+- Confidence is your confidence that the selected answer is correct,
+  not the probability that the target is recoverable.
+- Set confidence from 0.0 to 1.0. A well-supported "no" may have high
+  confidence; do not use zero merely because the answer is "no".
+- Give a brief reason grounded in the strongest available evidence.
+- For "yes", quote the surviving occurrence or contextual evidence.
+- For "no", do not claim the value is absent if it appears in the text.
+  If a matching string has a clearly different role, explain that distinction.
 - Evidence must contain short, exact quotes copied from the anonymized
   text. Do not paraphrase, reconstruct, or quote the question.
-- Use an empty evidence list when there is no relevant passage to quote.
+- Use an empty evidence list when no relevant passage is available.
 </rules>
 
 <text>

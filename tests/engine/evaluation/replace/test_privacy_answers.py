@@ -201,7 +201,7 @@ def test_batching_preserves_ids_full_text_and_question_order(
         template = json.loads(prompt.split("<answer_template>")[1].split("</answer_template>")[0])
         assert [item["id"] for item in template["answers"]] == ids
         assert all(item["confidence"] is None for item in template["answers"])
-        assert "text that has undergone entity replacement or redaction" in prompt
+        assert "A placeholder elsewhere NEVER cancels surviving evidence." in prompt
         assert call.kwargs["max_correction_steps"] == 3
         assert call.kwargs["parser"](json.dumps({"answers": [_answer(item_id) for item_id in ids]})).answers
         with pytest.raises(ParserException):
@@ -235,11 +235,11 @@ def test_batch_size_requires_a_positive_integer(batch_size: object) -> None:
 def test_replace_uses_dedicated_prompt_and_unfilled_confidence() -> None:
     model = _CorrectingModel([json.dumps({"answers": [_answer()]})])
     asyncio.run(_make_privacy_answer_column("judge")(_row(), None, {"judge": model}))
-    assert "text that has undergone entity replacement or redaction" in model.prompt
+    assert "A placeholder elsewhere NEVER cancels surviving evidence." in model.prompt
     assert "It does not reveal the hidden value." in model.prompt
     assert "A matching string used in a clearly different role is not sufficient." in model.prompt
     assert '"North America" alone does not establish US.' in model.prompt
-    assert "citizenship, or nationality. Those require evidence" in model.prompt
+    assert "does not by itself establish birthplace, citizenship," in model.prompt
     template = json.loads(model.prompt.split("<answer_template>")[1].split("</answer_template>")[0])
     assert template["answers"][0]["confidence"] is None
     assert template["answers"][0]["id"] == 1
