@@ -24,6 +24,7 @@ from anonymizer.engine.graph_core.authoring import (
     CONTEXT,
     DATUM,
     MENTIONS,
+    RECORD,
     TEXT,
     Assessment,
     ContextSource,
@@ -42,7 +43,7 @@ Terminal = Literal["success", "failed", "cancelled", "blocked"]
 Qualification = Literal["met", "not_met", "not_assessed"]
 AttemptStatus = Literal["running", "succeeded", "failed", "blocked", "cancelled"]
 
-SEEDS = {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "context": CONTEXT, "target": DATUM}
+SEEDS = {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "context": CONTEXT, "target": DATUM, "record": RECORD}
 _SEAL_KEY = secrets.token_bytes(32)
 
 
@@ -150,7 +151,8 @@ def _covering(ops: tuple[tuple[str, Operation], ...], plan: k.Plan, final: int) 
     """The verifiers whose every declared subject derives from the final candidate, from declared ports only.
 
     A candidate version is the index of the operation whose ``text`` output it is, or -1 for the source text. The
-    seeds ``text``, ``source``, ``mentions`` and ``target`` derive from the source text; ``context`` from none.
+    seeds ``text``, ``source``, ``mentions`` and ``target`` derive from the source text; ``context`` and ``record``
+    from none.
     Interim rule: every output of a text-producing operation derives from the version it emits, so evidence it
     returns beside its text counts as about that text. Any other operation's outputs derive from all its inputs.
     """
@@ -158,7 +160,7 @@ def _covering(ops: tuple[tuple[str, Operation], ...], plan: k.Plan, final: int) 
     covering = set()
     for i, (name, op) in enumerate(ops):
         read = {
-            port: (frozenset() if port == "context" else frozenset({-1}))
+            port: (frozenset() if port in ("context", "record") else frozenset({-1}))
             if source.node is None
             else outputs[source.node][source.port]
             for port, source in plan.sources[i].items()
@@ -591,7 +593,16 @@ def _protect(p: PreparedProtection) -> ProtectionResult:
                     ContextItem("datum" if isinstance(item, Datum) else "view", len(items), _static_text(item))
                 )
         m = tuple(mentions.get(d, ()))
-        seeds.append({"text": d.text, "source": d.text, "mentions": m, "context": tuple(items), "target": d})
+        seeds.append(
+            {
+                "text": d.text,
+                "source": d.text,
+                "mentions": m,
+                "context": tuple(items),
+                "target": d,
+                "record": g.record_of(d),
+            }
+        )
     state = k.initial_state(p.plan, seeds)
     for u in closed:
         k.apply(state, k.Closed(u, "binding_failed"))
