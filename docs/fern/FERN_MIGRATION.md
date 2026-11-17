@@ -7,9 +7,9 @@ This is a temporary file for the MkDocs to Fern migration and will be removed
 when the migration is complete. See [DEVELOPMENT.md](../../DEVELOPMENT.md#fern-validation-and-previews)
 for tool installation, authoring, validation, previews, and versioning conventions.
 
-1. Add MDX content, Fern configuration, mise tasks, validation, and manual preview
-   workflows in this PR.
-2. Ask in the `cdd-fern` Slack channel for the official docs URL and `FERN_TOKEN`.
+1. DONE - Add MDX content, Fern configuration, mise tasks, validation, and manual preview
+   workflows.
+2. DONE - Ask in the `cdd-fern` Slack channel for the official docs URL and `FERN_TOKEN`.
 3. Review the hosted preview and iterate on content alongside the remaining work.
 4. Provide a way to reach historical GitHub Pages documentation from Fern.
 5. Generate API reference pages and restore API navigation and symbol links.
