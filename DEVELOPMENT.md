@@ -307,8 +307,8 @@ instance; it does not establish that redirects work.
 `main`, merge queue checks, and manual dispatch. Its stable job name is
 **Fern Check**, and it requires no publishing token. `fern-docs-preview.yml` is
 manually dispatched from any repository branch. It runs `docs:fern:check` before
-`docs:fern:preview`, supplies the repository or organization `FERN_TOKEN` secret
-only to the preview step. Both workflows use the shared Python environment
+`docs:fern:preview`, and passes the organization `DOCS_FERN_TOKEN` secret to the
+preview step only, as `FERN_TOKEN`. Both workflows use the shared Python environment
 action with the `docs` profile, which installs mise and every pinned tool,
 including Fern and its Node/jq/yq dependencies, and syncs the locked docs
 dependencies. Neither publishes production

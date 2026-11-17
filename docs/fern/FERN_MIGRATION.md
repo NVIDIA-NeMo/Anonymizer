@@ -66,9 +66,9 @@ notebook cells and outputs, downloads, API coverage, and anchors. Restore
 Pydantic field documentation and public API links as part of the API follow-up.
 Validation cannot prove hosted rendering or redirect correctness.
 
-Configure a repository or organization `FERN_TOKEN` secret for the manual
-`fern-docs-preview.yml` workflow. PR validation, including fork PRs, uses no
-publishing token. Add the **Fern Check** job to required checks after its first
+The manual `fern-docs-preview.yml` workflow reads the organization
+`DOCS_FERN_TOKEN` secret and passes it to the Fern CLI as `FERN_TOKEN`. PR
+validation, including fork PRs, uses no publishing token. Add the **Fern Check** job to required checks after its first
 successful run. Production publishing remains a separate change.
 
 Release automation must build from the release tag, retain notebook artifact
