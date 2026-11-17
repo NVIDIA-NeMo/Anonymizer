@@ -28,10 +28,11 @@ Fern prose lives in `docs/**/*.mdx`, with site configuration and nightly
 navigation in `docs/fern/`. MkDocs and mike still serve production and release
 documentation; existing build, notebook, and release workflows remain active.
 
-Fern configures only `nightly` and the preview instance
-`nemo-anonymizer.docs.buildwithfern.com`. The NVIDIA Fern team still needs to
-confirm instance provisioning, the official production URL and mount, and token
-access. No production publishing or frozen Fern release versions are configured.
+`docs/fern/docs.yml` configures `nightly` on the instance
+`nvidia-nemo-anonymizer.docs.buildwithfern.com/nemo/anonymizer` with the custom
+domain `docs.nvidia.com/nemo/anonymizer`. Hosted previews publish with the
+organization `DOCS_FERN_TOKEN` secret. Nothing publishes to the instance or the
+custom domain yet, and no frozen Fern release versions are configured.
 The NVIDIA global theme supplies shared branding.
 
 The API Reference entry is omitted pending generated API pages. Five tutorial
@@ -50,7 +51,10 @@ Keep their content equivalent using each renderer's syntax.
 `mise run check:docs:pairs`, part of `mise run check` and CI, fails when a page
 that exists in both formats changes in only one, or when a new page is added in
 only one format. It compares against the merge base with the target branch,
-including uncommitted changes.
+including uncommitted changes. A page that has only one format at the merge
+base is not checked, so the check cannot catch a `.mdx` page that missed an
+earlier `.md` change, and a branch created before this PR merged is checked
+only once its CI runs against a `main` that has the `.mdx` files.
 
 - New prose pages need both formats and matching navigation entries in
   `mkdocs.yml` and `docs/fern/versions/nightly.yml`.
@@ -73,8 +77,10 @@ Validation cannot prove hosted rendering or redirect correctness.
 
 The manual `fern-docs-preview.yml` workflow reads the organization
 `DOCS_FERN_TOKEN` secret and passes it to the Fern CLI as `FERN_TOKEN`. PR
-validation, including fork PRs, uses no publishing token. Add the **Fern Check** job to required checks after its first
-successful run. Production publishing remains a separate change.
+validation, including fork PRs, uses no publishing token. Do not make **Fern
+Check** a required check while `fern-docs-ci.yml` has a `paths` filter: a PR
+that changes no Fern paths never reports the check, so a required check would
+block it. Production publishing remains a separate change.
 
 Release automation must build from the release tag, retain notebook artifact
 ordering from `build-notebooks.yml`, `docs.yml`, and `release.yml`, freeze pages,

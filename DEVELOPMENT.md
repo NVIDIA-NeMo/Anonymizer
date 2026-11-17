@@ -284,9 +284,9 @@ needed. Run these tasks from the repository root:
 
 Validation runs `fern check --local --warnings --strict-broken-links` without
 `FERN_TOKEN`. It also fails on MDX parse warnings, which Fern can report with a
-successful exit code. Keep the Fern version in `.mise.toml`, `mise.lock`,
-`docs/fern/fern.config.json`, and any workflow CLI pins aligned; validation
-rejects a configuration mismatch. The CLI may need
+successful exit code. Validation also fails when the `npm:fern-api` version in
+`.mise.toml` differs from the version in `docs/fern/fern.config.json`; update
+both, then run `mise lock`. The CLI may need
 network access to resolve its configured version. Local validation does not
 prove that a hosted build will succeed or that every page renders correctly.
 
@@ -303,8 +303,9 @@ the unauthenticated local server starts without the central theme.
 An unauthenticated missing-redirects warning concerns comparison with the hosted
 instance; it does not establish that redirects work.
 
-`fern-docs-ci.yml` runs the same `docs:fern:check` task on every PR, pushes to
-`main`, merge queue checks, and manual dispatch. Its stable job name is
+`fern-docs-ci.yml` runs the same `docs:fern:check` task on PRs and pushes to
+`main` that change `docs/` or the Fern tooling (see its `paths` filter), on
+merge queue checks, and on manual dispatch. Its stable job name is
 **Fern Check**, and it requires no publishing token. `fern-docs-preview.yml` is
 manually dispatched from any repository branch. It runs `docs:fern:check` before
 `docs:fern:preview`, and passes the organization `DOCS_FERN_TOKEN` secret to the

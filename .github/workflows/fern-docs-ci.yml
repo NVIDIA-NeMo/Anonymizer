@@ -4,9 +4,30 @@
 name: Fern Docs CI
 
 on:
+  # Run only when Fern content or its tooling changes.
   pull_request:
+    paths:
+      - "docs/**"
+      - ".github/workflows/fern-docs-ci.yml"
+      - ".github/actions/setup-python-env/**"
+      - ".mise.toml"
+      - "mise.lock"
+      - ".mise/tasks/fern.toml"
+      - ".mise/tasks/docs/fern/**"
+      - "pyproject.toml"
+      - "uv.lock"
   push:
     branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/fern-docs-ci.yml"
+      - ".github/actions/setup-python-env/**"
+      - ".mise.toml"
+      - "mise.lock"
+      - ".mise/tasks/fern.toml"
+      - ".mise/tasks/docs/fern/**"
+      - "pyproject.toml"
+      - "uv.lock"
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
