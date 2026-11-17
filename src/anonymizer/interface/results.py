@@ -43,6 +43,7 @@ class _DisplayMixin:
     privacy_inference_enabled: bool | None
     entity_labels: list[str] | None
     excluded_entity_labels: list[str] | None
+    data_summary: str | None
 
     @property
     def privacy_findings(self) -> pd.DataFrame:
@@ -125,6 +126,7 @@ class _DisplayMixin:
             execution_settings=self.execution_settings,
             entity_labels=self.entity_labels,
             excluded_entity_labels=self.excluded_entity_labels,
+            data_summary=self.data_summary,
             privacy_summary=self.privacy_summary if include_inference else {},
             privacy_issues=self.privacy_findings if include_inference else pd.DataFrame(),
             judge_summary=judge_summary,

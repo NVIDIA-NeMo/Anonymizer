@@ -519,3 +519,30 @@ def test_rewrite_strict_protection_is_visible_even_without_inference(strict: boo
     expected = str(strict) if strict is not None else "Unavailable"
     assert "Rewrite Settings" in document
     assert f"<th>strict_entity_protection</th><td>{expected}</td>" in document
+
+
+@pytest.mark.parametrize("preview", [False, True])
+@pytest.mark.parametrize(
+    "summary", [None, "", "  \n\t ", "Paragraph one.\n\nParagraph two <script>bad</script>\n" + "Long context. " * 200]
+)
+def test_data_summary_is_expandable_escaped_and_complete(
+    preview: bool, summary: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import html
+
+    result = _result(pd.DataFrame([{}]), preview, replace_method=Redact(), data_summary=summary)
+    rendered: list[str] = []
+    monkeypatch.setattr("anonymizer.interface.results._display_html", rendered.append)
+    result.display_evaluation_report()
+    document = result.export_evaluation_report(tmp_path / "report.html").read_text()
+    assert rendered[0] in document
+    assert document.index("Labels Used") < document.index("Data Summary") < document.index("Batching Settings")
+    if summary is not None and summary.strip():
+        assert "<details><summary>Show data summary</summary>" in document
+        assert html.escape(summary) in document
+        assert "<script>bad</script>" not in document
+        assert "white-space:pre-wrap" in document
+    else:
+        assert "<h3>Data Summary</h3><p>None.</p>" in document
+        assert "Show data summary" not in document
+    assert result.data_summary == summary

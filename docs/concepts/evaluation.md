@@ -75,7 +75,12 @@ unavailable**; the report never guesses from current configuration.
 in full. Any excluded labels are listed separately. This describes the configured
 detection scope, rather than the labels actually found in the data.
 
-**Batching Settings** follows Labels Used and displays saved
+**Data Summary** follows Labels Used. Saved dataset context is shown in a collapsed
+Show data summary disclosure, preserving all text, paragraphs, and line breaks.
+Missing, empty, or whitespace-only summaries say None. This appears in both
+notebook and standalone HTML reports.
+
+**Batching Settings** follows Data Summary and displays saved
 `privacy_qa_batch_size` and `validation_max_entities_per_call`. Privacy QA batch
 size comes from Rewrite's run settings or Replace's evaluation settings; explicit
 None means all questions in one call per record. Validation batching is preserved

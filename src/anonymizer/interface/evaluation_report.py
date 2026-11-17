@@ -97,6 +97,19 @@ def _render_labels_used(labels: list[str] | None, excluded: list[str] | None) ->
     return '<section class="labels-used"><h3>Labels Used</h3>' + description + "</section>"
 
 
+def _render_data_summary(summary: str | None) -> str:
+    """Show saved dataset context as escaped, expandable text, without truncation."""
+    body = "<p>None.</p>"
+    if summary is not None and summary.strip():
+        body = (
+            "<details><summary>Show data summary</summary>"
+            '<div style="white-space:pre-wrap;overflow-wrap:anywhere;margin:12px 0;">'
+            + html.escape(summary)
+            + "</div></details>"
+        )
+    return "<section><h3>Data Summary</h3>" + body + "</section>"
+
+
 def _render_batching_settings(settings: dict[str, int | None], summary: dict[str, Any]) -> str:
     """Show saved settings; distinguish unbatched QA from missing metadata."""
     validation = str(settings.get("validation_max_entities_per_call", "Unavailable"))
@@ -166,6 +179,7 @@ def render_evaluation_report_html(
     execution_settings: dict[str, int | None],
     entity_labels: list[str] | None,
     excluded_entity_labels: list[str] | None,
+    data_summary: str | None,
     privacy_summary: dict[str, Any],
     privacy_issues: pd.DataFrame,
     judge_summary: pd.DataFrame,
@@ -254,6 +268,7 @@ def render_evaluation_report_html(
         + failure_summary
         + _render_models_used(model_metadata)
         + _render_labels_used(entity_labels, excluded_entity_labels)
+        + _render_data_summary(data_summary)
         + _render_batching_settings(execution_settings, privacy_summary)
         + rewrite_settings
         + f'<div class="{summary_layout}"><section><h3>Privacy &amp; Quality Judge Summary</h3>'

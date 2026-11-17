@@ -84,6 +84,8 @@ Missing older metadata says Model information unavailable.
 Labels Used follows Models Used: omitted `entity_labels` says Default label list;
 explicit custom labels are listed in full. Excluded labels are shown separately.
 This is configured detection scope, not a list of labels found in the output.
+Data Summary follows Labels Used: saved `data_summary` is expandable and shown
+in full with line breaks preserved; None/empty/whitespace-only values say None.
 Batching Settings shows saved `privacy_qa_batch_size` and
 `validation_max_entities_per_call` from `execution_settings`. The privacy value
 comes from Rewrite's run or Replace's evaluation; None means one call per record.
