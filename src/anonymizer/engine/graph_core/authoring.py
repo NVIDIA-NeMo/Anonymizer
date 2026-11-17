@@ -15,12 +15,14 @@ from types import MappingProxyType
 from typing import Any, Literal
 
 from anonymizer.engine.graph_core.kernel import GraphRejection, register_kind
+from anonymizer.engine.graph_core.session import SubjectKey
 
 TEXT = register_kind("text", lambda v: isinstance(v, str), lambda v: len(v.encode("utf-8")))
 MENTIONS = register_kind("mentions", lambda v: isinstance(v, tuple))
 CONTEXT = register_kind("context", lambda v: isinstance(v, tuple))
 DATUM = register_kind("datum", lambda v: isinstance(v, Datum))
 ASSESSMENT = register_kind("assessment", lambda v: isinstance(v, Assessment))
+IDENTITIES = register_kind("identities", lambda v: isinstance(v, tuple) and all(isinstance(i, Identity) for i in v))
 
 
 def utf8_size(text: str) -> int:
@@ -93,6 +95,24 @@ class Mention:
 
 
 @dataclass(frozen=True)
+class Identity:
+    """A caller declaration: a mention inside ``[start, end)`` of ``target`` is ``subject``'s."""
+
+    target: Datum
+    start: int
+    end: int
+    subject: SubjectKey
+
+    def covers(self, mention: Mention) -> bool:
+        return mention.datum == self.target and self.start <= mention.start and mention.end <= self.end
+
+
+def subject_of(mention: Mention, identities: Iterable[Identity]) -> SubjectKey | None:
+    """The subject declared for the span holding ``mention``, or None; a mention straddling a span edge has none."""
+    return next((i.subject for i in identities if i.covers(mention)), None)
+
+
+@dataclass(frozen=True)
 class ContextView:
     """A read-only view ``[start, end)`` over a datum, delivered as context to ``target``."""
 
@@ -151,6 +171,7 @@ class ProtectionGraph:
     context: tuple[ContextScope, ...] = ()
     dependencies: tuple[Dependency, ...] = ()
     groups: tuple[OutputGroup, ...] = ()
+    identities: tuple[Identity, ...] = field(default=(), kw_only=True)
 
     def __post_init__(self) -> None:
         targets = set(self.targets)
@@ -189,6 +210,7 @@ class ProtectionGraph:
                 if self._own(m, targets, "group_member") in seen:
                     raise GraphRejection("group_overlap")
                 seen.add(m)
+        self._check_identities(targets)
 
     def _own(self, d: Datum, allowed: set[Datum] | None, what: str) -> Datum:
         if not isinstance(d, Datum) or d._scope != self.scope._token:
@@ -205,6 +227,33 @@ class ProtectionGraph:
                 raise GraphRejection("mention_not_on_target" if m.datum in declared else "unknown_reference")
         if problem := mention_problem(self.mentions):
             raise GraphRejection(problem)
+
+    def _check_identities(self, targets: set[Datum]) -> None:
+        if not isinstance(self.identities, tuple):
+            raise GraphRejection("invalid_identity")
+        by_target: dict[Datum, list[Identity]] = {}
+        for i in self.identities:
+            if not isinstance(i, Identity) or not isinstance(i.subject, SubjectKey):
+                raise GraphRejection("invalid_identity")
+            self._own(i.target, targets, "identity")
+            if not (type(i.start) is int and type(i.end) is int and 0 <= i.start < i.end <= len(i.target.text)):
+                raise GraphRejection("identity_out_of_range")
+            by_target.setdefault(i.target, []).append(i)
+        for ids in by_target.values():
+            ids.sort(key=lambda i: i.start)
+            # The furthest-reaching earlier span, and the furthest one of another subject: a span conflicts when an
+            # earlier span of another subject reaches past its start.
+            first: tuple[int, SubjectKey | None] = (0, None)
+            second = first
+            for i in ids:
+                if (first if first[1] != i.subject else second)[0] > i.start:
+                    raise GraphRejection("identity_conflict")
+                if i.subject == first[1]:
+                    first = (max(first[0], i.end), i.subject)
+                elif i.end > first[0]:
+                    first, second = (i.end, i.subject), first
+                elif i.end > second[0]:
+                    second = (i.end, i.subject)
 
     def _check_acyclic(self) -> None:
         """Iterative topological sort: a target left with an unsatisfied dependency lies on a cycle."""
@@ -290,11 +339,12 @@ class Operation:
     """A caller-supplied local operation with typed ports and declared requests.
 
     Input ports bind by name to the latest earlier output, else to the per-target seeds ``text`` (current candidate),
-    ``source`` (original text), ``mentions``, ``context``, ``target`` and ``session`` (a read-only Session view). An
-    operation whose output kind is ``assessment`` is a verifier; ``checks`` names the workflow requirements its
-    assessment answers and ``subject`` names the input ports the assessment is about (required with ``checks``;
-    there is no default). A verifier's outputs are exactly ``{"assessment": "assessment"}``; any other layout with an
-    ``assessment`` kind or port name is rejected with ``GraphRejection("verifier_ports")``.
+    ``source`` (original text), ``mentions``, ``context``, ``target``, ``session`` (a read-only Session view) and
+    ``identities`` (the target's declarations, by start and end). An operation whose output kind is ``assessment`` is
+    a verifier; ``checks`` names the workflow requirements its assessment answers and ``subject`` names the input
+    ports the assessment is about (required with ``checks``; there is no default). A verifier's outputs are exactly
+    ``{"assessment": "assessment"}``; any other layout with an ``assessment`` kind or port name is rejected with
+    ``GraphRejection("verifier_ports")``.
     """
 
     name: str

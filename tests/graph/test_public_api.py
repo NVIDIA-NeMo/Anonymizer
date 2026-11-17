@@ -23,6 +23,7 @@ PUBLIC_NAMES = {
     "Dependency",
     "GraphRejection",
     "GraphScope",
+    "Identity",
     "InspectionSummary",
     "Limits",
     "Mention",

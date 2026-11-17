@@ -6,7 +6,7 @@
 Declare datums and the relations between them, compose operations into a workflow, call :func:`prepare` to
 admit the workflow before any operation runs, then call :func:`protect` to run it synchronously on the calling
 thread. The kernel registers the kinds ``text``, ``mentions``, ``context``, ``datum``, ``assessment``,
-``session-view`` and ``decisions``; callers register any other kind their operations produce with
+``session-view``, ``decisions`` and ``identities``; callers register any other kind their operations produce with
 :func:`register_kind`. A :class:`Session` passed as ``session=`` keeps assignments across calls.
 """
 
@@ -20,6 +20,7 @@ from anonymizer.engine.graph_core.authoring import (
     Datum,
     Dependency,
     GraphScope,
+    Identity,
     Limits,
     Mention,
     Operation,
@@ -60,6 +61,7 @@ __all__ = [
     "Dependency",
     "GraphRejection",
     "GraphScope",
+    "Identity",
     "InspectionSummary",
     "Limits",
     "Mention",
