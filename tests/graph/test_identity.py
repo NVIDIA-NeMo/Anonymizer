@@ -7,15 +7,18 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 import anonymizer.graph as graph
-from anonymizer.engine.graph_core.authoring import subject_of
+from anonymizer.engine.graph_core.authoring import _RESERVED_SEED_OUTPUTS, subject_of
+from anonymizer.engine.graph_core.execution import SEEDS
 
 TEXT = "Alice and Bob and Carol"
 ALICE, BOB = graph.SubjectKey("subject-alice"), graph.SubjectKey("subject-bob")
+DOC = Path(__file__).resolve().parents[2] / "docs" / "concepts" / "graph-sdk.md"
 
 
 def build(*texts: str) -> tuple[graph.GraphScope, tuple[graph.Datum, ...]]:
@@ -193,3 +196,46 @@ def test_identities_seed_is_about_no_candidate() -> None:
     assert rejection(lambda: graph.prepare(g, graph.Workflow("w", (verifier,), requires=("c",)))) == (
         "verifier_subject_invalid"
     )
+
+
+class _Subclassed(graph.Operation):
+    pass
+
+
+def _forging_builds(port: str, kind: str) -> list[Callable[[], Any]]:
+    """The S2 reviewer's forging layout: an operation whose output replaces a seed for every later operation."""
+    outputs = {"text": "text", port: kind}
+    return [
+        lambda: graph.Operation("forge", lambda text: text, {"text": "text"}, outputs),
+        lambda: graph.Operation.phase_scoped("forge", lambda text: list(text), {"text": "text"}, outputs),
+        lambda: dataclasses.replace(graph.Operation.verifier("forge", lambda text: None), outputs={port: kind}),
+        lambda: _Subclassed("forge", lambda text: text, {"text": "text"}, outputs),
+    ]
+
+
+@pytest.mark.parametrize(("port", "kind"), [("identities", "identities"), ("session", "session-view")])
+def test_seed_named_outputs_are_rejected_at_construction(port: str, kind: str) -> None:
+    for build in _forging_builds(port, kind):
+        with pytest.raises(graph.GraphRejection) as info:
+            build()
+        assert (info.value.code, info.value.detail) == ("seed_output_reserved", f"forge: {port}")
+
+
+def test_identities_forging_layout_is_rejected_at_construction() -> None:
+    assert rejection(_forging_builds("identities", "identities")[0]) == "seed_output_reserved"
+
+
+def test_reserved_seed_outputs_are_seeds() -> None:
+    assert set(_RESERVED_SEED_OUTPUTS) <= set(SEEDS)
+
+
+def test_mention_across_two_same_key_declarations_resolves_to_none() -> None:
+    # Pinned limit: each declaration is tested alone, so a merge of same-key spans changes this answer.
+    scope, (t,) = build(TEXT)
+    ids = (graph.Identity(t, 0, 4, ALICE), graph.Identity(t, 1, 5, ALICE))
+    graph.ProtectionGraph(scope, (t,), identities=ids)
+    assert subject_of(graph.Mention(t, 0, 5, "x"), ids) is None
+
+
+def test_seed_output_reserved_is_documented() -> None:
+    assert 'GraphRejection("seed_output_reserved")' in DOC.read_text()

@@ -23,6 +23,8 @@ CONTEXT = register_kind("context", lambda v: isinstance(v, tuple))
 DATUM = register_kind("datum", lambda v: isinstance(v, Datum))
 ASSESSMENT = register_kind("assessment", lambda v: isinstance(v, Assessment))
 IDENTITIES = register_kind("identities", lambda v: isinstance(v, tuple) and all(isinstance(i, Identity) for i in v))
+# Seeds an operation may not shadow with an output; a subset of ``execution.SEEDS``.
+_RESERVED_SEED_OUTPUTS = ("session", "identities")
 
 
 def utf8_size(text: str) -> int:
@@ -96,7 +98,11 @@ class Mention:
 
 @dataclass(frozen=True)
 class Identity:
-    """A caller declaration: a mention inside ``[start, end)`` of ``target`` is ``subject``'s."""
+    """A caller declaration: a mention inside ``[start, end)`` of ``target`` is ``subject``'s.
+
+    Each declaration is tested alone: a mention spanning two overlapping declarations of one subject resolves to none.
+    Declare one span covering both instead.
+    """
 
     target: Datum
     start: int
@@ -369,6 +375,9 @@ class Operation:
         standard = {"assessment": ASSESSMENT}
         if (ASSESSMENT in self.outputs.values() or "assessment" in self.outputs) and self.outputs != standard:
             raise GraphRejection("verifier_ports", f"{self.name}: outputs must be {standard}; got {dict(self.outputs)}")
+        # These seeds carry caller declarations and Session state; an output of the same name would replace them.
+        if reserved := [p for p in _RESERVED_SEED_OUTPUTS if p in self.outputs]:
+            raise GraphRejection("seed_output_reserved", f"{self.name}: {', '.join(reserved)}")
 
     @classmethod
     def verifier(
