@@ -290,11 +290,11 @@ class Operation:
     """A caller-supplied local operation with typed ports and declared requests.
 
     Input ports bind by name to the latest earlier output, else to the per-target seeds ``text`` (current candidate),
-    ``source`` (original text), ``mentions``, ``context`` and ``target``. An operation whose output kind is
-    ``assessment`` is a verifier; ``checks`` names the workflow requirements its assessment answers and ``subject``
-    names the input ports the assessment is about (required with ``checks``; there is no default). A verifier's outputs
-    are exactly ``{"assessment": "assessment"}``; any other layout with an ``assessment`` kind or port name is rejected
-    with ``GraphRejection("verifier_ports")``.
+    ``source`` (original text), ``mentions``, ``context``, ``target`` and ``session`` (a read-only Session view). An
+    operation whose output kind is ``assessment`` is a verifier; ``checks`` names the workflow requirements its
+    assessment answers and ``subject`` names the input ports the assessment is about (required with ``checks``;
+    there is no default). A verifier's outputs are exactly ``{"assessment": "assessment"}``; any other layout with an
+    ``assessment`` kind or port name is rejected with ``GraphRejection("verifier_ports")``.
     """
 
     name: str
