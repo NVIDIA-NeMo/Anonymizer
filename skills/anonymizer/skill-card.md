@@ -1,5 +1,5 @@
 ## Description: <br>
-Use when the user wants to anonymize a text dataset, redact PII, de-identify free-text data, or rewrite text to remove sensitive or inferable identifying information; produces a runnable Python script that calls the NeMo Anonymizer pipeline (detection → replace or rewrite). <br>
+Use when the user wants to anonymize a text dataset, redact PII, de-identify free-text data, or rewrite text to remove sensitive or inferable identifying information. Produces a runnable Python script that calls the NeMo Anonymizer pipeline (detection → replace or rewrite). <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and data engineers use this skill to have an agent design, preview, evaluate, and run a NeMo Anonymizer configuration (Replace or Rewrite mode) that detects and protects PII in text datasets, producing a reusable Python script. <br>
+Developers, data engineers, and data scientists use this skill to have an agent generate, preview, evaluate, and run a NeMo Anonymizer Python script that detects PII in a text dataset and replaces it (Substitute, Redact, Annotate, Hash) or rewrites the text to remove direct and inferable identifiers. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,20 +25,21 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Interactive Workflow (references/interactive.md)](references/interactive.md) <br>
+- [Interactive workflow (references/interactive.md)](references/interactive.md) <br>
 - [Choosing a strategy](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/choosing-a-strategy/) <br>
-- [Troubleshooting](https://nvidia-nemo.github.io/Anonymizer/dev/troubleshooting/) <br>
-- [Detection](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/detection/) <br>
-- [Evaluation](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/evaluation/) <br>
-- [Models](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/models/) <br>
-- [Self-hosting GLiNER2](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/self-hosting-gliner/) <br>
+- [Detection guide](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/detection/) <br>
+- [Evaluation guide](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/evaluation/) <br>
+- [Models guide](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/models/) <br>
+- [Self-hosting GLiNER2 guide](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/self-hosting-gliner/) <br>
+- [Troubleshooting guide](https://nvidia-nemo.github.io/Anonymizer/dev/troubleshooting/) <br>
+- [NeMo Anonymizer repository](https://github.com/NVIDIA-NeMo/Anonymizer) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Code, Files, Shell commands, Analysis] <br>
-**Output Format:** [Python script file plus Markdown guidance with inline code blocks] <br>
+**Output Type(s):** [Code, Files, Shell commands] <br>
+**Output Format:** [Runnable Python script file plus Markdown guidance] <br>
 **Output Parameters:** [1D] <br>
-**Other Properties Related to Output:** [Script previews results before any full run; full pipeline runs only on user approval; no privacy guarantees are claimed.] <br>
+**Other Properties Related to Output:** [Script previews a few rows by default; full run and LLM-as-judge evaluation are opt-in via command-line flags] <br>
 
 ## Evaluation Agents Used: <br>
 - Claude Code (`aws/anthropic/bedrock-claude-opus-5-5`) <br>
@@ -47,7 +48,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-6 evaluation tasks (4 positive, 2 negative), 1 attempt per task, each run in its own isolated sandbox pod (`k8s-sandbox`); evaluator version `1.6.9`, evaluation date 2026-11-16. Baseline is the same task attempted without the target skill. <br>
+6 evaluation tasks (4 positive, 2 negative), 1 attempt per task, each in its own isolated sandbox pod (`k8s-sandbox` environment); evaluator version `1.6.9`, evaluated 2026-11-16. Baseline is the same task attempted without the target skill. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -79,14 +80,16 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 89.7% — baseline ran, but no comparable score was available; uplift unavailable | 83.6% — baseline ran, but no comparable score was available; uplift unavailable |
-| Security | 100.0% → 83.3% (-16.7 points) | 91.7% → 83.3% (-8.4 points) |
-| Correctness | 60.0% → 96.7% (+36.7 points) | 80.0% → 90.0% (+10.0 points) |
+| Overall | 92.2% — baseline ran, but no comparable score was available; uplift unavailable | 85.6% — baseline ran, but no comparable score was available; uplift unavailable |
+| Security | 100.0% → 83.3% (-16.7 points) | 91.7% → 100.0% (+8.3 points) |
+| Correctness | 60.0% → 96.7% (+36.7 points) | 70.0% → 86.7% (+16.7 points) |
 | Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 92.5% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 48.2% → 88.1% (+39.9 points) | 58.3% → 82.9% (+24.6 points) |
-| Efficiency | 80.6% — baseline ran, but no comparable score was available; uplift unavailable | 69.3% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 37.1% → 95.0% (+57.9 points) | 68.1% → 76.0% (+7.9 points) |
+| Efficiency | 85.9% — baseline ran, but no comparable score was available; uplift unavailable | 72.7% — baseline ran, but no comparable score was available; uplift unavailable |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
+
+Example: `47.0% → 92.0% (+45.0 points)` means the skill-assisted run scored 92.0%, 45.0 percentage points above its 47.0% no-skill baseline.
 
 A partial dimension was calculated from only the available configured signals; review the detailed report before relying on it.
 
@@ -97,9 +100,9 @@ Shared-source comparisons use the same signals and weights on both conditions. T
 | Agent | Dimension | Basis | Baseline → With skill (uplift) | Explanation |
 | --- | --- | --- | --- | --- |
 | claude-code | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| claude-code | Efficiency | Token-only comparison | 96.9% → 94.5% (-2.4 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| claude-code | Efficiency | Token-only comparison | 96.8% → 94.6% (-2.2 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
 | codex | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| codex | Efficiency | Token-only comparison | 87.3% → 88.6% (+1.3 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| codex | Efficiency | Token-only comparison | 88.2% → 88.2% (±0.0 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
 
 ### Tier Status
 
@@ -110,7 +113,7 @@ Shared-source comparisons use the same signals and weights on both conditions. T
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 6 task(s) |
 
 ## Skill Version(s): <br>
-90e957d (source: git SHA, committed 2026-11-16) <br>
+9d2aaed (source: git SHA, committed 2026-11-16) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

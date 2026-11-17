@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TypeVar
 
+from anonymizer.config.entity_labels import normalize_entity_label as normalize_label
 from anonymizer.engine.schemas import DetectionResult
 
 VALIDATION_CONTEXT_WINDOW = 32
@@ -66,11 +67,6 @@ class EntitySpan:
         }
 
 
-def normalize_label(label: str) -> str:
-    """Canonical normalization for entity label comparisons: strip + casefold."""
-    return label.strip().casefold()
-
-
 def normalize_labels(labels: Iterable[str] | None) -> set[str]:
     """Normalize a collection of labels, dropping empty/whitespace-only entries."""
     return {normalized for label in labels or [] if (normalized := normalize_label(label))}
@@ -102,7 +98,11 @@ def project_detection_result_to_entity_spans(result: DetectionResult) -> list[En
             start_position=observation.start_position,
             end_position=observation.end_position,
             score=observation.native_score or 0.0,
-            source="detector",
+            source=(
+                "detector"
+                if observation.source_kind == "initial_detector"
+                else f"{observation.source_kind}:{observation.source_instance}"
+            ),
         )
         for observation in result.observations
     ]

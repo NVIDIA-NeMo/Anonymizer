@@ -103,6 +103,8 @@ class AnonymizerResult(_DisplayMixin):
         detection_scope: The resolved detection scope the run used: effective
             labels, allowed labels (``None`` when ``entity_labels`` is unset),
             exclusions, and GLiNER threshold. ``None`` on ``evaluate()`` and hand-built results.
+        effective_entity_labels: Resolved detection labels used as coverage-prompt
+            guidance, without restricting permissive evaluation.
     """
 
     dataframe: pd.DataFrame
@@ -116,6 +118,7 @@ class AnonymizerResult(_DisplayMixin):
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
     detection_scope: DetectionScope | None = None
+    effective_entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
 
@@ -168,6 +171,8 @@ class PreviewResult(_DisplayMixin):
         detection_scope: The resolved detection scope the run used: effective
             labels, allowed labels (``None`` when ``entity_labels`` is unset),
             exclusions, and GLiNER threshold. ``None`` on ``evaluate()`` and hand-built results.
+        effective_entity_labels: Resolved detection labels used as coverage-prompt
+            guidance, without restricting permissive evaluation.
     """
 
     dataframe: pd.DataFrame
@@ -182,6 +187,7 @@ class PreviewResult(_DisplayMixin):
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
     detection_scope: DetectionScope | None = None
+    effective_entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
 

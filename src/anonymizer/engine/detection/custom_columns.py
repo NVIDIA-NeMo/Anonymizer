@@ -26,6 +26,7 @@ from anonymizer.engine.constants import (
     COL_MERGED_ENTITIES,
     COL_RAW_DETECTED,
     COL_RECONCILED_CANDIDATES,
+    COL_REGEX_DETECTION_RESULTS,
     COL_SEED_DETECTION_RESULT,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
@@ -39,7 +40,7 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.admission import apply_validation_admission
-from anonymizer.engine.detection.backend import _GlinerDetectionBackend
+from anonymizer.engine.detection.backend import _GlinerDetectionBackend, load_seed_detection_results
 from anonymizer.engine.detection.candidates import (
     coalesce_exact_candidates,
     materialize_admitted_candidates,
@@ -58,7 +59,6 @@ from anonymizer.engine.schemas import (
     AdmissionResults,
     AdmittedCandidate,
     AdmittedCandidates,
-    DetectionResult,
     EffectiveLabelPolicy,
     EntitiesSchema,
     SourceTextRef,
@@ -82,7 +82,7 @@ def prepare_detector_source(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @custom_column_generator(
-    required_columns=[RECORD_ID_COLUMN, COL_TEXT, COL_RAW_DETECTED],
+    required_columns=[RECORD_ID_COLUMN, COL_TEXT, COL_RAW_DETECTED, COL_REGEX_DETECTION_RESULTS],
     side_effect_columns=[COL_SEED_DETECTION_RESULT, COL_TAG_NOTATION],
 )
 def parse_detected_entities(
@@ -90,6 +90,7 @@ def parse_detected_entities(
     *,
     detection_result_id: str,
     source_instance: str,
+    regex_constrained_entity_labels: list[str] | None = None,
 ) -> dict[str, Any]:
     """Parse detector payload and produce seed entities."""
     text = str(row.get(COL_TEXT, ""))
@@ -107,10 +108,24 @@ def parse_detected_entities(
         canonical_text=text,
         raw_output=row.get(COL_RAW_DETECTED, ""),
     )
-    entities = project_detection_result_to_entity_spans(detection_result)
+    constrained = {label.strip().casefold() for label in regex_constrained_entity_labels or []}
+    detection_result = detection_result.model_copy(
+        update={
+            "observations": tuple(
+                observation
+                for observation in detection_result.observations
+                if observation.label.strip().casefold() not in constrained
+            )
+        }
+    )
+    row[COL_SEED_DETECTION_RESULT] = detection_result.model_dump(mode="json")
+    entities = [
+        entity
+        for result in load_seed_detection_results(row).results
+        for entity in project_detection_result_to_entity_spans(result)
+    ]
     seed_entities = [entity.as_dict() for entity in entities]
     row[COL_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
-    row[COL_SEED_DETECTION_RESULT] = detection_result.model_dump(mode="json")
     row[COL_TAG_NOTATION] = get_tag_notation(text=text)
     return row
 
@@ -146,7 +161,7 @@ def merge_and_build_candidates(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @custom_column_generator(
-    required_columns=[COL_TEXT, COL_SEED_DETECTION_RESULT, COL_ADMISSION_RESULTS],
+    required_columns=[COL_TEXT, COL_SEED_DETECTION_RESULT, COL_ADMISSION_RESULTS, COL_REGEX_DETECTION_RESULTS],
     side_effect_columns=[
         COL_ADMITTED_CANDIDATES,
         COL_INITIAL_TAGGED_TEXT,
@@ -159,7 +174,7 @@ def apply_validation_to_seed_entities(row: dict[str, Any]) -> dict[str, Any]:
     candidates = coalesce_exact_candidates(
         materialize_admitted_candidates(
             canonical_text=text,
-            detection_result=DetectionResult.model_validate(row[COL_SEED_DETECTION_RESULT]),
+            detection_result=load_seed_detection_results(row),
             admission_results=AdmissionResults.model_validate(row[COL_ADMISSION_RESULTS]),
         )
     )
@@ -189,6 +204,7 @@ def prepare_validation_inputs(row: dict[str, Any]) -> dict[str, Any]:
         COL_SEED_DETECTION_RESULT,
         COL_VALIDATION_DECISIONS,
         COL_VALIDATION_INVENTORIES,
+        COL_REGEX_DETECTION_RESULTS,
     ],
 )
 def admit_validation_decisions(
@@ -196,9 +212,10 @@ def admit_validation_decisions(
     *,
     allowed_entity_labels: list[str] | None = None,
     excluded_entity_labels: list[str] | None = None,
+    regex_constrained_entity_labels: list[str] | None = None,
 ) -> dict[str, Any]:
     """Admit observations under the configured label policy, checking inventory agreement."""
-    detection_result = DetectionResult.model_validate(row[COL_SEED_DETECTION_RESULT])
+    detection_result = load_seed_detection_results(row)
     inventories = tuple(ValidationRequestInventory.model_validate(item) for item in row[COL_VALIDATION_INVENTORIES])
     admission_results = apply_validation_admission(
         detection_result=detection_result,
@@ -208,6 +225,7 @@ def admit_validation_decisions(
             allowed_labels=allowed_entity_labels,
             excluded_labels=excluded_entity_labels,
         ),
+        regex_constrained_entity_labels=regex_constrained_entity_labels or (),
     )
     row[COL_ADMISSION_RESULTS] = AdmissionResults(results=admission_results).model_dump(mode="json")
     return row

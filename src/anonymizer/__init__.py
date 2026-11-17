@@ -27,6 +27,14 @@ if TYPE_CHECKING:
         TextRecord,
         TextRecordsInput,
     )
+    from anonymizer.config.regex import (
+        BUILTIN_REGEX_LABELS,
+        BuiltinRegex,
+        RegexCandidate,
+        RegexLimits,
+        RegexRule,
+        RegexValidationResult,
+    )
     from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
     from anonymizer.config.rewrite import PrivacyGoal
     from anonymizer.interface.anonymizer import Anonymizer as Anonymizer
@@ -54,6 +62,12 @@ _EXPORTS = {
     "RiskTolerance": "anonymizer.config.anonymizer_config",
     "TextRecord": "anonymizer.config.anonymizer_config",
     "TextRecordsInput": "anonymizer.config.anonymizer_config",
+    "BUILTIN_REGEX_LABELS": "anonymizer.config.regex",
+    "BuiltinRegex": "anonymizer.config.regex",
+    "RegexCandidate": "anonymizer.config.regex",
+    "RegexLimits": "anonymizer.config.regex",
+    "RegexRule": "anonymizer.config.regex",
+    "RegexValidationResult": "anonymizer.config.regex",
     "Annotate": "anonymizer.config.replace_strategies",
     "Hash": "anonymizer.config.replace_strategies",
     "Redact": "anonymizer.config.replace_strategies",
@@ -98,6 +112,8 @@ __all__ = [
     "AnonymizerInput",
     "AnonymizerIOError",
     "Annotate",
+    "BUILTIN_REGEX_LABELS",
+    "BuiltinRegex",
     "DEFAULT_ENTITY_LABELS",
     "Detect",
     "EvaluateConfig",
@@ -111,6 +127,10 @@ __all__ = [
     "NativeRuntimeSession",
     "PrivacyGoal",
     "Redact",
+    "RegexCandidate",
+    "RegexLimits",
+    "RegexRule",
+    "RegexValidationResult",
     "Rewrite",
     "RiskTolerance",
     "RunConfig",
