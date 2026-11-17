@@ -1900,3 +1900,52 @@ def test_strict_entity_protection_is_saved_for_report(stub_input: AnonymizerInpu
     )
     evaluated = anonymizer.evaluate(original)
     assert evaluated.execution_settings["strict_entity_protection"] is strict
+
+
+def test_run_warning_metadata_survives_preview_and_repeated_evaluation(stub_input: AnonymizerInput) -> None:
+    from anonymizer.engine import constants as cols
+
+    anonymizer, detector, runner, _ = _make_anonymizer()
+    detector.run.return_value.dataframe[cols.COL_AUGMENTATION_ATTEMPTS] = [
+        {
+            "attempts": [
+                {"attempt_index": 0, "failures": [{"category": "non_verbatim_context"}]},
+            ]
+        }
+    ]
+    runner.run.return_value.dataframe[cols.COL_REPLACEMENT_APPLICATION] = [
+        {"skipped_span_count": 2, "skipped_span_label_counts": {"age": 2}}
+    ]
+    original = anonymizer.preview(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+    assert [event["code"] for event in original.warning_metadata["run"]] == ["augmentation_grounding", "skipped_spans"]
+    frame = runner.run.return_value.dataframe.copy()
+    frame[cols.COL_ENTITY_COVERAGE] = [None]
+    runner.evaluate.return_value = ReplacementResult(dataframe=frame, failed_records=[])
+    evaluated = anonymizer.evaluate(original)
+    assert evaluated.warning_metadata["run"] == original.warning_metadata["run"]
+    assert evaluated.warning_metadata["evaluate"][0]["code"] == "judge_unavailable:Entity coverage"
+    repeated = anonymizer.evaluate(evaluated)
+    assert repeated.warning_metadata == evaluated.warning_metadata
+    assert "evaluate" not in original.warning_metadata
+
+
+@pytest.mark.parametrize("preview", [True, False])
+def test_execution_timings_survive_evaluation_and_are_refreshed(stub_input: AnonymizerInput, preview: bool) -> None:
+    anonymizer, _, runner, _ = _make_anonymizer()
+    config = AnonymizerConfig(replace=Redact())
+    original = (
+        anonymizer.preview(config=config, data=stub_input)
+        if preview
+        else anonymizer.run(config=config, data=stub_input)
+    )
+    assert original.execution_timings["run"]["Total detection"] is not None
+    assert original.execution_timings["run"]["Redact replacement"] is not None
+    assert original.execution_timings["run"]["Total elapsed"] is not None
+    runner.evaluate.return_value = ReplacementResult(dataframe=original.trace_dataframe.copy(), failed_records=[])
+    evaluated = anonymizer.evaluate(original)
+    assert evaluated.execution_timings["run"] == original.execution_timings["run"]
+    assert evaluated.execution_timings["evaluate"]["Total elapsed"] is not None
+    evaluated.execution_timings["evaluate"]["Stale task"] = 10.0
+    repeated = anonymizer.evaluate(evaluated)
+    assert "Stale task" not in repeated.execution_timings["evaluate"]
+    assert "evaluate" not in original.execution_timings

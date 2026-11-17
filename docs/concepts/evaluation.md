@@ -45,7 +45,8 @@ default. Explicit privacy-only display/export methods remain available.
 The former `compute_privacy_leakage` parameter was removed; use
 `compute_privacy_inference` instead. Unknown EvaluateConfig fields are rejected.
 
-The strategy and number of unique failed records appear below the title. Failure
+The report generation date (local date when displayed/exported) appears directly
+below the title, followed by the strategy and number of unique failed records. Failure
 counts retain saved pipeline and evaluation failures; repeated failures for the
 same record count once. When failures are present, a Failed Record Summary groups
 unique records by stage and exact saved reason. Expand Failed record details to
@@ -56,7 +57,24 @@ inferred cause; consult the run log for more specific diagnostics.
 Unavailable judge results are also shown separately in
 the summaries. The strategy is: Rewrite or Replace - Redact, Substitute,
 Annotate, or Hash. Older results without strategy metadata display Unknown.
-A compact **Models Used** section follows the strategy/failure information.
+**Run Warnings** follows the strategy/failure information. When events exist,
+Show warning summary expands a table grouped by stage and warning type, with
+occurrence counts (attempts, entries, spans, or evaluations) and unique affected
+records. A nested Warning details disclosure includes record IDs and saved
+value-free diagnostics. A record can appear in multiple groups.
+
+New runs save structured `warning_metadata` for augmentation grounding failures,
+missing or invalid replacement maps, repaired synthetic/original collisions,
+skipped replacement spans, and unavailable inference/judge evaluations.
+Evaluation retains original run warnings and replaces its prior evaluation
+warning snapshot on repeated evaluation. Failed records are reported separately.
+This is not a transcript of all logging: provider/network errors, library
+telemetry warnings, profiling warnings, and other external messages may require
+the run log. No console text is scraped. When captured phases have no warnings,
+the section says None. Older results without metadata say Warning information
+unavailable; evaluating older results cannot reconstruct their original run history.
+
+A compact **Models Used** section follows the warning information.
 Anonymization and evaluation tasks appear in two columns, with model names and
 providers (aliases are available on hover). Validator pools list all configured
 models. Only applicable roles are included; local Redact/Annotate/Hash replacements
@@ -642,3 +660,21 @@ batch receives the full current rewritten text and preserves original question I
 Answers are merged before leakage scoring and repair decisions. This also applies
 to the combined graph. A failed batch follows Rewrite's existing evaluation failure
 handling; partial answers are not scored. Quality QA is unchanged.
+
+### Execution time
+
+The report's **Execution Time** section shows saved anonymization and evaluation
+wall-clock timings side by side. Detection includes Detector (GLiNER), LLM
+validation, and LLM augmentation when scheduler timestamps are available, plus
+total detection time. Replacement and Rewrite stages reflect the workflows that
+ran; separate Rewrite scoring and repair workflows appear when used. Combined
+graph Rewrite reports its overall workflow time.
+
+Stages may overlap across records, so their durations should not be added.
+Detection task spans run from the first task acquiring a scheduler slot to the
+last task completing, including gaps between records. Workflow totals include
+setup and scheduling. Total anonymization time covers the pipeline, excluding
+input loading; evaluation time covers `evaluate()`, including model calls.
+Displaying or exporting the report uses saved results and does not repeat these
+calls. Evaluating again preserves anonymization timings and replaces evaluation
+timings. Older results without saved timings show **Unavailable**.

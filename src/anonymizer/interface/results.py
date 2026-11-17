@@ -44,6 +44,8 @@ class _DisplayMixin:
     entity_labels: list[str] | None
     excluded_entity_labels: list[str] | None
     data_summary: str | None
+    warning_metadata: dict[str, list[dict[str, Any]]]
+    execution_timings: dict[str, dict[str, float | None]]
 
     @property
     def privacy_findings(self) -> pd.DataFrame:
@@ -122,6 +124,8 @@ class _DisplayMixin:
             include_inference=include_inference,
             strategy=strategy,
             failed_records=self.failed_records,
+            warning_metadata=getattr(self, "warning_metadata", {}),
+            execution_timings=getattr(self, "execution_timings", {}),
             model_metadata=self.model_metadata,
             execution_settings=self.execution_settings,
             entity_labels=self.entity_labels,
@@ -203,6 +207,9 @@ class AnonymizerResult(_DisplayMixin):
             report's risk tolerance and repair threshold. None when unavailable.
         privacy_inference_enabled: Saved report choice from evaluate(). None
             uses the mode default (Rewrite enabled, Replace disabled).
+        execution_timings: Saved wall-clock durations grouped by run/evaluate phase.
+        warning_metadata: Structured warnings grouped by run/evaluate phase.
+            Missing phases indicate unavailable historical warning information.
         execution_settings: Saved batching and Rewrite strict-protection settings.
         model_metadata: Saved task/model/provider assignments for reports. Empty
             for older results without metadata; contains no provider credentials.
@@ -233,6 +240,8 @@ class AnonymizerResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
+    execution_timings: dict[str, dict[str, float | None]] = field(default_factory=dict)
+    warning_metadata: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     model_metadata: list[dict[str, str]] = field(default_factory=list)
     execution_settings: dict[str, int | None] = field(default_factory=dict)
     privacy_inference_enabled: bool | None = None
@@ -276,6 +285,9 @@ class PreviewResult(_DisplayMixin):
             report's risk tolerance and repair threshold. None when unavailable.
         privacy_inference_enabled: Saved report choice from evaluate(). None
             uses the mode default (Rewrite enabled, Replace disabled).
+        execution_timings: Saved wall-clock durations grouped by run/evaluate phase.
+        warning_metadata: Structured warnings grouped by run/evaluate phase.
+            Missing phases indicate unavailable historical warning information.
         execution_settings: Saved batching and Rewrite strict-protection settings.
         model_metadata: Saved task/model/provider assignments for reports. Empty
             for older results without metadata; contains no provider credentials.
@@ -307,6 +319,8 @@ class PreviewResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
+    execution_timings: dict[str, dict[str, float | None]] = field(default_factory=dict)
+    warning_metadata: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     model_metadata: list[dict[str, str]] = field(default_factory=list)
     execution_settings: dict[str, int | None] = field(default_factory=dict)
     privacy_inference_enabled: bool | None = None

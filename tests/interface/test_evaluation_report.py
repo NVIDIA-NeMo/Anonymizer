@@ -546,3 +546,116 @@ def test_data_summary_is_expandable_escaped_and_complete(
         assert "<h3>Data Summary</h3><p>None.</p>" in document
         assert "Show data summary" not in document
     assert result.data_summary == summary
+
+
+@pytest.mark.parametrize("preview", [False, True])
+def test_run_warnings_group_occurrences_and_unique_records_with_escaped_details(preview: bool, tmp_path: Path) -> None:
+    result = _result(pd.DataFrame([{}]), preview, replace_method=Redact())
+    base = {
+        "stage": "Detection",
+        "code": "grounding",
+        "message": "Grounding correction",
+        "unit": "attempts",
+        "count": 1,
+    }
+    result.warning_metadata = {
+        "run": [
+            {**base, "record_id": "r1", "detail": "<script>unsafe</script>"},
+            {**base, "record_id": "r1", "detail": "second attempt"},
+            {**base, "record_id": "r2", "detail": "first attempt"},
+        ]
+    }
+    document = result.export_evaluation_report(tmp_path / "warnings.html").read_text()
+    assert document.index("Run Warnings") < document.index("Models Used")
+    assert "<details><summary>Show warning summary</summary>" in document
+    assert "<summary>Warning details</summary>" in document
+    assert "<td>3 attempts</td>" in document
+    assert "<td>2</td>" in document
+    assert "&lt;script&gt;unsafe&lt;/script&gt;" in document
+    assert "<script>unsafe</script>" not in document
+    assert len(result.warning_metadata["run"]) == 3
+
+
+@pytest.mark.parametrize(
+    "metadata,expected",
+    [
+        ({}, "Warning information unavailable."),
+        ({"run": []}, "None."),
+        ({"evaluate": []}, "Warning information unavailable for the original run."),
+    ],
+)
+def test_run_warnings_distinguish_clean_run_from_unknown_history(
+    metadata: dict[str, Any], expected: str, tmp_path: Path
+) -> None:
+    result = _result(pd.DataFrame([{}]), replace_method=Redact())
+    result.warning_metadata = metadata
+    document = result.export_evaluation_report(tmp_path / "warnings.html").read_text()
+    section = document.split("<h3>Run Warnings</h3>", 1)[1].split("</section>", 1)[0]
+    assert expected in section
+    if not metadata or "run" not in metadata:
+        assert "<p>None.</p>" not in section
+
+
+def test_legacy_result_without_warning_attribute_shows_unknown_history(tmp_path: Path) -> None:
+    result = _result(pd.DataFrame([{}]), replace_method=Redact())
+    del result.warning_metadata
+    document = result.export_evaluation_report(tmp_path / "legacy.html").read_text()
+    assert "Warning information unavailable." in document
+
+
+@pytest.mark.parametrize("preview", [False, True])
+def test_report_generation_date_appears_under_title(
+    preview: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    fixed = datetime(2026, 11, 17, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr("anonymizer.interface.evaluation_report.datetime", SimpleNamespace(now=lambda: fixed))
+    result = _result(pd.DataFrame([{}]), preview, replace_method=Redact())
+    document = result.export_evaluation_report(tmp_path / "dated.html").read_text()
+    date_line = f"<p><strong>Date generated:</strong> {fixed.astimezone().date().isoformat()}</p>"
+    assert date_line in document
+    assert (
+        document.index("<h1>NeMo Anonymizer Evaluation Report</h1>")
+        < document.index(date_line)
+        < document.index("<strong>Strategy:</strong>")
+    )
+
+
+def test_execution_times_are_saved_only_and_missing_times_are_unavailable() -> None:
+    from anonymizer.interface.evaluation_report import _render_execution_times
+
+    report = _render_execution_times(
+        {
+            "run": {"Detector (GLiNER)": 1.25, "LLM validation": None, "Total elapsed": 12.5},
+            "evaluate": {"Privacy <QA>": 0.0, "Total elapsed": 3.0},
+        }
+    )
+    assert "Execution Time" in report
+    assert "1.25 s" in report
+    assert "12.50 s" in report
+    assert "0.00 s" in report
+    assert "Unavailable" in report
+    assert "Privacy &lt;QA&gt;" in report
+    assert "should not be added" in report
+    assert _render_execution_times({}).count("<td>Unavailable</td>") == 2
+
+
+@pytest.mark.parametrize("preview", [True, False])
+def test_execution_times_appear_in_full_report_and_old_results(preview: bool, tmp_path: Path) -> None:
+    result = _result(
+        pd.DataFrame(),
+        preview,
+        execution_timings={
+            "run": {"Total elapsed": 20.0},
+            "evaluate": {"Total elapsed": 5.0},
+        },
+    )
+    path = result.export_evaluation_report(tmp_path / "timed.html")
+    report = path.read_text()
+    assert "Total anonymization time</th><td>20.00 s" in report
+    assert "Total evaluation time</th><td>5.00 s" in report
+    del result.execution_timings
+    assert "Execution Time" in result._evaluation_report_html()
+    assert "Total anonymization time</th><td>Unavailable" in result._evaluation_report_html()

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import html
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +57,60 @@ def _render_failed_records(failures: list[FailedRecord]) -> tuple[int, str]:
         "<th>Record ID</th><th>Stage</th><th>Saved reason</th></tr></thead><tbody>"
         + detail_rows
         + "</tbody></table></div></details></section>"
+    )
+
+
+def _render_run_warnings(metadata: dict[str, list[dict[str, Any]]]) -> str:
+    """Summarize structured events without treating missing history as no warnings."""
+    heading = "<h3>Run Warnings</h3>"
+    if not metadata:
+        return "<section>" + heading + "<p>Warning information unavailable.</p></section>"
+    events = [event for phase in metadata.values() for event in phase]
+    historical_note = "<p>Warning information unavailable for the original run.</p>" if "run" not in metadata else ""
+    if not events:
+        return "<section>" + heading + historical_note + ("<p>None.</p>" if not historical_note else "") + "</section>"
+    groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+    for event in events:
+        key = tuple(str(event.get(field, "Unknown")) for field in ("stage", "code", "message", "unit"))
+        groups.setdefault(key, []).append(event)
+    summary_rows = []
+    for (stage, _code, message, unit), group in groups.items():
+        count = sum(int(event.get("count", 1)) for event in group)
+        records = {str(event["record_id"]) for event in group if event.get("record_id") is not None}
+        summary_rows.append(
+            {
+                "Stage": stage,
+                "Warning": message,
+                "Occurrences": f"{count} {unit}",
+                "Affected records": str(len(records)) if records else "Unknown",
+            }
+        )
+    detail_rows = [
+        {
+            "Stage": event.get("stage"),
+            "Record ID": event.get("record_id"),
+            "Warning": event.get("message"),
+            "Occurrences": f"{event.get('count', 1)} {event.get('unit', '')}",
+            "Details": event.get("detail", ""),
+        }
+        for event in events
+    ]
+    with pd.option_context("display.max_colwidth", None):
+        summary_table = pd.DataFrame(summary_rows).to_html(index=False, escape=True, border=0)
+        detail_table = pd.DataFrame(detail_rows).to_html(index=False, escape=True, border=0)
+    return (
+        "<section>"
+        + heading
+        + "<details><summary>Show warning summary</summary>"
+        + historical_note
+        + '<div class="privacy-details">'
+        + summary_table
+        + "</div>"
+        "<p>Occurrences count attempts, entries, spans, or evaluations as labeled; affected records are unique per warning. "
+        "One record may appear in multiple groups. This covers saved Anonymizer pipeline diagnostics; "
+        "provider, network, and library messages may require the run log.</p>"
+        "<details><summary>Warning details</summary>"
+        '<div class="privacy-details">' + detail_table + "</div></details></details></section>"
     )
 
 
@@ -175,6 +230,7 @@ def render_evaluation_report_html(
     strategy: str,
     include_inference: bool,
     failed_records: list[FailedRecord],
+    warning_metadata: dict[str, list[dict[str, Any]]],
     model_metadata: list[dict[str, str]],
     execution_settings: dict[str, int | None],
     entity_labels: list[str] | None,
@@ -184,6 +240,7 @@ def render_evaluation_report_html(
     privacy_issues: pd.DataFrame,
     judge_summary: pd.DataFrame,
     judge_issues: pd.DataFrame,
+    execution_timings: dict[str, dict[str, float | None]] | None = None,
 ) -> str:
     """Render summaries side by side and problem details below, with escaped data."""
     failed_count, failure_summary = _render_failed_records(failed_records)
@@ -262,10 +319,15 @@ def render_evaluation_report_html(
         ".anonymizer-evaluation-report .privacy-details{overflow:visible;}"
         ".anonymizer-evaluation-report thead{display:table-header-group;}}"
         "</style><h1>NeMo Anonymizer Evaluation Report</h1>"
-        "<p><strong>Strategy:</strong> "
+        + "<p><strong>Date generated:</strong> "
+        + datetime.now().astimezone().date().isoformat()
+        + "</p>"
+        + "<p><strong>Strategy:</strong> "
         + html.escape(strategy)
         + f" &nbsp; | &nbsp; <strong>Failed records:</strong> {failed_count}</p>"
         + failure_summary
+        + _render_run_warnings(warning_metadata)
+        + _render_execution_times(execution_timings or {})
         + _render_models_used(model_metadata)
         + _render_labels_used(entity_labels, excluded_entity_labels)
         + _render_data_summary(data_summary)
@@ -301,3 +363,27 @@ def write_report_html(path: str | Path, report: str, *, title: str) -> Path:
     )
     destination.write_text(document, encoding="utf-8")
     return destination
+
+
+def _render_execution_times(metadata: dict[str, dict[str, float | None]]) -> str:
+    """Render saved timings, distinguishing absent measurements from zero."""
+    sections = []
+    for phase, title in (("run", "Anonymization"), ("evaluate", "Evaluation")):
+        tasks = metadata.get(phase, {})
+        rows = []
+        for task, elapsed in tasks.items():
+            if task == "Total elapsed" or (task == "Detection workflow" and "Total detection" in tasks):
+                continue
+            value = "Unavailable" if elapsed is None else f"{elapsed:,.2f} s"
+            rows.append(f"<tr><th>{html.escape(task)}</th><td>{value}</td></tr>")
+        total = tasks.get("Total elapsed")
+        value = "Unavailable" if total is None else f"{total:,.2f} s"
+        rows.append(f"<tr><th>Total {title.lower()} time</th><td>{value}</td></tr>")
+        sections.append(f"<section><h4>{title}</h4><table>{''.join(rows)}</table></section>")
+    return (
+        '<section><h3>Execution Time</h3><div class="evaluation-summaries">'
+        + "".join(sections)
+        + "</div><p>Elapsed wall-clock time. Stages can overlap across records and should not be added together. "
+        "Evaluation time covers evaluate(), including its model calls; displaying or exporting this report does not rerun evaluation. "
+        "Unavailable means no timing was saved.</p></section>"
+    )

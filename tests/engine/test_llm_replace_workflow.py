@@ -391,3 +391,25 @@ def test_filter_replacement_map_empty_warning_does_not_leak_pii(
     assert "first_name" in caplog.text
     _assert_no_pii_in_logs(caplog, extra_secrets=("Acme Corp", "NovaCorp"))
     assert result == {"replacements": []}
+
+
+def test_map_warning_events_capture_missing_entries_and_repairs_without_values() -> None:
+    parsed = EntitiesByValueSchema.model_validate(
+        {
+            "entities_by_value": [
+                {"value": "Private Alice", "labels": ["full_name"]},
+                {"value": "Private Bob", "labels": ["full_name"]},
+            ]
+        }
+    )
+    events = []
+    result = _filter_replacement_map_to_input_entities(
+        raw_map={"replacements": [{"original": "Private Alice", "label": "full_name", "synthetic": "Private Bob"}]},
+        parsed_entities=parsed,
+        record_id="row-1",
+        warnings=events,
+    )
+    assert {event["code"] for event in events} == {"map_missing", "map_collision_repaired"}
+    assert all(event["count"] == 1 and event["unit"] == "entries" for event in events)
+    assert "Private Alice" not in str(events) and "Private Bob" not in str(events)
+    assert result["replacements"][0]["synthetic"] not in {"Private Alice", "Private Bob"}

@@ -7,6 +7,7 @@ import json
 import logging
 from collections import Counter
 from dataclasses import dataclass
+from typing import Any
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
@@ -21,7 +22,9 @@ from anonymizer.engine.constants import (
     COL_ENTITY_EXAMPLES,
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_SOURCE,
+    COL_REPLACEMENT_WARNINGS,
     ENTITY_LABEL_EXAMPLES,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
@@ -106,14 +109,21 @@ class LlmReplaceWorkflow:
         )
         output_df = run_result.dataframe.copy()
         # Drop any LLM-returned replacements that were not requested for this row.
-        output_df[COL_REPLACEMENT_MAP] = output_df.apply(
-            lambda row: _filter_replacement_map_to_input_entities(
-                raw_map=row.get(COL_REPLACEMENT_MAP, {"replacements": []}),
-                parsed_entities=EntitiesByValueSchema.from_raw(row.get(entities_column, {})),
-                record_id=str(row.get("_anonymizer_record_id", "")),
-            ),
-            axis=1,
-        )
+        maps: list[dict[str, list[dict[str, str]]]] = []
+        warning_payloads: list[str] = []
+        for _, row in output_df.iterrows():
+            warnings: list[dict[str, Any]] = []
+            maps.append(
+                _filter_replacement_map_to_input_entities(
+                    raw_map=row.get(COL_REPLACEMENT_MAP, {"replacements": []}),
+                    parsed_entities=EntitiesByValueSchema.from_raw(row.get(entities_column, {})),
+                    record_id=str(row.get(RECORD_ID_COLUMN, "")),
+                    warnings=warnings,
+                )
+            )
+            warning_payloads.append(json.dumps(warnings))
+        output_df[COL_REPLACEMENT_MAP] = pd.Series(maps, index=output_df.index, dtype=object)
+        output_df[COL_REPLACEMENT_WARNINGS] = pd.Series(warning_payloads, index=output_df.index, dtype=object)
         output_df[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
 
         combined = merge_and_reorder(output_df, passthrough_rows)
@@ -145,11 +155,28 @@ def _filter_replacement_map_to_input_entities(
     raw_map: object,
     parsed_entities: EntitiesByValueSchema,
     record_id: str = "",
+    warnings: list[dict[str, Any]] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
     """Keep only replacement entries that correspond to actual requested entities."""
+
+    def warn(code: str, message: str, count: int, detail: str = "", unit: str = "entries") -> None:
+        if warnings is not None:
+            warnings.append(
+                {
+                    "stage": "Replacement",
+                    "code": code,
+                    "message": message,
+                    "record_id": record_id or None,
+                    "count": count,
+                    "unit": unit,
+                    "detail": detail,
+                }
+            )
+
     if isinstance(raw_map, BaseModel):
         raw_map = raw_map.model_dump(mode="python")
     if not isinstance(raw_map, dict):
+        warn("map_invalid", "Replacement map had an unexpected format", 1, unit="maps")
         logger.warning(
             "Replacement map has unexpected type for record %s: %s",
             record_id or "<unknown>",
@@ -191,7 +218,21 @@ def _filter_replacement_map_to_input_entities(
         seen.add(key)
         filtered.append(replacement.model_dump())
 
+    missing = allowed_pairs - seen
+    if missing:
+        warn(
+            "map_missing",
+            "Requested values missing from replacement map",
+            len(missing),
+            "Missing entries by label: " + str(dict(Counter(label for _, label in missing))),
+        )
     if synthetic_collision_labels:
+        warn(
+            "map_collision_repaired",
+            "Synthetic values matched originals and were repaired",
+            sum(synthetic_collision_labels.values()),
+            str(dict(synthetic_collision_labels)),
+        )
         logger.warning(
             "Replacement map repaired synthetic-original collision entries for record %s; repaired=%d "
             "(repaired_by_label=%s)",

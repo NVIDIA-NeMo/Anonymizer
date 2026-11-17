@@ -31,7 +31,13 @@ from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
-from anonymizer.engine.constants import RECORD_ID_COLUMN
+from anonymizer.engine.constants import (
+    COL_AUGMENTED_ENTITIES,
+    COL_RAW_DETECTED,
+    COL_VALIDATION_DECISIONS,
+    RECORD_ID_COLUMN,
+)
+from anonymizer.engine.execution_timing import record_elapsed
 from anonymizer.engine.ndd.storage import prepare_json_storage_column, prepare_json_storage_seed
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
@@ -557,6 +563,7 @@ class NddAdapter:
             column_names=col_names,
             model_usage=_success_model_usage,
         )
+        _record_report_timings(workflow_name, time.perf_counter() - started, task_traces)
         return WorkflowRunResult(dataframe=output_df, failed_records=failed_records)
 
     def build_config(
@@ -1373,3 +1380,45 @@ def _trace_duration(start: Any, end: Any) -> float | None:
     if start <= 0 or end <= 0 or end < start:
         return None
     return float(end - start)
+
+
+def _record_report_timings(workflow_name: str, elapsed: float, task_traces: list[_TaskTrace]) -> None:
+    """Record workflow elapsed time and detection spans across concurrent records."""
+    labels = {
+        "entity-detection": "Detection workflow",
+        "latent-entity-detection": "Latent entity detection",
+        "replace-map-generation": "Substitute map generation",
+        "replace-judges": "Privacy & quality judges",
+        "replace-label-classification": "Entity label classification",
+        "replace-privacy": "Privacy inference",
+        "rewrite-pipeline": "Rewrite generation pipeline",
+        "rewrite-combined": "Combined Rewrite generation, scoring & repair",
+        "rewrite-final-judge": "Rewrite privacy, quality & style judges",
+        "entity-coverage-judge": "Entity coverage judge",
+        "replace-detection-judge": "Detection validity judge",
+    }
+    label = labels.get(workflow_name, workflow_name.replace("-", " ").capitalize())
+    if workflow_name.startswith("rewrite-repair-"):
+        label = f"Repair round {int(workflow_name.rsplit('-', 1)[1]) + 1}"
+    elif workflow_name.startswith("rewrite-evaluate-"):
+        iteration = int(workflow_name.rsplit("-", 1)[1])
+        label = "Initial Rewrite scoring" if iteration == 0 else f"Scoring after repair round {iteration}"
+    record_elapsed(label, elapsed)
+    if workflow_name != "entity-detection":
+        return
+    for column, label in (
+        (COL_RAW_DETECTED, "Detector (GLiNER)"),
+        (COL_VALIDATION_DECISIONS, "LLM validation"),
+        (COL_AUGMENTED_ENTITIES, "LLM augmentation"),
+    ):
+        intervals: list[tuple[float, float]] = []
+        for trace in task_traces:
+            if _trace_attr(trace, "column") != column:
+                continue
+            start = _trace_attr(trace, "slot_acquired_at")
+            end = _trace_attr(trace, "completed_at")
+            if _trace_duration(start, end) is not None:
+                intervals.append((float(start), float(end)))
+        record_elapsed(
+            label, max(end for _, end in intervals) - min(start for start, _ in intervals) if intervals else None
+        )

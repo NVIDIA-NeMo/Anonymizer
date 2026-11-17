@@ -70,6 +70,8 @@ from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWor
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
+from anonymizer.engine.evaluation.run_warnings import collect_evaluation_warnings, collect_run_warnings
+from anonymizer.engine.execution_timing import capture_execution, record_elapsed
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import (
@@ -540,6 +542,10 @@ class Anonymizer:
                 rewrite_evaluation=result.rewrite_evaluation,
                 model_metadata=[dict(entry) for entry in result.model_metadata],
                 execution_settings=dict(result.execution_settings),
+                execution_timings={phase: dict(tasks) for phase, tasks in result.execution_timings.items()},
+                warning_metadata={
+                    phase: [dict(event) for event in events] for phase, events in result.warning_metadata.items()
+                },
                 entity_labels=config.detect.entity_labels,
                 excluded_entity_labels=config.detect.excluded_entity_labels,
                 data_summary=result.data_summary,
@@ -561,6 +567,7 @@ class Anonymizer:
                 duration_sec=time.perf_counter() - t_start,
             )
 
+    @capture_execution("evaluate")
     def evaluate(
         self,
         output: AnonymizerResult | PreviewResult,
@@ -791,6 +798,17 @@ class Anonymizer:
                 data_summary=data_summary,
             )
 
+        result.execution_timings = {
+            phase: dict(tasks)
+            for phase, tasks in getattr(output, "execution_timings", {}).items()
+            if phase != "evaluate"
+        }
+        result.warning_metadata = {
+            phase: [dict(event) for event in events]
+            for phase, events in getattr(output, "warning_metadata", {}).items()
+            if phase != "evaluate"
+        }
+        result.warning_metadata["evaluate"] = collect_evaluation_warnings(result.trace_dataframe)
         result.privacy_inference_enabled = inference_enabled
         result.execution_settings = dict(output.execution_settings)
         if rewrite_config is None and inference_enabled:
@@ -827,6 +845,7 @@ class Anonymizer:
         """Validate that the active workflow config is compatible with model selections."""
         self._validate_preflight_config(config)
 
+    @capture_execution("run")
     def _run_internal(
         self,
         *,
@@ -956,6 +975,7 @@ class Anonymizer:
         if not _accepts_keyword(self._detection_workflow.run, "ignored_entity_values"):
             detection_result = _finalize_legacy_detection_result(detection_result, config.detect)
         detection_elapsed = time.perf_counter() - t0
+        record_elapsed("Total detection", detection_elapsed)
         entity_count = _count_entities(detection_result.dataframe)
         detection_failed = len(detection_result.failed_records)
         logger.info(
@@ -982,6 +1002,7 @@ class Anonymizer:
                 preview_num_records=preview_num_records,
             )
             replace_elapsed = time.perf_counter() - t0
+            record_elapsed(f"{strategy_name} replacement", replace_elapsed)
             final_df = replace_result.dataframe
             post_detection_failures = replace_result.failed_records
             logger.info(
@@ -1010,6 +1031,7 @@ class Anonymizer:
                 strict_entity_protection=config.rewrite.strict_entity_protection,
             )
             rewrite_elapsed = time.perf_counter() - t0
+            record_elapsed("Total rewrite", rewrite_elapsed)
             final_df = rewrite_result.dataframe
             post_detection_failures = rewrite_result.failed_records
             logger.info(
@@ -1050,6 +1072,7 @@ class Anonymizer:
             failed_records=all_failures,
             id_column=context.resolved_id_column,
             model_metadata=run_model_metadata(config, self._selected_models, self._model_configs),
+            warning_metadata={"run": collect_run_warnings(detection_result.dataframe, final_df)},
             execution_settings={
                 "validation_max_entities_per_call": config.detect.validation_max_entities_per_call,
                 **(

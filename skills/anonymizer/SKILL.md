@@ -75,6 +75,13 @@ and evaluation failures are preserved and record IDs deduplicated). A Failed
 Record Summary groups unique records by stage and exact saved reason, with
 expandable record IDs and full reasons; group counts may overlap and duplicate
 failure entries are omitted from display. Generic reasons are not embellished.
+Run Warnings is collapsed when populated. Structured `warning_metadata` is saved
+per run/evaluation phase, counting grounding attempts, map entries, skipped spans,
+and unavailable evaluations separately from unique affected records. Details
+include record IDs and value-free diagnostics. No events says None; missing
+historical metadata says Warning information unavailable. Evaluation preserves
+run warnings and refreshes its evaluation warnings without duplication. This is
+pipeline diagnostics, not all provider/network/library logs; no console scraping.
 Models Used appears before the summaries, with anonymization and evaluation tasks
 in two columns. `model_metadata` stores safe snapshots of task, alias, model name,
 and provider (no credentials/endpoints). Run/preview snapshots persist through
@@ -322,3 +329,10 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 ```
+
+The evaluation report includes saved **Execution Time** tables for anonymization
+and evaluation. Detection task spans include GLiNER, LLM validation, and LLM
+augmentation when available. Stages may overlap and are not additive. Repeated
+`evaluate()` calls refresh evaluation timings and preserve run timings. Older
+results without timing metadata show Unavailable; report display/export does not
+rerun model calls.
