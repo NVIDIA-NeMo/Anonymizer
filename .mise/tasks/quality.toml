@@ -26,8 +26,11 @@ description = "Check SPDX headers without modifying files."
 run = "uv run tools/codestyle/copyright_fixer.py --check ."
 
 ["check:lock"]
-description = "Verify that uv.lock matches pyproject.toml."
-run = "uv lock --check"
+description = "Verify that the root and serving-runtime lockfiles match their pyproject.toml files."
+run = [
+  "uv lock --check",
+  "uv lock --project tools/inference-service-runtime --check",
+]
 
 ["lock:update"]
 description = "Regenerate uv.lock from project dependency metadata. Modifies uv.lock."

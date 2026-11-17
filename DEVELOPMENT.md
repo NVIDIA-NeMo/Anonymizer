@@ -22,6 +22,9 @@ make setup
 ```
 
 `make setup` installs Mise when needed, trusts the repository's `.mise.toml`, then runs the default `dev` setup profile.
+
+After setup, verify that `mise --version` works in your terminal. If the command isn't found, follow mise's [shell setup instructions](https://mise.jdx.dev/getting-started.html#activate-mise) for your environment. This is a one-time setup per machine and shell.
+
 If Mise is already installed, trust the configuration once and run the same onboarding flow directly:
 
 ```bash
@@ -192,7 +195,7 @@ mise run check:type
 
 `ty` checks `src`, `tests`, `tests_e2e`, `docs`, `scripts`, and `tools`. Errors and warnings fail locally and in CI.
 
-Check lockfile freshness:
+Check that `uv.lock` and the serving runtime's `tools/inference-service-runtime/uv.lock` are current:
 
 ```bash
 mise run check:lock
@@ -298,3 +301,19 @@ The manual workflow (`workflow_dispatch`) takes three inputs. What it does depen
 `create-gh-release` applies only when `dry-run` is off. A dry run never creates the release or deploys docs. The Test PyPI upload uses `--skip-existing`, so re-running a tag whose version is already on Test PyPI passes without uploading.
 
 `mise run publish:pypi <version>` builds and publishes an explicit version straight to PyPI, with no Test PyPI step and no tag check. It runs `release:verify` before uploading. It is a manual fallback, not the release path; `--dry-run` builds and validates without uploading.
+
+## Local inference service environment
+
+The vLLM serving runtime has an independent Python 3.12 uv project at
+`tools/inference-service-runtime`. Its lockfile resolves separately from
+Anonymizer and DataDesigner. From the repository root:
+
+```bash
+uv sync --project tools/inference-service-runtime --locked --group test
+uv run --project tools/inference-service-runtime --locked --group test pytest --confcutdir tests/tools tests/tools/test_inference_service.py tests/tools/test_vllm_*.py
+```
+
+`--confcutdir` keeps the serving tests independent of Anonymizer's test fixtures.
+`mise run check:lock` checks both lockfiles without installing the serving stack.
+See the [deployment guide](docs/concepts/inference-services.md) for launch commands
+and the container workflow.
