@@ -25,6 +25,8 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP_SOURCE,
     ENTITY_LABEL_EXAMPLES,
 )
+from anonymizer.engine.graph_core.session import BY_VALUE, FALLBACK, Decision, SessionView, Slot
+from anonymizer.engine.graph_core.session import normalize as _fold
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import DataDesignerBackend
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
@@ -48,6 +50,7 @@ class LlmReplaceResult:
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
     source_positions: tuple[int, ...] | None = None
+    decisions: tuple[tuple[Decision, ...], ...] = ()  # per returned row, under a stable Session only
 
 
 class LlmReplaceWorkflow:
@@ -67,7 +70,13 @@ class LlmReplaceWorkflow:
         entities_column: str = COL_ENTITIES_BY_VALUE,
         preview_num_records: int | None = None,
         consistency: Literal["record", "run"] = "record",
+        session: SessionView | None = None,
     ) -> LlmReplaceResult:
+        """Under a stable ``session``, the fold runs in ``"run"`` mode, starts from the Session's assignments and
+        returns each row's decisions; any other ``session`` is ignored."""
+        view = session if session is not None and session.mode.stable_replacements else None
+        if view is not None:
+            consistency = "run"
         working_df = dataframe.copy()
 
         # Parse the per-row entity payload once, then reuse it for prompt inputs.
@@ -132,8 +141,11 @@ class LlmReplaceWorkflow:
         combined = merge_and_reorder(output_df, passthrough_rows)
         requested = [_requested_values(EntitiesByValueSchema.from_raw(v)) for v in combined[entities_column]]
         tally: Counter[tuple[str, ...]] = Counter()
+        decisions: list[tuple[Decision, ...]] = []
         with stage_timer("LlmReplaceWorkflow.fold", consistency=consistency, input_row_count=len(combined)) as fields:
-            maps = _fold_replacement_maps(combined[COL_REPLACEMENT_MAP].tolist(), consistency, requested, tally)
+            maps = _fold_replacement_maps(
+                combined[COL_REPLACEMENT_MAP].tolist(), consistency, requested, tally, view, decisions
+            )
             fields["entry_count"] = sum(len(m.get("replacements", [])) for m in maps)
             fields["records_with_placeholder"] = tally.pop(("records_with_placeholder",), 0)
             fallbacks: dict[str, dict[str, int]] = {}
@@ -145,11 +157,8 @@ class LlmReplaceWorkflow:
             dataframe=combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
             failed_records=run_result.failed_records,
             source_positions=positions,
+            decisions=tuple(decisions),
         )
-
-
-def _fold(value: str) -> str:
-    return " ".join(value.casefold().split())
 
 
 def _recase(synthetic: str, *, like: str, source: str) -> str:
@@ -167,6 +176,8 @@ def _fold_replacement_maps(
     consistency: Literal["record", "run"],
     requested: list[set[str]] | None = None,
     tally: Counter[tuple[str, ...]] | None = None,
+    view: SessionView | None = None,
+    decisions: list[tuple[Decision, ...]] | None = None,
 ) -> list[dict]:
     """Give entries with the same (label, case- and whitespace-folded value) one substitute, re-cased to each original.
 
@@ -188,11 +199,32 @@ def _fold_replacement_maps(
     When given, ``tally`` counts each fallback as ``(label, step)`` with step ``own``, ``placeholder_taken``
     (``"run"`` only) or ``placeholder_protected`` (its own proposal folds to a value in its record), plus
     ``("records_with_placeholder",)``.
+
+    With a stable Session's ``view`` (``"run"`` mode only), a key the run has not mapped yet takes the Session's
+    assignment, re-cased against its normalized original. A substitute also collides when the Session assigns it to
+    another key, or, unless it is the key's own held substitute, when it is a value the Session holds; a placeholder
+    is never one the Session assigns to another key. ``decisions`` then gets one tuple per map: a decision for each
+    key first used in that map, holding the key's run-wide substitute, and one for each record-local substitute not
+    marked before, under the fallback subject and keyed by that substitute, so later calls treat it as taken.
     """
     run_wide: dict[tuple[str, str], tuple[str, str]] = {}
     taken: dict[str, set[tuple[str, str]]] = {}
+    decided: set[tuple[str, str]] = set()
+    marked: set[tuple[str, str]] = set()  # (label, normalized record-local substitute)
     run_placeholders: Counter[str] = Counter()
     folded: list[dict] = []
+
+    def held(key: tuple[str, str], own: tuple[str, str]) -> tuple[str, str]:
+        if view is not None and key not in run_wide and (assigned := view.lookup((BY_VALUE, *key))) is not None:
+            run_wide[key] = (key[1], assigned)
+        return run_wide.get(key, own)
+
+    def crosses(value: str, key: tuple[str, str]) -> bool:
+        if view is None:
+            return False
+        holding = key in run_wide and _fold(run_wide[key][1]) == value
+        return view.assigned_elsewhere(value, (BY_VALUE, *key)) or (not holding and view.is_original(value))
+
     for index, raw in enumerate(maps):
         keyed = [((e["label"], _fold(e["original"])), e) for e in raw.get("replacements", [])]
         originals = {key[1] for key, _ in keyed} | {_fold(v) for v in (requested[index] if requested else ())}
@@ -204,7 +236,7 @@ def _fold_replacement_maps(
         def collides(value: str, key: tuple[str, str], *, shared: bool) -> bool:
             rivals = proposed.get(value, set()) if shared and key not in run_wide else set()
             others = rivals | emitted.get(value, set()) | taken.get(value, set())
-            return value in originals or bool(others - {key})
+            return value in originals or bool(others - {key}) or crosses(value, key)
 
         record: dict[tuple[str, str], tuple[str, str]] = {}
         placeholders: Counter[str] = run_placeholders if consistency == "run" else Counter()
@@ -213,7 +245,7 @@ def _fold_replacement_maps(
         for key, entry in keyed:
             own = (entry["original"], entry["synthetic"])
             first = key not in record
-            source = record.setdefault(key, run_wide.get(key, own))
+            source = record.setdefault(key, held(key, own))
             synthetic = _recase(source[1], like=entry["original"], source=source[0])
             if collides(_fold(synthetic), key, shared=True):
                 step = "own" if entry["synthetic"] != synthetic else None
@@ -225,10 +257,11 @@ def _fold_replacement_maps(
                     step = "placeholder_protected" if in_record else "placeholder_taken"
                     placeholders[entry["label"]] += 1
                     used += 1
+                    protected: tuple[Container[str], ...] = (originals, proposed, emitted, taken)
+                    if view is not None:
+                        protected = (*protected, _AssignedElsewhere(view, (BY_VALUE, *key)))
                     synthetic = _collision_safe_synthetic(
-                        entry["label"],
-                        index=placeholders[entry["label"]],
-                        protected_original_values=(originals, proposed, emitted, taken),
+                        entry["label"], index=placeholders[entry["label"]], protected_original_values=protected
                     )
                     source = (entry["original"], synthetic)
                 if first:
@@ -246,6 +279,16 @@ def _fold_replacement_maps(
                 run_wide.setdefault(key, source)
             for value, keys in emitted.items():
                 taken.setdefault(value, set()).update(keys)
+        if decisions is not None and view is not None:
+            fresh = [key for key in record if key not in decided]
+            row = [Decision((BY_VALUE, *key), run_wide[key][1]) for key in fresh]
+            decided.update(fresh)
+            for key, entry in zip((k for k, _ in keyed), out):
+                local = (key[0], _fold(entry["synthetic"]))
+                if local[1] != _fold(run_wide[key][1]) and local not in marked:
+                    row.append(Decision((FALLBACK, *local), local[1]))
+                    marked.add(local)
+            decisions.append(tuple(row))
         folded.append({**raw, "replacements": out})
     return folded
 
@@ -323,6 +366,18 @@ def _filter_replacement_map_to_input_entities(
             len(parsed_map.replacements),
         )
     return {"replacements": filtered}
+
+
+class _AssignedElsewhere:
+    """A Session view as a protected container: the values it assigns to a slot other than ``slot``."""
+
+    __slots__ = ("_slot", "_view")
+
+    def __init__(self, view: SessionView, slot: Slot) -> None:
+        self._view, self._slot = view, slot
+
+    def __contains__(self, value: object) -> bool:
+        return isinstance(value, str) and self._view.assigned_elsewhere(value, self._slot)
 
 
 def _collision_safe_synthetic(label: str, *, index: int, protected_original_values: tuple[Container[str], ...]) -> str:

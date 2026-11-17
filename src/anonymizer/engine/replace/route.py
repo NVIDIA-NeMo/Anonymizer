@@ -55,6 +55,7 @@ from anonymizer.engine.graph_core.authoring import (
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
+from anonymizer.engine.graph_core.session import DECISIONS, SESSION_VIEW, Session, SessionView
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
 from anonymizer.engine.replace.llm_replace_workflow import (
@@ -135,12 +136,18 @@ def _substitute_map_step(
     failures: list[FailedRecord],
     frame: Callable[[tuple[Datum, ...]], tuple[pd.DataFrame, Sequence[Datum]]],
 ) -> Operation:
-    """One ``generate_map_only`` call over ``frame(target)``'s frame and the target each of its rows belongs to."""
+    """One ``generate_map_only`` call over ``frame(target)``'s frame and the target each of its rows belongs to.
 
-    def generate_maps(target: tuple[Datum, ...]) -> list[dict[str, Any] | None]:
+    Under a stable Session, each row's decisions go out on its target's ``decisions`` port."""
+
+    def generate_maps(target: tuple[Datum, ...], session: tuple[SessionView, ...]) -> list[dict[str, Any] | None]:
         source, owners = frame(target)
         result = llm_workflow.generate_map_only(
-            source, instructions=replace_method.instructions, consistency=replace_method.consistency, **map_arguments
+            source,
+            instructions=replace_method.instructions,
+            consistency=replace_method.consistency,
+            session=session[0] if session else None,
+            **map_arguments,
         )
         failures.extend(result.failed_records)
         positions = resolve_source_positions(source, result.dataframe, result.source_positions)
@@ -149,12 +156,20 @@ def _substitute_map_step(
             if COL_REPLACEMENT_MAP in result.dataframe.columns
             else repeat({}, len(positions))
         )
-        entries = [{"replacements": [dict(vars(r)) for r in _parse_replacements(rmap)]} for rmap in maps]
+        decisions = result.decisions or repeat((), len(positions))
+        entries = [
+            {"replacement_map": {"replacements": [dict(vars(r)) for r in _parse_replacements(rmap)]}, "decisions": d}
+            for rmap, d in zip(maps, decisions)
+        ]
         by_owner = dict(zip(owners, per_target(entries, positions, len(owners))))
         return [by_owner.get(datum) for datum in target]
 
     return Operation.phase_scoped(
-        "substitute-map", generate_maps, {"target": DATUM}, {"replacement_map": REPLACEMENT_MAP}, Requests.opaque()
+        "substitute-map",
+        generate_maps,
+        {"target": DATUM, "session": SESSION_VIEW},
+        {"replacement_map": REPLACEMENT_MAP, "decisions": DECISIONS},
+        Requests.opaque(),
     )
 
 
@@ -287,12 +302,14 @@ def _protect_rows(
     annotate: bool,
     map_step: Operation | None = None,
     detect_op: Operation | None = None,
+    session: Session | None = None,
 ) -> ProtectionResult:
     """Run ``replace`` then the patch verifier over every lowered row.
 
     ``replace`` applies the row's accepted ``mentions``. Each row's map comes from ``map_step``'s
     ``replacement_map`` port when there is one, else from ``build_map`` over those mentions; ``detect_op``, when
-    given, runs first and supplies the mentions the graph does not declare.
+    given, runs first and supplies the mentions the graph does not declare. ``session`` goes to ``prepare`` and
+    ``protect``.
     """
     positions = {target: position for position, target in enumerate(graph.targets)}
 
@@ -359,13 +376,15 @@ def _protect_rows(
         max_mentions=sum(len(d.text) for d in graph.targets),
         max_context_items=0,
     )
-    return _run(graph, workflow, limits)
+    return _run(graph, workflow, limits, session)
 
 
-def _run(graph: ProtectionGraph, workflow: Workflow, limits: Limits) -> ProtectionResult:
+def _run(
+    graph: ProtectionGraph, workflow: Workflow, limits: Limits, session: Session | None = None
+) -> ProtectionResult:
     """Execute one invocation; the first error a non-verifier step raised is raised, as 0.4.0 raised it, then a
     cancellation."""
-    result = protect(prepare(graph, workflow, limits=limits))
+    result = protect(prepare(graph, workflow, limits=limits, session=session), session=session)
     steps = [step for _, step in workflow.flatten()]
     for entry in result.state.entries:
         if entry.error is not None and not steps[entry.node].is_verifier:

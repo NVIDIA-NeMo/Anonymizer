@@ -242,6 +242,60 @@ def test_reprs_and_errors_show_no_values() -> None:
         assert "Alice" not in str(info.value) and "5" not in str(info.value)
 
 
+def test_view_membership_questions_survive_a_snapshot() -> None:
+    """``assigned_elsewhere`` and ``is_original`` answer from normalized values, the same after a restore."""
+    other = (graph.SubjectKey("subject-paris"), "city", "paris")
+    session = graph.Session(stable_replacements=True)
+    decisions = (graph.Decision(SLOT, "Zebulon1"), graph.Decision(other, "Lyon"))
+    graph.protect(prepared(emit(lambda i: decisions), texts=("0",), session=session), session=session)
+    restored = graph.Session.restore(graph.SessionSnapshot.from_bytes(session.snapshot().to_bytes()))
+    questions = [
+        ("assigned_elsewhere", "ZEBULON1", SLOT),
+        ("assigned_elsewhere", " zebulon1 ", other),
+        ("assigned_elsewhere", "lyon", SLOT),
+        ("assigned_elsewhere", "Lyon", other),
+        ("assigned_elsewhere", "Nobody", SLOT),
+        ("is_original", "ALICE", None),
+        ("is_original", "Paris", None),
+        ("is_original", "Zebulon1", None),
+    ]
+
+    def answers(view: graph.SessionView) -> list[bool]:
+        return [getattr(view, name)(*(a for a in (value, slot) if a is not None)) for name, value, slot in questions]
+
+    expected = [False, True, True, False, False, True, True, False]
+    assert answers(session._view()) == answers(restored._view()) == expected
+    view = session._view()
+    with pytest.raises(TypeError):
+        iter(view)  # ty: ignore[no-matching-overload]
+    with pytest.raises(graph.GraphRejection):
+        view.assigned_elsewhere("Lyon", ("Alice", "x", "y"))  # ty: ignore[invalid-argument-type]
+    assert "lyon" not in repr(view).lower() and "paris" not in repr(view).lower()
+
+
+def test_view_membership_questions_check_their_input_and_normalize_slot_values() -> None:
+    unnormalized = (graph.SubjectKey("subject-x"), "city", "  New   YORK ")
+    session = graph.Session(stable_replacements=True)
+    graph.protect(prepared(emit(lambda i: (graph.Decision(unnormalized, "Lyon"),)), texts=("0",), session=session),
+                  session=session)  # fmt: skip
+    view = session._view()
+    assert view.is_original("new york")
+    for bad in (lambda: view.is_original(5), lambda: view.assigned_elsewhere(5, SLOT)):  # ty: ignore[invalid-argument-type]
+        assert rejection(bad) == "invalid_value"
+
+
+def test_reserved_subject_keys_cannot_be_constructed_but_restore_from_a_snapshot() -> None:
+    for name in ("by-value", "substitute-fallback"):
+        assert rejection(lambda: graph.SubjectKey(name)) == "reserved_subject_key"
+    session = graph.Session(stable_replacements=True)
+    graph.protect(prepared(fold(), session=session), session=session)
+    doc = json.loads(session.snapshot().to_bytes())
+    doc["slots"] = [{**doc["slots"][0], "subject": "by-value"}, {**doc["slots"][0], "subject": "substitute-fallback"}]
+    data = json.dumps(doc).encode()
+    restored = graph.Session.restore(graph.SessionSnapshot.from_bytes(data))
+    assert json.loads(restored.snapshot().to_bytes()) == json.loads(data)
+
+
 def test_acceptance_survives_withholding_and_skips_cancel_and_inconsistency() -> None:
     withheld = graph.Session(stable_replacements=True)
     p = prepared(fold(), check(satisfied=lambda t: False), session=withheld)

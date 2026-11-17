@@ -24,6 +24,11 @@ NORMALIZATIONS = frozenset({"casefold-whitespace-v1"})
 _FORMAT, _VERSION = "anonymizer.session", 1
 
 
+def normalize(value: str) -> str:
+    """The ``casefold-whitespace-v1`` normalization: casefolded, with each run of whitespace one space."""
+    return " ".join(value.casefold().split())
+
+
 @dataclass(frozen=True)
 class SubjectKey:
     """A subject declared by the caller and scoped to a Session; the SDK never derives one from text."""
@@ -33,9 +38,33 @@ class SubjectKey:
     def __post_init__(self) -> None:
         if not isinstance(self.value, str) or not self.value:
             raise GraphRejection("invalid_subject_key")
+        if self.value in _RESERVED_SUBJECTS:
+            raise GraphRejection("reserved_subject_key")
+
+    @classmethod
+    def _reserved(cls, value: str) -> SubjectKey:
+        key = object.__new__(cls)
+        object.__setattr__(key, "value", value)
+        return key
+
+
+def _subject(value: str) -> SubjectKey:
+    """The subject a snapshot names: a reserved one, or one a caller may construct."""
+    return _RESERVED_SUBJECTS.get(value) or SubjectKey(value)
 
 
 Slot = tuple[SubjectKey, str, str]  # (subject, label, normalized source value)
+# Subjects only the SDK constructs; ``SubjectKey(...)`` rejects their values. A by-value slot holds an assignment
+# for a label and value. A fallback slot is bookkeeping, not an assignment: it is keyed by a substitute used once in
+# place of an assignment, so no lookup for a value returns it, and it only marks that substitute as taken.
+BY_VALUE = SubjectKey._reserved("by-value")
+FALLBACK = SubjectKey._reserved("substitute-fallback")
+_RESERVED_SUBJECTS = {key.value: key for key in (BY_VALUE, FALLBACK)}
+
+
+def _check_value(value: object) -> None:
+    if not isinstance(value, str):
+        raise GraphRejection("invalid_value")
 
 
 def _check_slot(slot: object) -> Slot:
@@ -102,15 +131,20 @@ class _Entry:
 
 
 class SessionView:
-    """What an operation reads: the assignments at the revision captured when the invocation started. It offers
-    lookup only, no iteration or listing, and cannot be pickled."""
+    """What an operation reads: the assignments at the revision captured when the invocation started. It answers
+    lookups and membership questions only, offers no iteration or listing, and cannot be pickled."""
 
-    __slots__ = ("_assignments", "_mode", "_revision")
+    __slots__ = ("_assigned", "_assignments", "_mode", "_originals", "_revision")
 
     def __init__(self, mode: SessionMode, revision: int, assignments: dict[Slot, str]) -> None:
         self._mode = mode
         self._revision = revision
         self._assignments: Mapping[Slot, str] = MappingProxyType(assignments)
+        self._assigned: dict[str, set[Slot]] = {}
+        for slot, value in assignments.items():
+            self._assigned.setdefault(normalize(value), set()).add(slot)
+        # A slot's value is normalized here too: nothing makes an operation's Decision carry a normalized one.
+        self._originals = frozenset(normalize(slot[2]) for slot in assignments if slot[0] != FALLBACK)
 
     @property
     def mode(self) -> SessionMode:
@@ -118,6 +152,17 @@ class SessionView:
 
     def lookup(self, slot: Slot) -> str | None:
         return self._assignments.get(_check_slot(slot))
+
+    def assigned_elsewhere(self, value: str, slot: Slot) -> bool:
+        """Whether ``value``, normalized, is the assignment of a slot other than ``slot``."""
+        _check_slot(slot)
+        _check_value(value)
+        return any(other != slot for other in self._assigned.get(normalize(value), ()))
+
+    def is_original(self, value: str) -> bool:
+        """Whether ``value``, normalized, is the source value of some slot; fallback slots hold none."""
+        _check_value(value)
+        return normalize(value) in self._originals
 
     def __repr__(self) -> str:
         return f"SessionView(mode={self._mode!r}, revision={self._revision})"
@@ -203,7 +248,7 @@ def _parse_slot(s: dict[str, Any]) -> tuple[Slot, _Entry]:
     superseded = tuple((p["assignment"], p["revision"], p["by"]) for p in s["superseded"])
     if not all(isinstance(a, str) and _count(r) and isinstance(b, str) for a, r, b in superseded):
         raise ValueError
-    slot = (SubjectKey(s["subject"]), s["label"], s["value"])
+    slot = (_subject(s["subject"]), s["label"], s["value"])
     return slot, _Entry(s["assignment"], s["revision"], s["by"], superseded)
 
 
