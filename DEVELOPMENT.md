@@ -185,8 +185,8 @@ Run all read-only checks:
 mise run check
 ```
 
-`mise run check` runs `mise run check:format`, `mise run check:lint`, `mise run check:type`, `mise run check:lock`, and
-`mise run check:license:headers`. CI runs the same tasks as separate steps so failures identify the affected stage.
+`mise run check` runs `mise run check:format`, `mise run check:lint`, `mise run check:type`, `mise run check:lock`,
+`mise run check:license:headers`, and `mise run check:docs:pairs`. CI runs the same tasks as separate steps so failures identify the affected stage.
 
 Run the blocking type checker:
 

@@ -166,13 +166,14 @@ mise run hooks:install
 ```
 
 Before Git records a commit, the hooks check file hygiene, format and lint staged Python files, repair SPDX headers,
-and run `mise run check` on every commit. The aggregate check covers five read-only stages:
+and run `mise run check` on every commit. The aggregate check covers six read-only stages:
 
 - `mise run check:format`
 - `mise run check:lint`
 - `mise run check:type`
 - `mise run check:lock`
 - `mise run check:license:headers`
+- `mise run check:docs:pairs`
 
 The commit-message hook rejects commits without a `Signed-off-by` line. If a hook changes a file, review the change,
 stage it again, and retry the commit. Do not bypass repository hooks with `git commit --no-verify`.

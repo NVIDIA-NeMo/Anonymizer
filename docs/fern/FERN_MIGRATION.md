@@ -47,6 +47,11 @@ Every change to a paired documentation page must update both its `.md` and
 prose synchronization: `.md` serves production MkDocs and `.mdx` serves Fern.
 Keep their content equivalent using each renderer's syntax.
 
+`mise run check:docs:pairs`, part of `mise run check` and CI, fails when a page
+that exists in both formats changes in only one, or when a new page is added in
+only one format. It compares against the merge base with the target branch,
+including uncommitted changes.
+
 - New prose pages need both formats and matching navigation entries in
   `mkdocs.yml` and `docs/fern/versions/nightly.yml`.
 - For notebooks, edit `docs/notebook_source/*.py` and regenerate `.ipynb` with

@@ -119,7 +119,8 @@ pages together, using each renderer's syntax. New prose pages need both formats
 and navigation entries in `mkdocs.yml` and `docs/fern/versions/nightly.yml`.
 Keep legacy sources until cutover. Notebook Python sources remain authoritative;
 see [DEVELOPMENT.md](DEVELOPMENT.md#notebooks) for generation. Standalone
-repository Markdown does not need an MDX counterpart. See the
+repository Markdown does not need an MDX counterpart. `mise run check:docs:pairs`
+(part of `mise run check`) enforces the pairing. See the
 [migration status](docs/fern/FERN_MIGRATION.md) for temporary requirements.
 
 ```bash
