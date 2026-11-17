@@ -83,6 +83,13 @@ jobs:
         working-directory: benchmark-target
         run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      # The runner resolves a relative output_dir inside benchmark-target. Resolve it
+      # the same way so absolute inputs such as /tmp/results upload from their real path.
+      - name: Resolve benchmark output directory
+        id: output
+        working-directory: benchmark-target
+        run: echo "dir=$(realpath -m -- "$BENCHMARK_OUTPUT_DIR")" >> "$GITHUB_OUTPUT"
+
       - name: Check NVIDIA API key
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -169,5 +176,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: anonymizer-benchmark-${{ steps.target.outputs.commit }}
-          path: benchmark-target/${{ env.BENCHMARK_OUTPUT_DIR }}/
+          path: ${{ steps.output.outputs.dir }}/
           if-no-files-found: warn

@@ -112,7 +112,8 @@ def test_benchmark_workflow_keeps_setup_on_workflow_revision() -> None:
     target_steps = [
         step
         for step in steps
-        if step.get("id") == "target" or step.get("name") in {"Run benchmark suite", "Add benchmark summary"}
+        if step.get("id") in {"target", "output"}
+        or step.get("name") in {"Run benchmark suite", "Add benchmark summary"}
     ]
     assert target_steps
     assert all(step["working-directory"] == "benchmark-target" for step in target_steps)
@@ -121,7 +122,37 @@ def test_benchmark_workflow_keeps_setup_on_workflow_revision() -> None:
     assert "uv run --locked --group dev python tools/measurement/run_benchmarks.py" in run_step["run"]
 
     upload_step = next(step for step in steps if step.get("uses") == "actions/upload-artifact@v7")
-    assert upload_step["with"]["path"] == "benchmark-target/${{ env.BENCHMARK_OUTPUT_DIR }}/"
+    assert upload_step["with"]["path"] == "${{ steps.output.outputs.dir }}/"
+
+
+@pytest.mark.parametrize(
+    ("output_dir", "expected"),
+    [
+        ("benchmark-results", "{target}/benchmark-results"),
+        ("nested/../results", "{target}/results"),
+        ("{absolute}", "{absolute}"),
+    ],
+)
+def test_benchmark_artifact_path_matches_runner_output(tmp_path: Path, output_dir: str, expected: str) -> None:
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/benchmark-ci.yml").read_text(encoding="utf-8"))
+    step = next(step for step in workflow["jobs"]["benchmark"]["steps"] if step.get("id") == "output")
+    target = tmp_path / "benchmark-target"
+    target.mkdir()
+    absolute = str(tmp_path / "results")
+    github_output = tmp_path / "github_output"
+
+    subprocess.run(
+        ["bash", "-c", step["run"]],
+        cwd=target,
+        env={
+            **os.environ,
+            "BENCHMARK_OUTPUT_DIR": output_dir.format(absolute=absolute),
+            "GITHUB_OUTPUT": str(github_output),
+        },
+        check=True,
+    )
+
+    assert github_output.read_text(encoding="utf-8") == f"dir={expected.format(target=target, absolute=absolute)}\n"
 
 
 def test_local_mise_installer_keeps_unsigned_fallback_opt_in() -> None:
