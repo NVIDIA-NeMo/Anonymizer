@@ -101,6 +101,7 @@ class WorkflowSourceFrame:
             return
         require_source_frame_capabilities(designer)
         storage_bindings = ExitStack()
+        builders: list[Any] = []
         original_builder = designer._create_dataset_builder
 
         def builder(*args: Any, **kwargs: Any) -> Any:
@@ -120,6 +121,7 @@ class WorkflowSourceFrame:
                 BuilderConfig(data_designer=public).to_json(storage.base_dataset_path / SDG_CONFIG_FILENAME)
 
             result._write_builder_config = write_config
+            builders.append(result)
             return result
 
         designer._create_dataset_builder = builder
@@ -128,6 +130,9 @@ class WorkflowSourceFrame:
         finally:
             designer._create_dataset_builder = original_builder
             storage_bindings.close()
+            for built in builders:
+                # The override closes over the builder; drop it so the run's builder is freed by refcount.
+                vars(built).pop("_write_builder_config", None)
 
     @contextmanager
     def _bind_storage(self, storage: Any) -> Iterator[None]:

@@ -180,6 +180,7 @@ def test_graph_without_identities_is_unchanged() -> None:
         "dependencies",
         "groups",
         "identities",
+        "records",
     ]
 
 

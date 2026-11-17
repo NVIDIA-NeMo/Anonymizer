@@ -6,8 +6,8 @@
 Declare datums and the relations between them, compose operations into a workflow, call :func:`prepare` to
 admit the workflow before any operation runs, then call :func:`protect` to run it synchronously on the calling
 thread. The kernel registers the kinds ``text``, ``mentions``, ``context``, ``datum``, ``assessment``,
-``session-view``, ``decisions`` and ``identities``; callers register any other kind their operations produce with
-:func:`register_kind`. A :class:`Session` passed as ``session=`` keeps assignments across calls.
+``session-view``, ``decisions``, ``identities`` and ``record``; callers register any other kind their operations
+produce with :func:`register_kind`. A :class:`Session` passed as ``session=`` keeps assignments across calls.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from anonymizer.engine.graph_core.authoring import (
     Operation,
     OutputGroup,
     ProtectionGraph,
+    Record,
     Requests,
     Workflow,
 )
@@ -71,6 +72,7 @@ __all__ = [
     "ProtectionGraph",
     "ProtectionResult",
     "Reason",
+    "Record",
     "Requests",
     "Session",
     "SessionMode",

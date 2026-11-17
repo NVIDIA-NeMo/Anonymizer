@@ -33,6 +33,7 @@ PUBLIC_NAMES = {
     "ProtectionGraph",
     "ProtectionResult",
     "Reason",
+    "Record",
     "Requests",
     "Session",
     "SessionMode",

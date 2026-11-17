@@ -12,7 +12,7 @@ import secrets
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from anonymizer.engine.graph_core.kernel import GraphRejection, register_kind
 from anonymizer.engine.graph_core.session import SubjectKey
@@ -23,8 +23,9 @@ CONTEXT = register_kind("context", lambda v: isinstance(v, tuple))
 DATUM = register_kind("datum", lambda v: isinstance(v, Datum))
 ASSESSMENT = register_kind("assessment", lambda v: isinstance(v, Assessment))
 IDENTITIES = register_kind("identities", lambda v: isinstance(v, tuple) and all(isinstance(i, Identity) for i in v))
+RECORD = register_kind("record", lambda v: isinstance(v, Record))
 # Seeds an operation may not shadow with an output; a subset of ``execution.SEEDS``.
-_RESERVED_SEED_OUTPUTS = ("session", "identities")
+_RESERVED_SEED_OUTPUTS = ("session", "identities", "record")
 
 
 def utf8_size(text: str) -> int:
@@ -65,6 +66,14 @@ class GraphScope:
         if not isinstance(text, str):
             raise GraphRejection("datum_not_text", type(text).__name__)
         return Datum(text=text, _scope=self._token, _id=secrets.token_hex(8))
+
+    def record(self, members: tuple[Datum, ...]) -> Record:
+        """A Record grouping ``members``, kept in the caller's order; the graph checks they are its targets."""
+        if not isinstance(members, tuple) or not all(isinstance(m, Datum) for m in members):
+            raise GraphRejection("invalid_record")
+        if not members:
+            raise GraphRejection("empty_record")
+        return Record(members=members, _scope=self._token, _id=secrets.token_hex(8))
 
 
 @dataclass(frozen=True, eq=False)
@@ -167,6 +176,29 @@ class OutputGroup:
     members: tuple[Datum, ...]
 
 
+@dataclass(frozen=True, eq=False)
+class Record:
+    """A caller-declared group of targets with opaque, graph-scoped identity, made by ``GraphScope.record``.
+
+    Each target belongs to exactly one Record: a target in no declared Record is its own singleton Record, and a
+    declared Record of one member is allowed. Equality and hashing use identity only, never the members' text.
+    """
+
+    members: tuple[Datum, ...] = field(repr=False)
+    _scope: str = field(repr=False)
+    _id: str = field(repr=False)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Record) and (self._scope, self._id) == (other._scope, other._id)
+
+    def __hash__(self) -> int:
+        return hash((self._scope, self._id))
+
+    def __repr__(self) -> str:
+        n = len(self.members)
+        return f"Record(<opaque>, {n} member{'' if n == 1 else 's'})"
+
+
 @dataclass(frozen=True)
 class ProtectionGraph:
     """Immutable bound semantic input: target datums plus separately typed relations."""
@@ -178,6 +210,9 @@ class ProtectionGraph:
     dependencies: tuple[Dependency, ...] = ()
     groups: tuple[OutputGroup, ...] = ()
     identities: tuple[Identity, ...] = field(default=(), kw_only=True)
+    records: tuple[Record, ...] = field(default=(), kw_only=True)
+    # Set per instance by ``_check_records``; ClassVar keeps it out of the dataclass fields.
+    _record_of: ClassVar[dict[Datum, Record]]
 
     def __post_init__(self) -> None:
         targets = set(self.targets)
@@ -217,6 +252,7 @@ class ProtectionGraph:
                     raise GraphRejection("group_overlap")
                 seen.add(m)
         self._check_identities(targets)
+        self._check_records(targets)
 
     def _own(self, d: Datum, allowed: set[Datum] | None, what: str) -> Datum:
         if not isinstance(d, Datum) or d._scope != self.scope._token:
@@ -276,6 +312,42 @@ class ProtectionGraph:
                     ready.append(on)
         if len(ready) != len(waiting):
             raise GraphRejection("dependency_cycle")
+
+    def _check_records(self, targets: set[Datum]) -> None:
+        if not isinstance(self.records, tuple):
+            raise GraphRejection("invalid_record")
+        record_of: dict[Datum, Record] = {}
+        for r in self.records:
+            if not isinstance(r, Record) or not isinstance(r.members, tuple):
+                raise GraphRejection("invalid_record")
+            if not all(isinstance(m, Datum) for m in r.members):
+                raise GraphRejection("invalid_record")
+            if not r.members:
+                raise GraphRejection("empty_record")
+            if r._scope != self.scope._token:
+                raise GraphRejection("foreign_record")
+            for m in r.members:
+                if self._own(m, targets, "record_member") in record_of:
+                    raise GraphRejection("record_overlap")
+                record_of[m] = r
+        for d in self.targets:
+            # A singleton's id cannot equal a declared one, and is the same in every copy of the graph.
+            record_of.setdefault(d, Record((d,), d._scope, "t" + d._id))
+        # Derived from the fields, so not a field: equality, repr and the prepared seal are unchanged.
+        object.__setattr__(self, "_record_of", record_of)
+
+    def record_of(self, target: Datum) -> Record:
+        """The declared Record holding ``target``, else its own singleton Record."""
+        self._own(target, None, "target")
+        record = self._record_of.get(target)
+        if record is None:
+            raise GraphRejection("unknown_reference", "target")
+        return record
+
+    @property
+    def all_records(self) -> tuple[Record, ...]:
+        """Every target's Record once, ordered by each Record's earliest target."""
+        return tuple(dict.fromkeys(self._record_of[d] for d in self.targets))
 
 
 # ---------------------------------------------------------------- operations and workflows
@@ -345,12 +417,12 @@ class Operation:
     """A caller-supplied local operation with typed ports and declared requests.
 
     Input ports bind by name to the latest earlier output, else to the per-target seeds ``text`` (current candidate),
-    ``source`` (original text), ``mentions``, ``context``, ``target``, ``session`` (a read-only Session view) and
-    ``identities`` (the target's declarations, by start and end). An operation whose output kind is ``assessment`` is
-    a verifier; ``checks`` names the workflow requirements its assessment answers and ``subject`` names the input
-    ports the assessment is about (required with ``checks``; there is no default). A verifier's outputs are exactly
-    ``{"assessment": "assessment"}``; any other layout with an ``assessment`` kind or port name is rejected with
-    ``GraphRejection("verifier_ports")``.
+    ``source`` (original text), ``mentions``, ``context``, ``target``, ``session`` (a read-only Session view),
+    ``identities`` (the target's declarations, by start and end) and ``record`` (the target's Record). An operation
+    whose output kind is ``assessment`` is a verifier; ``checks`` names the workflow requirements its assessment
+    answers and ``subject`` names the input ports the assessment is about (required with ``checks``; there is no
+    default). A verifier's outputs are exactly ``{"assessment": "assessment"}``; any other layout with an
+    ``assessment`` kind or port name is rejected with ``GraphRejection("verifier_ports")``.
     """
 
     name: str

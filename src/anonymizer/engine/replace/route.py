@@ -198,7 +198,11 @@ def run_replace_pipeline(
         if llm_workflow is None:
             raise ValueError("Substitute requires an llm_workflow, but none was provided.")
         map_step = _substitute_map_step(
-            llm_workflow, replace_method, map_arguments, failures, lambda target: (detected[0].dataframe, owners)
+            llm_workflow,
+            replace_method,
+            map_arguments,
+            failures,
+            lambda target: _ready_rows(detected[0].dataframe, owners, target),
         )
     else:
 
@@ -251,6 +255,15 @@ def run_replace_pipeline(
     )
     outcomes = tuple(result.outcome(d) for d in targets)
     return ReplacementResult(output_df, failures, detected[0], elapsed[0], outcomes)
+
+
+def _ready_rows(
+    frame: pd.DataFrame, owners: Sequence[Datum], target: tuple[Datum, ...]
+) -> tuple[pd.DataFrame, list[Datum]]:
+    """``frame``'s rows (index kept) and their owners, for the owners in ``target``; rows that failed earlier drop."""
+    ready = set(target)
+    rows = [row for row, owner in enumerate(owners) if owner in ready]
+    return frame.iloc[rows], [owners[row] for row in rows]
 
 
 def _lower(dataframe: pd.DataFrame, text_column: str, entities_column: str) -> ProtectionGraph:

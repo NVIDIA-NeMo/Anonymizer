@@ -25,6 +25,7 @@ from anonymizer.engine.graph_core.authoring import (
     DATUM,
     IDENTITIES,
     MENTIONS,
+    RECORD,
     TEXT,
     Assessment,
     ContextSource,
@@ -52,6 +53,7 @@ SEEDS = {
     "target": DATUM,
     "session": SESSION_VIEW,
     "identities": IDENTITIES,
+    "record": RECORD,
 }
 _SEAL_KEY = secrets.token_bytes(32)
 
@@ -171,8 +173,8 @@ def _covering(ops: tuple[tuple[str, Operation], ...], plan: k.Plan, final: int) 
     """The verifiers whose every declared subject derives from the final candidate, from declared ports only.
 
     A candidate version is the index of the operation whose ``text`` output it is, or -1 for the source text. The
-    seeds ``text``, ``source``, ``mentions`` and ``target`` derive from the source text; ``context``, ``session``
-    and ``identities`` from none.
+    seeds ``text``, ``source``, ``mentions`` and ``target`` derive from the source text; ``context``, ``session``,
+    ``identities`` and ``record`` from none.
     Interim rule: every output of a text-producing operation derives from the version it emits, so evidence it
     returns beside its text counts as about that text. Any other operation's outputs derive from all its inputs.
     """
@@ -180,7 +182,7 @@ def _covering(ops: tuple[tuple[str, Operation], ...], plan: k.Plan, final: int) 
     covering = set()
     for i, (name, op) in enumerate(ops):
         read = {
-            port: (frozenset() if port in ("context", "session", "identities") else frozenset({-1}))
+            port: (frozenset() if port in ("context", "session", "identities", "record") else frozenset({-1}))
             if source.node is None
             else outputs[source.node][source.port]
             for port, source in plan.sources[i].items()
@@ -645,6 +647,7 @@ def _protect(p: PreparedProtection, session: Session | None = None) -> Protectio
                 "target": d,
                 "session": view,
                 "identities": tuple(identities.get(d, ())),
+                "record": g.record_of(d),
             }
         )
     state = k.initial_state(p.plan, seeds)

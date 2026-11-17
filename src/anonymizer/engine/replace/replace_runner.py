@@ -177,6 +177,7 @@ class ReplacementWorkflow:
         selected_models: EvaluateModelSelection,
         preview_num_records: int | None = None,
         entity_labels: list[str] | None = None,
+        effective_entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         compute_detection_validity: bool = False,
         data_summary: str | None = None,
@@ -213,6 +214,7 @@ class ReplacementWorkflow:
             )
         entity_coverage_judge = EntityCoverageWorkflow(
             adapter=self._adapter,  # type: ignore[arg-type]
+            effective_entity_labels=effective_entity_labels,
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
