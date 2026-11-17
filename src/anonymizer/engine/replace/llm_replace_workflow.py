@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import Counter
 from collections.abc import Container
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMa
 from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
+_PLACEHOLDER = re.compile(r"\[SUBSTITUTE_(.+)_([1-9]\d*)\]")  # see ``_is_placeholder``
 REPLACEMENT_MAP_SOURCE_LLM = "llm"
 
 # Workflow-internal scratch columns used only to build the replacement-generator
@@ -162,7 +164,8 @@ class LlmReplaceWorkflow:
 
 
 def _recase(synthetic: str, *, like: str, source: str) -> str:
-    if like == source:
+    """``synthetic`` in ``like``'s case where it differs from ``source``'s; a placeholder is always kept as minted."""
+    if like == source or _is_placeholder(synthetic):
         return synthetic
     if like.isupper():
         return synthetic.upper()
@@ -179,7 +182,8 @@ def _fold_replacement_maps(
     view: SessionView | None = None,
     decisions: list[tuple[Decision, ...]] | None = None,
 ) -> list[dict]:
-    """Give entries with the same (label, case- and whitespace-folded value) one substitute, re-cased to each original.
+    """Give entries with the same (label, case- and whitespace-folded value) one substitute, re-cased to each original
+    (a placeholder is never re-cased).
 
     ``"record"`` shares within each record; ``"run"`` also gives each key the first record's substitute. A shared
     substitute collides when its folded form equals a value in its record (its map's originals and ``requested``), a
@@ -380,8 +384,18 @@ class _AssignedElsewhere:
         return isinstance(value, str) and self._view.assigned_elsewhere(value, self._slot)
 
 
+def _label_token(label: str) -> str:
+    return "".join(char.upper() if char.isalnum() else "_" for char in label).strip("_") or "VALUE"
+
+
+def _is_placeholder(value: str) -> bool:
+    """Whether ``value`` is a token ``_collision_safe_synthetic`` can mint."""
+    match = _PLACEHOLDER.fullmatch(value)
+    return match is not None and _label_token(match[1]) == match[1]
+
+
 def _collision_safe_synthetic(label: str, *, index: int, protected_original_values: tuple[Container[str], ...]) -> str:
-    label_token = "".join(char.upper() if char.isalnum() else "_" for char in label).strip("_") or "VALUE"
+    label_token = _label_token(label)
     while True:
         candidate = f"[SUBSTITUTE_{label_token}_{index}]"
         if not any(_fold(candidate) in values for values in protected_original_values):

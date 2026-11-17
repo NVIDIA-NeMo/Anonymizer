@@ -37,7 +37,12 @@ from anonymizer.engine.detection.detection_workflow import (
 )
 from anonymizer.engine.graph_core.session import Session, SessionChanges, SessionView
 from anonymizer.engine.ndd.adapter import NddAdapter, WorkflowRunResult
-from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+from anonymizer.engine.replace.llm_replace_workflow import (
+    LlmReplaceWorkflow,
+    _collision_safe_synthetic,
+    _fold_replacement_maps,
+    _is_placeholder,
+)
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
@@ -480,3 +485,45 @@ def test_an_old_run_with_detection_override_works_without_a_session(tmp_path: Pa
     texts, proposals = ["Alice lives in Paris."], {"Alice": "Bob", "Paris": "Lyon"}
     expected = _protect(tmp_path, texts, proposals, trace=True)
     pd.testing.assert_frame_equal(_protect(tmp_path, texts, proposals, anonymizer=anonymizer, trace=True), expected)
+
+
+def test_a_placeholder_is_reused_verbatim_in_a_later_call(tmp_path: Path) -> None:
+    session = Session(stable_replacements=True)
+    first = _protect(tmp_path, ["Alice and Carol."], {"Alice": "Bob", "Carol": "Bob"}, session)
+    assert list(first["text_replaced"]) == ["Bob and [SUBSTITUTE_FIRST_NAME_1]."]
+    # The Session holds Carol's placeholder against the normalized "carol"; it is not re-cased to "Carol".
+    second = _protect(tmp_path, ["Carol is here."], {"Carol": "Zed"}, session)
+    assert list(second["text_replaced"]) == ["[SUBSTITUTE_FIRST_NAME_1] is here."]
+
+
+@pytest.mark.parametrize(
+    ("label", "names", "placeholder"),
+    [
+        ("first_name", ("Alice", "alice", "Carol"), "[SUBSTITUTE_FIRST_NAME_1]"),
+        ("prénom", ("Zoë", "zoë", "Élodie"), "[SUBSTITUTE_PRÉNOM_1]"),
+        ("名前", ("Zoë", "zoë", "Élodie"), "[SUBSTITUTE_名前_1]"),
+    ],
+    ids=["ascii", "accented", "cjk"],
+)
+@pytest.mark.parametrize("consistency", ["record", "run"])
+def test_a_placeholder_is_not_re_cased_for_a_case_variant_in_one_call(
+    consistency: Any, label: str, names: tuple[str, str, str], placeholder: str
+) -> None:
+    value, variant, other = names
+
+    def entry(original: str, synthetic: str) -> dict[str, str]:
+        return {"original": original, "label": label, "synthetic": synthetic}
+
+    # The value's proposal is a real value of the record, so it takes a placeholder; the variant shares it as written.
+    maps = [{"replacements": [entry(value, other), entry(variant, other), entry(other, "Dan")]}]
+    (folded,) = _fold_replacement_maps(maps, consistency)
+    assert [e["synthetic"] for e in folded["replacements"]] == [placeholder, placeholder, "Dan"]
+
+
+def test_is_placeholder_accepts_exactly_the_minted_tokens() -> None:
+    for label in ("first_name", "email", "prénom", "名前", "-x y-", "!!"):
+        for index in (1, 2, 10):
+            token = _collision_safe_synthetic(label, index=index, protected_original_values=())
+            assert _is_placeholder(token), token
+    for value in ("[SUBSTITUTE_X_01]", "[SUBSTITUTE_A_0]", "[SUBSTITUTE_First_1]", "[REDACTED_FIRST_NAME]"):
+        assert not _is_placeholder(value), value
