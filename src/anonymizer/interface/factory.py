@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -168,7 +168,7 @@ class NativeRuntimeSession:
 @contextmanager
 def native_runtime(
     *, device: DeviceRequest = "auto", dtype: DtypeRequest = "auto", attention: AttentionRequest = "auto"
-) -> Iterator[NativeRuntimeSession]:
+) -> Generator[NativeRuntimeSession]:
     """Run native GLiNER for the duration of a client session.
 
     An existing singleton is borrowed and remains running after exit. Nested

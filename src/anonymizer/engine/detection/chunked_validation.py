@@ -418,7 +418,7 @@ async def _dispatch_chunk_async(
                     max_conversation_restarts=max_conversation_restarts,
                     max_correction_steps=max_correction_steps,
                 )
-            except Exception as exc:  # noqa: BLE001 — failover is based on pool position
+            except Exception as exc:
                 last_exc = exc
                 break
             duplicate_aliases = find_duplicate_assigned_aliases(

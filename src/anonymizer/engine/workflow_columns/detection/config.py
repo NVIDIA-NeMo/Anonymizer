@@ -41,7 +41,7 @@ from anonymizer.engine.detection.regex_detection import ResolvedRegexRule
 class AugmentationConfig(SingleColumnConfig):
     """Model-backed occurrence-specific augmentation column."""
 
-    column_type: Literal["anonymizer-augmentation"] = "anonymizer-augmentation"
+    column_type: Literal["anonymizer-augmentation"] = "anonymizer-augmentation"  # ty: ignore[invalid-mutable-override]
     model_alias: str = Field(min_length=1)
     prompt_template: str = Field(repr=False)
     system_prompt: str | None = Field(default=None, repr=False)
@@ -194,7 +194,7 @@ class ChunkedValidationConfig(SingleColumnConfig):
 class RegexDetectionConfig(SingleColumnConfig):
     """Serializable local regex-detection column configuration."""
 
-    column_type: Literal["anonymizer-regex-detection"] = "anonymizer-regex-detection"
+    column_type: Literal["anonymizer-regex-detection"] = "anonymizer-regex-detection"  # ty: ignore[invalid-mutable-override]
     rules: list[ResolvedRegexRule]
     timeout_seconds: float = Field(gt=0, allow_inf_nan=False)
     timeout_seconds_per_million_characters: float = Field(

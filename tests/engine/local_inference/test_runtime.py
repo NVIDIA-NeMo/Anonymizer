@@ -206,7 +206,7 @@ def test_read_model_card_rejects_wrong_revision() -> None:
 def test_read_model_card_rejects_malformed_metadata(changes: dict[str, str]) -> None:
     with (
         patch("anonymizer.engine.local_inference.runtime.httpx.get", return_value=_model_card_response(**changes)),
-        pytest.raises(ValueError),  # noqa: PT011 - pydantic's ValidationError is a ValueError
+        pytest.raises(ValueError),
     ):
         native_runtime_module._read_model_card(_starting_runtime())
 
