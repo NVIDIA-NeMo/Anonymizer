@@ -16,7 +16,7 @@
         <link rel="prev" href="../../../../development/observability/">
       
       
-        <link rel="next" href="../models/">
+        <link rel="next" href="../entity_labels/">
       
       
         
@@ -1027,6 +1027,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1358,6 +1362,39 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.Detect.builtin_regexes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;builtin_regexes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.Detect.regex_rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;regex_rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.Detect.regex_limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;regex_limits
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1547,6 +1584,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.resolve_effective_detection_labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;resolve_effective_detection_labels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#anonymizer.config.anonymizer_config.is_remote_input_source" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1600,6 +1648,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../entity_labels/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    entity_labels
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../models/" class="md-nav__link">
         
   
@@ -1608,6 +1684,34 @@
     
   
     models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../regex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    regex
   
 
     
@@ -3202,6 +3306,39 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.Detect.builtin_regexes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;builtin_regexes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.Detect.regex_rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;regex_rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.Detect.regex_limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;regex_limits
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3387,6 +3524,17 @@
         
       </ul>
     </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.resolve_effective_detection_labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;resolve_effective_detection_labels
+      
+    </span>
+  </a>
   
 </li>
         
@@ -3660,6 +3808,14 @@
         </tr>
       </thead>
       <tbody>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            resolve_effective_detection_labels(entity_labels, *, regex_rules=None, excluded_entity_labels=None) (anonymizer.config.anonymizer_config.resolve_effective_detection_labels)" href="#anonymizer.config.anonymizer_config.resolve_effective_detection_labels">resolve_effective_detection_labels</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Resolve the labels used by detection after custom rules and exclusions.</p>
+                </div>
+              </td>
+            </tr>
             <tr class="doc-section-item">
               <td><code><a class="autorefs autorefs-internal" title="            is_remote_input_source(value) (anonymizer.config.anonymizer_config.is_remote_input_source)" href="#anonymizer.config.anonymizer_config.is_remote_input_source">is_remote_input_source</a></code></td>
               <td>
@@ -4188,6 +4344,45 @@
    (anonymizer.config.anonymizer_config.Detect.validation_excerpt_window_chars)" href="#anonymizer.config.anonymizer_config.Detect.validation_excerpt_window_chars">validation_excerpt_window_chars</a></code>
                 (<code><span title="int">int</span></code>)
             </li>
+            <li>
+              <code><a class="autorefs autorefs-internal" title="            builtin_regexes = True
+
+  
+      pydantic-field
+   (anonymizer.config.anonymizer_config.Detect.builtin_regexes)" href="#anonymizer.config.anonymizer_config.Detect.builtin_regexes">builtin_regexes</a></code>
+                (<code><span title="bool">bool</span></code>)
+            </li>
+            <li>
+              <code><a class="autorefs autorefs-internal" title="            regex_rules
+
+  
+      pydantic-field
+   (anonymizer.config.anonymizer_config.Detect.regex_rules)" href="#anonymizer.config.anonymizer_config.Detect.regex_rules">regex_rules</a></code>
+                (<code><span title="list">list</span>[<a class="autorefs autorefs-internal" title="            BuiltinRegex
+
+
+  
+      pydantic-model
+   (anonymizer.config.regex.BuiltinRegex)" href="../regex/#anonymizer.config.regex.BuiltinRegex">BuiltinRegex</a> | <a class="autorefs autorefs-internal" title="            RegexRule
+
+
+  
+      pydantic-model
+   (anonymizer.config.regex.RegexRule)" href="../regex/#anonymizer.config.regex.RegexRule">RegexRule</a>]</code>)
+            </li>
+            <li>
+              <code><a class="autorefs autorefs-internal" title="            regex_limits
+
+  
+      pydantic-field
+   (anonymizer.config.anonymizer_config.Detect.regex_limits)" href="#anonymizer.config.anonymizer_config.Detect.regex_limits">regex_limits</a></code>
+                (<code><a class="autorefs autorefs-internal" title="            RegexLimits
+
+
+  
+      pydantic-model
+   (anonymizer.config.regex.RegexLimits)" href="../regex/#anonymizer.config.regex.RegexLimits">RegexLimits</a></code>)
+            </li>
         </ul>
 
         <p>Validators:</p>
@@ -4218,6 +4413,9 @@
    (anonymizer.config.anonymizer_config.Detect.entity_label_examples)" href="#anonymizer.config.anonymizer_config.Detect.entity_label_examples">entity_label_examples</a></code>            </li>
             <li>
               <code><span title="anonymizer.config.anonymizer_config.Detect.validate_entity_label_overlap">validate_entity_label_overlap</span></code>
+            </li>
+            <li>
+              <code><span title="anonymizer.config.anonymizer_config.Detect.validate_regex_rule_scope">validate_regex_rule_scope</span></code>
             </li>
         </ul>
 
@@ -4291,7 +4489,7 @@
 
     <div class="doc doc-contents ">
 
-        <p>Entity labels to never detect, even if present in entity_labels or the default set. Excluded labels are removed before GLiNER and LLM prompts run, and are also filtered from the final entity output as a safety net. If this entirely overlaps the effective label set (entity_labels if set, otherwise the default label set), leaving an empty effective detection set, Detect raises a ValueError at config time.</p>
+        <p>Entity labels to never detect, even if present in entity_labels or the default set. Excluded labels are removed before GLiNER and LLM prompts run, and are also filtered from the final entity output as a safety net. If this entirely overlaps the effective allowlist (entity_labels if set, otherwise the default label set plus labels from enabled custom regex rules), leaving an empty effective detection set, Detect raises a ValueError at config time.</p>
 
     </div>
 
@@ -4358,6 +4556,72 @@
     <div class="doc doc-contents ">
 
         <p>Number of characters to include before and after a chunk's entity span when building the text excerpt sent to the validator. Bounds the prompt context the validator sees per chunk; it is NOT the LLM's context window limit.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="anonymizer.config.anonymizer_config.Detect.builtin_regexes" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <code class="highlight language-python">builtin_regexes = True</code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-pydantic-field"><code>pydantic-field</code></small>
+  </span>
+
+<a href="#anonymizer.config.anonymizer_config.Detect.builtin_regexes" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Run built-in regex recognizers for labels in the effective detection scope.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="anonymizer.config.anonymizer_config.Detect.regex_rules" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <code class="highlight language-python">regex_rules</code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-pydantic-field"><code>pydantic-field</code></small>
+  </span>
+
+<a href="#anonymizer.config.anonymizer_config.Detect.regex_rules" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Per-label built-in settings and user-defined regex candidate rules.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="anonymizer.config.anonymizer_config.Detect.regex_limits" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <code class="highlight language-python">regex_limits</code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-pydantic-field"><code>pydantic-field</code></small>
+  </span>
+
+<a href="#anonymizer.config.anonymizer_config.Detect.regex_limits" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Per-record, per-rule validated-match cap and character-scaled timeout for all regex rules.</p>
 
     </div>
 
@@ -4929,6 +5193,68 @@ evaluate() output alongside <code>entity_coverage</code>.</p>
 <div class="doc doc-object doc-function">
 
 
+<h3 id="anonymizer.config.anonymizer_config.resolve_effective_detection_labels" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">resolve_effective_detection_labels(entity_labels, *, regex_rules=None, excluded_entity_labels=None)</code>
+
+<a href="#anonymizer.config.anonymizer_config.resolve_effective_detection_labels" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Resolve the labels used by detection after custom rules and exclusions.</p>
+<p>An explicit <code>entity_labels</code> list is authoritative. When it is <code>None</code>,
+detection starts with <code>DEFAULT_ENTITY_LABELS</code> and appends labels from
+enabled custom <code>RegexRule</code> entries. Only enabled custom rules extend the
+effective label set: disabled custom rules are inert, and <code>BuiltinRegex</code>
+settings configure existing built-ins without adding labels. Exclusions
+are applied last using normalized label comparisons.</p>
+<p>This helper intentionally returns only the resolved labels. Callers must
+retain the original <code>entity_labels is None</code> state because it separately
+controls permissive versus strict augmentation.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/anonymizer/config/anonymizer_config.py</code></summary>
+              <pre class="highlight"><code class="language-python">def resolve_effective_detection_labels(
+    entity_labels: list[str] | None,
+    *,
+    regex_rules: list[BuiltinRegex | RegexRule] | None = None,
+    excluded_entity_labels: list[str] | set[str] | None = None,
+) -&gt; list[str]:
+    """Resolve the labels used by detection after custom rules and exclusions.
+
+    An explicit ``entity_labels`` list is authoritative. When it is ``None``,
+    detection starts with ``DEFAULT_ENTITY_LABELS`` and appends labels from
+    enabled custom ``RegexRule`` entries. Only enabled custom rules extend the
+    effective label set: disabled custom rules are inert, and ``BuiltinRegex``
+    settings configure existing built-ins without adding labels. Exclusions
+    are applied last using normalized label comparisons.
+
+    This helper intentionally returns only the resolved labels. Callers must
+    retain the original ``entity_labels is None`` state because it separately
+    controls permissive versus strict augmentation.
+    """
+    labels = list(DEFAULT_ENTITY_LABELS) if entity_labels is None else list(entity_labels)
+    if entity_labels is None:
+        known = {normalize_entity_label(label) for label in labels}
+        for rule in regex_rules or []:
+            if not isinstance(rule, RegexRule) or not rule.enabled:
+                continue
+            normalized = normalize_entity_label(rule.label)
+            if normalized not in known:
+                labels.append(rule.label)
+                known.add(normalized)
+
+    excluded = {normalize_entity_label(label) for label in excluded_entity_labels or []}
+    return [label for label in labels if normalize_entity_label(label) not in excluded]</code></pre>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h3 id="anonymizer.config.anonymizer_config.is_remote_input_source" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python">is_remote_input_source(value)</code>
 
@@ -5063,13 +5389,13 @@ evaluate() output alongside <code>entity_coverage</code>.</p>
         
         
           
-          <a href="../models/" class="md-footer__link md-footer__link--next" aria-label="Next: models">
+          <a href="../entity_labels/" class="md-footer__link md-footer__link--next" aria-label="Next: entity_labels">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                models
+                entity_labels
               </div>
             </div>
             <div class="md-footer__button md-icon">

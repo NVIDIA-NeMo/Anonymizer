@@ -543,6 +543,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#regex-recognition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regex recognition
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#chunked-validation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1317,6 +1328,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1392,6 +1407,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/anonymizer/config/entity_labels/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    entity_labels
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/anonymizer/config/models/" class="md-nav__link">
         
   
@@ -1400,6 +1443,34 @@
     
   
     models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/anonymizer/config/regex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    regex
   
 
     
@@ -2857,6 +2928,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#regex-recognition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regex recognition
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#chunked-validation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3087,7 +3169,13 @@
 <p>Entity detection is the first stage of every Anonymizer pipeline. Both replace and rewrite modes depend on it.</p>
 <hr />
 <h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
-<p>Detection combines a lightweight GLiNER2 PII model with LLM-based refinement. GLiNER2 produces an initial set of entity spans, an LLM validates those candidates by keeping, reclassifying, or dropping them based on context, and then an augmenter independently finds sensitive entities in the canonical plain source text. It receives no detector tags or seed-entity list. Grounded findings, including rediscoveries of existing detections, use the shared admission and final reconciliation policy and are not independently revalidated.</p>
+<p>Detection combines local regex recognizers, a lightweight GLiNER2 PII model, and LLM-based refinement. Regex and GLiNER2 findings retain independent source identities and admission routes. An LLM keeps, reclassifies, or drops candidates requiring contextual validation; locally accepted regex matches bypass that call but still obey label exclusions. An augmenter then independently finds sensitive entities in the canonical plain source text. It receives no detector tags or seed-entity list. Grounded findings, including rediscoveries of existing detections, use the shared admission and final reconciliation policy and are not independently revalidated.</p>
+<p>After admission, identical label/span candidates are combined with their accepted
+provenance intact. Overlaps are resolved once: longer spans win first; source
+priority breaks equal-span ties (custom regex, built-in regex, GLiNER, augmenter).
+A rejected claim never removes an independently accepted match at the same span.
+Detections are occurrence-specific: accepting one occurrence does not copy its
+label to every occurrence of the same text.</p>
 <p>Augmenter suggestions must match the source text and their supplied context exactly. If some do not, Anonymizer keeps the matching suggestions and asks the augmenter to correct only the others once. Suggestions that still do not match are dropped; the record and its other detections are retained. Transport errors or responses that do not match the required schema still fail the record.</p>
 <p>Unknown fields in augmentation responses are ignored, but required fields and their types are still checked. Passing those checks does not guarantee that a suggestion is grounded in the source or correctly classified.</p>
 <p>When rewrite is configured, an additional step identifies <strong>latent entities</strong> -- sensitive information inferable from context but not explicitly stated in the text.</p>
@@ -3184,6 +3272,16 @@ records use the same caller-provided IDs in <code>result.failed_records</code>. 
 <td>GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives.</td>
 </tr>
 <tr>
+<td><code>builtin_regexes</code></td>
+<td><code>True</code></td>
+<td>Enable built-in recognizers for supported labels in the effective detection scope.</td>
+</tr>
+<tr>
+<td><code>regex_rules</code></td>
+<td><code>[]</code></td>
+<td>Custom <code>RegexRule</code> patterns and per-label <code>BuiltinRegex</code> settings.</td>
+</tr>
+<tr>
 <td><code>validation_max_entities_per_call</code></td>
 <td><code>100</code></td>
 <td>Number of detected entities to validate per LLM call. This limit may be exceeded to keep detections covering the same text together. See <a href="#chunked-validation">Chunked validation</a>.</td>
@@ -3196,6 +3294,145 @@ records use the same caller-provided IDs in <code>result.failed_records</code>. 
 </tbody>
 </table>
 <hr />
+<h2 id="regex-recognition">Regex recognition<a class="headerlink" href="#regex-recognition" title="Permanent link">&para;</a></h2>
+<p>Built-ins cover <code>credit_debit_card</code>, <code>email</code>, <code>ipv4</code>, <code>ipv6</code>,
+<code>mac_address</code>, and <code>url</code>. They run only for active labels and use local
+structural checks (such as IP parsing and the card-number Luhn checksum).
+IPv6 addresses must be separated from adjoining word characters (Unicode
+letters, digits, and underscores), rather than extracted from inside identifiers
+such as <code>std::vector</code>. A colon-delimited prefix such as <code>IP:2001:db8::1</code>
+remains supported.
+Format validity is not proof that a value identifies a person; contextual
+LLM validation is enabled by default.</p>
+<p>Import the immutable <code>BUILTIN_REGEX_LABELS</code> tuple from <code>anonymizer</code> to discover
+supported built-in labels programmatically:</p>
+<pre class="highlight"><code class="language-python">from anonymizer import BUILTIN_REGEX_LABELS, BuiltinRegex
+
+rules = [BuiltinRegex(label=label) for label in BUILTIN_REGEX_LABELS]</code></pre>
+<p>This lists supported recognizers, not the labels enabled by a particular config;
+the effective detection scope and exclusions still apply.</p>
+<p>The URL recognizer supports explicit <code>http://</code>, <code>https://</code>, <code>ftp://</code>, <code>ftps://</code>,
+<code>sftp://</code>, <code>ws://</code>, and <code>wss://</code> addresses, plus <code>www.</code> forms. Explicit-scheme
+addresses may use internal single-label hosts or <code>localhost</code>, as well as DNS
+names and IP addresses. Recognition and structural validation are entirely
+local: no URL is fetched or resolved. Arbitrary bare domains, scheme-relative
+references (<code>//host/path</code>), slash-escaped schemes (<code>https:\/\/</code>), <code>file://</code>, and cloud-storage
+locators such as <code>s3://</code> are not covered by this built-in. Custom rules can
+cover these forms. When <code>detect_additional_matches=False</code>, this scope is also
+the label's detection limit; neither GLiNER nor augmentation fills its gaps.
+Surrounding prose punctuation is trimmed while balanced delimiters are kept;
+ambiguous literal trailing punctuation can require a custom rule with exact
+match boundaries.
+Backticks and literal backslashes delimit URL candidates, so inline-code
+wrappers such as <code>`https://example.org`</code> and the backslashes escaping
+closing quotes in nested JSON remain outside the replaced span. Ordinary
+addresses inside JSON strings are supported; JSON-escaped slash forms such as
+<code>https:\/\/example.org</code> remain outside the built-in scope described above.</p>
+<p>A standalone, case-insensitive <code>url:</code> field prefix is supported without a space
+(for example, <code>URL:https://example.org/path</code>). The prefix is not part of the
+detected span or replacement. Other immediately adjacent colon prefixes, such
+as <code>Visit:</code> or <code>custom:</code>, and embedded prefixes such as <code>myurl:</code> remain outside
+the built-in's scope; add whitespace or use a custom rule for those forms.</p>
+<p>Use the same <code>regex_rules</code> list to configure built-ins or add custom patterns:</p>
+<pre class="highlight"><code class="language-python">from anonymizer import BuiltinRegex, Detect, RegexRule
+
+Detect(
+    regex_rules=[
+        BuiltinRegex(label="email", validate_matches_with_llm=False),
+        BuiltinRegex(label="url", enabled=False),
+        RegexRule(label="support_case", pattern=r"CASE-[0-9]{8}"),
+    ],
+)</code></pre>
+<p><code>Detect(builtin_regexes=False)</code> disables all built-ins without disabling custom
+rules. With <code>entity_labels=None</code>, enabled custom rules extend the default label
+set. With an explicit <code>entity_labels</code> list, every enabled custom rule's label
+must appear in it. Exclusions always win, including for directly accepted rules.</p>
+<p>Each enabled rule has two independent controls:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default</th>
+<th>Effect when false</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>validate_matches_with_llm</code></td>
+<td><code>True</code></td>
+<td>Locally valid matches are admitted directly, without contextual validation.</td>
+</tr>
+<tr>
+<td><code>detect_additional_matches</code></td>
+<td><code>True</code></td>
+<td>Regex supplies every candidate span for the label; GLiNER and augmentation cannot introduce other spans for it.</td>
+</tr>
+</tbody>
+</table>
+<p>Enabled rules sharing a label must agree on <code>detect_additional_matches</code>.
+When it is false, a model reclassification or augmentation suggestion needs
+accepted, unchanged-label regex evidence at the exact source span. A rejected
+regex match cannot authorize another claim. If a validator omits a decision,
+the original regex span can retain fallback protection, but grants no accepted
+authority to other claims.</p>
+<p>Custom rules may include a synchronous <code>validator</code> callable accepting
+<code>RegexCandidate</code> and returning <code>bool</code> or <code>RegexValidationResult</code>. It receives
+the match value, offsets, named groups, adjacent context, and rule ID. Result
+<code>reason</code> is optional diagnostic metadata; never put source values or other PII
+in it. A false result discards only that match. Exceptions fail the record;
+validators must not be asynchronous.
+<code>RegexValidationResult.valid</code> must be a Boolean and <code>reason</code> must be a string
+or <code>None</code>; malformed results fail the record rather than being coerced.</p>
+<p>The built-in payment-card recognizer matches 13–19 unseparated digits,
+4-4-4-n groups (n is 1–7 digits), or 4-6-4 / 4-6-5 groups, with a consistent
+space or hyphen separator. Each candidate must pass the Luhn checksum. These
+layouts keep a following expiry date or security code outside the match. The
+built-in also checks later complete digit-group starts, so a failed candidate
+starting at an adjacent ID cannot hide a subsequent card; it never starts
+inside a contiguous digit run. Format and checksum validity do not establish
+that a number is actually a payment card.</p>
+<p>Mixed separators and other group layouts are outside the built-in scope.
+For more permissive matching, add a custom rule alongside it using the named,
+exportable built-in Luhn validator:</p>
+<pre class="highlight"><code class="language-python">RegexRule(
+    label="credit_debit_card",
+    pattern=r"(?&lt;![0-9])(?:[0-9][ -]?){12,18}[0-9](?![0-9])",
+    validator="nemo-anonymizer.credit-card-luhn.v1",
+)</code></pre>
+<p>Custom rules retain their explicit match spans and normal non-overlapping scan;
+they do not inherit the built-in's later-start search. Independently accepted
+equivalent custom and built-in claims coalesce with both origins retained.</p>
+<p>For exported builders, use a validator name registered by a trusted installed
+package under <code>nemo_anonymizer.regex_validators</code>; direct callables are
+in-process only. Disabled or excluded rules do not impose this export restriction.
+Names must be unique. Imported validators execute trusted
+Python code, so do not load registrations from untrusted packages.</p>
+<p>Patterns use the third-party <code>regex</code> dialect, except that fuzzy matching groups
+and match reset (<code>\K</code>) are unsupported. Invalid, zero-width, or oversized
+patterns are rejected during configuration, as are constructs whose consumed
+width cannot be established conservatively. Runtime matching has a per-rule
+timeout and match-count limit; exceeding either fails the record rather than
+silently omitting detections. This is not a sandbox for arbitrary validator
+code.</p>
+<p>Configure shared built-in/custom regex limits with <code>Detect.regex_limits</code>:</p>
+<pre class="highlight"><code class="language-python">from anonymizer import Detect, RegexLimits
+
+detect = Detect(regex_limits=RegexLimits(
+    max_matches_per_rule=10_000,
+    min_timeout_seconds=0.05,
+    timeout_seconds_per_million_characters=1.0,
+))</code></pre>
+<p>These are the defaults. The cap counts matches that pass local validation, before
+any LLM validation; rejected candidates do not count. Each rule gets one budget per
+record: <code>max(min_timeout_seconds, len(text) / 1_000_000 * timeout_seconds_per_million_characters)</code>.
+Length is measured in Unicode code points, not UTF-8 bytes or model tokens.
+For example, 10,000 characters get 50 ms; 300,000 get 300 ms. Limits apply equally
+to run, preview and exported workflows. Errors identify the rule, the exhausted
+limit and the setting to review without including record text. No partial regex
+result is returned after a limit failure. Review inefficient custom patterns or
+validators before increasing limits. One shared search budget is consumed across
+bounded matching batches; Python validation callbacks and time between batches
+do not consume it. This is not a sandbox or execution timeout for validator code.</p>
 <h2 id="chunked-validation">Chunked validation<a class="headerlink" href="#chunked-validation" title="Permanent link">&para;</a></h2>
 <p>When a row has many detected entities, Anonymizer splits validation across LLM calls using <code>validation_max_entities_per_call</code>. Detections that cover some of the same text stay together so the validator can compare them—for example, <code>San Diego</code> detected as a city and <code>Diego</code> detected as a first name. If keeping related detections together requires exceeding the limit, Anonymizer sends them in a separate call and logs a warning. The call must still fit the model's context window.</p>
 <p>Each response is bound to its request inventory. Multi-chunk requests receive a source excerpt with <code>validation_excerpt_window_chars</code> before and after the assigned spans. Only candidates assigned to that request are tagged; neighboring detections remain plain text. Single-chunk requests receive the full text supplied to detection by default (currently the whole document).</p>

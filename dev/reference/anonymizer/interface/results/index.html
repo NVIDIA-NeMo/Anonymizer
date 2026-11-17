@@ -1025,6 +1025,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1100,6 +1104,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../config/entity_labels/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    entity_labels
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../config/models/" class="md-nav__link">
         
   
@@ -1108,6 +1140,34 @@
     
   
     models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../config/regex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    regex
   
 
     
@@ -2723,7 +2783,7 @@
       </thead>
       <tbody>
           <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="              AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None, excluded_entity_labels=None, id_column=None)
+            <td><code><a class="autorefs autorefs-internal" title="              AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None, excluded_entity_labels=None, id_column=None, effective_entity_labels=None)
 
   
       dataclass
@@ -2735,7 +2795,7 @@
             </td>
           </tr>
           <tr class="doc-section-item">
-            <td><code><a class="autorefs autorefs-internal" title="              PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None, excluded_entity_labels=None, id_column=None)
+            <td><code><a class="autorefs autorefs-internal" title="              PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None, excluded_entity_labels=None, id_column=None, effective_entity_labels=None)
 
   
       dataclass
@@ -2770,7 +2830,7 @@
 
 
 <h3 id="anonymizer.interface.results.AnonymizerResult" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None, excluded_entity_labels=None, id_column=None)</code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None, excluded_entity_labels=None, id_column=None, effective_entity_labels=None)</code>
 
   <span class="doc doc-labels">
       <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
@@ -2933,6 +2993,18 @@ in-memory record input. File-backed input currently leaves this as
               </div>
             </td>
           </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="anonymizer.interface.results.AnonymizerResult.effective_entity_labels">effective_entity_labels</span></code></td>
+            <td>
+                  <code><span title="list">list</span>[<span title="str">str</span>] | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Resolved detection labels used as coverage-prompt
+guidance, without restricting permissive evaluation.</p>
+              </div>
+            </td>
+          </tr>
       </tbody>
     </table>
 
@@ -2975,7 +3047,7 @@ in-memory record input. File-backed input currently leaves this as
 
 
 <h3 id="anonymizer.interface.results.PreviewResult" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None, excluded_entity_labels=None, id_column=None)</code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>              <code class="highlight language-python">PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None, excluded_entity_labels=None, id_column=None, effective_entity_labels=None)</code>
 
   <span class="doc doc-labels">
       <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
@@ -3145,6 +3217,18 @@ not penalise the output for not anonymizing excluded labels.</p>
                 <p>Record identifier column retained in <code>dataframe</code> for
 in-memory record input. File-backed input currently leaves this as
 <code>None</code>.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="anonymizer.interface.results.PreviewResult.effective_entity_labels">effective_entity_labels</span></code></td>
+            <td>
+                  <code><span title="list">list</span>[<span title="str">str</span>] | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Resolved detection labels used as coverage-prompt
+guidance, without restricting permissive evaluation.</p>
               </div>
             </td>
           </tr>
