@@ -799,6 +799,7 @@ class _DataDesignerUsageProbe:
         self._workflow_name = workflow_name
         self._private_trace_column_names = {column.column_name for column in private_trace_columns or []}
         self._original_create_resource_provider: Any | None = None
+        self._designer_owned_resource_provider = False
         self._resource_providers: list[Any] = []
         self._model_registry_patches: list[tuple[Any, Any]] = []
         self._facade_patches: dict[int, tuple[Any, dict[str, Any]]] = {}
@@ -813,6 +814,7 @@ class _DataDesignerUsageProbe:
             return self
 
         self._original_create_resource_provider = original
+        self._designer_owned_resource_provider = "_create_resource_provider" in vars(self._data_designer)
 
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             resource_provider = original(*args, **kwargs)
@@ -825,8 +827,13 @@ class _DataDesignerUsageProbe:
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         self._restore_private_trace_patches()
-        if self._original_create_resource_provider is not None:
+        if self._original_create_resource_provider is None:
+            return
+        if self._designer_owned_resource_provider:
             setattr(self._data_designer, "_create_resource_provider", self._original_create_resource_provider)
+        else:
+            # Restoring the class's bound method as an instance attribute would tie the designer to itself.
+            vars(self._data_designer).pop("_create_resource_provider", None)
 
     def model_usage(self) -> dict[str, Any] | None:
         usage: dict[str, Any] = {}

@@ -124,11 +124,13 @@ class WorkflowSourceFrame:
             builders.append(result)
             return result
 
+        designer_owned_builder = "_create_dataset_builder" in vars(designer)
         designer._create_dataset_builder = builder
         try:
             yield
         finally:
-            designer._create_dataset_builder = original_builder
+            # Restoring the class's bound method as an instance attribute would tie the designer to itself.
+            _restore_attribute(designer, "_create_dataset_builder", original_builder, owned=designer_owned_builder)
             storage_bindings.close()
             for built in builders:
                 # The override closes over the builder; drop it so the run's builder is freed by refcount.
@@ -191,15 +193,24 @@ class WorkflowSourceFrame:
                 }
             return write_metadata(metadata)
 
+        originals = {"write_parquet_file": write, "write_metadata": write_metadata, "load_dataset": load}
+        owned = {name: name in vars(storage) for name in originals}
         object.__setattr__(storage, "write_parquet_file", write_file)
         object.__setattr__(storage, "write_metadata", public_metadata)
         object.__setattr__(storage, "load_dataset", load_dataset)
         try:
             yield
         finally:
-            object.__setattr__(storage, "write_parquet_file", write)
-            object.__setattr__(storage, "write_metadata", write_metadata)
-            object.__setattr__(storage, "load_dataset", load)
+            for name, original in originals.items():
+                _restore_attribute(storage, name, original, owned=owned[name])
+
+
+def _restore_attribute(target: Any, name: str, original: Any, *, owned: bool) -> None:
+    """Undo an instance-level override without leaving a bound method that refers back to ``target``."""
+    if owned:
+        object.__setattr__(target, name, original)
+    else:
+        vars(target).pop(name, None)
 
 
 def _is_data_designer(designer: Any) -> bool:
