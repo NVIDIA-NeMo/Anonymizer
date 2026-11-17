@@ -33,5 +33,5 @@ jobs:
         run: mise run docs:fern:check
       - name: Generate hosted preview
         env:
-          FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
+          FERN_TOKEN: ${{ secrets.DOCS_FERN_TOKEN }}
         run: mise run docs:fern:preview
