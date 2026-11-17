@@ -292,7 +292,9 @@ class Operation:
     Input ports bind by name to the latest earlier output, else to the per-target seeds ``text`` (current candidate),
     ``source`` (original text), ``mentions``, ``context`` and ``target``. An operation whose output kind is
     ``assessment`` is a verifier; ``checks`` names the workflow requirements its assessment answers and ``subject``
-    names the input ports the assessment is about (required with ``checks``; there is no default).
+    names the input ports the assessment is about (required with ``checks``; there is no default). A verifier's outputs
+    are exactly ``{"assessment": "assessment"}``; any other layout with an ``assessment`` kind or port name is rejected
+    with ``GraphRejection("verifier_ports")``.
     """
 
     name: str
@@ -313,6 +315,10 @@ class Operation:
         # The caller keeps its own mappings; the admitted ports cannot change after preparation.
         object.__setattr__(self, "inputs", MappingProxyType(dict(self.inputs)))
         object.__setattr__(self, "outputs", MappingProxyType(dict(self.outputs)))
+        # Reconciliation reads the port named "assessment" as an Assessment, so a verifier declares only that port.
+        standard = {"assessment": ASSESSMENT}
+        if (ASSESSMENT in self.outputs.values() or "assessment" in self.outputs) and self.outputs != standard:
+            raise GraphRejection("verifier_ports", f"{self.name}: outputs must be {standard}; got {dict(self.outputs)}")
 
     @classmethod
     def verifier(
