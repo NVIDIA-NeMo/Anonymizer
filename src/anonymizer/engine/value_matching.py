@@ -7,14 +7,34 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 
 def any_value_occurs(values: Iterable[str], text: str) -> bool:
     """Whether any of ``values`` occurs in ``text`` under ``_occurs``."""
-    plain = _normalized(text)
-    folded = plain.casefold()
-    return any(_occurs(_normalized(value), plain, folded) for value in values)
+    return compile_values(values)(text)
+
+
+def compile_values(values: Iterable[str]) -> Callable[[str], bool]:
+    """A test of whether any of ``values`` occurs in a text under ``_occurs``, normalizing and compiling each value
+    once so that one set of values can be checked against many texts."""
+    matchers: list[tuple[bool, Callable[[str], bool]]] = []  # (matches with its case, test)
+    for value in {_normalized(v) for v in values} - {""}:
+        cased = _short_code(value)
+        key = value if cased else value.casefold()
+        if _unspaced(key[0]) and _unspaced(key[-1]):
+            if len(key) >= 2:
+                matchers.append((cased, lambda text, key=key: key in text))
+        else:
+            pattern = re.compile(r"(?<![^\W_])" + re.escape(key) + r"(?![^\W_])")
+            matchers.append((cased, lambda text, search=pattern.search: search(text) is not None))
+
+    def occurs(text: str) -> bool:
+        plain = _normalized(text)
+        folded = plain.casefold()
+        return any(test(plain if cased else folded) for cased, test in matchers)
+
+    return occurs
 
 
 def _normalized(text: str) -> str:

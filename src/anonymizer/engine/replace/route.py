@@ -69,7 +69,7 @@ from anonymizer.engine.replace.strategies import (
 )
 from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
-from anonymizer.engine.value_matching import any_value_occurs
+from anonymizer.engine.value_matching import compile_values
 from anonymizer.logging import ProgressTracker
 from anonymizer.measurement import record_stage
 
@@ -406,8 +406,8 @@ def _verify_no_original(
         parts.append(source[cursor:])
         if "".join(parts) != text:
             return Assessment(None, target, "reconstruction_mismatch")
-        values = {source[m.start : m.end] for m in mentions}
-        found = any(any_value_occurs(values, part) for part in parts[::2])  # the kept parts
+        occurs = compile_values({source[m.start : m.end] for m in mentions})
+        found = any(occurs(part) for part in parts[::2])  # the kept parts
         return Assessment(not found, target)
     except Exception:
         return Assessment(None, target, "check_error")

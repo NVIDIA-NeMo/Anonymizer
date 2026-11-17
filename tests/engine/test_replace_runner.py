@@ -842,10 +842,10 @@ def test_replace_advisory_error_is_could_not_assess(monkeypatch: pytest.MonkeyPa
     """A matcher error gives could_not_assess with a code; the row stays met and released; no text leaks."""
     canary = "canary-rpc-41"
 
-    def boom(values: object, text: str) -> bool:
+    def boom(values: object) -> object:
         raise ValueError(canary)
 
-    monkeypatch.setattr(route, "any_value_occurs", boom)
+    monkeypatch.setattr(route, "compile_values", boom)
     frame = pd.DataFrame({COL_TEXT: ["Alice met Alice"], COL_FINAL_ENTITIES: [{"entities": [_ent("Alice", 0)]}]})
     graph = route._lower(frame, COL_TEXT, COL_FINAL_ENTITIES)
     complete = {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]}
