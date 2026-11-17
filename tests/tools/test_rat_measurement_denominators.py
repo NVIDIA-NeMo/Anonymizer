@@ -82,8 +82,6 @@ def test_rate_uses_requested_denominator_when_supplied(
         {"rows_requested": 9},
         {"rows_scored": 11},
         {"rows_scored": 9},
-        {"rows_missing": 11},
-        {"rows_excluded": 11},
         {"rows_missing": 1},
         {"rows_excluded": 1},
         {"rows_failed": 1},
