@@ -111,6 +111,7 @@ def run_substitute_route(
     llm_workflow: LlmReplaceWorkflow,
     replace_method: Substitute,
     map_arguments: dict[str, Any],
+    session: Session | None = None,
 ) -> ReplacementResult:
     """Run Substitute as one invocation: the whole-frame LLM map step, then ``replace`` and the verifier per row."""
     failures: list[FailedRecord] = []
@@ -118,7 +119,7 @@ def run_substitute_route(
         llm_workflow, replace_method, map_arguments, failures, lambda target: (dataframe, target)
     )
     graph = _lower(dataframe, COL_TEXT, COL_FINAL_ENTITIES)
-    result = _protect_rows(graph, "substitute", None, False, map_step)
+    result = _protect_rows(graph, "substitute", None, False, map_step, session=session)
     kept = [position for position, target in enumerate(graph.targets) if result.outcome(target).available]
     output_df = dataframe.iloc[kept].reset_index(drop=True)
     targets = [graph.targets[position] for position in kept]
@@ -126,7 +127,7 @@ def run_substitute_route(
     output_df[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
     output_df[COL_REPLACED_TEXT] = [result.value(d) for d in targets]
     output_df[COL_REPLACEMENT_APPLICATION] = [result.value(d, "application") for d in targets]
-    return ReplacementResult(dataframe=output_df, failed_records=failures)
+    return ReplacementResult(dataframe=output_df, failed_records=failures, session_changes=result.session_changes)
 
 
 def _substitute_map_step(
@@ -181,6 +182,7 @@ def run_replace_pipeline(
     llm_workflow: LlmReplaceWorkflow | None,
     map_arguments: dict[str, Any],
     reroute: Callable[[pd.DataFrame], ReplacementResult],
+    session: Session | None = None,
 ) -> ReplacementResult:
     """Run ``detect``, the Substitute map step and the per-target replace and verify as one invocation.
 
@@ -233,13 +235,15 @@ def run_replace_pipeline(
         isinstance(replace_method, Annotate),
         map_step,
         detect_op,
+        session,
     )
     replace_elapsed = time.perf_counter() - started - sum(elapsed)  # detection records its own stage
     failures.extend(malformed)
     call_on_empty_input(graph, detect_op)
     if state.unresolved:
         rerouted = reroute(detected[0].dataframe)
-        return ReplacementResult(rerouted.dataframe, [*failures, *rerouted.failed_records], detected[0], elapsed[0])
+        failed = [*failures, *rerouted.failed_records]
+        return dataclasses.replace(rerouted, failed_records=failed, detection=detected[0], detection_elapsed=elapsed[0])
     targets = [d for d in graph.targets if result.outcome(d).available]
     available = set(targets)
     row_of = {datum: row for row, datum in enumerate(owners)}
@@ -269,7 +273,7 @@ def run_replace_pipeline(
         failed_record_count=len(failures) - len(detected[0].failed_records),
     )
     outcomes = tuple(result.outcome(d) for d in targets)
-    return ReplacementResult(output_df, failures, detected[0], elapsed[0], outcomes)
+    return ReplacementResult(output_df, failures, detected[0], elapsed[0], outcomes, result.session_changes)
 
 
 def _ready_rows(
@@ -309,9 +313,10 @@ def _protect_rows(
     ``replace`` applies the row's accepted ``mentions``. Each row's map comes from ``map_step``'s
     ``replacement_map`` port when there is one, else from ``build_map`` over those mentions; ``detect_op``, when
     given, runs first and supplies the mentions the graph does not declare. ``session`` goes to ``prepare`` and
-    ``protect``.
+    ``protect``; under a stable one, a local ``build_map`` decides nothing, so ``replace`` returns no decisions.
     """
     positions = {target: position for position, target in enumerate(graph.targets)}
+    local_under_session = map_step is None and session is not None and session.mode.stable_replacements
 
     def replace(
         text: str, target: Datum, mentions: tuple[Mention, ...], replacement_map: dict[str, Any] | None = None
@@ -330,8 +335,12 @@ def _protect_rows(
         replaced, application = apply_replacements_to_spans(
             text=text, entities=entities, replacements=_parse_replacements(rmap), allow_value_fallback=True
         )
-        return {"text": replaced, "replacement_map": rmap, "application": application.to_metrics()}
+        out = {"text": replaced, "replacement_map": rmap, "application": application.to_metrics()}
+        return {**out, "decisions": ()} if local_under_session else out
 
+    replace_outputs = {"text": TEXT, "replacement_map": REPLACEMENT_MAP, "application": REPLACEMENT_APPLICATION}
+    if local_under_session:
+        replace_outputs["decisions"] = DECISIONS
     replace_inputs = {"text": TEXT, "target": DATUM, "mentions": MENTIONS}
     if map_step is not None:
         replace_inputs["replacement_map"] = REPLACEMENT_MAP
@@ -340,7 +349,7 @@ def _protect_rows(
             "replace",
             replace,
             replace_inputs,
-            {"text": TEXT, "replacement_map": REPLACEMENT_MAP, "application": REPLACEMENT_APPLICATION},
+            replace_outputs,
         ),
         Operation.verifier(
             "verify-patches",

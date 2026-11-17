@@ -11,6 +11,7 @@ from anonymizer.config.anonymizer_config import DetectionScope
 from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.graph_core.execution import TargetOutcome
+from anonymizer.engine.graph_core.session import SessionChanges
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.interface.display import render_record_html
 
@@ -121,6 +122,7 @@ class AnonymizerResult(_DisplayMixin):
     effective_entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
+    _session_changes: SessionChanges | None = field(default=None, repr=False, compare=False)
 
     def __repr__(self) -> str:
         return (
@@ -190,6 +192,7 @@ class PreviewResult(_DisplayMixin):
     effective_entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
+    _session_changes: SessionChanges | None = field(default=None, repr=False, compare=False)
 
     def __repr__(self) -> str:
         return (

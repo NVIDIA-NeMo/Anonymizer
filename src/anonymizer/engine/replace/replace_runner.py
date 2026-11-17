@@ -34,6 +34,7 @@ from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import Attrib
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
 from anonymizer.engine.graph_core.execution import TargetOutcome
+from anonymizer.engine.graph_core.session import Session, SessionChanges
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy
@@ -53,6 +54,7 @@ class ReplacementResult:
     detection: EntityDetectionResult | None = None  # set when detection ran in the same invocation
     detection_elapsed: float = 0.0
     outcomes: tuple[TargetOutcome, ...] | None = None  # one per output row, when the rows ran as one invocation
+    session_changes: SessionChanges = SessionChanges()
 
 
 def _drop_malformed_entities(dataframe: pd.DataFrame) -> tuple[pd.DataFrame, list[FailedRecord]]:
@@ -99,6 +101,7 @@ class ReplacementWorkflow:
         model_configs: list[ModelConfig],
         selected_models: ReplaceModelSelection,
         preview_num_records: int | None = None,
+        session: Session | None = None,
     ) -> ReplacementResult:
         """Apply the replacement strategy (no LLM judges).
 
@@ -109,6 +112,7 @@ class ReplacementWorkflow:
         with stage_timer("ReplacementWorkflow.run", strategy=strategy, input_row_count=len(dataframe)) as measurement:
             logger.debug("replacement starting on %d records", len(dataframe))
             dataframe, failed_records = _drop_malformed_entities(dataframe)
+            changes = SessionChanges()
             if isinstance(replace_method, (Annotate, Redact, Hash)):
                 local_df = apply_local_replace_strategy(dataframe, strategy=replace_method)
             elif isinstance(replace_method, Substitute):
@@ -125,13 +129,14 @@ class ReplacementWorkflow:
                         selected_models=selected_models,
                         preview_num_records=preview_num_records,
                     ),
+                    session=session,
                 )
-                local_df = substituted.dataframe
+                local_df, changes = substituted.dataframe, substituted.session_changes
                 failed_records.extend(substituted.failed_records)
             else:
                 raise ValueError(f"Unsupported replace method: {type(replace_method).__name__}")
 
-            result = ReplacementResult(dataframe=local_df, failed_records=failed_records)
+            result = ReplacementResult(dataframe=local_df, failed_records=failed_records, session_changes=changes)
             measurement.update(
                 output_row_count=len(result.dataframe),
                 failed_record_count=len(result.failed_records),
@@ -147,8 +152,10 @@ class ReplacementWorkflow:
         model_configs: list[ModelConfig],
         selected_models: ReplaceModelSelection,
         preview_num_records: int | None = None,
+        session: Session | None = None,
     ) -> ReplacementResult:
-        """Detect entities with ``detect`` and apply the replacement strategy as one graph invocation."""
+        """Detect entities with ``detect`` and apply the replacement strategy as one graph invocation; ``session``
+        goes to that invocation and to ``run`` when detection output must be rerouted."""
         from anonymizer.engine.replace.route import run_replace_pipeline
 
         return run_replace_pipeline(
@@ -165,7 +172,9 @@ class ReplacementWorkflow:
                 model_configs=model_configs,
                 selected_models=selected_models,
                 preview_num_records=preview_num_records,
+                session=session,
             ),
+            session=session,
         )
 
     def evaluate(
