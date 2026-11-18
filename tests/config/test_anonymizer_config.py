@@ -15,7 +15,6 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
     Detect,
-    DetectorDeclaration,
     EvaluateConfig,
     Rewrite,
     TextRecord,
@@ -934,8 +933,6 @@ _FROZEN_FIELDS: list[tuple[Any, str, Any]] = [
     (AnonymizerConfig(replace=Redact()), "detect", Detect()),
     (Detect(), "gliner_threshold", 0.5),
     (Detect(), "entity_labels", ["first_name"]),
-    (Detect(), "detector", DetectorDeclaration()),
-    (DetectorDeclaration(), "labels_fixed", True),
     (Rewrite(), "privacy_goal", None),
     (Rewrite(), "max_repair_iterations", 1),
     (default_privacy_goal(), "protect", "Something else entirely"),
@@ -965,7 +962,6 @@ _PICKLED: list[Any] = [
             entity_label_examples={"vendor_key": ["acme_live_1"]},
             excluded_entity_labels=["email"],
             gliner_threshold=0.4,
-            detector=DetectorDeclaration(labels=["first_name", "vendor_key"], labels_fixed=True),
         ),
         replace=Redact(),
     ),
@@ -980,7 +976,6 @@ _PICKLED: list[Any] = [
     Annotate(),
     Hash(digest_length=8),
     default_privacy_goal(),
-    DetectorDeclaration(offset_unit="code_point"),
 ]
 
 
@@ -1033,15 +1028,6 @@ def test_detect_derivation_is_not_cached() -> None:
     assert "b_label" in detect.scope.effective_labels
 
 
-def test_detector_declarations_live_under_detect_detector() -> None:
-    detect = Detect(detector={"labels": ["first_name"], "labels_fixed": True})
-    assert detect.detector == DetectorDeclaration(labels=["first_name"], labels_fixed=True)
-    with pytest.raises(ValidationError, match=r"detect\.detector\.labels_fixed"):
-        Detect.model_validate({"detector_labels_fixed": True})
-    with pytest.raises(ValidationError, match="extra"):
-        DetectorDeclaration.model_validate({"label": ["first_name"]})
-
-
 def test_rewrite_instructions_is_removed_with_a_message() -> None:
     with pytest.raises(ValidationError, match=r"Rewrite\.instructions was removed in v1.*privacy_goal\.protect"):
         Rewrite(instructions="x")  # ty: ignore[unknown-argument]
@@ -1071,7 +1057,6 @@ _GOAL = {"protect": "Names and street addresses", "preserve": "Clinical meaning 
 _UNKNOWN_KEY_CASES: list[tuple[Any, dict[str, Any], str]] = [
     (AnonymizerConfig, {"replace": {"kind": "redact"}}, "AnonymizerConfig"),
     (Detect, {}, "Detect"),
-    (DetectorDeclaration, {}, "DetectorDeclaration"),
     (Rewrite, {}, "Rewrite"),
     (PrivacyGoal, dict(_GOAL), "PrivacyGoal"),
     (Substitute, {}, "Substitute"),
@@ -1117,11 +1102,10 @@ def test_rewrite_instructions_tombstone_takes_precedence_over_unknown_keys() -> 
     assert "extra_forbidden" not in str(excinfo.value)
 
 
-@pytest.mark.parametrize("name", ["offset_unit", "labels", "labels_fixed"])
-def test_flat_detector_tombstone_takes_precedence_over_unknown_keys(name: str) -> None:
-    with pytest.raises(ValidationError, match=rf"detect\.detector\.{name}") as excinfo:
-        AnonymizerConfig.model_validate({"replace": {"kind": "redact"}, "detect": {f"detector_{name}": None}})
-    assert "extra_forbidden" not in str(excinfo.value)
+@pytest.mark.parametrize("name", ["detector", "detector_offset_unit", "detector_labels", "detector_labels_fixed"])
+def test_detector_declaration_keys_are_unknown_keys(name: str) -> None:
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        AnonymizerConfig.model_validate({"replace": {"kind": "redact"}, "detect": {name: None}})
 
 
 _CASE_ID_RULE = RegexRule(label="case_id", pattern=r"CASE-\d+")

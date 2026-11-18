@@ -25,7 +25,6 @@ from anonymizer.engine.detection.entity_label_examples import (
     normalize_entity_label_examples,
     resolve_entity_label_config,
 )
-from anonymizer.engine.detection.postprocess import normalize_label
 
 logger = logging.getLogger(__name__)
 
@@ -157,30 +156,6 @@ class DetectionScope(BaseModel):
     gliner_threshold: float = Field(description="GLiNER detection confidence threshold.")
 
 
-class DetectorDeclaration(BaseModel):
-    """Facts a detector declares about itself, checked against the configuration before work starts."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
-
-    offset_unit: str | None = Field(
-        default=None,
-        description=(
-            "Declared offset unit of the detector's spans. None declares nothing. The pipeline consumes "
-            "Unicode code point offsets, so any other declared unit is rejected before work starts."
-        ),
-    )
-    labels: list[str] | None = Field(
-        default=None, description="Declared label set the detector supports. None declares nothing."
-    )
-    labels_fixed: bool = Field(
-        default=False,
-        description=(
-            "True declares that labels is fixed (the detector cannot take caller-selected labels): "
-            "every effective label must then be in labels, or the run is rejected before work starts."
-        ),
-    )
-
-
 class Detect(BaseModel):
     """Configuration for the entity detection stage."""
 
@@ -250,19 +225,6 @@ class Detect(BaseModel):
         ),
     )
 
-    detector: DetectorDeclaration | None = Field(
-        default=None, description="Facts the detector declares about itself. None declares nothing."
-    )
-
-    @model_validator(mode="before")
-    @classmethod
-    def reject_flat_detector_fields(cls, data: Any) -> Any:
-        if isinstance(data, dict):
-            for name in ("offset_unit", "labels", "labels_fixed"):
-                if f"detector_{name}" in data:
-                    raise ValueError(f"detect.detector_{name} moved to detect.detector.{name} in v1.")
-        return data
-
     @property
     def scope(self) -> DetectionScope:
         """The detection scope this configuration resolves to, computed on every read."""
@@ -311,25 +273,6 @@ class Detect(BaseModel):
             excluded_entity_labels=self.excluded_entity_labels,
             entity_label_examples=self.entity_label_examples,
         )
-
-    def detector_declaration_conflicts(self) -> list[str]:
-        """Conflicts between the declared detector facts and this configuration; empty when consistent."""
-        conflicts = []
-        detector = self.detector or DetectorDeclaration()
-        if detector.offset_unit is not None and detector.offset_unit != "code_point":
-            conflicts.append(
-                f"detector.offset_unit {detector.offset_unit!r} is not supported; the pipeline consumes "
-                "'code_point' offsets."
-            )
-        if detector.labels_fixed:
-            if detector.labels is None:
-                conflicts.append("detector.labels_fixed=True requires detector.labels.")
-            else:
-                effective = set(self.entity_labels or DEFAULT_ENTITY_LABELS) - set(self.excluded_entity_labels or [])
-                missing = sorted(effective - {normalize_label(x) for x in detector.labels})
-                if missing:
-                    conflicts.append(f"Effective labels outside the fixed detector.labels: {missing}.")
-        return conflicts
 
     @field_validator("entity_labels")
     @classmethod

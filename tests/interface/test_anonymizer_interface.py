@@ -1573,36 +1573,6 @@ def test_evaluate_rewrite_flags_rows_with_missed_entities(
     assert run_result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False] * len(run_result.dataframe)
 
 
-@pytest.mark.parametrize(
-    "detect",
-    [
-        {"entity_labels": ["first_name", "email"], "detector": {"labels": ["first_name"], "labels_fixed": True}},
-        {"detector": {"labels_fixed": True}},
-        {"detector": {"offset_unit": "utf16_code_unit"}},
-    ],
-)
-def test_conflicting_detector_declarations_rejected_before_detection(stub_input: AnonymizerInput, detect: dict) -> None:
-    anonymizer, detection_wf, _, _ = _make_anonymizer()
-    with pytest.raises(InvalidConfigError):
-        anonymizer.run(config=AnonymizerConfig(detect=detect, replace=Redact()), data=stub_input)
-    detection_wf.run.assert_not_called()
-
-
-def test_fixed_detector_labels_missing_a_reserved_label_raise_invalid_config_at_preflight(
-    stub_input: AnonymizerInput,
-) -> None:
-    detect = {
-        "entity_labels": ["first_name", "nagroup_g1"],
-        "detector": {"labels": ["first_name"], "labels_fixed": True},
-    }
-    anonymizer, detection_wf, _, _ = _make_anonymizer()
-    with pytest.raises(InvalidConfigError, match="nagroup_g1"):
-        anonymizer.validate_config(AnonymizerConfig(detect=detect, replace=Redact()))
-    with pytest.raises(InvalidConfigError, match="nagroup_g1"):
-        anonymizer.run(config=AnonymizerConfig(detect=detect, replace=Redact()), data=stub_input)
-    detection_wf.run.assert_not_called()
-
-
 def test_detection_scope_is_immutable_and_hashable(stub_input: AnonymizerInput) -> None:
     anonymizer, _, _, _ = _make_anonymizer()
 
@@ -1618,7 +1588,6 @@ def test_preview_reports_scope_with_exclusions(stub_input: AnonymizerInput) -> N
     detect = {
         "entity_labels": ["first_name", "email"],
         "excluded_entity_labels": ["email"],
-        "detector": {"labels": ["first_name", "email", "city"], "labels_fixed": True, "offset_unit": "code_point"},
     }
     anonymizer, _, _, _ = _make_anonymizer()
 

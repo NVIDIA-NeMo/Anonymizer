@@ -1067,8 +1067,6 @@ class Anonymizer:
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
         """Run semantic preflight checks shared by validate, run, and preview."""
-        if conflicts := config.detect.detector_declaration_conflicts():
-            raise InvalidConfigError(" ".join(conflicts))
         try:
             validate_model_alias_references(
                 self._model_configs,

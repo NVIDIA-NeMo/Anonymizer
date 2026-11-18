@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from anonymizer.config.anonymizer_config import Detect, DetectorDeclaration, Rewrite
+from anonymizer.config.anonymizer_config import Detect, Rewrite
 from anonymizer.config.options import DetectionOptions, RewriteOptions
 from anonymizer.config.rewrite import default_privacy_goal
 
@@ -42,14 +42,9 @@ def _raw_labels(options: DetectionOptions) -> object:
     return options.entity_labels  # ty: ignore[unresolved-attribute]
 
 
-def _raw_detector(options: DetectionOptions) -> object:
-    return options.detector  # ty: ignore[unresolved-attribute]
-
-
 def test_raw_field_read_through_the_view_is_a_type_error() -> None:
-    detect = Detect(entity_labels=["first_name"], detector=DetectorDeclaration(offset_unit="code_point"))
+    detect = Detect(entity_labels=["first_name"])
     assert _raw_labels(detect) == ["first_name"]
-    assert _raw_detector(detect) == DetectorDeclaration(offset_unit="code_point")
 
 
 def _goal(options: RewriteOptions) -> str:
