@@ -185,9 +185,12 @@ class _ParquetCheckingJudgeAdapter:
         self.returned_positions = returned_positions
 
     def run_workflow(self, frame: pd.DataFrame, **kwargs: object) -> WorkflowRunResult:
-        frame.to_parquet(BytesIO())
+        buffer = BytesIO()
+        frame.to_parquet(buffer)
         assert COL_REPLACEMENT_APPLICATION not in frame.columns
-        out = frame.iloc[list(self.returned_positions)].copy().reset_index(drop=True)
+        buffer.seek(0)
+        roundtripped = pd.read_parquet(buffer)
+        out = roundtripped.iloc[list(self.returned_positions)].copy().reset_index(drop=True)
         out[COL_DETECTION_JUDGE] = [{"all_valid": True, "invalid_entities": []} for _ in range(len(out))]
         dropped = frame[~frame[RECORD_ID_COLUMN].isin(out[RECORD_ID_COLUMN])]
         failed_records = [
@@ -202,11 +205,11 @@ class _ParquetCheckingJudgeAdapter:
     [(0, 1, 2), (2, 1, 0), (2, 0)],
     ids=["all-rows", "reordered", "dropped-and-reordered"],
 )
-@pytest.mark.parametrize("include_telemetry", [True, False], ids=["with-telemetry", "without-telemetry"])
+@pytest.mark.parametrize("telemetry_case", ["all-empty", "mixed", "absent"])
 def test_evaluate_serializes_seed_and_preserves_telemetry(
     stub_evaluate_model_selection: EvaluateModelSelection,
     returned_positions: tuple[int, ...],
-    include_telemetry: bool,
+    telemetry_case: str,
 ) -> None:
     names = [["Alice"], [], ["Bob", "Carol"], ["Dan", "Eve", "Frank"]]
     df = pd.DataFrame(
@@ -220,15 +223,16 @@ def test_evaluate_serializes_seed_and_preserves_telemetry(
         },
         index=pd.Index([10, 20, 30, 40]),
     )
-    if include_telemetry:
+    if telemetry_case != "absent":
+        skipped_counts = [0, 0, 0, 1] if telemetry_case == "mixed" else [0, 0, 0, 0]
         df[COL_REPLACEMENT_APPLICATION] = [
             {
                 "targeted_span_count": len(row_names),
-                "applied_span_count": len(row_names),
-                "skipped_span_count": 0,
-                "skipped_span_label_counts": {},
+                "applied_span_count": len(row_names) - skipped_count,
+                "skipped_span_count": skipped_count,
+                "skipped_span_label_counts": {"first_name": skipped_count} if skipped_count else {},
             }
-            for row_names in names
+            for row_names, skipped_count in zip(names, skipped_counts, strict=True)
         ]
     original = df.copy(deep=True)
     workflow = DetectionJudgeWorkflow(adapter=_ParquetCheckingJudgeAdapter(returned_positions))
@@ -240,10 +244,16 @@ def test_evaluate_serializes_seed_and_preserves_telemetry(
     assert result.dataframe[RECORD_ID_COLUMN].tolist() == df.iloc[expected_positions][RECORD_ID_COLUMN].tolist()
     assert result.dataframe[COL_DETECTION_VALID].tolist() == [True] * len(expected_positions)
     assert result.dataframe[COL_DETECTION_INVALID_ENTITIES].tolist() == [[] for _ in expected_positions]
-    if include_telemetry:
-        assert result.dataframe[COL_REPLACEMENT_APPLICATION].tolist() == (
-            df.iloc[expected_positions][COL_REPLACEMENT_APPLICATION].tolist()
-        )
+    if telemetry_case != "absent":
+        telemetry_rows = result.dataframe[COL_REPLACEMENT_APPLICATION].tolist()
+        assert telemetry_rows == df.iloc[expected_positions][COL_REPLACEMENT_APPLICATION].tolist()
+        for telemetry in telemetry_rows:
+            assert type(telemetry) is dict
+            for count_name in ("targeted_span_count", "applied_span_count", "skipped_span_count"):
+                assert type(telemetry[count_name]) is int
+            label_counts = telemetry["skipped_span_label_counts"]
+            assert type(label_counts) is dict
+            assert all(type(count) is int for count in label_counts.values())
     else:
         assert COL_REPLACEMENT_APPLICATION not in result.dataframe.columns
     expected_dropped_ids = [

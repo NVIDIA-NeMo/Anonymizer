@@ -181,9 +181,10 @@ class _BaseJudgeWorkflow(ABC):
         selected_models: EvaluateModelSelection,
         preview_num_records: int | None = None,
     ) -> JudgeResult:
-        """Standalone single-judge entry point. The orchestrator in
-        ``ReplacementWorkflow`` does not go through this; tests and callers
-        that want to run one judge in isolation do.
+        """Run a single judge for ``RewriteWorkflow.evaluate()`` or isolated callers.
+
+        The orchestrator in ``ReplacementWorkflow`` runs combined judges
+        without going through this entry point.
         """
         working_df = self.prepare(dataframe)
         # `prepare()` returns a fresh copy (per its contract), so we can stamp
