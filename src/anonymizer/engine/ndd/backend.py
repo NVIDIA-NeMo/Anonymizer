@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TypeVar
 
@@ -13,8 +13,8 @@ import pandas as pd
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig
 
-from anonymizer.engine.graph_core.authoring import Operation, ProtectionGraph
-from anonymizer.engine.graph_core.execution import ProtectionResult
+from anonymizer.engine.graph_core.authoring import GraphScope, Limits, Operation, ProtectionGraph, Workflow
+from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.interface.errors import AnonymizerWorkflowError
@@ -78,3 +78,31 @@ def raise_if_cancelled(result: ProtectionResult) -> None:
     """Raise ``AnonymizerWorkflowError`` when a cancellation stopped any target before its steps finished."""
     if any(result.outcome(target).terminal == "cancelled" for target in result.targets):
         raise AnonymizerWorkflowError("The workflow was cancelled before it finished.")
+
+
+def rows_as_graph(texts: Iterable[object], *, none_as_empty: bool = False) -> ProtectionGraph:
+    """One target per row whose datum is ``str(text)``; ``none_as_empty`` writes ``""`` for a ``None`` text."""
+    scope = GraphScope()
+    return ProtectionGraph(
+        scope, tuple(scope.datum("" if none_as_empty and text is None else str(text)) for text in texts)
+    )
+
+
+def run_invocation(
+    graph: ProtectionGraph,
+    workflow: Workflow,
+    limits: Limits,
+    *,
+    tolerate: tuple[type[BaseException], ...] = (),
+    on_empty: Sequence[Operation] = (),
+) -> ProtectionResult:
+    """Run one invocation; raise the first non-verifier error not of a ``tolerate`` type, then a cancellation.
+    ``on_empty`` runs as ``call_on_empty_input`` does."""
+    result = protect(prepare(graph, workflow, limits=limits))
+    call_on_empty_input(graph, *on_empty)
+    steps = [step for _, step in workflow.flatten()]
+    for entry in result.state.entries:
+        if entry.error is not None and not steps[entry.node].is_verifier and not isinstance(entry.error, tolerate):
+            raise entry.error
+    raise_if_cancelled(result)
+    return result

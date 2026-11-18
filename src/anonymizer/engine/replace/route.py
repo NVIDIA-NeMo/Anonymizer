@@ -52,11 +52,11 @@ from anonymizer.engine.graph_core.authoring import (
     ProtectionGraph,
     Requests,
     Workflow,
+    register_plain_kind,
 )
-from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
-from anonymizer.engine.graph_core.kernel import register_kind
+from anonymizer.engine.graph_core.execution import ProtectionResult
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
+from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, rows_as_graph, run_invocation
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
     LlmReplaceWorkflow,
@@ -75,8 +75,8 @@ from anonymizer.measurement import record_stage
 
 logger = logging.getLogger("anonymizer")
 
-REPLACEMENT_MAP = register_kind("replacement-map", lambda v: isinstance(v, dict), copy=dict)
-REPLACEMENT_APPLICATION = register_kind("replacement-application", lambda v: isinstance(v, dict), copy=dict)
+REPLACEMENT_MAP = register_plain_kind("replacement-map")
+REPLACEMENT_APPLICATION = register_plain_kind("replacement-application")
 
 
 def run_local_route(
@@ -175,8 +175,7 @@ def run_replace_pipeline(
     result that is not verifiably one input row per returned row (see ``resolve_positions``) fails every target at
     ``detect``, and ``reroute`` replaces over the detection frame as returned.
     """
-    scope = GraphScope()
-    graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in dataframe[COL_TEXT]))
+    graph = rows_as_graph(dataframe[COL_TEXT])
     state = DetectState()
     failures, detected, owners, elapsed = state.failures, state.detected, state.owners, state.elapsed
     malformed: list[FailedRecord] = []
@@ -359,19 +358,7 @@ def _protect_rows(
         max_mentions=sum(len(d.text) for d in graph.targets),
         max_context_items=0,
     )
-    return _run(graph, workflow, limits)
-
-
-def _run(graph: ProtectionGraph, workflow: Workflow, limits: Limits) -> ProtectionResult:
-    """Execute one invocation; the first error a non-verifier step raised is raised, as 0.4.0 raised it, then a
-    cancellation."""
-    result = protect(prepare(graph, workflow, limits=limits))
-    steps = [step for _, step in workflow.flatten()]
-    for entry in result.state.entries:
-        if entry.error is not None and not steps[entry.node].is_verifier:
-            raise entry.error
-    raise_if_cancelled(result)
-    return result
+    return run_invocation(graph, workflow, limits)
 
 
 def _verify_patches(

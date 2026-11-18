@@ -22,8 +22,35 @@ CONTEXT = register_kind("context", lambda v: isinstance(v, tuple))
 DATUM = register_kind("datum", lambda v: isinstance(v, Datum))
 ASSESSMENT = register_kind("assessment", lambda v: isinstance(v, Assessment))
 RECORD = register_kind("record", lambda v: isinstance(v, Record))
+_PLAIN_SCALARS = (str, int, float, bool, type(None))
 # Seeds an operation may not shadow with an output; a subset of ``execution.SEEDS``.
 _RESERVED_SEED_OUTPUTS = ("record",)
+
+
+def _plain(value: Any) -> Any:
+    """``value`` converted deeply to plain Python (str keys, lists, exact scalars, NaN allowed); else ``TypeError``."""
+    if type(value) in _PLAIN_SCALARS:
+        return value
+    if isinstance(value, dict):
+        plain = {str(key): _plain(item) for key, item in value.items()}
+        if len(plain) != len(value):
+            raise TypeError("two keys convert to the same string")
+        return plain
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    if getattr(getattr(value, "dtype", None), "kind", "") in ("M", "m"):  # item() gives an int at nanoseconds
+        raise TypeError(f"{type(value).__name__} of dates or durations has no plain Python form")
+    if callable(getattr(value, "tolist", None)) and getattr(value, "ndim", 1) != 0:
+        return [_plain(item) for item in value.tolist()]
+    converted = value.item() if callable(getattr(value, "item", None)) else value
+    if type(converted) in _PLAIN_SCALARS:
+        return converted
+    raise TypeError(f"{type(value).__name__} has no plain Python form")
+
+
+def register_plain_kind(name: str) -> str:
+    """Register ``name`` as a dict kind copied by ``_plain``; a value with no plain form fails as ``invalid_output``."""
+    return register_kind(name, lambda v: isinstance(v, dict), copy=_plain)
 
 
 def utf8_size(text: str) -> int:

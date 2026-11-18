@@ -15,7 +15,7 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
 )
 from anonymizer.engine.detection.postprocess import EntitySpan
-from anonymizer.engine.replace import route
+from anonymizer.engine.ndd import backend
 from anonymizer.engine.replace.strategies import (
     ReplacementEntry,
     apply_entity_spans,
@@ -59,14 +59,14 @@ def test_replace_applies_only_the_accepted_mentions(narrowed: bool) -> None:
         {"value": "Bob", "label": "first_name", "start_position": 10, "end_position": 13},
     ]
     dataframe = pd.DataFrame({"source": ["Alice met Bob."], "detected": [{"entities": entities}]})
-    real_prepare = route.prepare
+    real_prepare = backend.prepare
 
     def accept_first(graph, workflow, **kwargs):
         if narrowed:
             graph = dataclasses.replace(graph, mentions=graph.mentions[:1])
         return real_prepare(graph, workflow, **kwargs)
 
-    with patch.object(route, "prepare", accept_first):
+    with patch.object(backend, "prepare", accept_first):
         result = apply_local_replace_strategy(
             dataframe, strategy=Redact(format_template="***"), text_column="source", entities_column="detected"
         )

@@ -44,18 +44,23 @@ from anonymizer.engine.graph_core.authoring import (
     TEXT,
     Assessment,
     Datum,
-    GraphScope,
     Limits,
     Operation,
     ProtectionGraph,
     Requests,
     Workflow,
+    register_plain_kind,
 )
-from anonymizer.engine.graph_core.execution import ProtectionResult, TargetOutcome, prepare, protect
-from anonymizer.engine.graph_core.kernel import register_kind
+from anonymizer.engine.graph_core.execution import ProtectionResult, TargetOutcome
 from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
+from anonymizer.engine.ndd.backend import (
+    call_on_empty_input,
+    per_target,
+    raise_if_cancelled,
+    rows_as_graph,
+    run_invocation,
+)
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
@@ -83,7 +88,7 @@ from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.rewrite.workflow")
 
-REWRITE_METRICS = register_kind("rewrite-metrics", lambda v: isinstance(v, dict), copy=dict)
+REWRITE_METRICS = register_plain_kind("rewrite-metrics")
 
 _PASSTHROUGH_DEFAULTS: dict[str, object] = {
     COL_UTILITY_SCORE: 1.0,
@@ -367,17 +372,7 @@ def _protect_rewrite(
         max_mentions=sum(len(d.text) for d in graph.targets),
         max_context_items=0,
     )
-    result = protect(prepare(graph, workflow, limits=limits))
-    steps = [step for _, step in workflow.flatten()]
-    for entry in result.state.entries:
-        if (
-            entry.error is not None
-            and not steps[entry.node].is_verifier
-            and not isinstance(entry.error, RewriteUnavailable)
-        ):
-            raise entry.error
-    raise_if_cancelled(result)
-    return result
+    return run_invocation(graph, workflow, limits, tolerate=(RewriteUnavailable,))
 
 
 def _flag_review(
@@ -410,8 +405,7 @@ def _rewrite_lowered(
     ``needs_human_review`` is set when that outcome is not qualified or the row's utility is unavailable or below the
     flag.
     """
-    scope = GraphScope()
-    graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in entity_rows[COL_TEXT]))
+    graph = rows_as_graph(entity_rows[COL_TEXT])
     order = list(entity_rows[ROW_ORDER_COL])
     position = {value: i for i, value in enumerate(order)}
 
@@ -533,8 +527,7 @@ class RewriteWorkflow:
         """
         started = time.perf_counter()
         evaluation = options["evaluation"]
-        scope = GraphScope()
-        graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in dataframe[COL_TEXT]))
+        graph = rows_as_graph(dataframe[COL_TEXT])
         state = DetectState()
         detect_op = detect_step(dataframe, detect, state)
         rows = _Rows(pd.DataFrame())
