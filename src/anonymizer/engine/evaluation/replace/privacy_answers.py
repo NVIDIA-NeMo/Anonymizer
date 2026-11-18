@@ -90,8 +90,14 @@ Redaction and substitution
 Equivalent forms and geography
 - Treat normalized, synonymous, abbreviated, and expanded forms as the
   same value when context supports the intended meaning.
-- A narrower geographic location can reveal its containing region or
-  country. Do not reverse this relationship without additional evidence.
+- Geographic inference is directional: a city can identify its containing
+  state or country. A state or country generally cannot identify a
+  particular city.
+- For example, an address containing Chicago, USA supports Illinois;
+  Illinois alone does not identify Chicago. A redacted or substituted
+  state field does not override this evidence.
+- Apply this relationship consistently to all locations, not only the
+  examples listed.
 
 Examples:
 - "United States", "United States of America", "U.S.", "USA", "US",
