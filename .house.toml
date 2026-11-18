@@ -5,5 +5,5 @@
 # it with an internal tool, house, which writes this file; contributors never need to run it.
 # source_commit identifies the baseline version applied. Do not edit.
 schema_version = 1
-source_commit = "412f05c1545a82e5959976ddcc0b34d6a7c33fa6" # pragma: allowlist secret
+source_commit = "6cce74072a0bf5b122ee0e7eaf95cb05299bb049" # pragma: allowlist secret
 profile = "public"
