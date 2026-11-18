@@ -25,7 +25,7 @@ This document covers contribution policy and pull request expectations. For loca
 3. Create a branch from the latest `main` using the [branch naming](#branch-naming) convention.
 4. For non-trivial changes, write a plan document before implementation. See [Agent-Assisted Development](#agent-assisted-development).
 5. Implement the change following [AGENTS.md](AGENTS.md), [STYLEGUIDE.md](STYLEGUIDE.md), and [DEVELOPMENT.md](DEVELOPMENT.md).
-6. `mise run setup` installs the repository hooks. Reinstall them with `mise run hooks:install` when needed.
+6. `mise run setup` installs the repository hooks with prek. Reinstall them with `mise run hooks:install` when needed.
 7. Run the relevant tests from [DEVELOPMENT.md](DEVELOPMENT.md#validation-before-opening-a-pr).
 8. Commit with DCO signoff. The pre-commit hooks run the repository checks before accepting the commit.
 9. Open a pull request with a conventional title, a linked issue, and a completed checklist.
@@ -159,20 +159,24 @@ The `main` branch has these protections:
 
 ### Local Commit Safety
 
-Install the repository hooks once per clone:
+`mise run setup` installs the repository hooks with prek once per clone. Reinstall them with:
 
 ```bash
 mise run hooks:install
 ```
 
+A `core.hooksPath` left over from another hook manager silently disables the hooks; unset it with
+`git config --unset core.hooksPath`, then reinstall them.
+
 Before Git records a commit, the hooks check file hygiene, format and lint staged Python, Markdown, and TOML files,
-repair SPDX headers, and run `mise run check` on every commit. The aggregate check covers six read-only stages:
+repair SPDX headers, and run `mise run check` on every commit. The aggregate check covers seven read-only stages:
 
 - `mise run check:format`
 - `mise run check:lint`
 - `mise run check:type`
 - `mise run check:lock`
 - `mise run check:license:headers`
+- `mise run check:tasks`
 - `mise run check:docs:pairs`
 
 The commit-message hook rejects commits without a `Signed-off-by` line. If a hook changes a file, review the change,

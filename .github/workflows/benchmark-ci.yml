@@ -69,6 +69,7 @@ jobs:
       - uses: ./.github/actions/setup-python-env
         with:
           checkout: "false"
+          dependency-profile: "dev"
 
       - name: Checkout benchmark target
         uses: actions/checkout@v7

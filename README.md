@@ -180,8 +180,8 @@ After installation, invoke it with `/anonymizer` in an agent that supports slash
 ## Development
 
 ```bash
-make setup                  # Install pinned tools, dev dependencies, and hooks
-mise run setup all          # Install every locked dependency group
+make setup                  # Install pinned tools, every dependency group and extra, and hooks
+mise run deps:sync          # Sync only the default dev dependencies
 mise run test               # Run tests
 mise run test:all           # Run unit and end-to-end tests
 mise run test:coverage      # Run with coverage report

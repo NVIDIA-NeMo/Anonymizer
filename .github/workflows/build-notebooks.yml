@@ -18,7 +18,7 @@ jobs:
       - uses: ./.github/actions/setup-python-env
         with:
           checkout: "false"
-          dependency-profile: "notebooks"
+          dependency-profile: "all"
       - name: Cache pinned GLiNER2 model
         uses: actions/cache@v6
         with:

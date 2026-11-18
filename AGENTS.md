@@ -124,8 +124,8 @@ repository Markdown does not need an MDX counterpart. `mise run check:docs:pairs
 [migration status](docs/fern/FERN_MIGRATION.md) for temporary requirements.
 
 ```bash
-mise run setup         # install pinned tools, dev dependencies, and hooks
-mise run setup all     # install pinned tools, every dependency group, and hooks
+mise run setup         # install pinned tools, every dependency group and extra, and hooks
+mise run deps:sync docs # sync one dependency profile: dev (default), all, ci, runtime, or docs
 mise run test          # run all unit tests
 mise run test:all      # run unit and opt-in end-to-end tests
 mise run format        # format and safely fix Python, notebooks, Markdown, and TOML

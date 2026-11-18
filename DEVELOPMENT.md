@@ -6,10 +6,11 @@ This guide covers local setup, common development commands, testing, documentati
 
 - Python 3.11+
 - Git
-- [mise](https://mise.jdx.dev/) 2026.11.3 or newer, which installs the pinned Python, uv, Ruff, ty, rumdl, and dprint and runs every task
+- [mise](https://mise.jdx.dev/) 2026.11.3 or newer, which installs the pinned Python, uv, Ruff, ty, rumdl, dprint, and prek and runs every task
 - [gh](https://cli.github.com/) for optional GitHub CLI workflows
 
-Development tools such as Ruff, ty, pre-commit, pytest, and pytest-cov are installed by the development dependency group.
+Development tools such as Ruff, ty, pytest, and pytest-cov are installed by the development dependency group. prek, which
+runs the repository hooks, comes from Mise.
 
 ## Local Setup
 
@@ -21,26 +22,34 @@ cd Anonymizer
 make setup
 ```
 
-`make setup` installs Mise when needed, trusts the repository's `.mise.toml`, then runs the default `dev` setup profile.
+`make setup` installs Mise when needed, trusts the repository's `.mise.toml`, then runs `mise run setup`. `make setup` is
+the only command that trusts the Mise configuration; no Mise task runs `mise trust`.
 
 After setup, verify that `mise --version` works in your terminal. If the command isn't found, follow mise's [shell setup instructions](https://mise.jdx.dev/getting-started.html#activate-mise) for your environment. This is a one-time setup per machine and shell.
 
-If Mise is already installed, trust the configuration once and run the same onboarding flow directly:
+If Mise is already installed, review `.mise.toml`, trust it once, and run the same onboarding flow directly:
 
 ```bash
 mise trust
 mise run setup
 ```
 
-The default profile installs pinned tools, development dependencies, and repository hooks. Select another profile during
-onboarding, or synchronize one profile later:
+`mise run setup` takes no arguments. It installs the pinned tools, synchronizes every dependency group and extra
+(`deps:sync all`), and installs the repository hooks with prek (`hooks:install`). To switch the environment to another
+dependency profile later:
 
 ```bash
-mise run setup docs
-mise run setup notebooks
-mise run deps:sync docs
-mise run deps:sync notebooks
+mise run deps:sync          # dev: the default dependency groups, what uv run builds
+mise run deps:sync all      # every dependency group and extra, including the notebooks extra
+mise run deps:sync docs     # the dev and docs groups
+mise run deps:sync runtime  # the package and its runtime dependencies only
 ```
+
+`deps:sync` is exact: it removes packages the selected profile does not name. The `ci` profile is what CI check and
+test jobs install; it matches `all`.
+
+The hooks install into `.git/hooks`. A `core.hooksPath` left over from another hook manager points Git elsewhere and
+silently disables them; run `git config --unset core.hooksPath` before `mise run hooks:install`.
 
 If you work from a fork, add the upstream remote:
 
@@ -61,12 +70,11 @@ git checkout -b <username>/<type>/<issue-number>-<short-description>
 Common mise tasks:
 
 ```bash
-mise run setup                  # tools, dev dependencies, and repository hooks
-mise run setup all              # tools, every dependency group, and repository hooks
+mise run setup                  # tools, every dependency group and extra, and repository hooks
+mise run deps:sync              # synchronize the default dev dependencies
 mise run deps:sync docs         # synchronize dev + docs dependencies
-mise run deps:sync notebooks    # synchronize dev + notebook dependencies
-mise run hooks:install          # reinstall repository hooks
-mise run check                  # read-only format, lint, type, lock, and SPDX checks
+mise run hooks:install          # reinstall repository hooks with prek
+mise run check                  # read-only format, lint, type, lock, SPDX, and task checks
 mise run check ::: test         # read-only checks plus unit tests
 mise run test                   # unit tests
 mise run test:all               # unit and opt-in end-to-end tests (credentials may be required)
@@ -77,8 +85,8 @@ mise run notebooks:execute      # execute sources and replace generated notebook
 ```
 
 `setup` and `deps:sync` use `uv sync --locked` and fail when `uv.lock` does not match the project metadata. After changing
-dependencies in `pyproject.toml`, run `mise run lock:update`, review the lockfile diff, then rerun the required setup or
-dependency profile.
+dependencies in `pyproject.toml`, run `mise run lock:update`, review the lockfile diff, then rerun `mise run setup` or the
+dependency profile you need.
 
 Task names follow `<domain>[:<action>[:<qualifier>...]]`. Colons separate concepts; public task names do not use hyphens
 or underscores. Run `mise tasks` for the complete tree. Commands containing `check` leave tracked files unchanged.
@@ -224,7 +232,7 @@ mise run license:headers:fix
 
 ## Pre-Commit Hooks
 
-Install hooks once:
+`mise run setup` installs the hooks with prek. Reinstall them with:
 
 ```bash
 mise run hooks:install
@@ -274,14 +282,15 @@ Fern prose lives in `docs/**/*.mdx`. The site configuration is
 when reorganizing the sidebar. Images use the existing source-relative assets;
 use native Fern components for cards, tabs, and admonitions.
 
-`mise run setup` installs the Fern tools with the rest of the pinned tools. To
-install them together with the docs dependency profile:
+`mise run setup` installs the Fern tools with the rest of the pinned tools and
+synchronizes the docs dependency group with every other group. To synchronize
+only the docs dependency profile afterward:
 
 ```bash
-mise run setup docs
+mise run deps:sync docs
 ```
 
-This installs Node.js 22, Fern CLI 5.201.0, and the check script's jq/yq
+The pinned tools include Node.js 22, Fern CLI 5.201.0, and the check script's jq/yq
 dependencies from `.mise.toml` and `mise.lock`. No separate npm installation is
 needed. Run these tasks from the repository root:
 

@@ -33,9 +33,9 @@ inputs:
     required: false
     default: "true"
   dependency-profile:
-    description: "Locked dependency profile to sync: runtime, dev, docs, or notebooks"
+    description: "Locked dependency profile for mise run deps:sync: ci (the default), dev, all, runtime, or docs"
     required: false
-    default: "dev"
+    default: "ci"
 
 outputs:
   merge-base:
@@ -95,4 +95,7 @@ runs:
           export UV_PYTHON="${{ inputs.python-version }}"
           echo "UV_PYTHON=${UV_PYTHON}" >> "$GITHUB_ENV"
         fi
-        MISE_YES=1 mise run setup "${{ inputs.dependency-profile }}" --no-hooks
+        # CI never runs setup and never installs hooks: install the pinned tools,
+        # then sync only the dependency profile the job needs.
+        MISE_YES=1 mise install
+        MISE_YES=1 mise run deps:sync "${{ inputs.dependency-profile }}"

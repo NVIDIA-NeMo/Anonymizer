@@ -76,20 +76,5 @@ jobs:
           checkout: "false"
           fetch-depth: "0"
 
-      - name: Check formatting
-        run: mise run check:format
-
-      - name: Check lint rules
-        run: mise run check:lint
-
-      - name: Run type checks
-        run: mise run check:type
-
-      - name: Check uv.lock is up to date
-        run: mise run check:lock
-
-      - name: Check copyright headers
-        run: mise run check:license:headers
-
-      - name: Check paired MkDocs and Fern pages
-        run: mise run check:docs:pairs
+      - name: Run the repository checks
+        run: mise run check

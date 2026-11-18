@@ -208,12 +208,24 @@ def test_makefile_exposes_bootstrap_without_deprecated_task_aliases() -> None:
     assert "deprecated_target" not in makefile
 
 
+def test_make_setup_is_the_only_place_that_trusts_the_mise_config() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    setup_recipe = makefile.split("setup: install-mise\n", 1)[1].splitlines()
+
+    assert setup_recipe[:2] == ["\t@MISE_YES=1 mise trust", "\t@MISE_YES=1 mise run setup"]
+    for path in (REPO_ROOT / ".mise/tasks").rglob("*"):
+        if path.is_file():
+            assert "mise trust" not in path.read_text(encoding="utf-8"), path
+
+
 def test_mise_typecheck_preserves_blocking_repository_contract() -> None:
     quality_tasks = _read_toml(REPO_ROOT / ".mise/tasks/quality.toml")
     typecheck = quality_tasks["check:type"]
 
     assert typecheck["description"].startswith("Run blocking ty checks")
-    assert typecheck["run"] == "uv run --locked --group docs ty check --error-on-warning"
+    assert typecheck["run"] == "uv run --locked --all-groups --all-packages ty check"
+    assert "depends" not in typecheck
+    assert _read_toml(REPO_ROOT / "ty.toml")["terminal"]["error-on-warning"] is True
 
 
 def test_mise_sources_the_uv_managed_environment() -> None:
@@ -236,8 +248,10 @@ def test_mise_uses_native_task_composition() -> None:
         "check:license:headers",
         "check:lint",
         "check:lock",
+        "check:tasks",
         "check:type",
     }
+    assert quality_tasks["check:tasks"]["run"] == "mise tasks validate"
     assert quality_tasks["check:lock"]["run"] == [
         "uv lock --check",
         "env -u UV_PYTHON uv lock --project tools/inference-service-runtime --check",
@@ -248,7 +262,13 @@ def test_mise_uses_native_task_composition() -> None:
     assert verify_args in publish_tasks["release:check"]["run"]
     assert "twine upload" not in str(publish_tasks["release:check"]) + str(publish_tasks["release:verify"])
     assert "UV_DYNAMIC_VERSIONING_BYPASS" not in str(publish_tasks["publish:pypi"])
-    assert setup_tasks["setup"]["run"][2] == {"task": "deps:sync", "args": ["{{usage.profile}}"]}
+    assert "usage" not in setup_tasks["setup"]
+    assert setup_tasks["setup"]["run"] == [
+        "mise install",
+        {"task": "deps:sync", "args": ["all"]},
+        {"task": "hooks:install"},
+    ]
+    assert setup_tasks["hooks:install"]["run"] == "prek install"
     assert '#MISE depends=["clean:pycache"]' in clean_task
     assert "mise run clean:pycache" not in clean_task
     assert "mise run deps:sync notebooks" not in notebook_task
@@ -258,12 +278,21 @@ def test_mise_dependency_profiles_require_current_lockfile() -> None:
     setup_tasks = _read_toml(REPO_ROOT / ".mise/tasks/setup.toml")
     sync_task = setup_tasks["deps:sync"]
 
-    assert sync_task["run"].count("uv sync --locked") == 5
-    assert 'choices "runtime" "dev" "docs" "notebooks" "all"' in sync_task["usage"]
-    assert "runtime) uv sync --locked --no-default-groups" in sync_task["run"]
-    for profile in ("runtime", "dev", "docs", "notebooks", "all"):
-        assert f"{profile}) uv sync --locked" in sync_task["run"]
-    assert "all) uv sync --locked --all-groups" in sync_task["run"]
+    assert sync_task["run"].count("uv sync --locked") == 4
+    assert 'choices "dev" "all" "ci" "runtime" "docs"' in sync_task["usage"]
+    assert 'default="dev"' in sync_task["usage"]
+    assert "dev) uv sync --locked ;;" in sync_task["run"]
+    assert "all | ci) uv sync --locked --all-groups --all-extras ;;" in sync_task["run"]
+    assert "runtime) uv sync --locked --no-default-groups ;;" in sync_task["run"]
+    assert "docs) uv sync --locked --group dev --group docs ;;" in sync_task["run"]
+
+
+def test_prek_from_mise_replaces_the_pre_commit_dependency() -> None:
+    pyproject = _read_toml(REPO_ROOT / "pyproject.toml")
+    mise = _read_toml(REPO_ROOT / ".mise.toml")
+
+    assert not any(str(dep).startswith("pre-commit") for dep in pyproject["dependency-groups"]["dev"])
+    assert "prek" in mise["tools"]
 
 
 def test_mise_test_all_composes_unit_and_end_to_end_suites() -> None:
@@ -290,6 +319,7 @@ def test_mise_task_tree_uses_colon_delimited_vocabulary() -> None:
         "check:format",
         "check:lint",
         "check:lock",
+        "check:tasks",
         "check:type",
         "deps:sync",
         "hooks:install",
@@ -306,7 +336,26 @@ def test_github_setup_preserves_requested_python_and_dependency_profile() -> Non
 
     assert 'export UV_PYTHON="${{ inputs.python-version }}"' in action
     assert 'echo "UV_PYTHON=${UV_PYTHON}" >> "$GITHUB_ENV"' in action
-    assert 'mise run setup "${{ inputs.dependency-profile }}" --no-hooks' in action
+    assert 'MISE_YES=1 mise run deps:sync "${{ inputs.dependency-profile }}"' in action
+    assert yaml.safe_load(action)["inputs"]["dependency-profile"]["default"] == "ci"
+
+
+def test_ci_syncs_dependencies_without_setup_or_hooks() -> None:
+    usage = _read_toml(REPO_ROOT / ".mise/tasks/setup.toml")["deps:sync"]["usage"]
+    choices_line = next(line for line in usage.splitlines() if line.strip().startswith("choices "))
+    profiles = set(re.findall(r'"([a-z]+)"', choices_line))
+    action = REPO_ROOT / ".github/actions/setup-python-env/action.yml"
+
+    for path in [*sorted((REPO_ROOT / ".github/workflows").glob("*.yml")), action]:
+        text = path.read_text(encoding="utf-8")
+        for command in ("mise run setup", "hooks:install", "prek install", "pre-commit install"):
+            assert command not in text, (path, command)
+        if path == action:
+            continue
+        for job in yaml.safe_load(text)["jobs"].values():
+            for step in job.get("steps", []):
+                if step.get("uses") == "./.github/actions/setup-python-env":
+                    assert step.get("with", {}).get("dependency-profile", "ci") in profiles, (path, step)
 
 
 def test_ci_matrix_jobs_assert_requested_interpreter_before_tests() -> None:

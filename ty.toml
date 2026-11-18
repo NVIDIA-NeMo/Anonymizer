@@ -26,3 +26,7 @@ allowed-unresolved-imports = ["vllm.**", "uvloop"]
 
 [rules]
 unused-ignore-comment = "ignore"
+
+[terminal]
+# check:type keeps the standard command, so the warning gate lives here.
+error-on-warning = true
