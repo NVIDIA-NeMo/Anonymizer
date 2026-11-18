@@ -390,10 +390,22 @@ def test_preview_retries_only_records_in_the_requested_entity_sample(
             id="collision-on-both-attempts",
         ),
         pytest.param(
+            [("Paris", "lyon"), ("Lyon", "Nantes")],
+            [("Berlin", "LYON")],
+            {"Paris": "[SUBSTITUTE_CITY_1]", "Lyon": "Nantes", "Berlin": "[SUBSTITUTE_CITY_2]"},
+            id="folded-collision-on-both-attempts",
+        ),
+        pytest.param(
             [("Paris", "[SUBSTITUTE_CITY_1]")],
             [("Berlin", "Berlin")],
             {"Paris": "[SUBSTITUTE_CITY_1]", "Berlin": "[SUBSTITUTE_CITY_2]"},
             id="accepted-model-placeholder",
+        ),
+        pytest.param(
+            [("Paris", " \t[substitute_city_1]\n")],
+            [("Berlin", " BERLIN\t")],
+            {"Paris": " \t[substitute_city_1]\n", "Berlin": "[SUBSTITUTE_CITY_2]"},
+            id="folded-accepted-model-placeholder",
         ),
         pytest.param(
             [("Paris", "[SUBSTITUTE_CITY_1]")],

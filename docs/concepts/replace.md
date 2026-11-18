@@ -38,10 +38,12 @@ after the retry is excluded from successful output and reported in
 of the same pair need only one mapping, and records without entities need no
 replacement-generator call.
 
-When a retry proposal matches a detected original, Anonymizer replaces it with a
-placeholder. New retry placeholders avoid original values, accepted substitutions,
-other retry proposals, and placeholders already created in that retry. Different
-entities can still share an ordinary model-generated substitute.
+Anonymizer compares retry proposals with detected originals ignoring case,
+trimming surrounding whitespace, and collapsing internal whitespace. A match
+receives a placeholder. New retry placeholders use the same comparison to avoid
+original values, accepted substitutions, other retry proposals, and placeholders
+already created in that retry. Different entities can still share an ordinary
+model-generated substitute.
 
 Before discarding a mapping, Substitute can reconcile a copied original that
 differs only in no-break spaces (`U+00A0`), thin spaces (`U+2009`), narrow no-break

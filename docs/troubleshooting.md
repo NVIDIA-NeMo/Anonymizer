@@ -233,11 +233,11 @@ that differs only in a supported Unicode space is reconciled only when it has
 one unambiguous match under the same label. Other differences or ambiguous matches
 remain missing. See [Substitute](concepts/replace.md#substitute) for the exact rules.
 
-A response with an absent field, an empty synthetic value, or a whitespace-only
-synthetic value fails schema validation instead. DataDesigner applies its existing
-whole-response schema retries before the map reaches the completeness check.
-Those retries are separate from the single missing-pair retry; this is not a
-per-entry recovery mechanism for a schema-rejected response.
+A replacement entry with a missing required field, an empty synthetic value, or a
+whitespace-only synthetic value fails schema validation instead. DataDesigner
+applies its existing whole-response schema retries before the map reaches the
+completeness check. Those retries are separate from the single missing-pair retry;
+this is not a per-entry recovery mechanism for a schema-rejected response.
 
 ### Replacement looks repetitive or unrealistic (Substitute)
 
