@@ -438,7 +438,6 @@ _SHARED_THREE_RUN = _maps(
     [("city", "Paris", "Lyon"), ("city", "Berlin", "[SUBSTITUTE_CITY_1]"), ("city", "Rome", "[SUBSTITUTE_CITY_2]")]
 )
 _SAME_VALUE_LABELS = _maps([("first_name", "Jordan", "Alex"), ("last_name", "Jordan", "Alex")])
-_SAME_VALUE_LABELS_RUN = _maps([("first_name", "Jordan", "Alex"), ("last_name", "Jordan", "[SUBSTITUTE_LAST_NAME_1]")])
 _REAL_VALUE = _maps([("city", "Paris", "London"), ("city", "London", "Berlin")])
 _REAL_VALUE_FOLDED = _maps([("city", "Paris", "[SUBSTITUTE_CITY_1]"), ("city", "London", "Berlin")])
 _SELF = _maps([("city", "Paris", "Paris")])
@@ -474,7 +473,7 @@ _RUN_VARIANT = _maps(
             (_SHARED, _SHARED, _SHARED_RUN),
             (_SHARED_LABELS, _SHARED_LABELS, _SHARED_LABELS_RUN),
             (_SHARED_THREE, _SHARED_THREE, _SHARED_THREE_RUN),
-            (_SAME_VALUE_LABELS, _SAME_VALUE_LABELS, _SAME_VALUE_LABELS_RUN),
+            (_SAME_VALUE_LABELS, _SAME_VALUE_LABELS, _SAME_VALUE_LABELS),
             (_REAL_VALUE, *[_REAL_VALUE_FOLDED] * 2),
             (_SELF, *[_SELF_FOLDED] * 2),
         ]
@@ -542,11 +541,11 @@ def test_fold_never_emits_a_colliding_substitute(consistency: Literal["record", 
             value = _fold(e["synthetic"])
             assert value not in originals, (raw, out)
             by_value.setdefault(value, set()).add((e["label"], _fold(e["original"])))
-        assert consistency == "record" or all(len(keys) == 1 for keys in by_value.values()), (raw, out)
+        assert consistency == "record" or all(len({k[1] for k in keys}) == 1 for keys in by_value.values()), (raw, out)
         for value, keys in by_value.items():
             run_wide.setdefault(value, set()).update(keys)
     if consistency == "run":
-        assert all(len(keys) == 1 for keys in run_wide.values()), run_wide
+        assert all(len({k[1] for k in keys}) == 1 for keys in run_wide.values()), run_wide
 
 
 _FALLBACKS = _maps(

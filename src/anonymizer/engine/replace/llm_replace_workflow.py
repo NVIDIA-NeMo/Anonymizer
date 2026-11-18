@@ -199,11 +199,12 @@ def _fold_replacement_maps(
     one.
 
     In ``"run"`` mode the fallback also collides with a substitute another key emitted in the record, and a substitute
-    emitted for one key anywhere in the run collides for every other key, so two keys never share one; placeholders are
-    numbered across the run. A key holding a run-wide mapping ignores other keys' proposals, so its run-wide substitute
-    wins over them. When that substitute collides in a record and the key falls back, its fallback is checked like any
-    other key's: a key earlier in the record that already emitted the same value keeps it, and the holder moves on to a
-    placeholder.
+    emitted for one key anywhere in the run collides for every key of another value, so different values never
+    share one (one value under two labels may); placeholders are numbered across the run. A key holding a run-wide
+    mapping ignores other keys' proposals, so its run-wide substitute wins over them. When that substitute collides in a
+    record and the key falls back, its fallback is checked like any other key's: a key earlier in the record that
+    already emitted the same value keeps it, and the holder moves on to a placeholder. In both modes a key is never
+    blocked by another key for the same normalized value (one value under two labels).
 
     When given, ``tally`` counts each fallback as ``(label, step)`` with step ``own``, ``placeholder_taken``
     (``"run"`` only: another key emitted it), ``placeholder_session`` (only the Session's view rules it out) or
@@ -211,11 +212,14 @@ def _fold_replacement_maps(
     ``("records_with_placeholder",)``.
 
     With a stable Session's ``view`` (``"run"`` mode only), a key the run has not mapped yet takes the Session's
-    assignment, re-cased against its normalized original. A substitute also collides when the Session assigns it to
-    another key, or, unless it is the key's own held substitute, when it is a value the Session holds; a placeholder
-    is never one the Session assigns to another key. ``decisions`` then gets one tuple per map: a decision for each
-    key first used in that map, holding the key's run-wide substitute, and one for each record-local substitute not
-    marked before, under the fallback subject and keyed by that substitute, so later calls treat it as taken.
+    assignment, re-cased against its normalized original. A substitute also collides when the view's
+    ``assigned_to_other_value`` finds it assigned to another subject or normalized value, or to a fallback entry; the
+    key's own slot and the same normalized value under any other label do not count, so a value under two labels keeps
+    one substitute. Unless it is the key's own held substitute, it also collides when it is a value the Session holds.
+    A placeholder is never one the Session assigns to another key. ``decisions`` then gets one tuple per map: a
+    decision for each key first used in that map, holding the key's run-wide substitute, and one for each record-local
+    substitute not marked before, under the fallback subject and keyed by that substitute, so later calls treat it as
+    taken.
     """
     run_wide: dict[tuple[str, str], tuple[str, str]] = {}
     taken: dict[str, set[tuple[str, str]]] = {}
@@ -233,7 +237,7 @@ def _fold_replacement_maps(
         if view is None:
             return False
         holding = key in run_wide and _fold(run_wide[key][1]) == value
-        return view.assigned_elsewhere(value, (BY_VALUE, *key)) or (not holding and view.is_original(value))
+        return view.assigned_to_other_value(value, (BY_VALUE, *key)) or (not holding and view.is_original(value))
 
     for index, raw in enumerate(maps):
         keyed = [((e["label"], _fold(e["original"])), e) for e in raw.get("replacements", [])]
@@ -246,7 +250,8 @@ def _fold_replacement_maps(
         def collides(value: str, key: tuple[str, str], *, shared: bool) -> bool:
             rivals = proposed.get(value, set()) if shared and key not in run_wide else set()
             others = rivals | emitted.get(value, set()) | taken.get(value, set())
-            return value in originals or bool(others - {key}) or crosses(value, key)
+            blocked = any(other[1] != key[1] for other in others)
+            return value in originals or blocked or crosses(value, key)
 
         record: dict[tuple[str, str], tuple[str, str]] = {}
         placeholders: Counter[str] = run_placeholders if consistency == "run" else Counter()
@@ -263,7 +268,7 @@ def _fold_replacement_maps(
                 synthetic = entry["synthetic"]
                 value = _fold(synthetic)
                 if value in originals if consistency == "record" else collides(value, key, shared=False):
-                    rival = (emitted.get(value, set()) | taken.get(value, set())) - {key}
+                    rival = any(other[1] != key[1] for other in emitted.get(value, set()) | taken.get(value, set()))
                     cause = "protected" if value in originals else "taken" if rival else "session"
                     step = f"placeholder_{cause}"
                     placeholders[entry["label"]] += 1

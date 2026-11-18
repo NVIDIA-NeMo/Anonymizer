@@ -161,6 +161,18 @@ class SessionView:
         _check_value(value)
         return any(other != slot for other in self._assigned.get(normalize(value), ()))
 
+    def assigned_to_other_value(self, value: str, slot: Slot) -> bool:
+        """Whether ``value``, normalized, is the assignment of a slot for another subject or normalized source value
+        than ``slot``'s; the same source value under another label does not count. A fallback slot always counts: it
+        records a substitute used in place of some value's assignment, not whose."""
+        _check_slot(slot)
+        _check_value(value)
+        source = normalize(slot[2])
+        return any(
+            other[0] == FALLBACK or other[0] != slot[0] or normalize(other[2]) != source
+            for other in self._assigned.get(normalize(value), ())
+        )
+
     def is_original(self, value: str) -> bool:
         """Whether ``value``, normalized, is the source value of some slot; fallback slots hold none."""
         _check_value(value)

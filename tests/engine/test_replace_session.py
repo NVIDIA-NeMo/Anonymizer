@@ -184,7 +184,7 @@ def test_a_substitute_assigned_in_an_earlier_call_is_not_given_to_another_value(
     session, results = Session(stable_replacements=True), []
     _protect(tmp_path, ["Alice lives here."], {"Alice": "Bob"}, session, results)
     # The model proposes, for another value, the substitute Alice already holds.
-    uncovered = patch.object(SessionView, "assigned_elsewhere", lambda *_: False)
+    uncovered = patch.object(SessionView, "assigned_to_other_value", lambda *_: False)
     with contextlib.nullcontext() if cover else uncovered:
         second = _protect(tmp_path, ["Carol lives here."], {"Carol": "bob"}, session, results)
     carol = "[SUBSTITUTE_FIRST_NAME_1]" if cover else "bob"  # without the cover, the two values share one
@@ -560,3 +560,143 @@ def test_the_result_reads_each_rows_replacement_map(tmp_path: Path, preview: boo
     assert reloaded.replacement_map(0) == expected
     no_map = dataclasses.replace(result, trace_dataframe=result.trace_dataframe.drop(columns=[COL_REPLACEMENT_MAP]))
     assert no_map.replacement_map(0) == ()
+
+
+# One string detected under two labels: a user name that is also a customer id.
+_USER = "lei_wilson_4541"
+
+
+def _user_entities(text: str, one_label: Any = _entities) -> dict[str, Any]:
+    """``_entities`` plus ``_USER``'s first two occurrences, as a user name and then as a customer id."""
+    spans = []
+    starts = [m.start() for m in re.finditer(_USER, text)][:2]
+    for start, label in zip(starts, ("user_name", "customer_id")):
+        span = {"value": _USER, "label": label, "start_position": start, "end_position": start + len(_USER)}
+        spans.append({"id": f"{label}-{start}", **span})
+    return {"entities": [*spans, *one_label(text)["entities"]]}
+
+
+@pytest.fixture
+def two_labels(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(f"{__name__}._entities", _user_entities)
+
+
+@pytest.mark.usefixtures("two_labels")
+def test_one_value_under_two_labels_keeps_one_substitute_across_calls(tmp_path: Path) -> None:
+    session, results = Session(stable_replacements=True), []
+    proposals = {_USER: "kim_park_1180", "Alice": "Bob"}
+    first = _protect(tmp_path, [f"Ticket from {_USER}, account {_USER}."], proposals, session, results)
+    # Within the call, the second label is not blocked by the first label of the same value.
+    assert list(first["text_replaced"]) == ["Ticket from kim_park_1180, account kim_park_1180."]
+    second = _protect(
+        tmp_path, [f"{_USER} wrote again as {_USER}."], {**proposals, _USER: "max_roe_2207"}, session, results
+    )
+    assert list(second["text_replaced"]) == ["kim_park_1180 wrote again as kim_park_1180."]
+    assert _slots(session) == {("user_name", _USER): "kim_park_1180", ("customer_id", _USER): "kim_park_1180"}
+    assert _slots(session, "substitute-fallback") == {}
+    assert results == [SessionCallChanges(added=2), SessionCallChanges(reused=2)]
+
+
+@pytest.mark.usefixtures("two_labels")
+def test_different_values_still_never_share_a_substitute_with_a_two_label_value(tmp_path: Path) -> None:
+    session, results = Session(stable_replacements=True), []
+    # In a call, Alice proposes the user's substitute; in the next, Carol proposes it again, re-cased.
+    first = _protect(
+        tmp_path, [f"{_USER} ({_USER}) and Alice."], {_USER: "kim_park_1180", "Alice": "kim_park_1180"}, session
+    )
+    assert list(first["text_replaced"]) == ["kim_park_1180 (kim_park_1180) and [SUBSTITUTE_FIRST_NAME_1]."]
+    second = _protect(
+        tmp_path, [f"{_USER} ({_USER}) and Carol."], {_USER: "x_1", "Carol": "KIM_PARK_1180"}, session, results
+    )
+    assert list(second["text_replaced"]) == ["kim_park_1180 (kim_park_1180) and [SUBSTITUTE_FIRST_NAME_2]."]
+    assert results == [SessionCallChanges(added=1, reused=2, placeholders_taken=1)]
+
+
+@pytest.mark.usefixtures("two_labels")
+@pytest.mark.parametrize("label", ["user_name", "customer_id"])
+def test_a_later_call_with_one_label_of_the_value_keeps_its_substitute(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, label: str
+) -> None:
+    session, results = Session(stable_replacements=True), []
+    # The substitute is cased, so the Session's assignment matches only once folded.
+    first = _protect(tmp_path, [f"{_USER} is {_USER}."], {_USER: "Kim_Park_1180"}, session, results)
+    assert list(first["text_replaced"]) == ["Kim_Park_1180 is Kim_Park_1180."]
+
+    def one_label(text: str) -> dict[str, Any]:
+        start = text.index(_USER)
+        span = {"value": _USER, "label": label, "start_position": start, "end_position": start + len(_USER)}
+        return {"entities": [{"id": "0", **span}]}
+
+    monkeypatch.setattr(f"{__name__}._entities", one_label)
+    for proposal in ("Kim_Park_1180", "max_roe_2207"):
+        later = _protect(tmp_path, [f"{_USER} wrote again."], {_USER: proposal}, session, results)
+        assert list(later["text_replaced"]) == ["Kim_Park_1180 wrote again."]
+    assert _slots(session, "substitute-fallback") == {}
+    assert results == [SessionCallChanges(added=2), SessionCallChanges(reused=1), SessionCallChanges(reused=1)]
+
+
+def test_a_placeholder_after_the_same_value_emitted_its_substitute_is_tallied_as_session() -> None:
+    """Jordan's last name holds Zed; his first name proposes Zed too, which the Session has as another original. The
+    placeholder's cause is the Session, not a rival key: only Jordan himself emitted Zed."""
+    from collections import Counter
+
+    from anonymizer.engine.graph_core.session import BY_VALUE, SessionMode
+
+    maps = [
+        {
+            "replacements": [
+                {"original": "Jordan", "label": "last_name", "synthetic": "Lee"},
+                {"original": "Jordan", "label": "first_name", "synthetic": "Zed"},
+            ]
+        }
+    ]
+    assignments = {(BY_VALUE, "last_name", "jordan"): "Zed", (BY_VALUE, "first_name", "zed"): "Amy"}
+    tally: Counter[tuple[str, ...]] = Counter()
+    view = SessionView(SessionMode(True, False), 1, assignments)
+    _fold_replacement_maps(maps, "run", None, tally, view, [])
+    assert {key[-1] for key in tally if key[-1].startswith("placeholder_")} == {"placeholder_session"}
+
+
+@pytest.mark.usefixtures("two_labels")
+@pytest.mark.parametrize("alone", [False, True], ids=["both-labels", "one-label"])
+def test_a_restored_snapshot_with_one_substitute_for_two_values_is_not_hidden(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, alone: bool
+) -> None:
+    session, results = Session(stable_replacements=True), []
+    _protect(tmp_path, [f"{_USER} is {_USER}."], {_USER: "kim_park_1180"}, session)
+    # An edited snapshot gives Bob the user's substitute too: a state the fold never writes.
+    data = json.loads(session.snapshot().to_bytes())
+    [slot] = [s for s in data["slots"] if s["label"] == "customer_id"]
+    data["slots"].append({**slot, "label": "first_name", "value": "bob"})
+    restored = Session.restore(SessionSnapshot.from_bytes(json.dumps(data).encode()))
+
+    def one_label(text: str) -> dict[str, Any]:
+        start = text.index(_USER)
+        span = {"value": _USER, "label": "user_name", "start_position": start, "end_position": start + len(_USER)}
+        return {"entities": [{"id": "0", **span}]}
+
+    if alone:
+        monkeypatch.setattr(f"{__name__}._entities", one_label)
+    text = f"{_USER} wrote again." if alone else f"{_USER} wrote again as {_USER}."
+    later = _protect(tmp_path, [text], {_USER: "kim_park_1180"}, restored, results)
+    assert "kim_park_1180" not in later["text_replaced"][0]
+    assert results[0].placeholders_session == (1 if alone else 2)
+
+
+def test_assigned_to_other_value_ignores_the_same_value_under_another_label() -> None:
+    from anonymizer.engine.graph_core.session import BY_VALUE, FALLBACK, SessionMode, SubjectKey
+
+    def view(assignments: dict[Any, str]) -> SessionView:
+        return SessionView(SessionMode(True, False), 1, assignments)
+
+    slot = (BY_VALUE, "user_name", "lei")
+    assert not view({(BY_VALUE, "customer_id", "lei"): "Kim"}).assigned_to_other_value("KIM", slot)
+    assert not view({slot: "Kim"}).assigned_to_other_value("kim", slot)
+    assert view({(BY_VALUE, "first_name", "bob"): "Kim"}).assigned_to_other_value("kim", slot)
+    # Another subject is another holder, even for the same original.
+    assert view({(SubjectKey("account"), "user_name", "lei"): "Kim"}).assigned_to_other_value("kim", slot)
+    # Originals and the value are compared normalized.
+    assert not view({(BY_VALUE, "customer_id", " LEI "): "Kim"}).assigned_to_other_value("kim", slot)
+    assert view({(BY_VALUE, "first_name", "bob"): "Kim"}).assigned_to_other_value("  KIM ", slot)
+    # A fallback entry names no value, so it always counts as another value's.
+    assert view({(FALLBACK, "user_name", "kim"): "kim"}).assigned_to_other_value("kim", slot)
