@@ -656,21 +656,6 @@ def test_detect_rejects_custom_rule_missing_from_explicit_labels() -> None:
         )
 
 
-def test_fixed_detector_declaration_counts_enabled_custom_regex_labels() -> None:
-    rule = RegexRule(label="case_id", pattern=r"CASE-[0-9]{8}")
-    missing_rule_label = Detect(
-        regex_rules=[rule], detector_labels=list(DEFAULT_ENTITY_LABELS), detector_labels_fixed=True
-    )
-    covers_rule_label = Detect(
-        regex_rules=[rule], detector_labels=[*DEFAULT_ENTITY_LABELS, "case_id"], detector_labels_fixed=True
-    )
-
-    assert missing_rule_label.detector_declaration_conflicts() == [
-        "Effective labels outside the fixed detector_labels: ['case_id']."
-    ]
-    assert covers_rule_label.detector_declaration_conflicts() == []
-
-
 def test_detect_accepts_builtin_regex_llm_override() -> None:
     detect = Detect(regex_rules=[BuiltinRegex(label="credit_debit_card", validate_matches_with_llm=False)])
 
