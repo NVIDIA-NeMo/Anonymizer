@@ -74,7 +74,7 @@ from anonymizer.engine.rewrite.rewrite_workflow import (
     _Rows,
 )
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
-from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
+from anonymizer.engine.rewrite.workflow_utils import run_columns
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 from anonymizer.measurement import stage_timer
@@ -564,11 +564,11 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 data_summary=data_summary,
                 strict_entity_protection=strict_entity_protection,
             )
-            seed = select_seed_cols(rows.frame, derive_seed_columns(graph.columns, rows.frame))
-            run_result = self._adapter.run_workflow(
-                seed,
+            run_result, _ = run_columns(
+                self._adapter,
+                rows.frame,
+                graph.columns,
                 model_configs=model_configs,
-                columns=graph.columns,
                 workflow_name="rewrite-combined",
                 preview_num_records=preview_num_records,
             )

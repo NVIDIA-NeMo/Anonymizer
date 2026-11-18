@@ -69,7 +69,7 @@ from anonymizer.engine.rewrite.rewrite_generation import (
     restore_empty_skipped_span_label_counts,
 )
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
-from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
+from anonymizer.engine.rewrite.workflow_utils import run_columns
 from anonymizer.engine.row_partitioning import (
     ROW_ORDER_COL,
     merge_and_reorder,
@@ -696,11 +696,11 @@ class RewriteWorkflow:
                 data_summary=data_summary,
             ),
         ]
-        pipeline_seed = select_seed_cols(rows.frame, derive_seed_columns(pipeline_columns, rows.frame))
-        pipeline_result = self._adapter.run_workflow(
-            pipeline_seed,
+        pipeline_result, _ = run_columns(
+            self._adapter,
+            rows.frame,
+            pipeline_columns,
             model_configs=model_configs,
-            columns=pipeline_columns,
             workflow_name="rewrite-pipeline",
             preview_num_records=preview_num_records,
         )
@@ -736,12 +736,12 @@ class RewriteWorkflow:
             effective_threshold=evaluation.repair_threshold,
         )
 
-        def run_columns(df: pd.DataFrame, columns: list, name: str, *, overwrite: bool = False) -> pd.DataFrame:
-            seed_cols = derive_seed_columns(columns, df)
-            result = self._adapter.run_workflow(
-                select_seed_cols(df, seed_cols),
+        def run_and_join(df: pd.DataFrame, columns: list, name: str, *, overwrite: bool = False) -> pd.DataFrame:
+            result, seed_cols = run_columns(
+                self._adapter,
+                df,
+                columns,
                 model_configs=model_configs,
-                columns=columns,
                 workflow_name=name,
                 preview_num_records=preview_num_records,
             )
@@ -751,7 +751,7 @@ class RewriteWorkflow:
             )
 
         def evaluate(df: pd.DataFrame, iteration: int) -> pd.DataFrame:
-            df = run_columns(df, eval_columns, f"rewrite-evaluate-{iteration}", overwrite=True)
+            df = run_and_join(df, eval_columns, f"rewrite-evaluate-{iteration}", overwrite=True)
             _normalize_evaluation_payloads(df)
             return df
 
@@ -778,7 +778,7 @@ class RewriteWorkflow:
                 len(df),
             )
             # Repair failing rows only
-            repaired = run_columns(rows.failing, repair_columns, f"rewrite-repair-{iteration}", overwrite=True)
+            repaired = run_and_join(rows.failing, repair_columns, f"rewrite-repair-{iteration}", overwrite=True)
             if COL_REWRITTEN_TEXT_NEXT in repaired.columns:
                 repaired[COL_REWRITTEN_TEXT] = repaired[COL_REWRITTEN_TEXT_NEXT]
             repaired[COL_REPAIR_ITERATIONS] = repaired[COL_REPAIR_ITERATIONS].apply(lambda x: int(x) + 1)
@@ -812,11 +812,11 @@ class RewriteWorkflow:
                 privacy_goal=privacy_goal,
             )
             effective_preview = min(preview_num_records, len(df)) if preview_num_records is not None else None
-            judge_seed = select_seed_cols(df, derive_seed_columns(judge_columns, df))
-            judge_result = self._adapter.run_workflow(
-                judge_seed,
+            judge_result, _ = run_columns(
+                self._adapter,
+                df,
+                judge_columns,
                 model_configs=model_configs,
-                columns=judge_columns,
                 workflow_name="rewrite-final-judge",
                 preview_num_records=effective_preview,
             )
