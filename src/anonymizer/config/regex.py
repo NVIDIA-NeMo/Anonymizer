@@ -132,6 +132,13 @@ class RegexRule(BaseModel):
         description="Whether GLiNER and LLM augmentation may find additional matches for this label.",
     )
 
+    def __deepcopy__(self, memo: dict[int, Any] | None = None) -> RegexRule:
+        """Copy the rule but share a callable validator: it is caller code, and may hold state that cannot be copied."""
+        memo = {} if memo is None else memo
+        if callable(self.validator):
+            memo[id(self.validator)] = self.validator
+        return super().__deepcopy__(memo)
+
     @field_validator("label")
     @classmethod
     def validate_label(cls, value: str) -> str:

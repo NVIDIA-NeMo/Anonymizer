@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextvars
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -27,7 +28,7 @@ from anonymizer.config.anonymizer_config import (
 )
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection
 from anonymizer.config.options import DetectionOptions, RunContext
-from anonymizer.config.regex import RegexLimits, RegexRule
+from anonymizer.config.regex import RegexCandidate, RegexLimits, RegexRule
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
@@ -1640,6 +1641,31 @@ def test_in_place_edit_after_call_start_does_not_change_the_call(stub_input: Ano
     assert "zz_late" not in received["entity_labels"]
     assert result.entity_labels is not None and "zz_late" not in result.entity_labels
     assert result.detection_scope == scope_before
+
+
+class _LockingValidator:
+    """A regex validator holding state that cannot be copied, as a validator guarding a shared client would."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+
+    def __call__(self, candidate: RegexCandidate) -> bool:
+        with self.lock:
+            return bool(candidate.value)
+
+
+@pytest.mark.parametrize("method", ["run", "preview"])
+def test_per_call_copy_shares_regex_validators(stub_input: AnonymizerInput, method: str) -> None:
+    validator = _LockingValidator()
+    rule = RegexRule(label="ticket", pattern=r"TKT-\d+", validator=validator)
+    config = AnonymizerConfig(detect=Detect(regex_rules=[rule]), replace=Redact())
+    anonymizer, detection_wf, _, _ = _make_anonymizer()
+
+    getattr(anonymizer, method)(config=config, data=stub_input)
+
+    received = detection_wf.run.call_args.kwargs["options"].regex_rules[0]
+    assert received is not rule
+    assert received.validator is validator
 
 
 @pytest.mark.parametrize("method", ["run", "preview", "export_detection_config", "export_detection_builder_for_seed"])
