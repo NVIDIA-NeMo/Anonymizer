@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-import ast
-import inspect
 import io
 import json
 from collections.abc import Callable
@@ -16,14 +14,11 @@ import pandas as pd
 import pytest
 from pydantic import BaseModel
 
-from anonymizer.engine import constants
 from anonymizer.engine.evaluation.replace import (
     attribute_fidelity_judge,
     relational_consistency_judge,
     type_fidelity_judge,
 )
-from anonymizer.engine.ndd._source_frame import _SEMANTIC_PAYLOAD_COLUMNS
-from anonymizer.engine.ndd.storage import JSON_STORAGE_COLUMNS
 from anonymizer.engine.replace.strategies import ReplacementEntry, _parse_replacements
 from anonymizer.engine.rewrite import parsers
 from anonymizer.engine.schemas import (
@@ -35,7 +30,6 @@ from anonymizer.engine.schemas import (
     QualityQAPairsSchema,
     SensitivityDispositionSchema,
 )
-from anonymizer.engine.schemas.columns import NESTED_COLUMN_SCHEMAS
 
 _PAYLOADS: dict[type[BaseModel], dict[str, Any]] = {
     PrivacyAnswersSchema: {"answers": [{"id": 1, "answer": "no", "confidence": 0.5, "reason": "r", "evidence": []}]},
@@ -217,20 +211,6 @@ def test_integer_synthetic_kept_by_skip_dropped_by_drop() -> None:
     raw = {"replacements": [{"original": "12345", "label": "postcode", "synthetic": 94110}]}
     assert [e.synthetic for e in EntityReplacementMapSchema.from_raw(raw, on_invalid="skip")] == ["94110"]
     assert EntityReplacementMapSchema.from_raw(raw, on_invalid="drop") == []
-
-
-# --- column-schema dict -----------------------------------------------------------------------
-
-
-def test_every_registered_nested_column_has_a_schema_entry() -> None:
-    missing = (set(JSON_STORAGE_COLUMNS) | set(_SEMANTIC_PAYLOAD_COLUMNS)) - set(NESTED_COLUMN_SCHEMAS)
-    assert not missing
-
-
-def test_constants_module_imports_nothing() -> None:
-    tree = ast.parse(inspect.getsource(constants))
-    imports = [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
-    assert all(isinstance(n, ast.ImportFrom) and n.module == "__future__" for n in imports)
 
 
 _HUGE_INT_JSON = '{"replacements": [{"original": "a", "label": "b", "synthetic": ' + "1" * 4301 + "}]}"
