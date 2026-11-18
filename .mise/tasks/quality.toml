@@ -2,20 +2,31 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [format]
-description = "Format and safely fix tracked Python files and rendered notebooks. Modifies files in place."
-run = "tools/codestyle/format.sh"
+description = "Format and safely fix Python, rendered notebooks, and the Python in Markdown with Ruff, Markdown with rumdl, and TOML with dprint. Modifies files in place."
+run = [
+    "ruff check --fix",
+    "ruff format",
+    "rumdl check --fix .",
+    "dprint fmt",
+]
 
 ["check:format"]
-description = "Check formatting of tracked Python files and rendered notebooks without modifying them."
-run = "tools/codestyle/format.sh --check"
+description = "Check the formatting of Python, rendered notebooks, and the Python in Markdown with Ruff, and of TOML with dprint, without modifying files."
+run = [
+    "ruff format --check",
+    "dprint check",
+]
 
 ["check:lint"]
-description = "Check Ruff rules for tracked Python files and rendered notebooks without modifying them."
-run = "tools/codestyle/ruff_check.sh"
+description = "Check Ruff rules for Python and rendered notebooks, and Markdown rules with rumdl, without modifying files."
+run = [
+    "ruff check",
+    "rumdl check .",
+]
 
 ["check:type"]
-description = "Run blocking ty checks across source, tests, tools, docs, and rendered notebooks."
-run = "uv run --locked --group docs tools/codestyle/typecheck.sh"
+description = "Run blocking ty checks across source, tests, tools, docs, and rendered notebooks under the root ty.toml."
+run = "uv run --locked --group docs ty check --error-on-warning"
 
 ["license:headers:fix"]
 description = "Add missing SPDX headers to repository files. Modifies files in place."

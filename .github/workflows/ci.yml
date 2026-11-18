@@ -13,7 +13,6 @@ on:
 env:
   # Telemetry is opt-out at runtime; in CI we never want to emit.
   NEMO_TELEMETRY_ENABLED: "false"
-  DEFAULT_PYTHON_VERSION: "3.11"
 
 jobs:
   benchmark-task-shell:
@@ -76,7 +75,6 @@ jobs:
         with:
           checkout: "false"
           fetch-depth: "0"
-          python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
 
       - name: Check formatting
         run: mise run check:format

@@ -69,7 +69,6 @@ jobs:
       - uses: ./.github/actions/setup-python-env
         with:
           checkout: "false"
-          python-version: "3.11"
 
       - name: Checkout benchmark target
         uses: actions/checkout@v7

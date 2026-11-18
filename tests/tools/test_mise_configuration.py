@@ -213,7 +213,7 @@ def test_mise_typecheck_preserves_blocking_repository_contract() -> None:
     typecheck = quality_tasks["check:type"]
 
     assert typecheck["description"].startswith("Run blocking ty checks")
-    assert typecheck["run"] == "uv run --locked --group docs tools/codestyle/typecheck.sh"
+    assert typecheck["run"] == "uv run --locked --group docs ty check --error-on-warning"
 
 
 def test_mise_sources_the_uv_managed_environment() -> None:
@@ -349,14 +349,22 @@ def test_ruff_enables_audited_error_and_safe_fix_rules() -> None:
     assert {"E9", "RUF100", "UP015", "UP017", "UP035", "UP037"} <= set(ruff["lint"]["select"])
 
 
+@pytest.mark.skipif(shutil.which("ruff") is None, reason="ruff is not installed")
 def test_ruff_and_ty_check_rendered_notebooks() -> None:
-    ruff = _read_toml(REPO_ROOT / "ruff.toml")
-    project = _read_toml(REPO_ROOT / "pyproject.toml")
-    file_collector = (REPO_ROOT / "tools/codestyle/_lib.sh").read_text(encoding="utf-8")
+    ty = _read_toml(REPO_ROOT / "ty.toml")
+    completed = subprocess.run(
+        ["ruff", "check", "--show-files"],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    checked = {Path(line).resolve() for line in completed.stdout.splitlines()}
+    notebooks = {path.resolve() for path in (REPO_ROOT / "docs/notebooks").glob("*.ipynb")}
 
-    assert "docs/notebooks/*.ipynb" not in ruff["exclude"]
-    assert "git ls-files '*.py' '*.ipynb'" in file_collector
-    assert "docs" in project["tool"]["ty"]["src"]["include"]
+    assert notebooks
+    assert notebooks <= checked
+    assert "docs" in ty["src"]["include"]
 
 
 def test_mise_python_tool_versions_match_project_versions() -> None:
@@ -369,7 +377,7 @@ def test_mise_python_tool_versions_match_project_versions() -> None:
         )
         assert requirement == f"{tool}=={mise['tools'][tool]}"
 
-    assert project["tool"]["uv"]["required-version"] == f">={mise['tools']['uv']}"
+    assert project["tool"]["uv"]["required-version"] == mise["tools"]["uv"]
 
 
 def _gpg_supported() -> bool:

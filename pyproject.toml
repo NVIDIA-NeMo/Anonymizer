@@ -90,9 +90,9 @@ package = true
 
 constraint-dependencies = [
     "grpcio>=1.68.0", # CVE-2024-11407
-    "urllib3>=2.8.0", # CVE-2026-44432
+    "urllib3>=2.8.0", # GHSA-8988-9cw3-xx77, GHSA-vxq7-64xx-v4gw, GHSA-gh4c-6fx4-qh6g (2.8.0); CVE-2026-44432 (2.7.0)
     "python-dotenv>=1.2.2", # CVE-2026-28684
-    "pyjwt>=2.14.0", # CVE-2026-48524, CVE-2026-48522, CVE-2026-48525, CVE-2026-48526
+    "pyjwt>=2.14.0", # GHSA-r6x4-923q-g947, GHSA-ffc3-869f-jxw9, GHSA-p4g4-x82p-q773, GHSA-w2cx-738m-mc7w, GHSA-pxh4-856f-4h89 and others (2.14.0); CVE-2026-48524, CVE-2026-48522, CVE-2026-48525, CVE-2026-48526 (2.13.0)
     "aiohttp>=3.14.4",
     "anyio>=4.14.2",
     "certifi>=2026.10.19",

@@ -128,7 +128,7 @@ mise run setup         # install pinned tools, dev dependencies, and hooks
 mise run setup all     # install pinned tools, every dependency group, and hooks
 mise run test          # run all unit tests
 mise run test:all      # run unit and opt-in end-to-end tests
-mise run format        # format and safely fix Python files and notebooks
+mise run format        # format and safely fix Python, notebooks, Markdown, and TOML
 mise run check         # run all read-only static checks
 mise run check ::: test # run static checks and unit tests before opening a PR
 mise run docs:serve    # local MkDocs server at http://127.0.0.1:8000

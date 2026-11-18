@@ -14,3 +14,4 @@ CHANGELOG.md
 .agent/
 skills/anonymizer/BENCHMARK.md
 skills/anonymizer/skill-card.md
+.mise/locks/*

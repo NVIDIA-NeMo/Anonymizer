@@ -6,7 +6,7 @@ This guide covers local setup, common development commands, testing, documentati
 
 - Python 3.11+
 - Git
-- [mise](https://mise.jdx.dev/) 2026.10.15 or newer, which installs the pinned uv, Ruff, and ty and runs every task
+- [mise](https://mise.jdx.dev/) 2026.11.3 or newer, which installs the pinned Python, uv, Ruff, ty, rumdl, and dprint and runs every task
 - [gh](https://cli.github.com/) for optional GitHub CLI workflows
 
 Development tools such as Ruff, ty, pre-commit, pytest, and pytest-cov are installed by the development dependency group.
@@ -176,8 +176,15 @@ mise run check:format
 mise run check:lint
 ```
 
-Ruff formats and lints tracked Python files and rendered notebooks. The ty configuration includes `docs`, so the
-blocking type check also checks code cells in `docs/notebooks/*.ipynb`.
+Ruff formats and lints Python files, rendered notebooks, and the Python code blocks in Markdown; rumdl formats and lints
+Markdown; dprint formats TOML. Their settings live in `ruff.toml`, `.rumdl.toml`, and `dprint.json`. The paired MkDocs
+and Fern pages under `docs/` and the signed `skills/anonymizer/` skill are excluded. The ty configuration in `ty.toml`
+includes `docs`, so the blocking type check also checks code cells in `docs/notebooks/*.ipynb`.
+
+Some configuration comes from a development baseline shared with other NVIDIA NeMo repositories: `.house.toml`,
+`.house-tool.sh`, `.rumdl.toml`, `dprint.json`, `ty.toml`, the `managed: house` block in `.gitignore`, and the tool pins
+in `.mise.toml`. Maintainers update it periodically. Change those files through a PR as usual, but a later baseline
+upgrade may undo a change, so mention it in the PR.
 
 Run all read-only checks:
 
@@ -223,9 +230,12 @@ Install hooks once:
 mise run hooks:install
 ```
 
-Before Git records a commit, the hooks check file hygiene, format and lint staged Python files, repair SPDX headers, and
-run the repository-wide `mise run check`. That aggregate includes the blocking ty check and read-only lock verification.
+Before Git records a commit, the hooks check file hygiene, format and lint staged Python, Markdown, and TOML files,
+repair SPDX headers, and run the repository-wide `mise run check`. That aggregate includes the blocking ty check and read-only lock verification.
 The commit-message hook rejects commits without a DCO `Signed-off-by` line.
+
+The Ruff, rumdl, and dprint hooks run each tool through `.house-tool.sh`, which uses `mise exec` to run the pinned
+version, so a commit from a shell without Mise activated, or from an IDE, uses the same tools as the Mise tasks.
 
 If a hook changes a file, review the change, stage it again, and retry the commit. If lock verification fails after a
 dependency change, run `mise run lock:update` and review the result. Do not bypass repository hooks with

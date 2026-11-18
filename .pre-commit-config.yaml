@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 default_install_hook_types: [pre-commit, commit-msg]
+# The signed skill changes only through re-signing, so no hook may touch it or its signature.
+exclude: '^skills/anonymizer/|(^|/)skill\.oms\.sig$'
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -67,13 +69,6 @@ repos:
         entry: sh .house-tool.sh dprint fmt --allow-no-files
         language: system
         files: '\.toml$'
-
-      - id: format
-        name: Format
-        language: system
-        entry: uv run --locked tools/codestyle/format.sh
-        types: [python]
-        pass_filenames: true
 
       - id: copyright-fix
         name: Copyright Fix

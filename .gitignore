@@ -67,8 +67,6 @@ uv.lock.bak
 .mise.local.toml
 mise.local.toml
 mise.*.local.toml
-!.mise/tasks/build/
-!.mise/tasks/build/**
 
 # Environments
 .env
@@ -163,3 +161,6 @@ htmlcov/
 # The development Python, which house writes and CI reads, is committed even where an earlier rule ignores it.
 !/.python-version
 # END managed: house
+# The build tasks under .mise/tasks/ are tracked although the build/ rules above ignore them.
+!.mise/tasks/build/
+!.mise/tasks/build/**
