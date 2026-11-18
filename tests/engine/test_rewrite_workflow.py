@@ -1,8 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 from typing import Any
@@ -16,11 +17,12 @@ from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.models import ModelConfig
 from data_designer.interface.data_designer import DataDesigner
 
-from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelection
+from anonymizer.config.models import EvaluateModelSelection, ReplaceModelSelection, RewriteModelSelection
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_DETECTION_INVALID_ENTITIES,
+    COL_DETECTION_JUDGE,
     COL_DETECTION_VALID,
     COL_DOMAIN,
     COL_ENTITIES_BY_VALUE,
@@ -35,6 +37,7 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_REANSWER,
     COL_RAW_SENSITIVITY_DISPOSITION,
     COL_REPAIR_ITERATIONS,
+    COL_REPLACEMENT_APPLICATION,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
@@ -43,6 +46,7 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
     RECORD_ID_COLUMN,
 )
+from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.engine.rewrite.repair import RepairWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow, _detection_valid_fraction, _join_new_columns
@@ -1349,6 +1353,67 @@ def test_evaluate_produces_detection_valid_column(
     )
 
     assert COL_DETECTION_VALID in result.dataframe.columns
+
+
+def _run_parquet_judge(
+    dataframe: pd.DataFrame,
+    *,
+    workflow_name: str,
+    **_: object,
+) -> WorkflowRunResult:
+    dataframe.to_parquet(io.BytesIO())
+    output = dataframe.copy()
+    if workflow_name == "replace-detection-judge":
+        output[COL_DETECTION_JUDGE] = [{"all_valid": True, "invalid_entities": []} for _ in range(len(output))]
+    elif workflow_name == "rewrite-final-judge":
+        output[COL_JUDGE_EVALUATION] = [
+            {"privacy": {"score": "high"}, "quality": {"score": "high"}, "style": {"score": "medium"}}
+            for _ in range(len(output))
+        ]
+    else:
+        raise AssertionError(f"Unexpected workflow: {workflow_name}")
+    return WorkflowRunResult(dataframe=output, failed_records=[])
+
+
+def test_evaluate_detection_validity_serializes_seeds_and_preserves_telemetry(
+    stub_model_configs: list[ModelConfig],
+    stub_evaluate_model_selection: EvaluateModelSelection,
+    stub_eval_df: pd.DataFrame,
+) -> None:
+    dataframe = pd.concat([stub_eval_df, stub_eval_df], ignore_index=True)
+    dataframe[RECORD_ID_COLUMN] = ["rec-0", "rec-1"]
+    telemetry = [
+        {
+            "targeted_span_count": count,
+            "applied_span_count": count,
+            "skipped_span_count": 0,
+            "skipped_span_label_counts": {},
+        }
+        for count in (1, 2)
+    ]
+    dataframe[COL_REPLACEMENT_APPLICATION] = telemetry
+    adapter = Mock()
+    adapter.run_workflow.side_effect = _run_parquet_judge
+    workflow = RewriteWorkflow(adapter=adapter)
+    assert isinstance(workflow._detection_judge_wf, DetectionJudgeWorkflow)
+
+    result = workflow.evaluate(
+        dataframe,
+        model_configs=stub_model_configs,
+        selected_models=stub_evaluate_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        compute_detection_validity=True,
+    )
+
+    assert [call.kwargs["workflow_name"] for call in adapter.run_workflow.call_args_list] == [
+        "replace-detection-judge",
+        "rewrite-final-judge",
+    ]
+    assert result.dataframe[COL_DETECTION_VALID].tolist() == [1.0, 1.0]
+    assert pd.api.types.is_numeric_dtype(result.dataframe[COL_DETECTION_VALID])
+    assert result.dataframe[COL_DETECTION_INVALID_ENTITIES].tolist() == [[], []]
+    assert result.dataframe[COL_REPLACEMENT_APPLICATION].tolist() == telemetry
+    assert dataframe[COL_REPLACEMENT_APPLICATION].tolist() == telemetry
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
 import logging
+from io import BytesIO
 
 import pandas as pd
 import pytest
@@ -15,7 +16,9 @@ from anonymizer.engine.constants import (
     COL_DETECTION_JUDGE,
     COL_DETECTION_VALID,
     COL_ENTITIES_BY_VALUE,
+    COL_REPLACEMENT_APPLICATION,
     COL_TEXT,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.evaluation.detection_judge import (
     DetectionJudgeWorkflow,
@@ -24,6 +27,7 @@ from anonymizer.engine.evaluation.detection_judge import (
     _judge_prompt,
     _label_examples_for_judge,
 )
+from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeColumnConfig, JudgeKind
 
@@ -174,6 +178,81 @@ def test_flatten_judgment_malformed_returns_unavailable_sentinel() -> None:
 
 def _entities_payload(entities: list[dict]) -> dict:
     return {"entities_by_value": entities}
+
+
+class _ParquetCheckingJudgeAdapter:
+    def __init__(self, returned_positions: tuple[int, ...]) -> None:
+        self.returned_positions = returned_positions
+
+    def run_workflow(self, frame: pd.DataFrame, **kwargs: object) -> WorkflowRunResult:
+        frame.to_parquet(BytesIO())
+        assert COL_REPLACEMENT_APPLICATION not in frame.columns
+        out = frame.iloc[list(self.returned_positions)].copy().reset_index(drop=True)
+        out[COL_DETECTION_JUDGE] = [{"all_valid": True, "invalid_entities": []} for _ in range(len(out))]
+        dropped = frame[~frame[RECORD_ID_COLUMN].isin(out[RECORD_ID_COLUMN])]
+        failed_records = [
+            FailedRecord(record_id=record_id, step="replace-detection-judge", reason="Synthetic judge failure")
+            for record_id in dropped[RECORD_ID_COLUMN]
+        ]
+        return WorkflowRunResult(dataframe=out, failed_records=failed_records)
+
+
+@pytest.mark.parametrize(
+    "returned_positions",
+    [(0, 1, 2), (2, 1, 0), (2, 0)],
+    ids=["all-rows", "reordered", "dropped-and-reordered"],
+)
+@pytest.mark.parametrize("include_telemetry", [True, False], ids=["with-telemetry", "without-telemetry"])
+def test_evaluate_serializes_seed_and_preserves_telemetry(
+    stub_evaluate_model_selection: EvaluateModelSelection,
+    returned_positions: tuple[int, ...],
+    include_telemetry: bool,
+) -> None:
+    names = [["Alice"], [], ["Bob", "Carol"], ["Dan", "Eve", "Frank"]]
+    df = pd.DataFrame(
+        {
+            RECORD_ID_COLUMN: [f"rec-{position}" for position in range(len(names))],
+            COL_TEXT: ["Alice", "no sensitive content", "Bob met Carol", "Dan met Eve and Frank"],
+            COL_ENTITIES_BY_VALUE: [
+                _entities_payload([{"value": name, "labels": ["first_name"]} for name in row_names])
+                for row_names in names
+            ],
+        },
+        index=pd.Index([10, 20, 30, 40]),
+    )
+    if include_telemetry:
+        df[COL_REPLACEMENT_APPLICATION] = [
+            {
+                "targeted_span_count": len(row_names),
+                "applied_span_count": len(row_names),
+                "skipped_span_count": 0,
+                "skipped_span_label_counts": {},
+            }
+            for row_names in names
+        ]
+    original = df.copy(deep=True)
+    workflow = DetectionJudgeWorkflow(adapter=_ParquetCheckingJudgeAdapter(returned_positions))
+
+    result = workflow.evaluate(df, model_configs=[], selected_models=stub_evaluate_model_selection)
+
+    entity_positions = (0, 2, 3)
+    expected_positions = sorted([1, *(entity_positions[position] for position in returned_positions)])
+    assert result.dataframe[RECORD_ID_COLUMN].tolist() == df.iloc[expected_positions][RECORD_ID_COLUMN].tolist()
+    assert result.dataframe[COL_DETECTION_VALID].tolist() == [True] * len(expected_positions)
+    assert result.dataframe[COL_DETECTION_INVALID_ENTITIES].tolist() == [[] for _ in expected_positions]
+    if include_telemetry:
+        assert result.dataframe[COL_REPLACEMENT_APPLICATION].tolist() == (
+            df.iloc[expected_positions][COL_REPLACEMENT_APPLICATION].tolist()
+        )
+    else:
+        assert COL_REPLACEMENT_APPLICATION not in result.dataframe.columns
+    expected_dropped_ids = [
+        df.iloc[original_position][RECORD_ID_COLUMN]
+        for position, original_position in enumerate(entity_positions)
+        if position not in returned_positions
+    ]
+    assert [failure.record_id for failure in result.failed_records] == expected_dropped_ids
+    pd.testing.assert_frame_equal(df, original)
 
 
 def test_evaluate_short_circuits_when_no_entities(
