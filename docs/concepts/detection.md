@@ -418,6 +418,10 @@ the model configs and selections, the data summary and the preview record count,
 privacy goal or `None`. The types are in `anonymizer.interface.workflows`. A workflow written for the older keyword
 list fails with `TypeError` at its first call.
 
+A workflow must apply `options.builtin_regexes`, `options.regex_rules` and `options.regex_limits`, or raise when it
+cannot. `Anonymizer` no longer inspects an injected workflow's signature, so it no longer refuses a workflow that
+cannot accept explicitly configured regex options; that check went with the keyword list in v1.
+
 ### Excluding entity labels
 
 Use `excluded_entity_labels` to omit specific labels from detection without having to enumerate the entire label set. Excluded labels are removed from the active label set before GLiNER runs. If a model still emits an excluded label, final filtering prevents it from appearing in detection results.

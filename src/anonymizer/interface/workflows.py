@@ -27,6 +27,9 @@ class DetectionWorkflow(Protocol):
     Result: `dataframe` carries `"final_entities"` for each returned row, and `source_positions` maps each returned
     row to its input row. The Rewrite route also reads `"_entities_by_value"`, `"tagged_text"` and, when
     `latent_goal` is set, `"_latent_entities"`. Rows that failed go in `failed_records`.
+
+    A workflow must apply `options.builtin_regexes`, `options.regex_rules` and `options.regex_limits`, or raise when
+    it cannot: `Anonymizer` does not check what an injected workflow supports.
     """
 
     def run(
