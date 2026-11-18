@@ -32,7 +32,6 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
-from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
@@ -501,15 +500,14 @@ def test_evaluate_caught_replace_workflow_exception_logs_debug_and_public_warnin
     )
     caplog.clear()
 
-    with (
-        patch.object(EntityCoverageWorkflow, "column_config", return_value=Mock()),
-        caplog.at_level(logging.DEBUG, logger="anonymizer"),
-    ):
+    with caplog.at_level(logging.DEBUG, logger="anonymizer"):
         evaluated = anonymizer.evaluate(run_result)
 
+    adapter.run_workflow.assert_called_once()
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert "Replace judges workflow failed (RuntimeError); judge scores are unavailable for 2 row(s)." in warnings
     messages = caplog.text
-    assert "Replace judges workflow failed (" in messages
-    assert "judge scores are unavailable for 2 row(s)." in messages
+    assert all("simulated workflow outage" not in record.getMessage() for record in caplog.records)
     assert "simulated workflow outage" not in messages
     assert "Entity coverage score unavailable for 2/2 records" in messages
     assert evaluated.trace_dataframe[COL_ENTITY_COVERAGE].isna().all()

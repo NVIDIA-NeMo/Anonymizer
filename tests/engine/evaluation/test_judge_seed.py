@@ -274,3 +274,47 @@ def test_entity_coverage_run_non_critical_keeps_scores_on_their_rows_when_rows_r
 
     assert list(out[COL_TEXT]) == list(trace[COL_TEXT])
     assert [raw["row_text"] for raw in out[EntityCoverageWorkflow.RAW_COL]] == list(trace[COL_TEXT])
+
+
+@pytest.mark.parametrize(
+    "judge_cls",
+    [
+        DetectionJudgeWorkflow,
+        TypeFidelityJudgeWorkflow,
+        RelationalConsistencyJudgeWorkflow,
+        AttributeFidelityJudgeWorkflow,
+        EntityCoverageWorkflow,
+    ],
+    ids=lambda cls: cls.__name__,
+)
+def test_judge_scores_rows_that_share_an_index_label(
+    judge_cls: type[_BaseJudgeWorkflow], stub_evaluate_model_selection: EvaluateModelSelection
+) -> None:
+    fresh = _trace(_ALL_EMPTY)
+    repeated = fresh.set_axis([0, 0])
+
+    expected = judge_cls(_ParquetAdapter()).evaluate(
+        fresh, model_configs=[], selected_models=stub_evaluate_model_selection
+    )
+    result = judge_cls(_ParquetAdapter()).evaluate(
+        repeated, model_configs=[], selected_models=stub_evaluate_model_selection
+    )
+
+    assert result.dataframe[judge_cls.VALID_COL].notna().all()
+    assert list(result.dataframe[judge_cls.VALID_COL]) == list(expected.dataframe[judge_cls.VALID_COL])
+
+
+def test_entity_coverage_run_non_critical_scores_rows_that_share_an_index_label(
+    stub_evaluate_model_selection: EvaluateModelSelection,
+) -> None:
+    def run(trace: pd.DataFrame) -> list[Any]:
+        adapter = cast(Any, _ParquetAdapter())
+        adapter._attach_record_ids = lambda df: df.assign(**{RECORD_ID_COLUMN: [f"r{i}" for i in range(len(df))]})
+        out, _ = EntityCoverageWorkflow(adapter).run_non_critical(
+            trace, model_configs=[], selected_models=stub_evaluate_model_selection
+        )
+        return list(out[EntityCoverageWorkflow.VALID_COL])
+
+    fresh = _trace(_ALL_EMPTY)
+
+    assert run(fresh.set_axis([0, 0])) == run(fresh) == [1.0, 1.0]

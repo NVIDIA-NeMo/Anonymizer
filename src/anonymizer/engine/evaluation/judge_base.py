@@ -262,6 +262,6 @@ class _BaseJudgeWorkflow(ABC):
             workflow_name=self.WORKFLOW_NAME,
             preview_num_records=preview_num_records,
         )
-        judged = frame.iloc[list(run.source_positions)].copy()
+        judged = frame.iloc[list(run.source_positions)].reset_index(drop=True)
         judged[self.RAW_COL] = run.dataframe[self.RAW_COL].tolist()
         return run, judged
