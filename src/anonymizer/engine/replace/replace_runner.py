@@ -22,7 +22,6 @@ from anonymizer.config.replace_strategies import (
 from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
-    COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
     RECORD_ID_COLUMN,
 )
@@ -37,6 +36,7 @@ from anonymizer.engine.graph_core.execution import TargetOutcome
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy
+from anonymizer.engine.rewrite.workflow_utils import run_columns
 from anonymizer.engine.row_partitioning import restore_diagnostic_columns
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.measurement import stage_timer
@@ -280,16 +280,11 @@ class ReplacementWorkflow:
         prepared = adapter._attach_record_ids(prepared)
 
         try:
-            # Replacement application telemetry can contain an all-empty nested
-            # ``skipped_span_label_counts`` mapping. PyArrow cannot represent that
-            # as a Parquet struct with no child fields, and the judges do not read
-            # this diagnostic column. Keep it on ``prepared`` for the returned
-            # trace, but omit it from DataDesigner's temporary seed dataframe.
-            workflow_input = prepared.drop(columns=[COL_REPLACEMENT_APPLICATION], errors="ignore")
-            run_result = adapter.run_workflow(
-                workflow_input,
+            run_result, _ = run_columns(
+                adapter,
+                prepared,
+                [judge.column_config(selected_models) for judge in active],
                 model_configs=model_configs,
-                columns=[judge.column_config(selected_models) for judge in active],
                 workflow_name="replace-judges",
                 preview_num_records=preview_num_records,
             )
@@ -301,8 +296,12 @@ class ReplacementWorkflow:
                 dict.fromkeys(new_cols),
                 source_positions=run_result.source_positions,
             ).reset_index(drop=True)
-        except Exception:
-            logger.debug("Replace judges workflow failed; evaluation scores may be unavailable.")
+        except Exception as exc:
+            logger.warning(
+                "Replace judges workflow failed (%s); judge scores are unavailable for %d row(s).",
+                type(exc).__name__,
+                len(prepared),
+            )
             judged_df = prepared
 
         for judge in active:

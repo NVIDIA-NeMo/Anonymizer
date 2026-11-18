@@ -236,6 +236,8 @@ def test_evaluate_invokes_adapter_for_rows_with_entities(
             class _Result:
                 dataframe = out
                 failed_records: list = []
+                source_positions = tuple(range(len(dataframe)))
+                observed_requests = None
 
             return _Result()
 
@@ -277,6 +279,8 @@ def test_evaluate_merges_entity_and_empty_rows_in_order(
             class _Result:
                 dataframe = out
                 failed_records: list = []
+                source_positions = tuple(range(len(dataframe)))
+                observed_requests = None
 
             return _Result()
 
@@ -306,6 +310,8 @@ def test_evaluate_marks_judge_unavailable_for_malformed_payload(
             class _Result:
                 dataframe = out
                 failed_records: list = []
+                source_positions = tuple(range(len(dataframe)))
+                observed_requests = None
 
             return _Result()
 

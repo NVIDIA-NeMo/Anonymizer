@@ -508,7 +508,9 @@ def test_evaluate_caught_replace_workflow_exception_logs_debug_and_public_warnin
         evaluated = anonymizer.evaluate(run_result)
 
     messages = caplog.text
-    assert "Replace judges workflow failed; evaluation scores may be unavailable." in messages
+    assert "Replace judges workflow failed (" in messages
+    assert "judge scores are unavailable for 2 row(s)." in messages
+    assert "simulated workflow outage" not in messages
     assert "Entity coverage score unavailable for 2/2 records" in messages
     assert evaluated.trace_dataframe[COL_ENTITY_COVERAGE].isna().all()
     for column in run_result.dataframe.columns:

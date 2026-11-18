@@ -220,9 +220,9 @@ def _prepare_rewrite_tagged_text(row: dict[str, Any]) -> dict[str, Any]:
     # and reunifying them fails. Serialize to a JSON string instead -- always the
     # same Arrow type regardless of content -- and let
     # ``restore_empty_skipped_span_label_counts`` decode it back to a dict once the
-    # dataframe is back in our hands (see the analogous drop-before-run_workflow
-    # pattern in replace_runner.py / entity_coverage_judge.py, which isn't available
-    # here since this column is produced *during* the DataDesigner run).
+    # dataframe is back in our hands. Leaving the column out of the seed, as the
+    # judges do, is not available here since this column is produced *during* the
+    # DataDesigner run.
     metrics["skipped_span_label_counts"] = json.dumps(metrics["skipped_span_label_counts"], sort_keys=True)
     row[COL_REPLACEMENT_APPLICATION] = metrics
     admitted_pairs = {(entity.value, entity.label) for entity in target_entities.entities}

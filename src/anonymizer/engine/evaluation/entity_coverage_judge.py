@@ -34,7 +34,6 @@ from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import (
     ROW_ORDER_COL,
     merge_and_reorder,
-    resolve_source_positions,
     restore_diagnostic_columns,
 )
 from anonymizer.engine.schemas import EntitiesByValueSchema
@@ -657,9 +656,12 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             if not had_record_ids:
                 out = out.drop(columns=[RECORD_ID_COLUMN])
             return out, result.failed_records
-        except Exception:
-            logger.warning("Entity coverage workflow failed; scores may be unavailable.")
-            logger.debug("Entity coverage workflow failed.")
+        except Exception as exc:
+            logger.warning(
+                "Entity coverage workflow failed (%s); scores are unavailable for %d row(s).",
+                type(exc).__name__,
+                len(dataframe),
+            )
             out = dataframe.copy()
             out[self.VALID_COL] = None
             out[self.INVALID_COL] = [[] for _ in range(len(out))]
@@ -678,20 +680,13 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
         working_df = self.prepare(dataframe)
         working_df[ROW_ORDER_COL] = range(len(working_df))
         effective_preview = min(preview_num_records, len(working_df)) if preview_num_records is not None else None
-        run_result = self._adapter.run_workflow(
+        run_result, judged_df = self._run_seeded(
             working_df,
             model_configs=model_configs,
-            columns=[self.column_config(selected_models)],
-            workflow_name=self.WORKFLOW_NAME,
+            selected_models=selected_models,
             preview_num_records=effective_preview,
         )
-
-        judged_df = run_result.dataframe.copy()
-        positions = getattr(run_result, "source_positions", None)
-        if positions is not None:
-            positions = resolve_source_positions(working_df, judged_df, positions)
-            judged_df[ROW_ORDER_COL] = positions
-            positions = tuple(sorted(positions))
+        positions = tuple(sorted(judged_df[ROW_ORDER_COL]))
         judged_df = self.postprocess(judged_df)
         combined = merge_and_reorder(judged_df)
         return JudgeResult(dataframe=combined, failed_records=run_result.failed_records, source_positions=positions)
