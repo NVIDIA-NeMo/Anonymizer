@@ -1,0 +1,46 @@
+{
+  "incremental": false,
+  "includes": [
+    "**/*.toml"
+  ],
+  "toml": {
+    "indentWidth": 4,
+    "lineWidth": 120
+  },
+  "plugins": [
+    "https://plugins.dprint.dev/toml-0.9.0.wasm@776e088ed4255a51a80e3640e5fd20b15661147e86df3e99611aaa37e9c59852"
+  ],
+  "excludes": [
+    "vendor/**",
+    "third_party/**",
+    "uv.lock",
+    "mise.lock",
+    "LICENSE",
+    "**/skill.oms.sig",
+    "docs/fern/**/*.markdown",
+    "docs/fern/**/*.md",
+    "docs/fern/**/*.mdx",
+    "docs/**/*.markdown",
+    "docs/**/*.md",
+    "docs/**/*.mdx",
+    "skills/anonymizer/BENCHMARK.md",
+    "skills/anonymizer/skill-card.md",
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "dist",
+    "venv"
+  ]
+}

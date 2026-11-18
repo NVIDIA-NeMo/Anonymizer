@@ -3,12 +3,12 @@
 
 # Tool versions managed by mise (https://mise.jdx.dev/).
 # Run `mise install` to install all tools.
-min_version = "2026.10.15"
+min_version = "2026.11.3"
 
 [tools]
-uv = "0.13.4"
-ruff = "0.17.1"
-ty = "0.0.90"
+uv = "0.13.5"
+ruff = "0.17.2"
+ty = "0.0.92"
 # Fern documentation tooling. jq and yq are dependencies of docs:fern:check.
 jq = "1.8.1"
 yq = "4.44.1"
@@ -16,6 +16,9 @@ yq = "4.44.1"
 # fern-api is a wrapper; fern.config.json selects the CLI version it executes.
 node = "22"
 "npm:fern-api" = "5.201.0"
+python = "3.13.17"
+dprint = "0.64.3"
+rumdl = "0.3.0"
 
 [env]
 _.file = [".env", { path = ".env.local", redact = true }]

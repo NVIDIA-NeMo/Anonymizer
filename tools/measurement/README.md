@@ -666,11 +666,7 @@ cols = [
 ]
 print(groups[cols].sort_values(["workload_id", "median_pipeline_elapsed_sec"]))
 
-failures = cases[
-    (cases["case_failed"]) |
-    (cases["observed_failed_requests"] > 0) |
-    (cases["dd_trace_error_count"] > 0)
-]
+failures = cases[(cases["case_failed"]) | (cases["observed_failed_requests"] > 0) | (cases["dd_trace_error_count"] > 0)]
 print(failures[["case_id", "config_id", "observed_failed_requests", "dd_trace_error_count"]])
 ```
 

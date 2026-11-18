@@ -8,15 +8,15 @@ arg "<version>" help="Expected Python package version"
 flag "--dry-run" help="Build and validate without uploading"
 '''
 run = [
-  '''
+    '''
 if [ "${usage_dry_run:-false}" != "true" ]; then
   : "${TWINE_USERNAME:?TWINE_USERNAME is required}"
   : "${TWINE_PASSWORD:?TWINE_PASSWORD is required}"
 fi
 ''',
-  { task = "build:wheel" },
-  { task = "release:verify", args = ["{{usage.version}}"] },
-  '''
+    { task = "build:wheel" },
+    { task = "release:verify", args = ["{{usage.version}}"] },
+    '''
 echo "Destination: PyPI"
 echo "Version: ${usage_version?}"
 if [ "${usage_dry_run:-false}" = "true" ]; then
@@ -75,11 +75,11 @@ usage = '''
 arg "<version>" help="Normalized package version to build, for example 0.5.0 or 0.5.0rc1"
 '''
 run = [
-  '''
+    '''
 # Overrides the tag-derived version so an untagged commit builds a version
 # PyPI would accept. Only this task uses the override; real releases do not.
 export UV_DYNAMIC_VERSIONING_BYPASS="${usage_version?}"
 mise run build:wheel
 ''',
-  { task = "release:verify", args = ["{{usage.version}}"] },
+    { task = "release:verify", args = ["{{usage.version}}"] },
 ]

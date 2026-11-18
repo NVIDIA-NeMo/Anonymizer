@@ -52,6 +52,7 @@ export OPENROUTER_API_KEY="your-openrouter-api-key"
 ### 3. Anonymize text
 
 #### CLI
+
 > Tip: All examples below use `uv run` to invoke commands. If you prefer, activate the venv with `source .venv/bin/activate` and run commands directly.
 ```bash
 DATA_URL="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv"
@@ -72,6 +73,7 @@ Run `anonymizer --help` or `anonymizer <subcommand> --help` for all options.
 
 ```python
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Redact
+
 DATA_URL = "https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv"
 
 # Uses Anonymizer's bundled model providers (see src/anonymizer/config/default_model_configs/providers.yaml)

@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+[global]
+flavor = "standard"
+# Named files, as hooks pass them, still honor exclude, which adoption sets to what the baseline's checks skip.
+force-exclude = true
+disable = ["MD013", "MD014", "MD024", "MD025", "MD026", "MD031", "MD033", "MD036", "MD041"]
+exclude = [
+    "vendor/**",
+    "third_party/**",
+    "uv.lock",
+    "mise.lock",
+    "LICENSE",
+    "**/skill.oms.sig",
+    "docs/fern/**/*.markdown",
+    "docs/fern/**/*.md",
+    "docs/fern/**/*.mdx",
+    "docs/**/*.markdown",
+    "docs/**/*.md",
+    "docs/**/*.mdx",
+    "skills/anonymizer/BENCHMARK.md",
+    "skills/anonymizer/skill-card.md",
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "dist",
+    "venv",
+]
+
+[MD004]
+style = "dash"
+
+[MD029]
+style = "ordered"

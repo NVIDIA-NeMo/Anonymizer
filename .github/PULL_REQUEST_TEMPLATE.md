@@ -9,6 +9,7 @@
 <!-- Briefly describe what changed and why. -->
 
 ## Type of Change
+
 - [ ] Bug fix
 - [ ] New feature
 - [ ] Breaking change
@@ -17,6 +18,7 @@
 - [ ] CI, release, or contributor workflow update
 
 ## Contributor Checklist
+
 - [ ] PR title follows Conventional Commits, for example `fix: handle empty entity list`
 - [ ] Related issue is linked and, for external contributions, open and labeled `triaged`; or a maintainer-owned no-issue reason is documented above
 - [ ] For non-trivial changes, a plan document is linked above, or the no-plan reason is documented above
@@ -31,6 +33,7 @@
 - Skipped checks or known failures:
 
 ## Documentation and Artifacts
+
 - [ ] Docs updated, or not needed
 - [ ] If docs changed: `mise run docs:build` passes locally
 - [ ] If tutorial sources changed: notebooks regenerated with `mise run notebooks:execute`

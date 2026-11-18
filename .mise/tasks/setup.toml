@@ -10,10 +10,10 @@ arg "[profile]" help="Dependency profile to install" default="dev" {
 flag "--no-hooks" help="Skip hook installation in ephemeral CI environments"
 '''
 run = [
-  "MISE_YES=1 mise trust",
-  "MISE_YES=1 mise install",
-  { task = "deps:sync", args = ["{{usage.profile}}"] },
-  '''
+    "MISE_YES=1 mise trust",
+    "MISE_YES=1 mise install",
+    { task = "deps:sync", args = ["{{usage.profile}}"] },
+    '''
 if [ "${usage_profile?}" != "runtime" ] && [ "${usage_no_hooks:-false}" != "true" ]; then
   mise run hooks:install
 fi

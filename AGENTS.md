@@ -44,7 +44,7 @@ Public-API changes (re-exports, signatures, kwargs, default values) may require 
 
 ### Replace mode — `AnonymizerConfig(replace=...)`
 
-```
+```text
 input_df
   → EntityDetectionWorkflow.run()              # engine/detection/detection_workflow.py
         GLiNER detection
@@ -62,7 +62,7 @@ Validation runs before augmentation, not after: GLiNER is high-recall/low-precis
 
 ### Rewrite mode — `AnonymizerConfig(rewrite=...)`
 
-```
+```text
 input_df
   → EntityDetectionWorkflow.run()              # same as above, plus latent entity tagging
   → RewriteWorkflow.run()                      # engine/rewrite/rewrite_workflow.py

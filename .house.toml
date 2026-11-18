@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Shared development baseline: the tool versions, lint and format settings, and pre-commit
+# hooks this repository keeps in common with other NVIDIA NeMo repositories. Maintainers apply
+# it with an internal tool, house, which writes this file; contributors never need to run it.
+# source_commit identifies the baseline version applied. Do not edit.
+schema_version = 1
+source_commit = "93aca89fac3881a961bfe7b60f557d56951f7218" # pragma: allowlist secret
+profile = "public"

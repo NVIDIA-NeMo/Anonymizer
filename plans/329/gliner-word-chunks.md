@@ -23,7 +23,6 @@ Use fabricated fixtures for regression tests: complete words at window boundarie
 
 Commit with a conventional message and DCO signoff after repository hooks pass. Review the plan and implementation together. Ship the server correction before rerunning release-candidate notebook validation. Legal rewrite-provider timeouts remain a separate issue. No release tag or package publication is part of this fix.
 
-
 ## Verified results
 
 - `make check`: passed formatting, lint, type checking, lock consistency, and SPDX checks.
@@ -32,7 +31,6 @@ Commit with a conventional message and DCO signoff after repository hooks pass. 
 - Live endpoint replay using the model's actual native word splitter: all 11 affected fixtures (two biographies and nine public legal records) returned source-valid spans; one synthetic suffix prediction was corrected. Only aggregate results are recorded here.
 - [Notebook CI run 40271396191](https://github.com/NVIDIA-NeMo/Anonymizer/actions/runs/40271396191) on commit `b27e39e3` completed CPU runtime installation and notebooks 01–03. Notebook 04 detection completed across all 25 records with zero detection failures; provider timeouts then failed all eight repair records and triggered the missing-Parquet crash tracked in [#331](https://github.com/NVIDIA-NeMo/Anonymizer/issues/331). Notebook 05 did not execute, and artifact upload was skipped. The full five-notebook run has not passed; detection recall remains unevaluated.
 - Local legal verification on commit `b27e39e3`: all 25 records passed through the actual notebook-local server on CPU, using the pinned checkpoint, notebook 05 labels, threshold 0.3, and word windows 384/128. All 1,717 returned spans had valid bounds and exact source text; the engine parser passed and retained 1,578 spans after overlap resolution. This includes all nine previously failing legal records. LLM validation, augmentation, and rewriting were not part of this local check.
-
 
 ## CI setup follow-up
 
@@ -44,18 +42,15 @@ Validate workflow structure, resolve the Linux Python 3.11 dependency graph and 
 
 Follow-up validation: Linux x86_64/Python 3.11 resolution passed with 43 packages, `torch==2.14.1+cpu`, and no NVIDIA CUDA or Triton packages. Workflow YAML validation, `make check`, and the strict documentation build passed. The subsequent notebook run confirmed CPU runtime installation succeeded without the earlier disk-quota failure, before encountering the separate rewrite-repair failure described above.
 
-
 ## Review follow-up
 
 Reject empty or whitespace-only model entity text before source-span comparison, even when its offsets point to whitespace. Add synthetic regressions for both cases; both reproduced the missing rejection before the guard was added. This is defensive validation of malformed responses, separate from the real-model span validation above.
-
 
 ## Exact-contract review follow-up
 
 The pinned GLiNER2 2.0 implementation returns case-preserving slices at word offsets and appends exactly one period when input lacks terminal punctuation. Tighten chunk grounding to exact equality and that single-period case; reject case changes, whitespace-normalized values, extra synthetic periods, and invalid bounds. Retain blank-text rejection and synthetic-only skipping. Replace the accepted double-period test with a URL-at-window-end regression and add explicit rejection cases. The earlier external endpoint replay is historical evidence of span repair, not evidence that extra periods belong to the pinned library contract.
 
 Document that native word counts do not bound subword length, particularly for unspaced Chinese/Japanese runs. Compare original character windows and revised word windows with the same local pinned model, legal labels, threshold, and overlap policy on the 16 legal records that previously passed. Save only per-record aggregate counts and source-validity measures; compare word-window sizes if a large drop appears. Counts are a regression screen, not labeled precision or recall. Rerun the full 25-record source-span check after tightening, along with unit tests, repository checks, and strict docs.
-
 
 ### Paired legal-window comparison
 
@@ -85,7 +80,6 @@ The 384-word setting produced 25.8% fewer proposals than the character baseline 
 
 All 25 legal records also passed the tightened 384-word grounding implementation with zero source-span mismatches (1,717 proposals in total). Shorter settings had no span mismatches on the 16-record comparison. Full tests, repository checks, and strict docs passed after the tightening change. No source text, entity values, or model outputs beyond aggregate counts are committed.
 
-
 ## Measured default update
 
 Use native word windows 128/32 for the bundled notebook/development server. Share these defaults between server parsing and the notebook-owned detector model configuration. Remove the engine's hardcoded chunk assignments so configured `extra_body.chunk_length` and `extra_body.overlap` pass through and omitted settings defer to the server. Continue injecting effective labels and threshold from detection config. Omit chunk settings in the shipped `models.yaml` detector entry, which targets the bundled localhost server. Plain `Anonymizer()` therefore receives the measured 128/32 server defaults, as does the notebook helper through its explicit parameters. Custom model pools without chunk fields defer to their server's defaults and units. No new `Detect` fields or top-level public symbols are needed; the bundled skill template does not change.
@@ -109,9 +103,7 @@ The evaluation uses untyped letter/digit position coverage so split first/last-n
 
 All three word settings had zero inference errors and zero invalid source spans across 74 unique documents. On the 24 unique notebook fixtures, sensitive-text coverage/precision was 93.11%/61.81% at 128/32, versus 93.74%/59.56% for character windows. Source data, gold annotations, and entity values remain outside the repository; only aggregate results are recorded here.
 
-
 Final default validation: 1,579 unit tests, `make check`, and strict documentation build passed. The actual notebook-local server was exercised on all 25 legal CSV records using parameters obtained from the notebook model builder through engine injection: 128/32, threshold 0.3. All 2,097 returned spans had exact source text and valid bounds; the engine parser passed (1,928 spans after overlap resolution), with zero record failures. The server was stopped after the check. Tests cover the notebook route, server defaults and explicit request overrides, omission of unconfigured engine chunk fields, preservation of configured chunk fields, and the notebook defaults. The later localhost-default correction below removes the shipped pool's 384/128 override.
-
 
 ## Localhost-default review correction
 

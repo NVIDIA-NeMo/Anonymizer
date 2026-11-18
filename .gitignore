@@ -140,3 +140,26 @@ docs/notebook_source/data/synth_bios_sample10_anonymized.csv
 # Local mise overrides
 mise.local.toml
 .mise.local.toml
+# BEGIN managed: house
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# From the shared development baseline (see .house.toml): a baseline upgrade rewrites this
+# block, so keep this repository's own rules outside it.
+.venv/
+venv/
+node_modules/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+.cache/
+build/
+*.py[cod]
+.coverage
+htmlcov/
+.mypy_cache/
+.ty_cache/
+# The development Python, which house writes and CI reads, is committed even where an earlier rule ignores it.
+!/.python-version
+# END managed: house

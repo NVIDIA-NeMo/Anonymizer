@@ -1,23 +1,56 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-exclude = [".bzr", ".direnv", ".eggs", ".git", ".hg", ".ipynb_checkpoints",
-           ".mypy_cache", ".nox", ".pytest_cache", ".ruff_cache", ".tox",
-           ".venv", ".vscode", "__pypackages__", "_build", "dist", "venv"]
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "dist",
+    "venv",
+]
 
 line-length = 120
 indent-width = 4
 target-version = "py311"
+extend-exclude = [
+    "vendor/**",
+    "third_party/**",
+    "uv.lock",
+    "mise.lock",
+    "LICENSE",
+    "**/skill.oms.sig",
+    "docs/fern/**/*.markdown",
+    "docs/fern/**/*.md",
+    "docs/fern/**/*.mdx",
+    "docs/**/*.markdown",
+    "docs/**/*.md",
+    "docs/**/*.mdx",
+    "skills/anonymizer/BENCHMARK.md",
+    "skills/anonymizer/skill-card.md",
+]
+force-exclude = true
 
 [lint]
 select = [
-    "W",     # pycodestyle warnings
-    "F",     # pyflakes
-    "I",     # isort
-    "ICN",   # flake8-import-conventions
-    "PIE",   # flake8-pie
+    "W", # pycodestyle warnings
+    "F", # pyflakes
+    "I", # isort
+    "ICN", # flake8-import-conventions
+    "PIE", # flake8-pie
     "RUF100", # unused noqa directives
-    "TID",   # flake8-tidy-imports (bans relative imports)
+    "TID", # flake8-tidy-imports (bans relative imports)
     "UP006", # List[A] -> list[A]
     "UP007", # Union[A, B] -> A | B
     "UP015", # redundant open modes
@@ -25,9 +58,9 @@ select = [
     "UP035", # deprecated imports
     "UP037", # quoted annotations
     "UP045", # Optional[A] -> A | None
-    "E4",    # pycodestyle import errors
-    "E7",    # pycodestyle statement errors
-    "E9",    # pycodestyle file I/O errors
+    "E4", # pycodestyle import errors
+    "E7", # pycodestyle statement errors
+    "E9", # pycodestyle file I/O errors
     # TODO: enable these rules:
     # "B006",  # mutable default argument
     # "T201",  # no print() in non-test code

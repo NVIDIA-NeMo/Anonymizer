@@ -22,10 +22,10 @@ test = ["pytest>=9.0.3,<10"]
 package = false
 
 constraint-dependencies = [
-  "grpcio>=1.68.0",  # CVE-2024-11407
-  "urllib3>=2.7.0",  # CVE-2026-44432
-  "python-dotenv>=1.2.2",  # CVE-2026-28684
-  "pyjwt>=2.13.0",  # CVE-2026-48524, CVE-2026-48522, CVE-2026-48525, CVE-2026-48526
+    "grpcio>=1.68.0", # CVE-2024-11407
+    "urllib3>=2.7.0", # CVE-2026-44432
+    "python-dotenv>=1.2.2", # CVE-2026-28684
+    "pyjwt>=2.13.0", # CVE-2026-48524, CVE-2026-48522, CVE-2026-48525, CVE-2026-48526
 ]
 
 [tool.house]

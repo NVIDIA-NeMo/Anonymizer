@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# ty reads this file, never [tool.ty] in pyproject.toml. The shared development baseline sets some
+# keys here, which the baseline requires; every other key belongs to this repository.
+
+[src]
+include = ["src", "tests", "tests_e2e", "docs", "scripts", "tools"]
+exclude = [".uv_cache/"]
+
+[environment]
+root = ["src", ".", "tools", "tools/measurement"]
+
+[[overrides]]
+include = ["src/anonymizer/engine/local_inference/gliner2/backend.py"]
+
+[overrides.analysis]
+# Notebook dependencies may be absent; inline ignores fail when they are installed.
+allowed-unresolved-imports = ["torch", "gliner2"]
+
+[[overrides]]
+include = ["tools/inference_service_compiler/vllm_compat.py"]
+
+[overrides.analysis]
+# vLLM is installed only in tools/inference-service-runtime, never in the main environment.
+allowed-unresolved-imports = ["vllm.**", "uvloop"]
+
+[rules]
+unused-ignore-comment = "ignore"

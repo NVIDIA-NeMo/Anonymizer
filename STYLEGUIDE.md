@@ -26,6 +26,7 @@ For contribution workflow and branch naming, see [CONTRIBUTING.md](CONTRIBUTING.
 class Detect(BaseModel):
     gliner_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
 
+
 # Internal result — dataclass
 @dataclass(frozen=True)
 class WorkflowRunResult:
@@ -151,12 +152,15 @@ from .anonymizer_config import AnonymizerConfig
 # Good - imports at module level
 from pathlib import Path
 
+
 def process_file(filename: str) -> None:
     path = Path(filename)
+
 
 # Bad - import inside function
 def process_file(filename: str) -> None:
     from pathlib import Path
+
     path = Path(filename)
 ```
 

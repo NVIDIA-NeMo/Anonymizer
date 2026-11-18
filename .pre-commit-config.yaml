@@ -5,22 +5,69 @@ default_install_hook_types: [pre-commit, commit-msg]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        args: ["--markdown-linebreak-ext=md,mdx,markdown"]
+        types: [text]
+        files: &whitespace-files |
+          (?x)
+          \.(py|pyi|sh|toml|yaml|yml|md|mdx|markdown|mdc|rst|txt|json|ini|in|js|ts|tsx|css|html|j2|template)$
+          | (^|/)(Makefile|Dockerfile|Dockerfile\.[^/]*|\.gitignore|\.gitattributes|\.dockerignore)$
+        exclude: &whitespace-exclude |
+          (?x)
+          (^|/)(uv\.lock|mise\.lock|LICENSE|skill\.oms\.sig)(/|$)
+          | ^(vendor|third_party|docs/assets)/
+          | \.(csv|tsv|lock)(/|$)
+          | ^docs/fern/(.*/)?.*\.md(/|$)
+          | ^docs/(.*/)?.*\.md(/|$)
+          | ^docs/(.*/)?.*\.mdx(/|$)
       - id: end-of-file-fixer
+        types: [text]
+        files: *whitespace-files
+        exclude: *whitespace-exclude
       - id: check-yaml
         args: [--unsafe]  # MkDocs uses custom !ENV and Python-name tags.
       - id: check-added-large-files
       - id: check-json
       - id: check-toml
       - id: check-merge-conflict
+        args: [--assume-in-merge]
       - id: debug-statements
       - id: detect-private-key
       - id: mixed-line-ending
+        args: [--fix=lf]
+        types: [text]
+        files: *whitespace-files
+        exclude: *whitespace-exclude
 
   - repo: local
     hooks:
+      - id: ruff-check
+        name: Ruff lint and import sorting
+        entry: sh .house-tool.sh ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter]
+
+      - id: ruff-format
+        name: Ruff format, and the Python in Markdown
+        entry: sh .house-tool.sh ruff format --force-exclude
+        language: system
+        types_or: [python, pyi, jupyter, markdown]
+        exclude: '\.(mdx|markdown)$'
+
+      - id: rumdl
+        name: Format and lint Markdown with rumdl
+        entry: sh .house-tool.sh rumdl check --fix
+        language: system
+        files: '\.(md|mdx|markdown)$'
+
+      - id: dprint
+        name: Format TOML with dprint
+        entry: sh .house-tool.sh dprint fmt --allow-no-files
+        language: system
+        files: '\.toml$'
+
       - id: format
         name: Format
         language: system
