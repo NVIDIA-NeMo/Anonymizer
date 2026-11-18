@@ -742,9 +742,13 @@ def test_run_reports_each_rows_protection_outcome(omit_bob: bool, tmp_path: Path
     second = result.outcome(1)
     assert second.qualification == ("not_met" if omit_bob else "met")
     assert any(reason.check == "replacements_applied" for reason in second.reasons) is omit_bob
-    assert [(v.check, v.status) for v in result.outcome(0).advisories] == [("no_replaced_value_remains", "passed")]
+    assert [(v.check, v.status) for v in result.outcome(0).advisories] == [
+        ("no_detected_value_outside_replacements", "passed")
+    ]
     second_status = "failed" if omit_bob else "passed"
-    assert [(v.check, v.status) for v in second.advisories] == [("no_replaced_value_remains", second_status)]
+    assert [(v.check, v.status) for v in second.advisories] == [
+        ("no_detected_value_outside_replacements", second_status)
+    ]
     with pytest.raises(IndexError):
         result.outcome(2)
 
@@ -818,7 +822,7 @@ def test_replace_reports_replaced_values_left_in_kept_text(
     outcome = with_check.outcome(graph.targets[0])
 
     assert [(a.check, a.verifier, a.status, a.cause) for a in outcome.advisories] == [
-        ("no_replaced_value_remains", "verify-no-original", *advisory)
+        ("no_detected_value_outside_replacements", "verify-no-original", *advisory)
     ]
     without = _without_advisory_verifier(graph, build_map)
     base = without.outcome(graph.targets[0])
