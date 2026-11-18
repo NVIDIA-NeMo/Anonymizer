@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from collections import Counter
 from dataclasses import dataclass
@@ -16,7 +15,7 @@ from anonymizer.engine.constants import (
     COL_TEXT,
 )
 from anonymizer.engine.detection.postprocess import EntitySpan
-from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.schemas import EntitiesSchema, EntityReplacementMapSchema
 
 logger = logging.getLogger("anonymizer")
 
@@ -199,28 +198,7 @@ def _resolve_synthetic(
 
 def _parse_replacements(raw: str | dict | object) -> list[ReplacementEntry]:
     """Parse raw replacement map (JSON string or dict) into typed entries."""
-    parsed = raw
-    model_dump = getattr(raw, "model_dump", None)
-    if callable(model_dump):
-        parsed = model_dump(mode="python")
-    if isinstance(raw, str):
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            return []
-    if not isinstance(parsed, dict):
-        return []
-    replacements = parsed.get("replacements", [])
-    if not isinstance(replacements, list):
-        return []
-    normalized: list[ReplacementEntry] = []
-    for replacement in replacements:
-        if not isinstance(replacement, dict):
-            continue
-        original = str(replacement.get("original", ""))
-        label = str(replacement.get("label", ""))
-        synthetic = str(replacement.get("synthetic", ""))
-        if not original or not label or not synthetic:
-            continue
-        normalized.append(ReplacementEntry(original=original, label=label, synthetic=synthetic))
-    return normalized
+    return [
+        ReplacementEntry(original=e.original, label=e.label, synthetic=e.synthetic)
+        for e in EntityReplacementMapSchema.from_raw(raw, on_invalid="skip")
+    ]
