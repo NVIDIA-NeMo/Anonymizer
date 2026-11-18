@@ -117,6 +117,7 @@ For docs changes:
 
 ```bash
 mise run docs:build
+mise run docs:fern:check
 ```
 
 For tutorial source changes:
@@ -184,8 +185,8 @@ Run all read-only checks:
 mise run check
 ```
 
-`mise run check` runs `mise run check:format`, `mise run check:lint`, `mise run check:type`, `mise run check:lock`, and
-`mise run check:license:headers`. CI runs the same tasks as separate steps so failures identify the affected stage.
+`mise run check` runs `mise run check:format`, `mise run check:lint`, `mise run check:type`, `mise run check:lock`,
+`mise run check:license:headers`, and `mise run check:docs:pairs`. CI runs the same tasks as separate steps so failures identify the affected stage.
 
 Run the blocking type checker:
 
@@ -242,19 +243,109 @@ repository history before sharing the branch further.
 
 ## Documentation
 
-Serve docs locally:
+Update docs when a change affects public API behavior, CLI behavior, examples,
+notebooks, configuration, contributor workflow, or release process. Fern is being
+introduced alongside the production MkDocs site; see the
+[temporary migration status](docs/fern/FERN_MIGRATION.md) for parallel authoring
+requirements and cutover work.
+
+### MkDocs
 
 ```bash
-mise run docs:serve
+mise run docs:serve    # local server at http://127.0.0.1:8000
+mise run docs:build    # strict build
 ```
 
-Build docs in strict mode:
+### Fern Validation and Previews
+
+Fern prose lives in `docs/**/*.mdx`. The site configuration is
+`docs/fern/docs.yml`, and nightly navigation is in
+`docs/fern/versions/nightly.yml`. Use explicit slugs to keep page URLs stable
+when reorganizing the sidebar. Images use the existing source-relative assets;
+use native Fern components for cards, tabs, and admonitions.
+
+`mise run setup` installs the Fern tools with the rest of the pinned tools. To
+install them together with the docs dependency profile:
 
 ```bash
-mise run docs:build
+mise run setup docs
 ```
 
-Update docs when a change affects public API behavior, CLI behavior, examples, notebooks, configuration, contributor workflow, or release process.
+This installs Node.js 22, Fern CLI 5.201.0, and the check script's jq/yq
+dependencies from `.mise.toml` and `mise.lock`. No separate npm installation is
+needed. Run these tasks from the repository root:
+
+| Task | Purpose |
+| --- | --- |
+| `mise run docs:fern:check` | Validate version alignment, configuration, MDX, and internal links. |
+| `mise run docs:fern:serve` | Start the local Fern development server. |
+| `mise run docs:fern:preview` | Generate a hosted preview; run the check task first. |
+| `mise run docs:fern:notebooks` | Regenerate notebook MDX from saved cells and outputs without executing cells. |
+
+Validation runs `fern check --local --warnings --strict-broken-links` without
+`FERN_TOKEN`. It also fails on MDX parse warnings, which Fern can report with a
+successful exit code. Validation also fails when the `npm:fern-api` version in
+`.mise.toml` differs from the version in `docs/fern/fern.config.json`; update
+both, then run `mise lock`. The CLI may need
+network access to resolve its configured version. Local validation does not
+prove that a hosted build will succeed or that every page renders correctly.
+
+For a hosted preview, authenticate with `fern login` or set `FERN_TOKEN`, then run:
+
+```bash
+mise run docs:fern:check && mise run docs:fern:preview
+```
+
+Command output, including the hosted preview URL, appears directly in the
+terminal or GitHub Actions log. Hosted previews send the selected documentation
+to Fern. For the NVIDIA theme in the local server, authentication is also needed;
+the unauthenticated local server starts without the central theme.
+An unauthenticated missing-redirects warning concerns comparison with the hosted
+instance; it does not establish that redirects work.
+
+`fern-docs-ci.yml` runs the same `docs:fern:check` task on PRs and pushes to
+`main` that change `docs/` or the Fern tooling (see its `paths` filter), on
+merge queue checks, and on manual dispatch. Its stable job name is
+**Fern Check**, and it requires no publishing token. `fern-docs-preview.yml` is
+manually dispatched from any repository branch. It runs `docs:fern:check` before
+`docs:fern:preview`, and passes the organization `DOCS_FERN_TOKEN` secret to the
+preview step only, as `FERN_TOKEN`. Both workflows use the shared Python environment
+action with the `docs` profile, which installs mise and every pinned tool,
+including Fern and its Node/jq/yq dependencies, and syncs the locked docs
+dependencies. Neither publishes production
+documentation. See the [migration status](docs/fern/FERN_MIGRATION.md#current-status)
+for production publishing and instance setup.
+
+#### Notebooks and visual review
+
+Tutorial Python sources and their generated `.ipynb` files keep the existing
+workflow described under [Notebooks](#notebooks). Fern's current exporter reads
+saved notebooks and outputs without executing cells. Generated MDX lives beside
+the notebooks; extracted images go under `docs/fern/assets/notebooks/`. These
+files are ignored by Git and regenerated by the check, serve, and preview tasks.
+Do not edit them directly. Notebook handling will change in a follow-up PR.
+
+Check notebook reading pages, saved outputs, code formatting, and dataset and
+notebook download links in the preview.
+
+Preview affected pages even when validation passes. Check cards, sidebar
+entries, tabs, admonitions, formulas, charts, Dev Notes bylines, and API symbol
+anchors as applicable. For navigation or theme changes, also check desktop and
+mobile layouts, light/dark themes, and search.
+
+#### Versioned documentation
+
+`nightly` follows `main`. Release documentation must reflect the exact release
+source, including API output, notebook reading pages, assets, and download links
+pinned to the release tag. Treat frozen snapshots as immutable except for
+deliberate backports. A `latest` alias should point to the current frozen GA
+release, rather than nightly content.
+
+When adding release publication, publish the complete version manifest so that
+publishing an older release cannot remove newer versions. Serialize main and
+release publications. Existing historical documentation at
+`https://nvidia-nemo.github.io/Anonymizer/` remains available; preserve
+version-specific URLs and assets rather than redirecting all releases to nightly.
 
 ## Notebooks
 

@@ -38,6 +38,10 @@ run = [
 description = "Regenerate uv.lock from project dependency metadata. Modifies uv.lock."
 run = "uv lock"
 
+["check:docs:pairs"]
+description = "Check that paired docs/**/*.md (MkDocs) and .mdx (Fern) pages change together relative to the target branch."
+run = "uv run tools/codestyle/check_docs_pairs.py"
+
 [check]
 description = "Run the repository read-only quality checks."
-depends = ["check:format", "check:lint", "check:type", "check:lock", "check:license:headers"]
+depends = ["check:format", "check:lint", "check:type", "check:lock", "check:license:headers", "check:docs:pairs"]
