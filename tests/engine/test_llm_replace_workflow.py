@@ -664,3 +664,91 @@ def test_the_fold_counts_each_placeholder_cause() -> None:
     _fold_replacement_maps(maps, "run", None, tally, view, [])
     placeholders = {key[-1]: n for key, n in tally.items() if key[-1].startswith("placeholder_")}
     assert placeholders == {"placeholder_protected": 1, "placeholder_taken": 1, "placeholder_session": 1}
+
+
+# A value detected under two labels is shown to the model with its labels joined ("Jordan (first_name, last_name)").
+_TWO_LABEL_ENTITIES = {"entities_by_value": [{"value": "Jordan", "labels": ["first_name", "last_name"]}]}
+_FILLED = [
+    {"original": "Jordan", "label": "first_name", "synthetic": "Alex"},
+    {"original": "Jordan", "label": "last_name", "synthetic": "Alex"},
+]
+
+
+@pytest.mark.parametrize(
+    ("replacements", "expected"),
+    [
+        ([{"original": "Jordan", "label": "first_name, last_name", "synthetic": "Alex"}], _FILLED),
+        ([{"original": "jordan", "label": "person", "synthetic": "Alex"}], _FILLED),
+        ([{"original": "Jordan", "label": "first_name", "synthetic": "Alex"}], _FILLED),
+        (
+            [
+                {"original": "JORDAN", "label": "person", "synthetic": "Alex"},
+                {"original": "jordan", "label": "person", "synthetic": "Sam"},
+            ],
+            _FILLED,
+        ),
+        (
+            [
+                {"original": "Jordan", "label": "person", "synthetic": "Sam"},
+                {"original": "Jordan", "label": "last_name", "synthetic": "Alex"},
+                {"original": "Jordan", "label": "last_name", "synthetic": "Lee"},
+            ],
+            [_FILLED[1], _FILLED[0]],
+        ),
+        (
+            [
+                {"original": "Jordan", "label": "first_name", "synthetic": "Alex"},
+                {"original": "Jordan", "label": "last_name", "synthetic": "Reed"},
+            ],
+            [_FILLED[0], {**_FILLED[1], "synthetic": "Reed"}],
+        ),
+    ],
+    ids=[
+        "joined-label",
+        "folded-original",
+        "single-entry",
+        "first-folded-match",
+        "same-value-before-folded",
+        "exact-pair-wins",
+    ],
+)
+@pytest.mark.parametrize("consistency", ["record", "run"])
+def test_generate_map_only_fills_every_label_of_a_value(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+    consistency: Literal["record", "run"],
+    replacements: list[dict[str, str]],
+    expected: list[dict[str, str]],
+) -> None:
+    text = "Jordan Jordan"
+    adapter = Mock()
+    adapter.run_workflow.return_value = _positional(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: [text],
+                COL_ENTITIES_BY_VALUE: [_TWO_LABEL_ENTITIES],
+                "tagged_text": [text],
+                "_anonymizer_row_order": [0],
+                COL_REPLACEMENT_MAP: [{"replacements": replacements}],
+            }
+        ),
+        failed_records=[],
+    )
+    input_df = pd.DataFrame({COL_TEXT: [text], COL_ENTITIES_BY_VALUE: [_TWO_LABEL_ENTITIES], "tagged_text": [text]})
+    result = LlmReplaceWorkflow(adapter=adapter).generate_map_only(
+        input_df,
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+        consistency=consistency,
+    )
+    assert result.dataframe[COL_REPLACEMENT_MAP].tolist() == [{"replacements": expected}]
+
+
+def test_fold_record_mode_does_not_block_a_key_on_its_own_value() -> None:
+    maps = _maps([("last_name", "Jordan", "Alex"), ("first_name", "Jordan", "Alex"), ("first_name", "JORDAN", "Bob")])
+
+    assert [e["synthetic"] for e in _fold_replacement_maps(maps, "record")[0]["replacements"]] == [
+        "Alex",
+        "Alex",
+        "ALEX",
+    ]

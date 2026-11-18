@@ -354,13 +354,28 @@ def _filter_replacement_map_to_input_entities(
         if entity.value and label
     }
     filtered: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    exact: dict[tuple[str, str], str] = {}
     for replacement in parsed_map.replacements:
         key = (replacement.original, replacement.label)
-        if key not in allowed_pairs or key in seen:
+        if key not in allowed_pairs or key in exact:
             continue
-        seen.add(key)
+        exact[key] = replacement.synthetic
         filtered.append(replacement.model_dump())
+    by_folded: dict[str, str] = {}
+    for replacement in parsed_map.replacements:
+        by_folded.setdefault(_fold(replacement.original), replacement.synthetic)
+    # An unfilled pair (the model echoed joined labels, or returned one entry for a value detected under several
+    # labels) takes an exact entry of the same value under another label, else the first entry whose folded original
+    # matches. It keeps the requested original and label, since Replace resolves by the exact pair first.
+    for entity in parsed_entities.entities_by_value:
+        same_value = next((exact[(entity.value, lb)] for lb in entity.labels if (entity.value, lb) in exact), None)
+        for label in entity.labels:
+            if not (entity.value and label) or (entity.value, label) in exact:
+                continue
+            synthetic = same_value or by_folded.get(_fold(entity.value))
+            if synthetic is not None:
+                exact[(entity.value, label)] = synthetic
+                filtered.append({"original": entity.value, "label": label, "synthetic": synthetic})
 
     if logger.isEnabledFor(logging.DEBUG):
         raw_pairs = {(r.original, r.label) for r in parsed_map.replacements}
