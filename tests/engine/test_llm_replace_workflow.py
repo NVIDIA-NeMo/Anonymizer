@@ -365,6 +365,45 @@ def test_filter_replacement_map_repairs_synthetic_original_collisions_without_pi
     _assert_no_pii_in_logs(caplog, extra_secrets=("1979-01-01", "1980-02-02", "1991-03-04"))
 
 
+@pytest.mark.parametrize(
+    "colliding_synthetic",
+    [
+        pytest.param("Maya Chen", id="exact"),
+        pytest.param("MAYA CHEN", id="case"),
+        pytest.param(" Maya \t Chen ", id="whitespace"),
+    ],
+)
+def test_filter_replacement_map_repairs_folded_synthetic_original_collisions(colliding_synthetic: str) -> None:
+    """A synthetic that matches another protected original up to case or whitespace is a collision too."""
+    parsed_entities = EntitiesByValueSchema.model_validate(
+        {
+            "entities_by_value": [
+                {"value": "Maya Chen", "labels": ["full_name"]},
+                {"value": "Alice Wong", "labels": ["full_name"]},
+            ]
+        }
+    )
+    raw_map = {
+        "replacements": [
+            {"original": "Alice Wong", "label": "full_name", "synthetic": colliding_synthetic},
+            {"original": "Maya Chen", "label": "full_name", "synthetic": "Priya Nair"},
+        ]
+    }
+
+    result = _filter_replacement_map_to_input_entities(
+        raw_map=raw_map, parsed_entities=parsed_entities, record_id="row-folded-collision"
+    )
+
+    assert result == {
+        "replacements": [
+            {"original": "Alice Wong", "label": "full_name", "synthetic": "[SUBSTITUTE_FULL_NAME_1]"},
+            {"original": "Maya Chen", "label": "full_name", "synthetic": "Priya Nair"},
+        ]
+    }
+    synthetics = {" ".join(entry["synthetic"].casefold().split()) for entry in result["replacements"]}
+    assert synthetics.isdisjoint({"maya chen", "alice wong"})
+
+
 def test_filter_replacement_map_empty_warning_does_not_leak_pii(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
