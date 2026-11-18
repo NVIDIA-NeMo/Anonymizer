@@ -3177,7 +3177,7 @@ Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["c
 </tr>
 <tr>
 <td>Additional LLM calls (beyond shared detection)</td>
-<td>~1 (Substitute) or 0 (Redact/Annotate/Hash)</td>
+<td>Typically 1 per row with entities, plus retries (Substitute); 0 for Redact/Annotate/Hash</td>
 <td>Many (domain → disposition → QA → rewrite → evaluate → repair → judge)</td>
 </tr>
 <tr>
@@ -3193,6 +3193,8 @@ Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["c
 </tbody>
 </table>
 <p><strong>Picking between them.</strong> If your data has inferable identifiers that survive entity-only scrubbing (clinical notes, biographies, depositions), Rewrite is the right fit. For structured records, logs, or single-cell PII, Replace is faster and preserves shape. If you're unsure, walk through a few sample rows before deciding.</p>
+<p>Substitute's existing whole-response schema retries and its single missing-pair
+retry can add calls. See <a href="../replace/#substitute">Substitute validation and retries</a>.</p>
 <hr />
 <h2 id="4-replace-which-strategy">4. (Replace) Which strategy<a class="headerlink" href="#4-replace-which-strategy" title="Permanent link">&para;</a></h2>
 <p>The four strategies are summarised in <a href="../replace/#strategy-comparison">Replace</a>. The decision rule:</p>
@@ -3259,7 +3261,7 @@ Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["c
 <p>Keep instructions short (one or two sentences). Long instructions compete with the per-entity context and degrade quality.</p>
 <div class="admonition note">
 <p class="admonition-title">Substitute is per-row, not per-dataset</p>
-<p>Within a single row, repeated mentions of the same value get one consistent replacement (entities are grouped by value before the LLM call). <strong>Across rows the LLM has no shared memory</strong> — each row is an independent call, so "Alice" in row 1 and "Alice" in row 47 will likely get different replacements. If you need stable cross-row mappings (e.g. to re-join records by an identifier), use <code>Hash</code> instead, or post-process <code>result.trace_dataframe["_replacement_map"]</code>.</p>
+<p>Within a single row, repeated mentions of the same value get one consistent replacement (entities are grouped by value before the LLM call). <strong>Across rows the LLM has no shared memory</strong> — each row has an independent request context, so "Alice" in row 1 and "Alice" in row 47 will likely get different replacements. If you need stable cross-row mappings (e.g. to re-join records by an identifier), use <code>Hash</code> instead, or post-process <code>result.trace_dataframe["_replacement_map"]</code>.</p>
 </div>
 <hr />
 <h2 id="5-rewrite-privacy-goal">5. (Rewrite) Privacy goal<a class="headerlink" href="#5-rewrite-privacy-goal" title="Permanent link">&para;</a></h2>

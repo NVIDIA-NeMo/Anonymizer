@@ -877,6 +877,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#incomplete-substitute-mappings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Incomplete Substitute mappings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#replacement-looks-repetitive-or-unrealistic-substitute" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3009,6 +3020,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#incomplete-substitute-mappings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Incomplete Substitute mappings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#replacement-looks-repetitive-or-unrealistic-substitute" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3080,7 +3102,7 @@
 <h1 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h1>
 <p>Symptom-first guide to common problems and how to fix them. Each entry says how to diagnose, what knob to turn, and what to verify after.</p>
 <p>For a controlled campaign that establishes quality thresholds before testing concurrency, see <a href="../tuning/">Tune quality before throughput</a>.</p>
-<p>When something looks wrong, <strong>first confirm the run completed cleanly</strong> (no <code>failed_records</code> — these are rows that didn't make it through the pipeline at all, usually a rate-limit / infra issue). Once you know the pipeline ran, <strong>run <code>preview</code> and inspect rows with quality issues</strong> (<code>needs_human_review=True</code>) — the trace columns it produces are where to start.</p>
+<p>When something looks wrong, <strong>first inspect <code>failed_records</code></strong>. Records can be excluded because of model/provider failures, invalid generated responses, or unresolved Substitute mappings. Use each record's <code>step</code> and <code>reason</code> to distinguish these cases. Once you know the pipeline ran, <strong>run <code>preview</code> and inspect rows with quality issues</strong> (<code>needs_human_review=True</code>) — the trace columns it produces are where to start.</p>
 <div class="admonition note">
 <p class="admonition-title">This guide is written against the Python API</p>
 <p>Diagnostic objects like <code>result.failed_records</code> and <code>result.trace_dataframe</code> only exist in Python. The CLI is for production batch runs and only emits a per-stage summary line on stderr (<code>📋 Detection complete — N entities … (K failed) [Xs]</code>); if <code>K &gt; 0</code> you have a problem to investigate, but the CLI can't tell you <em>which</em> rows or <em>why</em>. Drop into Python (or import the same config from the agent's config file) for everything below.</p>
@@ -3089,7 +3111,7 @@
 <h2 id="diagnostics-what-to-read-first">Diagnostics: what to read first<a class="headerlink" href="#diagnostics-what-to-read-first" title="Permanent link">&para;</a></h2>
 <p>Most fixes start with one of these.</p>
 <h3 id="did-the-run-actually-complete-cleanly">Did the run actually complete cleanly?<a class="headerlink" href="#did-the-run-actually-complete-cleanly" title="Permanent link">&para;</a></h3>
-<p>Before debugging quality, confirm the run wasn't degraded by infra problems. Anonymizer logs a WARNING with the number of failed records, and every dropped record appears on <code>result.failed_records</code> with its step and reason:</p>
+<p>Before debugging quality, inspect workflow and substitution-validation failures. Anonymizer logs a WARNING with the number of failed records, and every reported failed record appears on <code>result.failed_records</code> with its step and reason:</p>
 <pre class="highlight"><code class="language-python">for fr in result.failed_records:
     print(fr.record_id, fr.step, fr.reason)</code></pre>
 <p>Common patterns and what they mean:</p>
@@ -3123,6 +3145,16 @@
 <td>Restart the self-hosted GLiNER server from a current Anonymizer release (see the <a href="../concepts/self-hosting-gliner/">self-hosting guide</a>); servers started from older code can return offsets that do not match the text</td>
 </tr>
 <tr>
+<td><code>Replacement map incomplete after one retry</code></td>
+<td>Substitute still lacks one or more exact requested mappings after its missing-pair retry</td>
+<td>See <a href="#incomplete-substitute-mappings">Incomplete Substitute mappings</a> below; this is separate from schema validation retries</td>
+</tr>
+<tr>
+<td><code>Replacement map retry failed</code></td>
+<td>The missing-pair generation workflow failed before returning a complete map</td>
+<td>Inspect the workflow logs for schema, provider, or request errors; already-complete records are retained</td>
+</tr>
+<tr>
 <td><code>Record missing from workflow output</code> with no other cause, at <code>step="entity-detection"</code>, <code>step="replace-map-generation"</code> or <code>step="rewrite-*"</code></td>
 <td>Often rate limiting (429s) exhausting the retry budget of the model pool</td>
 <td>See <a href="#rate-limits-dropped-rows">Rate limits / dropped rows</a> below</td>
@@ -3134,9 +3166,9 @@
 </tr>
 </tbody>
 </table>
-<p>If <code>failed_records</code> is non-empty, <strong>fix that first.</strong> Strategy/prompt knobs (<code>risk_tolerance</code>, <code>protect</code>, <code>gliner_threshold</code>) won't help: those rows didn't fail because of bad output, they failed because the workflow never produced a usable output for them.</p>
+<p>If <code>failed_records</code> is non-empty, <strong>investigate those records first</strong>. Provider failures need model/provider configuration changes; incomplete substitution maps need the <a href="../concepts/replace/#substitute">Substitute validation and retry checks</a>. Treat the reported step and reason as the starting point rather than assuming every failure is an infrastructure problem.</p>
 <h3 id="rate-limits-dropped-rows">Rate limits / dropped rows<a class="headerlink" href="#rate-limits-dropped-rows" title="Permanent link">&para;</a></h3>
-<p>If you have rows failing with <code>Record missing from workflow output</code>, the chain is:
+<p>For rate-limited rows failing at <code>step="entity-detection"</code>, a common chain is:
 GLiNER candidate set → chunked into validator calls → each call dispatched to a model in the validator pool → <code>ThrottledModelClient</code> does AIMD on 429s → if every alias in the pool fails on at least one chunk, the row drops.</p>
 <p>Fix in this order:</p>
 <ol>
@@ -3337,7 +3369,23 @@ detect = Detect(
 <hr />
 <h2 id="pipeline-output-issues">Pipeline / output issues<a class="headerlink" href="#pipeline-output-issues" title="Permanent link">&para;</a></h2>
 <h3 id="output-rows-are-missing-failedrecords">Output rows are missing (<code>FailedRecord</code>s)<a class="headerlink" href="#output-rows-are-missing-failedrecords" title="Permanent link">&para;</a></h3>
-<p>See <a href="#did-the-run-actually-complete-cleanly">Did the run actually complete cleanly?</a> and <a href="#rate-limits-dropped-rows">Rate limits / dropped rows</a>. The short version: this is almost always a model/provider issue, not a strategy issue, and the fix is in <code>models.yaml</code> / <code>providers.yaml</code>.</p>
+<p>Start with each failed record's step and reason in <a href="#did-the-run-actually-complete-cleanly">Did the run actually complete cleanly?</a>. Provider errors may require changes to <code>models.yaml</code> / <code>providers.yaml</code>; incomplete Substitute maps follow the validation and retry behavior below. A workflow-wide error can instead raise <code>AnonymizerWorkflowError</code>.</p>
+<h3 id="incomplete-substitute-mappings">Incomplete Substitute mappings<a class="headerlink" href="#incomplete-substitute-mappings" title="Permanent link">&para;</a></h3>
+<p>Substitute compares the schema-valid, filtered map with the unique <code>(entity value,
+label)</code> pairs supplied before generation. It retains accepted substitutions and
+retries only missing pairs once. If the map is still incomplete, the record is
+excluded from successful output and reported at <code>step="replace-map-generation"</code>
+with <code>Replacement map incomplete after one retry</code> in its reason.</p>
+<p>Check the missing-label counts in the reason, the requested entities, and the
+<code>replacement_generator</code> model and <code>Substitute.instructions</code>. A copied original
+that differs only in a supported Unicode space is reconciled only when it has
+one unambiguous match under the same label. Other differences or ambiguous matches
+remain missing. See <a href="../concepts/replace/#substitute">Substitute</a> for the exact rules.</p>
+<p>A replacement entry with a missing required field, an empty synthetic value, or a
+whitespace-only synthetic value fails schema validation instead. DataDesigner
+applies its existing whole-response schema retries before the map reaches the
+completeness check. Those retries are separate from the single missing-pair retry;
+this is not a per-entry recovery mechanism for a schema-rejected response.</p>
 <h3 id="replacement-looks-repetitive-or-unrealistic-substitute">Replacement looks repetitive or unrealistic (Substitute)<a class="headerlink" href="#replacement-looks-repetitive-or-unrealistic-substitute" title="Permanent link">&para;</a></h3>
 <p>Symptoms: every "Alice" becomes "Maya," every city becomes "Springfield," every email becomes <code>john@example.com</code>.</p>
 <ol>

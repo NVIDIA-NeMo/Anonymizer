@@ -2786,7 +2786,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 <h1 id="replace">Replace<a class="headerlink" href="#replace" title="Permanent link">&para;</a></h1>
-<p>Replace mode replaces each <a href="../detection/">detected entity</a> with an alternative token. Anonymizer provides four strategies. </p>
+<p>Replace mode replaces each <a href="../detection/">detected entity</a> with an alternative token. Anonymizer provides four strategies.</p>
 <hr />
 <h2 id="strategy-comparison">Strategy comparison<a class="headerlink" href="#strategy-comparison" title="Permanent link">&para;</a></h2>
 <table>
@@ -2828,6 +2828,49 @@
 <hr />
 <h2 id="substitute">Substitute<a class="headerlink" href="#substitute" title="Permanent link">&para;</a></h2>
 <p>Replaces entities with LLM-generated synthetic values that are contextually plausible. This is the only replacement strategy that requires an LLM call.</p>
+<p>Synthetic values must contain at least one non-whitespace character. Schema
+validation rejects empty strings and values made entirely of spaces, tabs,
+newlines, or Unicode whitespace. Valid one-character substitutes, such as an
+initial or a single-digit age, remain allowed. Valid values are preserved as
+generated, including any surrounding whitespace. This shared schema rule also
+applies to the replacement maps generated for rewrite mode.</p>
+<p>After schema validation and filtering, Anonymizer checks that every unique
+requested <code>(entity value, label)</code> pair has a mapping. If mappings are missing,
+it retries only the missing pairs once, retaining the accepted substitutions.
+A record whose map is complete is returned; a record still missing mappings
+after the retry is excluded from successful output and reported in
+<code>failed_records</code>. Other complete records continue normally. Repeated occurrences
+of the same pair need only one mapping, and records without entities need no
+replacement-generator call.</p>
+<p>Anonymizer compares retry proposals with detected originals ignoring case,
+trimming surrounding whitespace, and collapsing internal whitespace. A match
+receives a placeholder. New retry placeholders use the same comparison to avoid
+original values, accepted substitutions, other retry proposals, and placeholders
+already created in that retry. Different entities can still share an ordinary
+model-generated substitute.</p>
+<p>Before discarding a mapping, Substitute can reconcile a copied original that
+differs only in no-break spaces (<code>U+00A0</code>), thin spaces (<code>U+2009</code>), narrow no-break
+spaces (<code>U+202F</code>), or ASCII spaces. The label must match exactly and the comparison
+must identify exactly one pair in the original requested inventory. Exact
+mappings take precedence. The mapping's original is restored from that inventory;
+the source text, span offsets, and synthetic value stay unchanged. This comparison
+does not strip or collapse whitespace or change other characters. Ambiguous or
+unmatched entries remain missing and follow the retry/failure flow above.</p>
+<p>This completeness retry applies to schema-valid responses. DataDesigner already
+retries schema-invalid responses, validating the record's entire mapping response
+on each attempt. Its default is up to five conversation restarts after the initial
+attempt, controlled by <code>max_conversation_restarts</code> in the <code>RunConfig</code> passed as
+<code>Anonymizer(data_designer_run_config=...)</code>. These schema retries also apply to the
+missing-pair generation call. The one completeness retry therefore does not mean
+a maximum of two LLM requests. Valid entries from a schema-rejected response are
+not retained for a targeted per-entry retry.</p>
+<p>If the completeness retry fails validation after DataDesigner's recovery attempts,
+or its workflow fails, the affected records are reported as failed while complete
+records are retained. Initial generation retains the existing failure handling:
+dropped records appear in <code>failed_records</code>, but a failure of the entire initial
+workflow can raise <code>AnonymizerWorkflowError</code>. Completeness checks exact pairs;
+it does not guarantee the semantic quality of a generated substitute or validate
+span offsets.</p>
 <pre class="highlight"><code class="language-python">from anonymizer import AnonymizerConfig, Substitute
 
 # Default: uses the replacement_generator model
