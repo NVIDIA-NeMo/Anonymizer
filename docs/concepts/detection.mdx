@@ -314,7 +314,7 @@ In an otherwise successful response, a missing/unusable decision or an empty rec
 
 If every alias fails on any required validation chunk, the row is **dropped from the output** rather than returned as a successful partial result. This differs from an omitted decision in a successful response, which can use the exact-span fallback described above. Transport failures, invalid required response fields, and unresolved duplicate assigned aliases are failures, not omissions.
 
-A detector text/source mismatch also fails the record instead of silently skipping the observation. This check allows case-folded comparison and surrounding-whitespace normalization of detector-echoed text, then publishes the actual source substring. It does not mean every malformed detector payload is rejected: malformed entries and unusable bounds can still be ignored by the parser.
+A detector text/source mismatch also fails the record instead of silently skipping the observation. This check allows case-folded comparison and surrounding-whitespace normalization of detector-echoed text, then publishes the actual source substring. It does not mean every malformed detector payload is rejected: malformed entries and unusable bounds can still be ignored by the parser. A detector span that ends past the text also fails the record.
 
 Dropped rows show up on `result.failed_records` with `step="entity-detection"`, so you can tell which inputs didn't make it through by comparing input IDs against output IDs and reprocess those on a follow-up pass.
 

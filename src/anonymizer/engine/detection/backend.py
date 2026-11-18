@@ -77,9 +77,13 @@ class _GlinerDetectionBackend:
                 or view_relative_end is None
                 or view_relative_start < 0
                 or view_relative_end <= view_relative_start
-                or view_relative_end > len(view_text)
             ):
                 continue
+            if view_relative_end > len(view_text):
+                raise ValueError(
+                    f"Detector entity span [{view_relative_start}, {view_relative_end}) "
+                    f"ends past the source text of length {len(view_text)}"
+                )
             canonical_start = source_view.start_position + view_relative_start
             canonical_end = source_view.start_position + view_relative_end
             source_value = canonical_text[canonical_start:canonical_end]
