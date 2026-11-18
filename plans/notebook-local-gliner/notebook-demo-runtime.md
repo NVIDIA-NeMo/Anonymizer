@@ -19,7 +19,7 @@ provide the API keys required by the bundled default providers, and receive a
 configured `Anonymizer` instance. The defaults may use multiple external hosts,
 such as OpenAI for one model and OpenRouter or NVIDIA Build for another:
 
-```python
+```text
 %pip install "nemo-anonymizer[notebooks]"
 ```
 

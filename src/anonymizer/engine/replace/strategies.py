@@ -77,7 +77,9 @@ def apply_local_replace_strategy(
                 row_counts[r.get("label", "unknown")] += 1
             total_label_counts += row_counts
             n = sum(row_counts.values())
-            summary = ", ".join(f"{l}={c}" for l, c in row_counts.most_common()) if row_counts else "(none)"
+            summary = (
+                ", ".join(f"{label}={count}" for label, count in row_counts.most_common()) if row_counts else "(none)"
+            )
             logger.debug("  record %d: %d replacements — %s", idx, n, summary)
         tracker.record_success()
     output_df[COL_REPLACEMENT_MAP] = replacement_maps

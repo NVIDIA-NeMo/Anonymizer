@@ -25,13 +25,13 @@ select = [
     "UP035", # deprecated imports
     "UP037", # quoted annotations
     "UP045", # Optional[A] -> A | None
+    "E4",    # pycodestyle import errors
+    "E7",    # pycodestyle statement errors
     "E9",    # pycodestyle file I/O errors
     # TODO: enable these rules:
     # "B006",  # mutable default argument
     # "T201",  # no print() in non-test code
     # "D",     # pydocstyle -- Google-style docstrings (add convention = "google" under [lint.pydocstyle])
-    # "E4",    # pycodestyle import errors
-    # "E7",    # pycodestyle statement errors
 ]
 ignore = []
 
@@ -46,6 +46,12 @@ ban-relative-imports = "all"
 
 [lint.per-file-ignores]
 # "tests/**" = ["T201"]  # uncomment when T201 is enabled
+# Jupytext tutorial sources install the package in an early cell, so later cells import after code.
+"docs/notebook_source/*.py" = ["E402"]
+# The CLI sets NEMO_DEPLOYMENT_TYPE before importing the package so CLI runs report as "cli".
+"src/anonymizer/interface/cli/main.py" = ["E402"]
+# The vLLM entry point puts tools/ on sys.path before importing the compiler package from it.
+"tools/inference_service_compiler/vllm_server.py" = ["E402"]
 
 [format]
 quote-style = "double"
