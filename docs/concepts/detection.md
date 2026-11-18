@@ -22,6 +22,10 @@ Augmenter suggestions must match the source text and their supplied context exac
 
 Unknown fields in augmentation responses are ignored, but required fields and their types are still checked. Passing those checks does not guarantee that a suggestion is grounded in the source or correctly classified.
 
+On OpenAI-compatible providers, the augmenter requests schema-constrained output: each request carries a `response_format` with the response JSON schema, and the prompt no longer asks for a fenced code block. It is not sent to Anthropic providers. Setting `response_format` in an alias's or provider's `extra_body`, even to `null`, turns this off and your setting is sent instead. If the provider rejects the field (an HTTP 400 or 422 that names `response_format`, `json_schema`, `guided`, or `grammar`), Anonymizer retries that request once without it; when the retry succeeds, later augmenter requests in the same run omit it. Any other error is raised as before, and a failed retry raises the original error.
+
+Schema-constrained output has not been measured on reasoning models with thinking enabled. Anonymizer sends the constraint the same way; the `_augmentation_response_format` trace column records, per row, whether the reply was constrained, fell back, or appears to have ignored the constraint.
+
 When rewrite is configured, an additional step identifies **latent entities** -- sensitive information inferable from context but not explicitly stated in the text.
 
 ### Occurrences and boundaries
@@ -233,7 +237,7 @@ Patterns use the third-party `regex` dialect, except that fuzzy matching groups
 and match reset (`\K`) are unsupported. Invalid, zero-width, or oversized
 patterns are rejected during configuration, as are constructs whose consumed
 width cannot be established conservatively. Runtime matching has a per-rule
-timeout and match-count limit; exceeding either fails the record rather than
+CPU-time budget and match-count limit; exceeding either fails the record rather than
 silently omitting detections. This is not a sandbox for arbitrary validator
 code.
 
@@ -251,15 +255,29 @@ detect = Detect(regex_limits=RegexLimits(
 
 These are the defaults. The cap counts matches that pass local validation, before
 any LLM validation; rejected candidates do not count. Each rule gets one budget per
-record: `max(min_timeout_seconds, len(text) / 1_000_000 * timeout_seconds_per_million_characters)`.
+record, in CPU seconds: `max(min_timeout_seconds, len(text) / 1_000_000 * timeout_seconds_per_million_characters)`.
 Length is measured in Unicode code points, not UTF-8 bytes or model tokens.
-For example, 10,000 characters get 50 ms; 300,000 get 300 ms. Limits apply equally
-to run, preview and exported workflows. Errors identify the rule, the exhausted
-limit and the setting to review without including record text. No partial regex
-result is returned after a limit failure. Review inefficient custom patterns or
-validators before increasing limits. One shared search budget is consumed across
-bounded matching batches; Python validation callbacks and time between batches
-do not consume it. This is not a sandbox or execution timeout for validator code.
+For example, 10,000 characters get 0.05 CPU seconds; 300,000 get 0.3 CPU seconds.
+The budget counts CPU time used by the thread that scans the record. Time spent
+waiting for other threads or for Python's global interpreter lock is not charged,
+and neither is a garbage collection that happens to run during the scan, so many
+records scanned in parallel do not time each other out. A wall-clock
+ceiling of 20 times the budget (1 second at the default minimum) still fails a
+record whose scan the process was too busy to run, with its own "starved" error.
+Like the budget, the ceiling does not count the thread's own garbage collections or
+the time validators run between batches.
+Limits apply equally to run, preview and exported workflows. Errors identify the
+rule, the exhausted limit and the setting to review without including record text.
+No partial regex result is returned after a limit failure. Review inefficient
+custom patterns or validators before increasing limits. One shared search budget
+is consumed across bounded matching batches; Python validation callbacks and time
+between batches do not consume it. This is not a sandbox or execution timeout for
+validator code.
+
+!!! note
+    The `main` branch measures this budget in wall-clock time until the graph SDK
+    (#319) merges: the same settings there also charge time spent waiting for other
+    threads, so more records time out under parallel load.
 
 ## Chunked validation
 
@@ -300,7 +318,7 @@ See [Validator pools](models.md#validator-pools) for the YAML syntax and caveats
 
 Use `result.dataframe["final_entities"]` for the public entity output. Its representative `source` can be `detector`, `augmenter`, or `fallback`; it is not a full provenance ledger. `score` is the available native score, or `0.0` when none is available, not a universal probability of correctness. Augmenter-only findings are no longer assigned synthetic confidence `1.0`.
 
-For internal debugging, `result.trace_dataframe` can include `_seed_detection_result`, `_validation_request_inventories`, `_validation_decisions`, `_admission_results`, `_admitted_candidates`, `_augmentation_detection_result`, `_augmentation_admission_results`, `_augmentation_attempts`, `_augmented_candidates`, and `_reconciled_candidates`. These underscore-prefixed structures are internal and may change between releases. `_augmentation_attempts` records attempt outcomes and grounding-failure categories without embedding suggested values or context; other trace columns and explicitly enabled raw message traces can contain sensitive source text.
+For internal debugging, `result.trace_dataframe` can include `_seed_detection_result`, `_validation_request_inventories`, `_validation_decisions`, `_admission_results`, `_admitted_candidates`, `_augmentation_detection_result`, `_augmentation_admission_results`, `_augmentation_attempts`, `_augmented_candidates`, `_augmentation_response_format`, and `_reconciled_candidates`. These underscore-prefixed structures are internal and may change between releases. `_augmentation_attempts` records attempt outcomes and grounding-failure categories without embedding suggested values or context; `_augmentation_response_format` is `constrained`, `fallback`, `ignored` (a fenced reply although the schema was sent), `unconstrained` (not sent), or empty when augmentation did not run; other trace columns and explicitly enabled raw message traces can contain sensitive source text.
 
 
 ## Entity labels

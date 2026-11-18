@@ -370,7 +370,7 @@ class InspectionSummary:
         if self.terminals is None:
             lines.append("terminals: none (not executed)")
         else:
-            fmt = lambda pairs: ", ".join(f"{a}={b}" for a, b in pairs) or "-"  # noqa: E731
+            fmt = lambda pairs: ", ".join(f"{a}={b}" for a, b in pairs) or "-"
             lines += [
                 f"terminals: {fmt(self.terminals)}; qualification: {fmt(self.qualifications or ())}",
                 f"reasons: {fmt(self.reasons)}; protected: {self.protected}; consistent: {self.consistent}",

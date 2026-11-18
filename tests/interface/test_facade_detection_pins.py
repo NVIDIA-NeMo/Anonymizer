@@ -59,7 +59,8 @@ def _steps(result: Any) -> list[tuple[str, str]]:
 class _StubRewrite(RewriteWorkflow):
     """Rewrite with the model stages stubbed: each row is rewritten to ``R<text>``."""
 
-    def _produce(self, rows, **options):  # noqa: ANN001, ANN003, ANN202 - LLM stages stubbed
+    # LLM stages stubbed.
+    def _produce(self, rows, **options):
         def produce() -> None:
             rows.frame[COL_REWRITTEN_TEXT] = [f"R<{t}>" for t in rows.frame[COL_TEXT]]
             for col in (COL_UTILITY_SCORE, COL_LEAKAGE_MASS, COL_WEIGHTED_LEAKAGE_RATE):

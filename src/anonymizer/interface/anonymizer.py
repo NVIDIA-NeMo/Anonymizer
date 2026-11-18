@@ -1284,7 +1284,8 @@ class Anonymizer:
                 session_id=uuid.uuid4().hex,
             ) as handler:
                 handler.enqueue(event)
-        except Exception:  # noqa: BLE001 - best-effort
+        # Best-effort telemetry must not affect anonymization.
+        except Exception:
             logger.debug("Failed to emit telemetry event")
 
     def _build_telemetry_event(

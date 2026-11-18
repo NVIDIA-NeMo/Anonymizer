@@ -7,15 +7,18 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
 
 from data_designer.config.models import ModelProvider
 
 # (model name, prompt text, number of earlier requests with the same prompt and model) -> reply
 Reply = tuple[int, str, str]  # (http status, content, finish_reason)
 Script = Callable[[str, str, int], Reply]
+# Optional: sees each request body first; returning None defers to the Script.
+BodyScript = Callable[[dict[str, Any]], Reply | None]
 
 COMPLETE = (200, '{"label": "ok", "score": 1}', "stop")
 
@@ -26,19 +29,24 @@ def cut_off(prefix: str = "") -> Reply:
 
 
 @contextmanager
-def stub_provider(script: Script) -> Iterator[ModelProvider]:
+def stub_provider(
+    script: Script, *, bodies: list[dict[str, Any]] | None = None, body_script: BodyScript | None = None
+) -> Generator[ModelProvider]:
     seen: dict[tuple[str, str], int] = {}
     lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             prompt = json.dumps(body["messages"])
             with lock:
                 key = (body["model"], prompt)
                 earlier = seen.get(key, 0)
                 seen[key] = earlier + 1
-            status, content, finish_reason = script(body["model"], prompt, earlier)
+                if bodies is not None:
+                    bodies.append(body)
+            reply = body_script(body) if body_script is not None else None
+            status, content, finish_reason = reply or script(body["model"], prompt, earlier)
             if status == 200:
                 payload = {
                     "id": "stub",
@@ -63,7 +71,7 @@ def stub_provider(script: Script) -> Iterator[ModelProvider]:
             self.end_headers()
             self.wfile.write(data)
 
-        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+        def log_message(self, format: str, *args: object) -> None:
             return
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)

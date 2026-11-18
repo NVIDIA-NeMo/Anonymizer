@@ -12,7 +12,7 @@ import tempfile
 import time
 import uuid
 from collections import Counter
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -31,6 +31,7 @@ from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
+from anonymizer.config.regex import REGEX_WALL_CEILING_FACTOR
 from anonymizer.engine.constants import COL_REGEX_ENTITIES, RECORD_ID_COLUMN
 from anonymizer.engine.graph_core.observe import report_requests
 from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
@@ -55,6 +56,9 @@ _UNTRACED_REASON = (
     f"{_MISSING_RECORD_REASON}: not completed: no error was recorded for this row; other rows in the run failed"
 )
 _MAX_REASON_CHARS = 500
+# Like the summaries below, these only choose a fixed regex reason; the matched text is never returned.
+_REGEX_CPU_BUDGET_FAILURE = re.compile(r"(?:^|: )Regex rule '[^'\n]*' timed out after \S+ CPU seconds? ")
+_REGEX_STARVED_FAILURE = re.compile(r"(?:^|: )Regex rule '[^'\n]*' was starved: ")
 _CAUSE_LINE = re.compile(r"^\s*\|\s*Cause:\s*(.+)", re.MULTILINE)
 _SOLUTION_LINE = re.compile(r"^\s*\|\s*Solution:\s*(.+)", re.MULTILINE)
 # Task traces retain only strings. Exception text can impersonate even a complete classified error,
@@ -618,7 +622,7 @@ class NddAdapter:
         existing shared seed. ``num_jobs > 1`` selects one worker's ordered partition
         (``job_index`` of ``num_jobs``), matching how the orchestrator shards the seed.
         """
-        from data_designer.config.seed import PartitionBlock  # noqa: PLC0415
+        from data_designer.config.seed import PartitionBlock
 
         if num_jobs < 1:
             raise ValueError(f"num_jobs must be >= 1, got {num_jobs}")
@@ -730,6 +734,19 @@ def _failure_reason(trace: _TaskTrace) -> str:
     if _trace_attr(trace, "column") == COL_REGEX_ENTITIES:
         # Trace strings are untrusted, including custom-validator exceptions.
         # Give fixed guidance without echoing exception text into public results.
+        error = str(_trace_attr(trace, "error") or "")
+        if _REGEX_STARVED_FAILURE.search(error):
+            return (
+                f"{prefix}Regex rule was starved: the process was too busy to run its scan within the wall-clock "
+                f"ceiling of {REGEX_WALL_CEILING_FACTOR} times its CPU budget; reduce concurrent load. "
+                "No partial regex result was returned."
+            )
+        if _REGEX_CPU_BUDGET_FAILURE.search(error):
+            return (
+                f"{prefix}Regex rule used its CPU-time budget; review custom pattern efficiency, or raise "
+                "detect.regex_limits.min_timeout_seconds or detect.regex_limits.timeout_seconds_per_million_characters "
+                "(CPU seconds). No partial regex result was returned."
+            )
         return (
             f"{prefix}Regex detection failed; review detect.regex_limits.max_matches_per_rule, "
             "detect.regex_limits.min_timeout_seconds, detect.regex_limits.timeout_seconds_per_million_characters "
@@ -799,6 +816,7 @@ class _DataDesignerUsageProbe:
         self._workflow_name = workflow_name
         self._private_trace_column_names = {column.column_name for column in private_trace_columns or []}
         self._original_create_resource_provider: Any | None = None
+        self._designer_owned_resource_provider = False
         self._resource_providers: list[Any] = []
         self._model_registry_patches: list[tuple[Any, Any]] = []
         self._facade_patches: dict[int, tuple[Any, dict[str, Any]]] = {}
@@ -813,6 +831,7 @@ class _DataDesignerUsageProbe:
             return self
 
         self._original_create_resource_provider = original
+        self._designer_owned_resource_provider = "_create_resource_provider" in vars(self._data_designer)
 
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             resource_provider = original(*args, **kwargs)
@@ -825,8 +844,13 @@ class _DataDesignerUsageProbe:
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         self._restore_private_trace_patches()
-        if self._original_create_resource_provider is not None:
+        if self._original_create_resource_provider is None:
+            return
+        if self._designer_owned_resource_provider:
             setattr(self._data_designer, "_create_resource_provider", self._original_create_resource_provider)
+        else:
+            # Restoring the class's bound method as an instance attribute would tie the designer to itself.
+            vars(self._data_designer).pop("_create_resource_provider", None)
 
     def model_usage(self) -> dict[str, Any] | None:
         usage: dict[str, Any] = {}
@@ -1180,7 +1204,7 @@ def _model_trace_usage(response: Any) -> Any:
 
 
 @contextmanager
-def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | None) -> Iterator[None]:
+def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | None) -> Generator[None]:
     if not TRACE_TASKS_BY_DEFAULT and (collector is None or not collector.dd_task_trace_enabled):
         yield
         return
@@ -1215,7 +1239,7 @@ def _task_traces_from_result(result: Any) -> list[_TaskTrace]:
     if isinstance(raw_traces, list):
         return cast(list[_TaskTrace], raw_traces)
     try:
-        return cast(list[_TaskTrace], list(raw_traces))
+        return list(raw_traces)
     except TypeError:
         return []
 

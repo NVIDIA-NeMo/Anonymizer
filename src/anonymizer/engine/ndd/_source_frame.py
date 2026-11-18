@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
@@ -88,7 +88,7 @@ class WorkflowSourceFrame:
         return returned.iloc[order].drop(columns=self.key_column).reset_index(drop=True), positions
 
     @contextmanager
-    def bind_generators(self, designer: Any) -> Iterator[None]:
+    def bind_generators(self, designer: Any) -> Generator[None]:
         """Carry source keys through DD's artifact storage without exposing them in public output."""
         from anonymizer.engine.ndd._graph_requests import (
             require_dataset_builder_capabilities,
@@ -124,18 +124,20 @@ class WorkflowSourceFrame:
             builders.append(result)
             return result
 
+        designer_owned_builder = "_create_dataset_builder" in vars(designer)
         designer._create_dataset_builder = builder
         try:
             yield
         finally:
-            designer._create_dataset_builder = original_builder
+            # Restoring the class's bound method as an instance attribute would tie the designer to itself.
+            _restore_attribute(designer, "_create_dataset_builder", original_builder, owned=designer_owned_builder)
             storage_bindings.close()
             for built in builders:
                 # The override closes over the builder; drop it so the run's builder is freed by refcount.
                 vars(built).pop("_write_builder_config", None)
 
     @contextmanager
-    def _bind_storage(self, storage: Any) -> Iterator[None]:
+    def _bind_storage(self, storage: Any) -> Generator[None]:
         """Keep only batch-order identity in memory across DD's parquet round trip."""
         from data_designer.engine.storage.artifact_storage import BatchStage
 
@@ -191,15 +193,24 @@ class WorkflowSourceFrame:
                 }
             return write_metadata(metadata)
 
+        originals = {"write_parquet_file": write, "write_metadata": write_metadata, "load_dataset": load}
+        owned = {name: name in vars(storage) for name in originals}
         object.__setattr__(storage, "write_parquet_file", write_file)
         object.__setattr__(storage, "write_metadata", public_metadata)
         object.__setattr__(storage, "load_dataset", load_dataset)
         try:
             yield
         finally:
-            object.__setattr__(storage, "write_parquet_file", write)
-            object.__setattr__(storage, "write_metadata", write_metadata)
-            object.__setattr__(storage, "load_dataset", load)
+            for name, original in originals.items():
+                _restore_attribute(storage, name, original, owned=owned[name])
+
+
+def _restore_attribute(target: Any, name: str, original: Any, *, owned: bool) -> None:
+    """Undo an instance-level override without leaving a bound method that refers back to ``target``."""
+    if owned:
+        object.__setattr__(target, name, original)
+    else:
+        vars(target).pop(name, None)
 
 
 def _is_data_designer(designer: Any) -> bool:

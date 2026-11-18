@@ -10,11 +10,11 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 - Skill: `anonymizer`
 - Validation status: `passed`
-- Evaluation date: 2026-11-16
+- Evaluation date: 2026-11-17
 - Evaluator version: `1.6.9`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-5-5`), Codex (`openai/openai/gpt-6.1-sol`)
 - Tasks: 6 evaluation tasks (4 positive, 2 negative)
-- Dataset digest: `sha256:865d81c618ebd9f108b567b77c3155826a1b98bfc9ff61c7db47e9913968e662` (skill-evaluator-dataset-snapshot/1)
+- Dataset digest: `sha256:ca93426a43017199f46d08a5a727950cc0f0e32d81f03d6d2b2a8a39d24c43ac` (skill-evaluator-dataset-snapshot/1)
 - Attempts per task: 1
 - Environment: `k8s-sandbox`
 - Tier 2 evidence: required for publication
@@ -50,12 +50,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 92.2% — baseline ran, but no comparable score was available; uplift unavailable | 85.6% — baseline ran, but no comparable score was available; uplift unavailable |
-| Security | 100.0% → 83.3% (-16.7 points) | 91.7% → 100.0% (+8.3 points) |
-| Correctness | 60.0% → 96.7% (+36.7 points) | 70.0% → 86.7% (+16.7 points) |
+| Overall | 87.7% — baseline ran, but no comparable score was available; uplift unavailable | 84.4% — baseline ran, but no comparable score was available; uplift unavailable |
+| Security | 100.0% → 83.3% (-16.7 points) | 91.7% → 91.7% (±0.0 points) |
+| Correctness | 66.7% → 96.7% (+30.0 points) | 80.0% → 90.0% (+10.0 points) |
 | Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 92.5% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 37.1% → 95.0% (+57.9 points) | 68.1% → 76.0% (+7.9 points) |
-| Efficiency | 85.9% — baseline ran, but no comparable score was available; uplift unavailable | 72.7% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 38.7% → 77.2% (+38.5 points) | 70.6% → 71.8% (+1.2 points) |
+| Efficiency | 81.5% — baseline ran, but no comparable score was available; uplift unavailable | 75.9% — baseline ran, but no comparable score was available; uplift unavailable |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -70,9 +70,9 @@ Shared-source comparisons use the same signals and weights on both conditions. T
 | Agent | Dimension | Basis | Baseline → With skill (uplift) | Explanation |
 | --- | --- | --- | --- | --- |
 | claude-code | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| claude-code | Efficiency | Token-only comparison | 96.8% → 94.6% (-2.2 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| claude-code | Efficiency | Token-only comparison | 96.7% → 94.3% (-2.4 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
 | codex | Discoverability | Dimension comparison | N/A | Discoverability is not applicable to the no-skill baseline; there is no installed skill to discover. |
-| codex | Efficiency | Token-only comparison | 88.2% → 88.2% (±0.0 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
+| codex | Efficiency | Token-only comparison | 87.0% → 87.2% (+0.2 points) | Only Token Efficiency is comparable; the full dimension scores use different evaluator sources. |
 
 ## Token Usage
 
@@ -80,21 +80,21 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 963,560 | 1,008,003 | -44,443 | -4.41% | skill 6/6; base 6/6 |
-| claude-code | anonymizer-negative-general-privacy-explainer | 37,438 | 37,210 | +228 | +0.61% | skill 1/1; base 1/1 |
-| claude-code | anonymizer-negative-repository-source-development | 183,092 | 142,812 | +40,280 | +28.20% | skill 1/1; base 1/1 |
-| claude-code | anonymizer-positive-failed-records-first | 170,989 | 143,032 | +27,957 | +19.55% | skill 1/1; base 1/1 |
-| claude-code | anonymizer-positive-hash-cross-record-consistency | 80,318 | 107,468 | -27,150 | -25.26% | skill 1/1; base 1/1 |
-| claude-code | anonymizer-positive-mode-choice | 221,962 | 108,198 | +113,764 | +105.14% | skill 1/1; base 1/1 |
-| claude-code | anonymizer-positive-self-hosted-gliner | 269,761 | 469,283 | -199,522 | -42.52% | skill 1/1; base 1/1 |
-| codex | All cases | 395,106 | 414,017 | -18,911 | -4.57% | skill 6/6; base 6/6 |
-| codex | anonymizer-negative-general-privacy-explainer | 13,541 | 13,465 | +76 | +0.56% | skill 1/1; base 1/1 |
-| codex | anonymizer-negative-repository-source-development | 104,325 | 268,534 | -164,209 | -61.15% | skill 1/1; base 1/1 |
-| codex | anonymizer-positive-failed-records-first | 51,359 | 50,351 | +1,008 | +2.00% | skill 1/1; base 1/1 |
-| codex | anonymizer-positive-hash-cross-record-consistency | 51,326 | 20,155 | +31,171 | +154.66% | skill 1/1; base 1/1 |
-| codex | anonymizer-positive-mode-choice | 110,621 | 22,316 | +88,305 | +395.70% | skill 1/1; base 1/1 |
-| codex | anonymizer-positive-self-hosted-gliner | 63,934 | 39,196 | +24,738 | +63.11% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 1,358,666 | 1,422,020 | -63,354 | -4.46% | skill 12/12; base 12/12 |
+| claude-code | All cases | 1,011,107 | 1,029,459 | -18,352 | -1.78% | skill 6/6; base 6/6 |
+| claude-code | anonymizer-negative-general-privacy-explainer | 37,324 | 37,110 | +214 | +0.58% | skill 1/1; base 1/1 |
+| claude-code | anonymizer-negative-repository-source-development | 226,259 | 143,068 | +83,191 | +58.15% | skill 1/1; base 1/1 |
+| claude-code | anonymizer-positive-failed-records-first | 125,902 | 107,479 | +18,423 | +17.14% | skill 1/1; base 1/1 |
+| claude-code | anonymizer-positive-hash-cross-record-consistency | 127,276 | 108,188 | +19,088 | +17.64% | skill 1/1; base 1/1 |
+| claude-code | anonymizer-positive-mode-choice | 222,371 | 108,242 | +114,129 | +105.44% | skill 1/1; base 1/1 |
+| claude-code | anonymizer-positive-self-hosted-gliner | 271,975 | 525,372 | -253,397 | -48.23% | skill 1/1; base 1/1 |
+| codex | All cases | 430,755 | 304,718 | +126,037 | +41.36% | skill 6/6; base 6/6 |
+| codex | anonymizer-negative-general-privacy-explainer | 13,513 | 13,521 | -8 | -0.06% | skill 1/1; base 1/1 |
+| codex | anonymizer-negative-repository-source-development | 160,891 | 122,652 | +38,239 | +31.18% | skill 1/1; base 1/1 |
+| codex | anonymizer-positive-failed-records-first | 68,183 | 50,539 | +17,644 | +34.91% | skill 1/1; base 1/1 |
+| codex | anonymizer-positive-hash-cross-record-consistency | 51,225 | 21,558 | +29,667 | +137.61% | skill 1/1; base 1/1 |
+| codex | anonymizer-positive-mode-choice | 51,437 | 30,669 | +20,768 | +67.72% | skill 1/1; base 1/1 |
+| codex | anonymizer-positive-self-hosted-gliner | 85,506 | 65,779 | +19,727 | +29.99% | skill 1/1; base 1/1 |
+| ALL AGENTS | Dataset aggregate | 1,441,862 | 1,334,177 | +107,685 | +8.07% | skill 12/12; base 12/12 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. Change is `100 * (with - without) / without`; negative means fewer tokens. N/A comparisons include their reason in the coverage column; coverage is never estimated.
 
@@ -102,7 +102,7 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 16 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 15 finding(s) |
 | Tier 2 | Semantic deduplication | **PASSED** | 2 validator(s); 0 finding(s) |
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 6 task(s) |
 
@@ -112,11 +112,11 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 <summary>Show detailed findings and successful checks</summary>
 
 - **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/anonymizer/SKILL.md`)
-- **MEDIUM** QUALITY/quality_efficiency: Large skill (6019 tokens, recommended max <5000). Per agentskills.io, SKILL.md should be concise (~500 lines) — large skill bodies increase token cost after invocation; long or unfocused top-level descriptions can degrade agent routing accuracy (`skills/anonymizer/SKILL.md`)
+- **MEDIUM** QUALITY/quality_efficiency: Large skill (6050 tokens, recommended max <5000). Per agentskills.io, SKILL.md should be concise (~500 lines) — large skill bodies increase token cost after invocation; long or unfocused top-level descriptions can degrade agent routing accuracy (`skills/anonymizer/SKILL.md`)
 - **MEDIUM** QUALITY/quality_efficiency: Deeply nested references in interactive.md (`skills/anonymizer/SKILL.md`)
 - **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/anonymizer/SKILL.md`)
 - **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/anonymizer/SKILL.md`)
-- 11 additional finding(s) are available in the full evaluation artifacts.
+- 10 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 

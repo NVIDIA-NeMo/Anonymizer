@@ -54,5 +54,5 @@ def test_all_rewrite_pipeline_prompts_pass_ndd_template_validation(
         env = UserTemplateSandboxEnvironment(allowed_references=references)
         try:
             env.validate_template(prompt)
-        except Exception as exc:  # noqa: BLE001 - re-raise with the offending column named
+        except Exception as exc:
             raise AssertionError(f"Prompt for column {name!r} fails NDD template validation: {exc}") from exc

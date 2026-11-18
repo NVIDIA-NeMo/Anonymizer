@@ -94,7 +94,7 @@ def program() -> list[dict[str, str]]:
     try:
         _, seen4, outer4, ia4, oa4 = _nested(boom)
         raised = None
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raised = type(exc).__name__
     ok4 = raised is None and seen4["inner_result"].outcome(ia4).terminal == "failed"
     c.check(
