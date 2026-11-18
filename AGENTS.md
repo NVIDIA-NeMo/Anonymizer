@@ -135,6 +135,15 @@ and expected vs actual.
 
 ## Development
 
+During the MkDocs / Fern migration, update paired `docs/**/*.md` and `.mdx`
+pages together, using each renderer's syntax. New prose pages need both formats
+and navigation entries in `mkdocs.yml` and `docs/fern/versions/nightly.yml`.
+Keep legacy sources until cutover. Notebook Python sources remain authoritative;
+see [DEVELOPMENT.md](DEVELOPMENT.md#notebooks) for generation. Standalone
+repository Markdown does not need an MDX counterpart. `mise run check:docs:pairs`
+(part of `mise run check`) enforces the pairing. See the
+[migration status](docs/fern/FERN_MIGRATION.md) for temporary requirements.
+
 ```bash
 mise run setup         # install pinned tools, dev dependencies, and hooks
 mise run setup all     # install pinned tools, every dependency group, and hooks
@@ -144,6 +153,8 @@ mise run format        # format and safely fix Python files and notebooks
 mise run check         # run all read-only static checks
 mise run check ::: test # run static checks and unit tests before opening a PR
 mise run docs:serve    # local MkDocs server at http://127.0.0.1:8000
+mise run docs:fern:check  # Fern configuration, MDX, and internal links
+mise run docs:fern:serve  # local Fern server
 ```
 
 For contributor workflow and branch naming see [CONTRIBUTING.md](CONTRIBUTING.md). For local setup, tests, docs, and day-to-day development tasks see [DEVELOPMENT.md](DEVELOPMENT.md). For code style and naming conventions see [STYLEGUIDE.md](STYLEGUIDE.md).

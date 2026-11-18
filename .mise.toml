@@ -9,6 +9,13 @@ min_version = "2026.10.15"
 uv = "0.13.4"
 ruff = "0.17.1"
 ty = "0.0.90"
+# Fern documentation tooling. jq and yq are dependencies of docs:fern:check.
+jq = "1.8.1"
+yq = "4.44.1"
+# Keep the Fern version aligned with docs/fern/fern.config.json.
+# fern-api is a wrapper; fern.config.json selects the CLI version it executes.
+node = "22"
+"npm:fern-api" = "5.201.0"
 
 [env]
 _.file = [".env", { path = ".env.local", redact = true }]

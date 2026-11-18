@@ -739,7 +739,7 @@ wheels = [
 
 [[package]]
 name = "data-designer"
-version = "1.0.0rc4"
+version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "data-designer-config" },
@@ -758,14 +758,14 @@ dependencies = [
     { name = "rich" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/08/3e/81c0bbed15d789e1552609571bb562b53d153c51f4a2d35c9f956e4a4fa2/data_designer-1.0.0rc4.tar.gz", hash = "sha256:a17c4de0b048bfac2fcaf6cae7f3b1324a21bb97bece2ed5dac96ceb43f9d1b9", size = 274978, upload-time = "2026-11-12T18:44:33.456Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/58/f40905749db5d97a596d89a19c4f8a3f5ffb68b5c69413205c9c3c813b47/data_designer-1.0.0.tar.gz", hash = "sha256:4c77a0a5d0a8c006277e8d5979f13d4a2a11486ab3a52faf2751a8cdb9bf2fee", size = 275018, upload-time = "2026-11-17T00:26:49.615Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6a/9d/941eb4dc99ca0e9045584eda41c76a41d5fb090c4383233392c5a39d989e/data_designer-1.0.0rc4-py3-none-any.whl", hash = "sha256:15b13011fa8639f8cadc238bfa2cc95fb66ebd19152f2d87ac40b2b9adbb0719", size = 169415, upload-time = "2026-11-12T18:44:31.989Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/7b/6c6bd487683c9d370629474986a2f322e638825709f463002a87ba0c5fbb/data_designer-1.0.0-py3-none-any.whl", hash = "sha256:283f29cb72c681edc91c541eeac303a4bff1a2b0f8aae1ffdc537db101728402", size = 169435, upload-time = "2026-11-17T00:26:48.12Z" },
 ]
 
 [[package]]
 name = "data-designer-config"
-version = "1.0.0rc4"
+version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -782,14 +782,14 @@ dependencies = [
     { name = "requests" },
     { name = "rich" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/50/82/8d19b17b5f5a4163c751d5e8c797d8010b590939b93a62d2e184a2e94845/data_designer_config-1.0.0rc4.tar.gz", hash = "sha256:027a597e8967f89fe993341d3ed07c29e60376a6102d3979e65a009a24b48c79", size = 175481, upload-time = "2026-11-12T18:44:21.026Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0a/e4/a9189d44c6f2b7332418691f692f8e0c0853f9792859580d5f5fad60f2d7/data_designer_config-1.0.0.tar.gz", hash = "sha256:9f56f485e6ddd92277a14043e8fc9aa3a5330ffb5f1789cdc7ba126348f11ce8", size = 175468, upload-time = "2026-11-17T00:26:39.162Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bd/ab/70b50b36f458d8c2b3dba98c6a2714ff60d46b667527ba2b5603cc0522d1/data_designer_config-1.0.0rc4-py3-none-any.whl", hash = "sha256:6a2127c5adcce9b2df5c9f904eb90a62cd32a8b08788dcdc2f0e5326d18eb2d1", size = 143953, upload-time = "2026-11-12T18:44:19.446Z" },
+    { url = "https://files.pythonhosted.org/packages/44/05/ef3f5cd77242f9a7995b42c644d7691dff3ed1329efb712b473a1e911919/data_designer_config-1.0.0-py3-none-any.whl", hash = "sha256:cf996b2a15a05160fd6e0c030ff12b1545154608da7485c7ed017c14ee08a56a", size = 143923, upload-time = "2026-11-17T00:26:37.515Z" },
 ]
 
 [[package]]
 name = "data-designer-engine"
-version = "1.0.0rc4"
+version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyascii" },
@@ -820,9 +820,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "wcwidth" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9e/7f/60db4a94797cc45acda93164cfdf91ea9b416f9dcb8f8faa6aafb448c231/data_designer_engine-1.0.0rc4.tar.gz", hash = "sha256:fe8db5c6b12eb970c1cec0519ce26e9b438d97b2c5247a310ecba26d1bdd4174", size = 924723, upload-time = "2026-11-12T18:44:25.216Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/3c/aa67d53e142457c07e0fcec722d3cc35735e7133f4ec729ec8ff4921b982/data_designer_engine-1.0.0.tar.gz", hash = "sha256:5ef4cb3427bfdaa891030a27ffcdd85e68303069f55147e0b876d88a67ca29b5", size = 924343, upload-time = "2026-11-17T00:26:42.746Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ee/98/f6646d93d68c76546dacb437d67a7b9b5f97fe8a7c0a0d16c02096492d9d/data_designer_engine-1.0.0rc4-py3-none-any.whl", hash = "sha256:89250476623a7a98baf5a579bcdb2aa1414e3695cefce3be65cf8e445bed3874", size = 669148, upload-time = "2026-11-12T18:44:23.637Z" },
+    { url = "https://files.pythonhosted.org/packages/07/62/5af57172d680dfaf2b07f68dd5463fba62688da8412ce63b2ca7c83f1ef2/data_designer_engine-1.0.0-py3-none-any.whl", hash = "sha256:d404cd58e20341851d725ea1affbb5fa5635143e9a478be77cb66f2d8ece66b3", size = 669114, upload-time = "2026-11-17T00:26:41.149Z" },
 ]
 
 [[package]]
@@ -2013,6 +2013,19 @@ wheels = [
 ]
 
 [[package]]
+name = "markdownify"
+version = "1.2.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "beautifulsoup4" },
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/92/ab/d1297139c0e2ceb151ae564c8c4f57ac0155d8f1f8b4cbd5d6523c82ea36/markdownify-1.2.3.tar.gz", hash = "sha256:1a176f05522c8a2cb1dd3ab9d307dcdadbed5c26ae717855bfc42b3b6d38d937", size = 18852, upload-time = "2026-06-30T20:27:39.06Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/10/fa543d484e8b1199243fe20eedd02cc5af050edebce98a7293a5773df592/markdownify-1.2.3-py3-none-any.whl", hash = "sha256:a189a0bedfd14009030fde5f85bb6f77c56897cb839b5c25315dd7d4e3e290ba", size = 15732, upload-time = "2026-06-30T20:27:38.094Z" },
+]
+
+[[package]]
 name = "marko"
 version = "2.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2578,14 +2591,18 @@ dev = [
     { name = "wandb", extra = ["workspaces"] },
 ]
 docs = [
+    { name = "beautifulsoup4" },
     { name = "griffe-pydantic" },
     { name = "jupytext" },
+    { name = "markdownify" },
     { name = "mike" },
     { name = "mkdocs-gen-files" },
     { name = "mkdocs-jupyter" },
     { name = "mkdocs-literate-nav" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extra = ["python"] },
+    { name = "nbconvert" },
+    { name = "nbformat" },
 ]
 measurement = [
     { name = "wandb", extra = ["workspaces"] },
@@ -2596,7 +2613,7 @@ requires-dist = [
     { name = "certifi", specifier = ">=2026.10.19" },
     { name = "cryptography", specifier = ">=46.0.6" },
     { name = "cyclopts", specifier = ">=3" },
-    { name = "data-designer", specifier = ">=1.0.0rc4,<1.1" },
+    { name = "data-designer", specifier = ">=1.0.0,<1.1" },
     { name = "datasets", marker = "extra == 'notebooks'", specifier = ">=4.0.0,<6" },
     { name = "gliner2", marker = "extra == 'notebooks'", specifier = "==2.1.0" },
     { name = "httpx", specifier = ">=0.27.0" },
@@ -2626,14 +2643,18 @@ dev = [
     { name = "wandb", extras = ["workspaces"], specifier = ">=0.19,<1" },
 ]
 docs = [
+    { name = "beautifulsoup4", specifier = ">=4,<5" },
     { name = "griffe-pydantic" },
     { name = "jupytext" },
+    { name = "markdownify", specifier = ">=1.2,<2" },
     { name = "mike", specifier = ">=2.1.3,<3" },
     { name = "mkdocs-gen-files" },
     { name = "mkdocs-jupyter" },
     { name = "mkdocs-literate-nav" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extras = ["python"] },
+    { name = "nbconvert", specifier = ">=7,<8" },
+    { name = "nbformat", specifier = ">=5,<6" },
 ]
 measurement = [{ name = "wandb", extras = ["workspaces"], specifier = ">=0.19,<1" }]
 

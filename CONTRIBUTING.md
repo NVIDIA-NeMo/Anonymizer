@@ -166,13 +166,14 @@ mise run hooks:install
 ```
 
 Before Git records a commit, the hooks check file hygiene, format and lint staged Python files, repair SPDX headers,
-and run `mise run check` on every commit. The aggregate check covers five read-only stages:
+and run `mise run check` on every commit. The aggregate check covers six read-only stages:
 
 - `mise run check:format`
 - `mise run check:lint`
 - `mise run check:type`
 - `mise run check:lock`
 - `mise run check:license:headers`
+- `mise run check:docs:pairs`
 
 The commit-message hook rejects commits without a `Signed-off-by` line. If a hook changes a file, review the change,
 stage it again, and retry the commit. Do not bypass repository hooks with `git commit --no-verify`.
@@ -198,6 +199,9 @@ Every PR should include:
 - Documentation updates when public behavior, CLI behavior, examples, notebooks, or contributor workflow changes.
 - A public API impact check. If a public symbol or default changes, check whether [`skills/anonymizer/SKILL.md`](skills/anonymizer/SKILL.md) also needs an update.
 - A PII fixture check. Do not add real PII to tests, docs, notebooks, or artifacts. Use synthetic examples.
+- Documentation changes must follow the [authoring and validation guidance](DEVELOPMENT.md#documentation).
+  During the MkDocs / Fern migration, update paired `.md` and `.mdx` pages and
+  both navigation files together; see the [temporary migration requirements](docs/fern/FERN_MIGRATION.md#required-during-migration-update-both-formats).
 - A secrets check. Do not commit API keys, service tokens, private keys, credentials, or real endpoint secrets. Use
   environment variables, local `.env` files, or GitHub Actions secrets instead.
 
