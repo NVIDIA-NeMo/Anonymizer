@@ -11,6 +11,7 @@ from unittest.mock import Mock, PropertyMock, patch
 
 import pandas as pd
 import pytest
+import yaml
 from data_designer.config.models import ModelConfig
 
 from anonymizer import RunConfig
@@ -26,6 +27,7 @@ from anonymizer.config.anonymizer_config import (
 )
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection
 from anonymizer.config.options import DetectionOptions, RunContext
+from anonymizer.config.regex import RegexLimits, RegexRule
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
@@ -52,7 +54,11 @@ from anonymizer.engine.detection.detection_workflow import (
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.engine.ndd.model_loader import load_default_model_providers, validate_model_alias_references
+from anonymizer.engine.ndd.model_loader import (
+    load_default_model_providers,
+    load_models_config,
+    validate_model_alias_references,
+)
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
@@ -431,6 +437,42 @@ def test_export_paths_pass_options_and_context(stub_input: AnonymizerInput, tmp_
     assert seed_kwargs["options"] == config.detect
     assert seed_kwargs["context"].data_summary == "Notes"
     assert seed_kwargs["context"].preview_num_records is None
+
+
+@pytest.mark.parametrize("mode", ["run", "preview", "export_detection_config", "export_detection_builder_for_seed"])
+@pytest.mark.parametrize(
+    "detect",
+    [
+        Detect(),
+        Detect(
+            builtin_regexes=False,
+            regex_rules=[RegexRule(label="ticket", pattern=r"TKT-\d+")],
+            regex_limits=RegexLimits(
+                max_matches_per_rule=1234, min_timeout_seconds=0.2, timeout_seconds_per_million_characters=2
+            ),
+        ),
+    ],
+)
+def test_detection_entrypoints_pass_regex_options(
+    stub_input: AnonymizerInput, tmp_path: Path, mode: str, detect: Detect
+) -> None:
+    anonymizer, detector, _, _ = _make_anonymizer()
+    config = AnonymizerConfig(detect=detect, replace=Redact())
+
+    if mode == "export_detection_config":
+        anonymizer.export_detection_config(config=config, data=stub_input, seed_path=tmp_path / "seed.parquet")
+        call = detector.build_detection_config.call_args
+    elif mode == "export_detection_builder_for_seed":
+        anonymizer.export_detection_builder_for_seed(config=config, seed_path=tmp_path / "seed.parquet")
+        call = detector.build_detection_builder_for_seed.call_args
+    else:
+        getattr(anonymizer, mode)(config=config, data=stub_input)
+        call = detector.run.call_args
+
+    options = call.kwargs["options"]
+    assert options.builtin_regexes is detect.builtin_regexes
+    assert options.regex_rules == detect.regex_rules
+    assert options.regex_limits == detect.regex_limits
 
 
 @pytest.mark.parametrize("strategy", [Redact(), Substitute(), Annotate(), Hash()], ids=lambda s: type(s).__name__)
@@ -1390,7 +1432,10 @@ def test_evaluate_rewrite_calls_validate_with_check_rewrite_false(stub_input: An
 def test_run_and_preview_persist_data_summary(stub_input: AnonymizerInput) -> None:
     """run()/preview() must preserve input context for later evaluation."""
     data = stub_input.model_copy(update={"data_summary": "Customer support transcripts."})
-    config = AnonymizerConfig(rewrite=Rewrite())
+    config = AnonymizerConfig(
+        detect={"regex_rules": [RegexRule(label="ticket", pattern=r"TICKET-\d+")]},
+        rewrite=Rewrite(),
+    )
     anonymizer, _, _, _ = _make_anonymizer()
 
     result = anonymizer.run(config=config, data=data)
@@ -1398,6 +1443,58 @@ def test_run_and_preview_persist_data_summary(stub_input: AnonymizerInput) -> No
 
     assert result.data_summary == "Customer support transcripts."
     assert preview.data_summary == "Customer support transcripts."
+    assert result.entity_labels is preview.entity_labels is None
+    assert result.effective_entity_labels == preview.effective_entity_labels
+    assert result.effective_entity_labels is not None
+    assert "ticket" in result.effective_entity_labels
+
+
+def test_effective_entity_labels_match_detection_scope_on_run_and_preview(stub_input: AnonymizerInput) -> None:
+    config = AnonymizerConfig(
+        detect={
+            "excluded_entity_labels": ["email"],
+            "regex_rules": [RegexRule(label="ticket", pattern=r"TICKET-\d+")],
+        },
+        replace=Redact(),
+    )
+    anonymizer, _, _, _ = _make_anonymizer()
+
+    result = anonymizer.run(config=config, data=stub_input)
+    preview = anonymizer.preview(config=config, data=stub_input, num_records=1)
+
+    for output in (result, preview):
+        assert output.detection_scope is not None
+        assert output.effective_entity_labels is not None
+        assert set(output.effective_entity_labels) == set(output.detection_scope.effective_labels)
+        assert "ticket" in output.effective_entity_labels
+        assert "email" not in output.effective_entity_labels
+
+
+def test_run_detects_custom_regex_rule_entity_through_the_facade(tmp_path: Path) -> None:
+    """A custom rule reaches the detection run: it needs no model, so every model request is refused."""
+    rule = RegexRule(
+        label="ticket", pattern=r"TKT-[0-9]+", validate_matches_with_llm=False, detect_additional_matches=False
+    )
+    config = AnonymizerConfig(
+        detect=Detect(entity_labels=["ticket"], builtin_regexes=False, regex_rules=[rule]), replace=Redact()
+    )
+    data = TextRecordsInput(records=[TextRecord(id="a", text="Escalate TKT-4821 today.")])
+    models = load_models_config()["model_configs"]
+    models_yaml = tmp_path / "models.yaml"
+    models_yaml.write_text(yaml.safe_dump({"model_configs": [{**m, "skip_health_check": True} for m in models]}))
+    anonymizer = Anonymizer(model_configs=models_yaml, artifact_path=tmp_path / "artifacts")
+
+    with (
+        patch("httpx.Client.send", side_effect=AssertionError("unexpected synchronous model request")),
+        patch("httpx.AsyncClient.send", side_effect=AssertionError("unexpected asynchronous model request")),
+    ):
+        result = anonymizer.run(config=config, data=data)
+
+    assert result.failed_records == []
+    assert [(e["value"], e["label"]) for e in result.dataframe["final_entities"].iloc[0]["entities"]] == [
+        ("TKT-4821", "ticket")
+    ]
+    assert result.dataframe["text_replaced"].tolist() == ["Escalate [REDACTED_TICKET] today."]
 
 
 def test_evaluate_passes_detection_context_to_coverage_judge(stub_input: AnonymizerInput) -> None:
@@ -1430,6 +1527,8 @@ def test_evaluate_passes_detection_context_to_coverage_judge(stub_input: Anonymi
     assert mock_coverage_wf.call_args.kwargs["excluded_entity_labels"] == ["email"]
     assert evaluated.data_summary == "Customer support transcripts."
     assert evaluated.excluded_entity_labels == ["email"]
+    assert mock_coverage_wf.call_args.kwargs["effective_entity_labels"] == run_result.effective_entity_labels
+    assert evaluated.effective_entity_labels == run_result.effective_entity_labels
 
 
 _MISSED = [{"value": "Smith", "label": "last_name", "reasoning": "kept verbatim"}]
@@ -1515,7 +1614,7 @@ def test_detection_scope_is_immutable_and_hashable(stub_input: AnonymizerInput) 
     assert not hasattr(scope.effective_labels, "clear")
 
 
-def test_matching_detector_declaration_runs_and_reports_scope(stub_input: AnonymizerInput) -> None:
+def test_preview_reports_scope_with_exclusions(stub_input: AnonymizerInput) -> None:
     detect = {
         "entity_labels": ["first_name", "email"],
         "excluded_entity_labels": ["email"],

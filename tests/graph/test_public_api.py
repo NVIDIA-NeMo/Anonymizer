@@ -12,6 +12,7 @@ from pathlib import Path
 import anonymizer.graph as graph
 
 PUBLIC_NAMES = {
+    "Advisory",
     "Assessment",
     "CancelToken",
     "ContextScope",
@@ -30,6 +31,7 @@ PUBLIC_NAMES = {
     "ProtectionGraph",
     "ProtectionResult",
     "Reason",
+    "Record",
     "Requests",
     "TargetOutcome",
     "Workflow",

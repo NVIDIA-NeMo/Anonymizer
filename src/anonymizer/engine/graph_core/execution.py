@@ -24,6 +24,7 @@ from anonymizer.engine.graph_core.authoring import (
     CONTEXT,
     DATUM,
     MENTIONS,
+    RECORD,
     TEXT,
     Assessment,
     ContextSource,
@@ -42,7 +43,7 @@ Terminal = Literal["success", "failed", "cancelled", "blocked"]
 Qualification = Literal["met", "not_met", "not_assessed"]
 AttemptStatus = Literal["running", "succeeded", "failed", "blocked", "cancelled"]
 
-SEEDS = {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "context": CONTEXT, "target": DATUM}
+SEEDS = {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "context": CONTEXT, "target": DATUM, "record": RECORD}
 _SEAL_KEY = secrets.token_bytes(32)
 
 
@@ -150,7 +151,8 @@ def _covering(ops: tuple[tuple[str, Operation], ...], plan: k.Plan, final: int) 
     """The verifiers whose every declared subject derives from the final candidate, from declared ports only.
 
     A candidate version is the index of the operation whose ``text`` output it is, or -1 for the source text. The
-    seeds ``text``, ``source``, ``mentions`` and ``target`` derive from the source text; ``context`` from none.
+    seeds ``text``, ``source``, ``mentions`` and ``target`` derive from the source text; ``context`` and ``record``
+    from none.
     Interim rule: every output of a text-producing operation derives from the version it emits, so evidence it
     returns beside its text counts as about that text. Any other operation's outputs derive from all its inputs.
     """
@@ -158,7 +160,7 @@ def _covering(ops: tuple[tuple[str, Operation], ...], plan: k.Plan, final: int) 
     covering = set()
     for i, (name, op) in enumerate(ops):
         read = {
-            port: (frozenset() if port == "context" else frozenset({-1}))
+            port: (frozenset() if port in ("context", "record") else frozenset({-1}))
             if source.node is None
             else outputs[source.node][source.port]
             for port, source in plan.sources[i].items()
@@ -289,6 +291,18 @@ class Reason:
 
 
 @dataclass(frozen=True)
+class Advisory:
+    """A check the workflow does not require, as a final-text verifier assessed it: ``passed``, ``failed`` or
+    ``could_not_assess``; ``cause`` is the verifier's stated cause for ``failed`` and ``could_not_assess``. It never
+    changes qualification or release. Fields hold codes and declared names, never record text."""
+
+    check: str
+    verifier: str
+    status: Literal["passed", "failed", "could_not_assess"]
+    cause: str = ""
+
+
+@dataclass(frozen=True)
 class TargetOutcome:
     """Execution terminal, criteria satisfaction and output availability, kept separate.
 
@@ -303,6 +317,7 @@ class TargetOutcome:
     reasons: tuple[Reason, ...] = ()
     error: BaseException | None = field(default=None, repr=False, compare=False)
     withheld_by: tuple[Datum, ...] = ()
+    advisories: tuple[Advisory, ...] = ()
 
     @property
     def reason(self) -> str:
@@ -333,7 +348,7 @@ class InspectionSummary:
         if self.terminals is None:
             lines.append("terminals: none (not executed)")
         else:
-            fmt = lambda pairs: ", ".join(f"{a}={b}" for a, b in pairs) or "-"  # noqa: E731
+            fmt = lambda pairs: ", ".join(f"{a}={b}" for a, b in pairs) or "-"
             lines += [
                 f"terminals: {fmt(self.terminals)}; qualification: {fmt(self.qualifications or ())}",
                 f"reasons: {fmt(self.reasons)}; protected: {self.protected}; consistent: {self.consistent}",
@@ -578,7 +593,16 @@ def _protect(p: PreparedProtection) -> ProtectionResult:
                     ContextItem("datum" if isinstance(item, Datum) else "view", len(items), _static_text(item))
                 )
         m = tuple(mentions.get(d, ()))
-        seeds.append({"text": d.text, "source": d.text, "mentions": m, "context": tuple(items), "target": d})
+        seeds.append(
+            {
+                "text": d.text,
+                "source": d.text,
+                "mentions": m,
+                "context": tuple(items),
+                "target": d,
+                "record": g.record_of(d),
+            }
+        )
     state = k.initial_state(p.plan, seeds)
     for u in closed:
         k.apply(state, k.Closed(u, "binding_failed"))
@@ -661,6 +685,8 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
     g = p.graph
     requires = p.workflow.requires
     checks_of = [[c for c in op.checks if c in requires] for _, op in p.workflow.flatten()]
+    advisory_of = [[c for c in op.checks if c not in requires] for _, op in p.workflow.flatten()]
+    advice: list[tuple[Advisory, ...]] = []
     consistent = True
     verdicts: list[tuple[Terminal, Qualification, list[Reason]]] = []
     failures: dict[int, k.Entry] = {}
@@ -678,6 +704,15 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
         # Unattributed, foreign or swapped evidence from any verifier destroys attribution.
         assessments = [v for out in row.outputs.values() for v in out.values() if isinstance(v, Assessment)]
         consistent = consistent and all(a.target == d for a in assessments)
+        found: list[Advisory] = []
+        for i in sorted(p.covering_verifiers):
+            a = row.outputs.get(i, {}).get("assessment")
+            if a is None or not advisory_of[i]:
+                continue
+            status = "passed" if a.satisfied is True else "could_not_assess" if a.satisfied is None else "failed"
+            cause = "" if status == "passed" else a.reason
+            found += [Advisory(c, p.names[i], status, cause) for c in advisory_of[i]]
+        advice.append(tuple(found))
         qual: Qualification
         if terminal != "success":
             qual = "not_met"
@@ -739,5 +774,5 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
         failed = failures.get(u)
         error = failed.error if failed is not None and terminal != "success" else None
         by = shared.get(d) or tuple(withheld_by.get(d, ()))
-        outcomes.append(TargetOutcome(terminal, qual, available, d in released, tuple(reasons), error, by))
+        outcomes.append(TargetOutcome(terminal, qual, available, d in released, tuple(reasons), error, by, advice[u]))
     return ProtectionResult(p, state, retrievals, tuple(outcomes), consistent)

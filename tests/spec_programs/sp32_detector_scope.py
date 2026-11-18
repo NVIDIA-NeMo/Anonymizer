@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-32 declared detector facts and the resolved detection scope (E32.1-E32.2)."""
+"""SP-32 the resolved detection scope (E32.2)."""
 
 from __future__ import annotations
 

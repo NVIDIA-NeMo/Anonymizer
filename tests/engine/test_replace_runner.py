@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import dataclasses
+from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from unittest.mock import Mock
 
 import numpy as np
@@ -38,7 +40,10 @@ from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
+from anonymizer.engine.graph_core.authoring import ProtectionGraph, Workflow
+from anonymizer.engine.graph_core.execution import PreparedProtection, ProtectionResult
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
+from anonymizer.engine.replace import route
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult, LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.schemas import EntitiesSchema
@@ -325,9 +330,11 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
         assert bool(result.dataframe[col].iloc[0]) is True
 
 
+@pytest.mark.parametrize("entity_labels", [["first_name", "organization", "email"], None])
 def test_evaluate_threads_detection_context_into_coverage_prompt(
     stub_model_configs: list[ModelConfig],
     stub_evaluate_model_selection: EvaluateModelSelection,
+    entity_labels: list[str] | None,
 ) -> None:
     """Replace-mode ``evaluate()`` must forward detection context into the
     coverage prompt so it uses the run's effective taxonomy.
@@ -363,14 +370,19 @@ def test_evaluate_threads_detection_context_into_coverage_prompt(
         replace_method=Redact(),
         model_configs=stub_model_configs,
         selected_models=stub_evaluate_model_selection,
-        entity_labels=["first_name", "organization", "email"],
+        entity_labels=entity_labels,
+        effective_entity_labels=["first_name", "organization", "ticket"],
         excluded_entity_labels=["email"],
         data_summary="Employee HR records.",
     )
 
     call_columns = adapter.run_workflow.call_args.kwargs["columns"]
     coverage_col = next(c for c in call_columns if c.name == COL_ENTITY_COVERAGE_JUDGE)
-    assert "ONLY these entity types: first_name, organization." in coverage_col.prompt
+    if entity_labels is None:
+        assert "Common entity types include: first_name, organization, ticket." in coverage_col.prompt
+        assert "This list is not exhaustive" in coverage_col.prompt
+    else:
+        assert "ONLY these entity types: first_name, organization." in coverage_col.prompt
     assert "Employee HR records." in coverage_col.prompt
 
 
@@ -730,5 +742,132 @@ def test_run_reports_each_rows_protection_outcome(omit_bob: bool, tmp_path: Path
     second = result.outcome(1)
     assert second.qualification == ("not_met" if omit_bob else "met")
     assert any(reason.check == "replacements_applied" for reason in second.reasons) is omit_bob
+    assert [(v.check, v.status) for v in result.outcome(0).advisories] == [("no_replaced_value_remains", "passed")]
+    second_status = "failed" if omit_bob else "passed"
+    assert [(v.check, v.status) for v in second.advisories] == [("no_replaced_value_remains", second_status)]
     with pytest.raises(IndexError):
         result.outcome(2)
+
+
+def _ent(value: str, start: int, label: str = "first_name") -> dict:
+    return {"value": value, "label": label, "start_position": start, "end_position": start + len(value)}
+
+
+_ALICE = {("Alice", "first_name"): "Maya"}
+
+
+@pytest.mark.parametrize(
+    ("text", "entities", "patches", "advisory"),
+    [
+        pytest.param("Alice met Alice", [_ent("Alice", 0)], _ALICE, ("failed", ""), id="value-repeated-in-kept-text"),
+        pytest.param('{"Alice": 1} Alice', [_ent("Alice", 13)], _ALICE, ("failed", ""), id="json-key-in-kept-text"),
+        pytest.param(
+            "Alice met Alice", [_ent("Alice", 0), _ent("Alice", 10)], _ALICE, ("passed", ""), id="all-patched"
+        ),
+        pytest.param(
+            "Alice Smith and Alice",
+            [_ent("Alice Smith", 0, "full_name"), _ent("Alice", 16)],
+            {("Alice Smith", "full_name"): "Ravi Rao", **_ALICE},
+            ("passed", ""),
+            id="value-only-inside-patches",
+        ),
+        pytest.param(
+            "Alice and Bob",
+            [_ent("Alice", 0), _ent("Bob", 10)],
+            {("Alice", "first_name"): "Bob", ("Bob", "first_name"): "Alice Jr"},
+            ("passed", ""),
+            id="substitute-equals-another-original",
+        ),
+        pytest.param("Alice met ALICE", [_ent("Alice", 0)], _ALICE, ("failed", ""), id="case-insensitive"),
+        pytest.param(
+            "IN and in", [_ent("IN", 0, "state")], {("IN", "state"): "OH"}, ("passed", ""), id="short-code-case"
+        ),
+        pytest.param(
+            "IN and IN", [_ent("IN", 0, "state")], {("IN", "state"): "OH"}, ("failed", ""), id="short-code-kept"
+        ),
+        pytest.param("Alice met Alicea", [_ent("Alice", 0)], _ALICE, ("passed", ""), id="letter-boundary"),
+        pytest.param("Alice met x_Alice_y", [_ent("Alice", 0)], _ALICE, ("failed", ""), id="underscore-boundary"),
+        pytest.param(
+            "José met Jose", [_ent("José", 0)], {("José", "first_name"): "Luis"}, ("failed", ""), id="accent-folded"
+        ),
+        pytest.param(
+            "Alice is alice_smith_42", [_ent("Alice", 0)], _ALICE, ("failed", ""), id="inside-unpatched-user-id"
+        ),
+        pytest.param("Alice met Bob", [_ent("Alice", 0), _ent("Bob", 10)], _ALICE, ("failed", ""), id="map-omits"),
+        pytest.param(
+            "Alice met Bob",
+            [_ent("Alice", 0)],
+            {("Alice", "last_name"): "Maya"},
+            ("could_not_assess", "reconstruction_mismatch"),
+            id="value-only-fallback",
+        ),
+        pytest.param("nobody here", [], {}, ("passed", ""), id="no-mentions"),
+    ],
+)
+def test_replace_reports_replaced_values_left_in_kept_text(
+    text: str, entities: list[dict], patches: dict, advisory: tuple[str, str]
+) -> None:
+    """The advisory follows Rewrite's matching rule over the kept text and never touches the row's outcome."""
+
+    def build_map(index: int, rows: object) -> dict:
+        return {"replacements": [{"original": o, "label": lab, "synthetic": s} for (o, lab), s in patches.items()]}
+
+    frame = pd.DataFrame({COL_TEXT: [text], COL_FINAL_ENTITIES: [{"entities": entities}]})
+    graph = route._lower(frame, COL_TEXT, COL_FINAL_ENTITIES)
+    with_check = route._protect_rows(graph, "redact", build_map, False)
+    outcome = with_check.outcome(graph.targets[0])
+
+    assert [(a.check, a.verifier, a.status, a.cause) for a in outcome.advisories] == [
+        ("no_replaced_value_remains", "verify-no-original", *advisory)
+    ]
+    without = _without_advisory_verifier(graph, build_map)
+    base = without.outcome(graph.targets[0])
+    assert (outcome.terminal, outcome.qualification, outcome.protected, outcome.reasons) == (
+        base.terminal,
+        base.qualification,
+        base.protected,
+        base.reasons,
+    )
+    assert with_check.content() == without.content()
+    assert with_check.protected == without.protected
+
+
+def _without_advisory_verifier(graph: ProtectionGraph, build_map: Callable[..., dict]) -> ProtectionResult:
+    """The same rows run with the advisory verifier removed: the outcome the check must not change."""
+    real_prepare = route.prepare
+
+    def drop_advisory(g: ProtectionGraph, workflow: Workflow, **kwargs: Any) -> PreparedProtection:
+        steps = tuple(op for op in workflow.steps if op.name != "verify-no-original")
+        return real_prepare(g, dataclasses.replace(workflow, steps=steps), **kwargs)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(route, "prepare", drop_advisory)
+        return route._protect_rows(graph, "redact", build_map, False)
+
+
+def test_replace_advisory_error_is_could_not_assess(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A matcher error gives could_not_assess with a code; the row stays met and released; no text leaks."""
+    canary = "canary-rpc-41"
+
+    def boom(values: object) -> object:
+        raise ValueError(canary)
+
+    monkeypatch.setattr(route, "compile_values", boom)
+    frame = pd.DataFrame({COL_TEXT: ["Alice met Alice"], COL_FINAL_ENTITIES: [{"entities": [_ent("Alice", 0)]}]})
+    graph = route._lower(frame, COL_TEXT, COL_FINAL_ENTITIES)
+    complete = {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]}
+    result = route._protect_rows(graph, "redact", lambda i, rows: complete, False)
+    outcome = result.outcome(graph.targets[0])
+
+    assert (outcome.qualification, outcome.protected, outcome.reasons) == ("met", True, ())
+    assert [(a.status, a.cause) for a in outcome.advisories] == [("could_not_assess", "check_error")]
+    assert canary not in repr(outcome) and "Alice" not in repr(outcome.advisories)
+
+
+def test_annotate_has_no_advisory() -> None:
+    frame = pd.DataFrame({COL_TEXT: ["Alice met Alice"], COL_FINAL_ENTITIES: [{"entities": [_ent("Alice", 0)]}]})
+    graph = route._lower(frame, COL_TEXT, COL_FINAL_ENTITIES)
+    result = route._protect_rows(graph, "annotate", lambda i, rows: {"replacements": []}, True)
+
+    assert "verify-no-original" not in result.prepared.names
+    assert result.outcome(graph.targets[0]).advisories == ()

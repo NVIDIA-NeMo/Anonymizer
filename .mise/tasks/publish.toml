@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+["publish:pypi"]
+description = "Build and publish an explicit version to PyPI. Requires TWINE_USERNAME and TWINE_PASSWORD; --dry-run performs no upload."
+usage = '''
+arg "<version>" help="Expected Python package version"
+flag "--dry-run" help="Build and validate without uploading"
+'''
+run = [
+  '''
+if [ "${usage_dry_run:-false}" != "true" ]; then
+  : "${TWINE_USERNAME:?TWINE_USERNAME is required}"
+  : "${TWINE_PASSWORD:?TWINE_PASSWORD is required}"
+fi
+''',
+  { task = "build:wheel" },
+  { task = "release:verify", args = ["{{usage.version}}"] },
+  '''
+echo "Destination: PyPI"
+echo "Version: ${usage_version?}"
+if [ "${usage_dry_run:-false}" = "true" ]; then
+  echo "Dry run: upload skipped"
+  exit 0
+fi
+
+uvx twine upload --non-interactive dist/*.whl
+''',
+]
+
+["release:verify"]
+description = "Validate the wheel in dist/ against an expected version: filename, twine check, and a clean install. Does not build or publish."
+usage = '''
+arg "<version>" help="Expected normalized package version, for example 0.5.0 or 0.5.0rc1"
+'''
+run = '''
+set -eu
+
+case "${usage_version?}" in
+  *+*)
+    echo "Local version ${usage_version} cannot be published to PyPI" >&2
+    exit 1
+    ;;
+esac
+
+wheel="$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)"
+case "$(basename "${wheel:-none}")" in
+  nemo_anonymizer-"${usage_version}"-*) ;;
+  *)
+    echo "Wheel does not match expected version ${usage_version}: ${wheel:-none}" >&2
+    exit 1
+    ;;
+esac
+
+uvx twine check --strict "$wheel"
+
+# Install the wheel into a clean environment, outside the project, and confirm
+# the installed package imports and reports the expected version.
+EXPECTED_VERSION="${usage_version}" uv run --isolated --no-project --with "$wheel" python -I - <<'PY'
+import importlib.metadata
+import os
+
+import anonymizer  # noqa: F401
+
+expected = os.environ["EXPECTED_VERSION"]
+installed = importlib.metadata.version("nemo-anonymizer")
+assert installed == expected, f"installed {installed}, expected {expected}"
+print(f"nemo-anonymizer {installed} installs and imports")
+PY
+'''
+
+["release:check"]
+description = "Rehearse a release without publishing: build the wheel at an explicit version, then validate it. Needs no credentials."
+usage = '''
+arg "<version>" help="Normalized package version to build, for example 0.5.0 or 0.5.0rc1"
+'''
+run = [
+  '''
+# Overrides the tag-derived version so an untagged commit builds a version
+# PyPI would accept. Only this task uses the override; real releases do not.
+export UV_DYNAMIC_VERSIONING_BYPASS="${usage_version?}"
+mise run build:wheel
+''',
+  { task = "release:verify", args = ["{{usage.version}}"] },
+]

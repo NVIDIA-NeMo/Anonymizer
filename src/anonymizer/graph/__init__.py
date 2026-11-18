@@ -5,8 +5,8 @@
 
 Declare datums and the relations between them, compose operations into a workflow, call :func:`prepare` to
 admit the workflow before any operation runs, then call :func:`protect` to run it synchronously on the calling
-thread. The kernel registers the kinds ``text``, ``mentions``, ``context``, ``datum`` and ``assessment``; callers
-register any other kind their operations produce with :func:`register_kind`.
+thread. The kernel registers the kinds ``text``, ``mentions``, ``context``, ``datum``, ``assessment`` and
+``record``; callers register any other kind their operations produce with :func:`register_kind`.
 """
 
 from __future__ import annotations
@@ -24,10 +24,12 @@ from anonymizer.engine.graph_core.authoring import (
     Operation,
     OutputGroup,
     ProtectionGraph,
+    Record,
     Requests,
     Workflow,
 )
 from anonymizer.engine.graph_core.execution import (
+    Advisory,
     InspectionSummary,
     PreparedProtection,
     ProtectionResult,
@@ -39,6 +41,7 @@ from anonymizer.engine.graph_core.execution import (
 from anonymizer.engine.graph_core.kernel import CancelToken, GraphRejection, register_kind
 
 __all__ = [
+    "Advisory",
     "Assessment",
     "CancelToken",
     "ContextScope",
@@ -57,6 +60,7 @@ __all__ = [
     "ProtectionGraph",
     "ProtectionResult",
     "Reason",
+    "Record",
     "Requests",
     "TargetOutcome",
     "Workflow",

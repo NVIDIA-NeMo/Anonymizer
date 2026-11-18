@@ -33,7 +33,7 @@ def _setup(cancel_in_first: bool):
 def _run(p, token):
     try:
         return protect(p, cancel=token), None
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return None, type(exc).__name__
 
 

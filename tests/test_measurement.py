@@ -19,7 +19,7 @@ from data_designer.config.column_configs import CustomColumnConfig, LLMStructure
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.custom_column import custom_column_generator
-from data_designer.config.models import ModelConfig
+from data_designer.config.models import ModelConfig, ModelProvider
 from data_designer.config.run_config import RunConfig
 from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
@@ -1009,10 +1009,19 @@ class _TraceModelRegistry:
     def get_model(self, *, model_alias: str) -> _TraceModelFacade:
         return self._models[model_alias]
 
+    def get_model_config(self, *, model_alias: str) -> ModelConfig:
+        return ModelConfig(alias=model_alias, model="dummy-model", provider="provider")
+
+    def get_model_provider(self, *, model_alias: str) -> ModelProvider:
+        return ModelProvider(name="provider", endpoint="http://provider/v1")
+
 
 class _CustomTraceDataDesigner:
     def __init__(self, *, facade: Any | None = None) -> None:
-        self.resource_provider = SimpleNamespace(model_registry=_TraceModelRegistry(facade))
+        self.resource_provider = SimpleNamespace(
+            model_registry=_TraceModelRegistry(facade),
+            run_config=RunConfig(max_conversation_restarts=0, max_conversation_correction_steps=0),
+        )
 
     def _create_resource_provider(self, *_args: Any, **_kwargs: Any) -> SimpleNamespace:
         return self.resource_provider

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import ClassVar, cast
 
 import pandas as pd
+from data_designer.config.base import SkipConfig
 from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
@@ -32,6 +33,7 @@ from anonymizer.engine.constants import (
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
     COL_RAW_DETECTED,
+    COL_REGEX_ENTITIES,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
@@ -51,6 +53,11 @@ from anonymizer.engine.detection.postprocess import (
     normalize_label,
     normalize_labels,
 )
+from anonymizer.engine.detection.regex_detection import (
+    resolve_regex_constrained_labels,
+    resolve_regex_rules,
+    validate_exportable_regex_rules,
+)
 from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import raise_if_cancelled
@@ -67,6 +74,7 @@ from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
     DetectionTransformConfig,
     DetectionTransformOperation,
+    RegexDetectionConfig,
 )
 from anonymizer.measurement import stage_timer
 
@@ -145,17 +153,37 @@ class EntityDetectionWorkflow:
         so both paths run exactly the same workflow.
         """
         labels = list(options.ordered_labels)
+        if not labels:
+            logger.warning(
+                "excluded_entity_labels removed all labels from the effective detection set. No entities will be detected."
+            )
         strict_labels = options.strict_labels
         allowed = labels if strict_labels else None
         excluded = list(options.scope.excluded_labels)
-        validator_examples = options.validator_examples
+        validator_examples = dict(options.validator_examples)
+        for label in labels:
+            validator_examples.setdefault(label, ())
         augmenter_examples = options.augmenter_examples
         data_summary = context.data_summary
         selected_models = context.models.detection
+        custom_rules = list(options.regex_rules)
+        limits = options.regex_limits
+        regex_constrained_labels = resolve_regex_constrained_labels(
+            labels=labels,
+            builtin_regexes=options.builtin_regexes,
+            rules=custom_rules,
+        )
+        normalized_regex_constrained_labels = normalize_labels(regex_constrained_labels)
+        model_labels = [label for label in labels if normalize_label(label) not in normalized_regex_constrained_labels]
+        resolved_regex_rules = resolve_regex_rules(
+            labels=labels,
+            builtin_regexes=options.builtin_regexes,
+            rules=custom_rules,
+        )
         workflow_model_configs = self._inject_detector_params(
             model_configs=context.model_configs,
             selected_models=selected_models,
-            labels=labels,
+            labels=model_labels,
             gliner_detection_threshold=options.scope.gliner_threshold,
         )
 
@@ -183,6 +211,13 @@ class EntityDetectionWorkflow:
         columns = cast(
             list[ColumnConfigT],
             [
+                RegexDetectionConfig(
+                    name=COL_REGEX_ENTITIES,
+                    rules=resolved_regex_rules,
+                    timeout_seconds=limits.min_timeout_seconds,
+                    timeout_seconds_per_million_characters=limits.timeout_seconds_per_million_characters,
+                    max_matches_per_rule=limits.max_matches_per_rule,
+                ),
                 DetectionTransformConfig(
                     name=COL_DETECTOR_SOURCE,
                     operation=DetectionTransformOperation.PREPARE_DETECTOR_SOURCE,
@@ -192,12 +227,17 @@ class EntityDetectionWorkflow:
                     name=COL_RAW_DETECTED,
                     prompt=_jinja(COL_DETECTOR_SOURCE, key="text"),
                     model_alias=detection_alias,
+                    skip=SkipConfig(when=f"{{{{ {COL_DETECTOR_SOURCE} == {COL_DETECTOR_SOURCE} }}}}", value="")
+                    if not model_labels
+                    else None,
                 ),
                 DetectionTransformConfig(
                     name=COL_SEED_ENTITIES,
                     operation=DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
                     detection_result_id=SEED_DETECTION_RESULT_ID,
                     source_instance=detection_alias,
+                    regex_constrained_entity_labels=sorted(regex_constrained_labels),
+                    propagate_skip=False,
                 ),
                 DetectionTransformConfig(
                     name=COL_SEED_VALIDATION_CANDIDATES,
@@ -224,6 +264,7 @@ class EntityDetectionWorkflow:
                     operation=DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS,
                     allowed_entity_labels=allowed,
                     excluded_entity_labels=excluded,
+                    regex_constrained_entity_labels=sorted(regex_constrained_labels),
                 ),
                 DetectionTransformConfig(
                     name=COL_SEED_ENTITIES_JSON,
@@ -233,7 +274,7 @@ class EntityDetectionWorkflow:
                     name=COL_AUGMENTED_ENTITIES,
                     prompt_template=_get_augment_prompt(
                         data_summary=data_summary,
-                        labels=labels,
+                        labels=model_labels,
                         strict_labels=strict_labels,
                         configured_examples=augmenter_examples,
                         excluded_entity_labels=excluded,
@@ -241,6 +282,8 @@ class EntityDetectionWorkflow:
                     model_alias=augmenter_alias,
                     allowed_entity_labels=allowed,
                     excluded_entity_labels=excluded,
+                    enabled=bool(model_labels),
+                    regex_constrained_entity_labels=sorted(regex_constrained_labels),
                 ),
                 DetectionTransformConfig(
                     name=COL_MERGED_ENTITIES,
@@ -267,6 +310,7 @@ class EntityDetectionWorkflow:
         as :meth:`detect_and_validate_entities` (culminating in final entities); the
         external runtime supplies the model providers and the seed dataset.
         """
+        validate_exportable_regex_rules(list(options.regex_rules), active_labels=list(options.ordered_labels))
         workflow_model_configs, columns = self._build_detection_spec(options=options, context=context)
         return self._adapter.build_config(
             dataframe,
@@ -292,6 +336,7 @@ class EntityDetectionWorkflow:
         orchestrator), the plugin column configs remain serializable and the model aliases
         are resolved by the runtime's providers.
         """
+        validate_exportable_regex_rules(list(options.regex_rules), active_labels=list(options.ordered_labels))
         workflow_model_configs, columns = self._build_detection_spec(options=options, context=context)
         return self._adapter.build_config_for_seed(
             model_configs=workflow_model_configs,
@@ -503,7 +548,7 @@ def _filter_excluded_latent_entities(raw: object, excluded_entity_labels: list[s
         return [
             entity
             for entity in raw
-            if not isinstance(entity, dict) or str(entity.get("label", "")).strip().casefold() not in excluded
+            if not isinstance(entity, dict) or normalize_label(str(entity.get("label", ""))) not in excluded
         ]
 
     return raw

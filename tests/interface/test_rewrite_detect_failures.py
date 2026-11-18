@@ -58,7 +58,8 @@ def test_rewrite_reports_rows_that_fail_detection(tmp_path: Path, rejected: list
     seen: list[list[str]] = []
 
     class StubRewrite(RewriteWorkflow):
-        def _produce(self, rows, **options):  # noqa: ANN001, ANN003, ANN202 - LLM stages stubbed
+        # LLM stages stubbed.
+        def _produce(self, rows, **options):
             def produce() -> None:
                 seen.append(list(rows.frame[COL_TEXT]))
                 rows.frame[COL_REWRITTEN_TEXT] = [f"R<{t}>" for t in rows.frame[COL_TEXT]]

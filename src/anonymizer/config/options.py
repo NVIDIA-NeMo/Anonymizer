@@ -5,12 +5,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from anonymizer.config.anonymizer_config import DetectionScope
 from anonymizer.config.models import ModelSelection
+from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 
 if TYPE_CHECKING:
@@ -42,6 +43,15 @@ class DetectionOptions(Protocol):
 
     @property
     def validation_excerpt_window_chars(self) -> int: ...
+
+    @property
+    def builtin_regexes(self) -> bool: ...
+
+    @property
+    def regex_rules(self) -> Sequence[BuiltinRegex | RegexRule]: ...
+
+    @property
+    def regex_limits(self) -> RegexLimits: ...
 
 
 @dataclass(frozen=True, kw_only=True)

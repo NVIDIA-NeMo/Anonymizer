@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import ClassVar, Mapping, TypeVar, cast
+from collections.abc import Mapping
+from typing import ClassVar, TypeVar, cast
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
@@ -133,6 +134,7 @@ def _data_summary_block(data_summary: str | None) -> str:
 def _coverage_prompt(
     *,
     entity_labels: list[str] | None,
+    effective_entity_labels: list[str] | None = None,
     excluded_entity_labels: list[str] | None = None,
     data_summary: str | None = None,
 ) -> str:
@@ -140,6 +142,8 @@ def _coverage_prompt(
     data_context_section = f"\n\n{_data_summary_block(data_summary)}" if data_summary and data_summary.strip() else ""
 
     active_labels = entity_labels if entity_labels is not None else DEFAULT_ENTITY_LABELS
+    if entity_labels is None and effective_entity_labels is not None:
+        active_labels = effective_entity_labels
     labels_str = ", ".join(active_labels)
     if entity_labels is None:
         taxonomy_guidance = (
@@ -471,6 +475,8 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
     all labels). ``excluded_entity_labels`` removes specific labels from scope
     regardless of ``entity_labels``. Both are applied to the LLM prompt and the
     postprocess filter so excluded labels are never penalised in the coverage score.
+    ``effective_entity_labels`` supplies taxonomy guidance only; it never narrows
+    permissive evaluation when ``entity_labels`` is ``None``.
 
     Output columns:
       ``COL_ENTITY_COVERAGE`` (float|None) — covered / total unique candidate values
@@ -492,11 +498,13 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
         adapter: NddAdapter,
         *,
         entity_labels: list[str] | None = None,
+        effective_entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         data_summary: str | None = None,
     ) -> None:
         super().__init__(adapter)
         self._entity_labels = entity_labels
+        self._effective_entity_labels = effective_entity_labels
         self._excluded_entity_labels = excluded_entity_labels
         self._data_summary = data_summary
 
@@ -537,6 +545,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             name=self.RAW_COL,
             prompt=_coverage_prompt(
                 entity_labels=effective_labels,
+                effective_entity_labels=self._effective_entity_labels,
                 excluded_entity_labels=self._excluded_entity_labels,
                 data_summary=self._data_summary,
             ),

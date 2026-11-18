@@ -27,7 +27,7 @@ import json
 import pickle
 import re
 import tempfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -363,7 +363,7 @@ def _evaluation(repairing: list[bool], *, iteration: int | None, heals: bool) ->
 
 
 @contextlib.contextmanager
-def scripted(case: Case) -> Iterator[tuple[Script, list[int]]]:
+def scripted(case: Case) -> Generator[tuple[Script, list[int]]]:
     """Patch the adapter and count graph invocations; yields the script and the invocation counter."""
     script, invocations = Script(case), [0]
     original = execution._protect
@@ -449,7 +449,7 @@ def _consumers(result: Any) -> dict[str, Any]:
         path = Path(tmp) / "user.parquet"
         result.dataframe.to_parquet(path)
         saved = pd.read_parquet(path)
-    restored = pickle.loads(pickle.dumps(result))  # noqa: S301
+    restored = pickle.loads(pickle.dumps(result))
     return {
         "display_record": {"chars": len(html), "sha256": hashlib.sha256(html.encode()).hexdigest()[:16]},
         "parquet": {"columns": list(saved.columns), "dtypes": {c: str(t) for c, t in saved.dtypes.items()}},

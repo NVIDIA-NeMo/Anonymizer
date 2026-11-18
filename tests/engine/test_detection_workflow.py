@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import re
 from typing import cast
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
@@ -18,6 +18,7 @@ from jinja2 import Environment, StrictUndefined
 
 from anonymizer.config.anonymizer_config import Detect
 from anonymizer.config.models import DetectionModelSelection
+from anonymizer.config.options import DetectionOptions
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
@@ -30,6 +31,7 @@ from anonymizer.engine.constants import (
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
     COL_RAW_DETECTED,
+    COL_REGEX_DETECTION_RESULTS,
     COL_SEED_DETECTION_RESULT,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
@@ -46,6 +48,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.augmentation import _ground_augmentation_items
 from anonymizer.engine.detection.chunked_validation import VALIDATION_EXCERPT_VAR
 from anonymizer.engine.detection.detection_workflow import (
+    EntityDetectionResult,
     EntityDetectionWorkflow,
     _filter_excluded_latent_entities,
     _format_label_examples,
@@ -54,7 +57,9 @@ from anonymizer.engine.detection.detection_workflow import (
     _get_validation_prompt,
     _materialize_final_entities,
 )
-from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
+from anonymizer.engine.detection.entity_label_examples import (
+    resolve_entity_label_config,
+)
 from anonymizer.engine.detection.postprocess import TagNotation, _format_entity_tag
 from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
@@ -966,6 +971,32 @@ def test_defaults_plus_non_default_examples_use_strict_augmentation(
     assert "acme_live_abc123" not in repr(augmenter)
 
 
+@pytest.mark.parametrize(("entity_labels", "strict"), [(None, False), (["first_name", "city"], True)])
+def test_run_marks_labels_strict_only_when_entity_labels_are_given(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+    entity_labels: list[str] | None,
+    strict: bool,
+) -> None:
+    """Detection receives the resolved scope already marked, before any stage builds its own columns."""
+    frame = pd.DataFrame({COL_TEXT: ["Alice"]})
+    received: list[bool] = []
+
+    def detect(dataframe: pd.DataFrame, **kwargs: object) -> EntityDetectionResult:
+        received.append(cast(DetectionOptions, kwargs["options"]).strict_labels)
+        return EntityDetectionResult(dataframe=dataframe, failed_records=[], source_positions=(0,))
+
+    workflow = EntityDetectionWorkflow(adapter=Mock())
+    with patch.object(workflow, "detect_and_validate_entities", side_effect=detect):
+        workflow.run(
+            frame,
+            options=Detect(gliner_threshold=0.5, entity_labels=entity_labels),
+            context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
+        )
+
+    assert received == [strict]
+
+
 # ── excluded_entity_labels ────────────────────────────────────────────────────
 
 
@@ -1296,6 +1327,7 @@ def test_validation_column_is_chunked_validation_plugin(
         COL_TEXT,
         COL_SEED_DETECTION_RESULT,
         COL_TAG_NOTATION,
+        COL_REGEX_DETECTION_RESULTS,
     }
 
 

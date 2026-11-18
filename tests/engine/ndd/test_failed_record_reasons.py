@@ -6,10 +6,10 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Collection, Iterator
+from collections.abc import Collection, Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pandas as pd
@@ -24,11 +24,15 @@ from pydantic import BaseModel
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect
 from anonymizer.config.models import DetectionModelSelection
+from anonymizer.config.regex import RegexRule
 from anonymizer.config.replace_strategies import Redact
-from anonymizer.engine.constants import COL_TEXT
+from anonymizer.engine.constants import COL_REGEX_ENTITIES, COL_TEXT
+from anonymizer.engine.detection import regex_detection
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
+from anonymizer.engine.detection.regex_detection import resolve_regex_rules
 from anonymizer.engine.ndd import adapter
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter, WorkflowRunResult
+from anonymizer.engine.workflow_columns.detection.config import RegexDetectionConfig
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.measurement import MeasurementConfig, configured_measurement_session
 from tests.conftest import detection_context
@@ -101,7 +105,7 @@ def _run(
 
 
 @contextmanager
-def _measurement(tmp_path: Path, *, enabled: bool) -> Iterator[None]:
+def _measurement(tmp_path: Path, *, enabled: bool) -> Generator[None]:
     if not enabled:
         yield
         return
@@ -306,6 +310,60 @@ def _fail_echoing_input_with_marker(row: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("bad row: " + row[COL_TEXT])
     row["checked"] = "yes"
     return row
+
+
+def test_regex_limit_failure_has_safe_actionable_public_reason(tmp_path: Path) -> None:
+    df = pd.DataFrame({COL_TEXT: ["no matches", "192.0.2.1 192.0.2.2"]})
+    columns = cast(
+        list[ColumnConfigT],
+        [
+            RegexDetectionConfig(
+                name=COL_REGEX_ENTITIES,
+                rules=resolve_regex_rules(labels=["ipv4"], builtin_regexes=True, rules=[]),
+                timeout_seconds=0.2,
+                max_matches_per_rule=1,
+            )
+        ],
+    )
+    tagged, result = _run(tmp_path, lambda *_: COMPLETE, df, columns=columns)
+    reasons = _reasons_by_position(tagged, result)
+    assert list(reasons) == [1]
+    assert "detect.regex_limits.max_matches_per_rule" in reasons[1]
+    assert "detect.regex_limits.min_timeout_seconds" in reasons[1]
+    assert "detect.regex_limits.timeout_seconds_per_million_characters" in reasons[1]
+    assert "No partial regex result" in reasons[1]
+    assert "192.0.2" not in reasons[1]
+
+
+def _regex_budget_reasons(tmp_path: Path) -> dict[int, str]:
+    df = pd.DataFrame({COL_TEXT: ["no matches", "a" * 20000 + "!"]})
+    rules = resolve_regex_rules(
+        labels=["ticket"], builtin_regexes=False, rules=[RegexRule(label="ticket", pattern=r"(a+)+$")]
+    )
+    columns = cast(
+        list[ColumnConfigT],
+        [RegexDetectionConfig(name=COL_REGEX_ENTITIES, rules=rules, timeout_seconds=0.005, max_matches_per_rule=5)],
+    )
+    tagged, result = _run(tmp_path, lambda *_: COMPLETE, df, columns=columns)
+    return _reasons_by_position(tagged, result)
+
+
+def test_regex_cpu_budget_and_starved_failures_have_distinct_reasons(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An expensive rule and a machine too busy to run it lead to different advice."""
+    expensive = _regex_budget_reasons(tmp_path / "expensive")
+    assert list(expensive) == [1]
+    assert "used its CPU-time budget" in expensive[1]
+    assert "detect.regex_limits.min_timeout_seconds" in expensive[1]
+
+    # As if other threads had used the CPU time that regex's process clock charged to each scan.
+    monkeypatch.setattr(regex_detection, "_rule_cpu_time", lambda: 0.0)
+    starved = _regex_budget_reasons(tmp_path / "starved")
+    assert list(starved) == [1]
+    assert "process was too busy" in starved[1]
+    assert "CPU-time budget" not in starved[1]
+    assert "a" * 20 not in starved[1]
 
 
 def test_provider_error_echoing_a_cause_marker_cannot_steer_the_reason(tmp_path: Path) -> None:

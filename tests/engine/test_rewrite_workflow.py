@@ -1432,7 +1432,7 @@ def test_rewrite_pipeline_rows_join_by_declared_correspondence(
     replace_df = dataframe.assign(_replacement_map=[{"replacements": []}] * 2)
     with patch(_REPLACE_PATCH) as mock_replace_cls:
         _mock_replace(mock_replace_cls, replace_df)
-        run = lambda: RewriteWorkflow(adapter=adapter).run(  # noqa: E731
+        run = lambda: RewriteWorkflow(adapter=adapter).run(
             dataframe,
             model_configs=stub_model_configs,
             selected_models=stub_rewrite_model_selection,
@@ -1899,6 +1899,7 @@ def test_replacements_applied_assesses_the_final_text(
 
     assert outcome.qualification == ("not_met" if reasons else "met")
     assert [(r.code, r.check, r.cause) for r in outcome.reasons] == reasons
+    assert outcome.advisories == ()
 
 
 @pytest.mark.parametrize(

@@ -27,6 +27,7 @@ from anonymizer.config.anonymizer_config import (
     EvaluateConfig,
     Rewrite,
     TextRecordsInput,
+    resolve_effective_detection_labels,
 )
 from anonymizer.config.options import DetectionOptions, RunContext
 from anonymizer.config.replace_strategies import ReplaceMethod, Substitute
@@ -55,7 +56,6 @@ from anonymizer.engine.constants import (
     COL_TYPE_FIDELITY_VALID,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
-    DEFAULT_ENTITY_LABELS,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
@@ -542,6 +542,7 @@ class Anonymizer:
                 resolved_text_column=result.resolved_text_column,
                 failed_records=result.failed_records,
                 preview_num_records=num_records,
+                effective_entity_labels=result.effective_entity_labels,
                 id_column=result.id_column,
                 replace_method=config.replace,
                 rewrite_config=result.rewrite_config,
@@ -632,6 +633,7 @@ class Anonymizer:
             raise InvalidConfigError(str(exc)) from exc
 
         entity_labels = getattr(output, "entity_labels", None)
+        effective_entity_labels = getattr(output, "effective_entity_labels", None)
         excluded_entity_labels = getattr(output, "excluded_entity_labels", None)
         data_summary = getattr(output, "data_summary", None)
         num_records = len(output.trace_dataframe)
@@ -698,6 +700,7 @@ class Anonymizer:
             def run_coverage(df: pd.DataFrame) -> tuple[pd.DataFrame, list[FailedRecord]]:
                 coverage_wf = EntityCoverageWorkflow(
                     adapter=self._adapter,
+                    effective_entity_labels=effective_entity_labels,
                     entity_labels=entity_labels,
                     excluded_entity_labels=excluded_entity_labels,
                     data_summary=data_summary,
@@ -744,6 +747,7 @@ class Anonymizer:
                 stage_start = time.perf_counter()
                 replace_result = self._replace_runner.evaluate(
                     df,
+                    effective_entity_labels=effective_entity_labels,
                     replace_method=replace_method,
                     model_configs=self._model_configs,
                     selected_models=self._selected_models.evaluate,
@@ -801,6 +805,7 @@ class Anonymizer:
             id_column=output.id_column,
             replace_method=None if is_rewrite else replace_method,
             rewrite_config=rewrite_config,
+            effective_entity_labels=effective_entity_labels,
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
@@ -885,7 +890,7 @@ class Anonymizer:
             logger.info("🔍 Running entity detection on %d records", num_records)
         scope = config.detect.scope
         configured_label_count = len(
-            config.detect.entity_labels if config.detect.entity_labels is not None else DEFAULT_ENTITY_LABELS
+            resolve_effective_detection_labels(config.detect.entity_labels, regex_rules=config.detect.regex_rules)
         )
         effective_label_count = len(scope.effective_labels)
         removed_label_count = configured_label_count - effective_label_count
@@ -1057,6 +1062,7 @@ class Anonymizer:
             detection_scope=scope,
             data_summary=data.data_summary,
             _outcomes=outcomes,
+            effective_entity_labels=list(config.detect.ordered_labels),
         )
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
@@ -1115,7 +1121,8 @@ class Anonymizer:
                 session_id=uuid.uuid4().hex,
             ) as handler:
                 handler.enqueue(event)
-        except Exception:  # noqa: BLE001 - best-effort
+        # Best-effort telemetry must not affect anonymization.
+        except Exception:
             logger.debug("Failed to emit telemetry event")
 
     def _build_telemetry_event(

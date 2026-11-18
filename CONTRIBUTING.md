@@ -25,7 +25,7 @@ This document covers contribution policy and pull request expectations. For loca
 3. Create a branch from the latest `main` using the [branch naming](#branch-naming) convention.
 4. For non-trivial changes, write a plan document before implementation. See [Agent-Assisted Development](#agent-assisted-development).
 5. Implement the change following [AGENTS.md](AGENTS.md), [STYLEGUIDE.md](STYLEGUIDE.md), and [DEVELOPMENT.md](DEVELOPMENT.md).
-6. Install the repository hooks once per clone with `make install-pre-commit`.
+6. `mise run setup` installs the repository hooks. Reinstall them with `mise run hooks:install` when needed.
 7. Run the relevant tests from [DEVELOPMENT.md](DEVELOPMENT.md#validation-before-opening-a-pr).
 8. Commit with DCO signoff. The pre-commit hooks run the repository checks before accepting the commit.
 9. Open a pull request with a conventional title, a linked issue, and a completed checklist.
@@ -162,16 +162,18 @@ The `main` branch has these protections:
 Install the repository hooks once per clone:
 
 ```bash
-make install-pre-commit
+mise run hooks:install
 ```
 
 Before Git records a commit, the hooks check file hygiene, format and lint staged Python files, repair SPDX headers,
-verify `uv.lock` when `pyproject.toml` changes, and run `make check`. The aggregate check covers four read-only stages:
+and run `mise run check` on every commit. The aggregate check covers six read-only stages:
 
-- `make format-check`
-- `make typecheck`
-- `make lock-check`
-- `make copyright-check`
+- `mise run check:format`
+- `mise run check:lint`
+- `mise run check:type`
+- `mise run check:lock`
+- `mise run check:license:headers`
+- `mise run check:docs:pairs`
 
 The commit-message hook rejects commits without a `Signed-off-by` line. If a hook changes a file, review the change,
 stage it again, and retry the commit. Do not bypass repository hooks with `git commit --no-verify`.
@@ -197,6 +199,9 @@ Every PR should include:
 - Documentation updates when public behavior, CLI behavior, examples, notebooks, or contributor workflow changes.
 - A public API impact check. If a public symbol or default changes, check whether [`skills/anonymizer/SKILL.md`](skills/anonymizer/SKILL.md) also needs an update.
 - A PII fixture check. Do not add real PII to tests, docs, notebooks, or artifacts. Use synthetic examples.
+- Documentation changes must follow the [authoring and validation guidance](DEVELOPMENT.md#documentation).
+  During the MkDocs / Fern migration, update paired `.md` and `.mdx` pages and
+  both navigation files together; see the [temporary migration requirements](docs/fern/FERN_MIGRATION.md#required-during-migration-update-both-formats).
 - A secrets check. Do not commit API keys, service tokens, private keys, credentials, or real endpoint secrets. Use
   environment variables, local `.env` files, or GitHub Actions secrets instead.
 

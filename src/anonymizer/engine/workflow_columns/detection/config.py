@@ -9,16 +9,21 @@ from typing import ClassVar, Literal
 from data_designer.config.base import SingleColumnConfig
 from pydantic import Field
 
+from anonymizer.config.regex import DEFAULT_REGEX_TIMEOUT_SECONDS_PER_MILLION_CHARACTERS
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
     COL_ADMITTED_CANDIDATES,
     COL_AUGMENTATION_ADMISSION_RESULTS,
     COL_AUGMENTATION_ATTEMPTS,
     COL_AUGMENTATION_DETECTION_RESULT,
+    COL_AUGMENTATION_RESPONSE_FORMAT,
     COL_AUGMENTED_CANDIDATES,
     COL_INITIAL_TAGGED_TEXT,
     COL_RAW_DETECTED,
     COL_RECONCILED_CANDIDATES,
+    COL_REGEX_ACCEPTED_ENTITIES,
+    COL_REGEX_DETECTION_RESULTS,
+    COL_REGEX_VALIDATION_TRACE,
     COL_SEED_DETECTION_RESULT,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
@@ -31,17 +36,20 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
     SEED_DETECTION_RESULT_ID,
 )
+from anonymizer.engine.detection.regex_detection import ResolvedRegexRule
 
 
 class AugmentationConfig(SingleColumnConfig):
     """Model-backed occurrence-specific augmentation column."""
 
-    column_type: Literal["anonymizer-augmentation"] = "anonymizer-augmentation"
+    column_type: Literal["anonymizer-augmentation"] = "anonymizer-augmentation"  # ty: ignore[invalid-mutable-override]
     model_alias: str = Field(min_length=1)
     prompt_template: str = Field(repr=False)
     system_prompt: str | None = Field(default=None, repr=False)
     allowed_entity_labels: list[str] | None = None
     excluded_entity_labels: list[str] = Field(default_factory=list)
+    enabled: bool = True
+    regex_constrained_entity_labels: list[str] = Field(default_factory=list)
 
     @staticmethod
     def get_column_emoji() -> str:
@@ -52,6 +60,7 @@ class AugmentationConfig(SingleColumnConfig):
         return [
             RECORD_ID_COLUMN,
             COL_TEXT,
+            COL_ADMITTED_CANDIDATES,
         ]
 
     @property
@@ -61,6 +70,7 @@ class AugmentationConfig(SingleColumnConfig):
             COL_AUGMENTATION_ADMISSION_RESULTS,
             COL_AUGMENTATION_ATTEMPTS,
             COL_AUGMENTED_CANDIDATES,
+            COL_AUGMENTATION_RESPONSE_FORMAT,
         ]
 
     def get_model_aliases(self) -> list[str]:
@@ -78,10 +88,11 @@ class DetectionTransformOperation(str, Enum):
 
 
 class DetectionTransformConfig(SingleColumnConfig):
-    column_type: Literal["anonymizer-detection-transform"] = "anonymizer-detection-transform"
+    column_type: Literal["anonymizer-detection-transform"] = "anonymizer-detection-transform"  # ty: ignore[invalid-mutable-override]
     operation: DetectionTransformOperation
     excluded_entity_labels: list[str] = Field(default_factory=list)
     allowed_entity_labels: list[str] | None = None
+    regex_constrained_entity_labels: list[str] = Field(default_factory=list)
     detection_result_id: str = SEED_DETECTION_RESULT_ID
     source_instance: str = "gliner"
 
@@ -91,17 +102,20 @@ class DetectionTransformConfig(SingleColumnConfig):
             RECORD_ID_COLUMN,
             COL_TEXT,
             COL_RAW_DETECTED,
+            COL_REGEX_DETECTION_RESULTS,
         ],
         DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: [COL_TEXT, COL_SEED_ENTITIES],
         DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS: [
             COL_SEED_DETECTION_RESULT,
             COL_VALIDATION_DECISIONS,
             COL_VALIDATION_INVENTORIES,
+            COL_REGEX_DETECTION_RESULTS,
         ],
         DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: [
             COL_TEXT,
             COL_SEED_DETECTION_RESULT,
             COL_ADMISSION_RESULTS,
+            COL_REGEX_DETECTION_RESULTS,
         ],
         DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES: [
             COL_TEXT,
@@ -147,7 +161,7 @@ class DetectionTransformConfig(SingleColumnConfig):
 
 
 class ChunkedValidationConfig(SingleColumnConfig):
-    column_type: Literal["anonymizer-chunked-validation"] = "anonymizer-chunked-validation"
+    column_type: Literal["anonymizer-chunked-validation"] = "anonymizer-chunked-validation"  # ty: ignore[invalid-mutable-override]
     pool: list[str] = Field(min_length=1)
     max_entities_per_call: int = Field(gt=0)
     excerpt_window_chars: int = Field(gt=0)
@@ -168,6 +182,7 @@ class ChunkedValidationConfig(SingleColumnConfig):
             COL_TEXT,
             COL_SEED_DETECTION_RESULT,
             COL_TAG_NOTATION,
+            COL_REGEX_DETECTION_RESULTS,
         ]
 
     @property
@@ -176,3 +191,32 @@ class ChunkedValidationConfig(SingleColumnConfig):
 
     def get_model_aliases(self) -> list[str]:
         return list(self.pool)
+
+
+class RegexDetectionConfig(SingleColumnConfig):
+    """Serializable local regex-detection column configuration."""
+
+    column_type: Literal["anonymizer-regex-detection"] = "anonymizer-regex-detection"  # ty: ignore[invalid-mutable-override]
+    rules: list[ResolvedRegexRule]
+    timeout_seconds: float = Field(
+        gt=0, allow_inf_nan=False, description="Smallest per-rule, per-record budget, in CPU seconds."
+    )
+    timeout_seconds_per_million_characters: float = Field(
+        default=DEFAULT_REGEX_TIMEOUT_SECONDS_PER_MILLION_CHARACTERS,
+        gt=0,
+        allow_inf_nan=False,
+        description="Per-rule budget in CPU seconds per million Unicode code points of the record.",
+    )
+    max_matches_per_rule: int = Field(gt=0)
+
+    @staticmethod
+    def get_column_emoji() -> str:
+        return "A"
+
+    @property
+    def required_columns(self) -> list[str]:
+        return [RECORD_ID_COLUMN, COL_TEXT]
+
+    @property
+    def side_effect_columns(self) -> list[str]:
+        return [COL_REGEX_ACCEPTED_ENTITIES, COL_REGEX_VALIDATION_TRACE, COL_REGEX_DETECTION_RESULTS]

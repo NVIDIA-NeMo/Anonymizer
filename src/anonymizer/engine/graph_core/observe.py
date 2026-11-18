@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
-from collections.abc import Iterator
+from collections.abc import Generator
 
 
 class Activation:
@@ -34,7 +34,7 @@ def report_requests(n: int) -> None:
 
 
 @contextlib.contextmanager
-def activation() -> Iterator[Activation]:
+def activation() -> Generator[Activation]:
     """Open a fresh activation for the duration of one callable call."""
     current = Activation()
     token = _ACTIVATION.set(current)
