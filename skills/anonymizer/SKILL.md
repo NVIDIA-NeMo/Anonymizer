@@ -45,7 +45,7 @@ regulatory and business context.
 # Usage Tips and Common Pitfalls
 
 - **`Detect.entity_labels=None` (the default) is permissive** — the augmenter LLM may invent labels not in `DEFAULT_ENTITY_LABELS`. Setting an explicit list switches to **strict mode** where *only* the listed labels are detected.
-- **Label terminology:** A **default label** is present in `DEFAULT_ENTITY_LABELS`, while any label not present in this list is called a  **non-default label**. An **explicit label set** is supplied through `entity_labels` and may contain either kind.
+- **Label terminology:** A **default label** is present in `DEFAULT_ENTITY_LABELS`, while any label not present in this list is called a **non-default label**. An **explicit label set** is supplied through `entity_labels` and may contain either kind.
 - **`Detect.entity_label_examples` provides configured positive examples for detection.** For a default label, configured examples are appended to its built-in examples. Every non-default label referenced by `entity_label_examples` must also appear in the explicit `entity_labels` set. To keep every default while adding one, use `entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility"]`. Configured examples are soft detection guidance: they do not limit detection to the listed value formats, and they are not passed to substitution or evaluation. Keep configured examples concise and lists short to limit prompt growth, token cost, latency, and context-window pressure. Use synthetic values because configured examples are included in prompts, exported builders, provider requests, and explicitly enabled raw message traces.
 - **`Detect.excluded_entity_labels`** removes specific label types from the active detection scope and final results. Use it when a label type is systematically noisy for your data or should never be anonymized (e.g. `Detect(excluded_entity_labels=["occupation", "gender"])`). Exclusions take precedence over labels and examples; configured examples for excluded labels are ignored with a warning. If exclusions empty the effective allowlist (`entity_labels` if set, otherwise `DEFAULT_ENTITY_LABELS` plus labels from enabled custom regex rules), `Detect` raises a `ValueError`.
 - **GLiNER is zero-shot** — entity labels are natural-language concept names (e.g. `"clinical_facility"`, `"internal_project_codename"`), not codes or enum values. Any concept you can name in English is a label GLiNER can detect.
@@ -116,13 +116,20 @@ from anonymizer import (
     AnonymizerConfig,
     AnonymizerInput,
     Detect,
-    BuiltinRegex, RegexCandidate, RegexRule, RegexValidationResult,
+    BuiltinRegex,
+    RegexCandidate,
+    RegexRule,
+    RegexValidationResult,
     # Optional discovery: from anonymizer import BUILTIN_REGEX_LABELS
     # Pick what you need:
     # Replace mode:
-    Substitute, Redact, Annotate, Hash,
+    Substitute,
+    Redact,
+    Annotate,
+    Hash,
     # Rewrite mode:
-    Rewrite, PrivacyGoal,
+    Rewrite,
+    PrivacyGoal,
 )
 
 
@@ -162,8 +169,8 @@ def build_config() -> tuple[AnonymizerInput, AnonymizerConfig]:
                 protect="TODO: what must not appear in the output, even by inference",
                 preserve="TODO: what must be kept so the rewritten text is still useful",
             ),
-            risk_tolerance="low",          # minimal | low | moderate | high
-            strict_entity_protection=False, # True = force every detected entity into a protective disposition
+            risk_tolerance="low",  # minimal | low | moderate | high
+            strict_entity_protection=False,  # True = force every detected entity into a protective disposition
             max_repair_iterations=3,
         ),
     )
@@ -208,7 +215,9 @@ def main() -> None:
         print(f"\n⚠️  {len(result.failed_records)} record(s) failed:")
         for fr in result.failed_records[:3]:
             print(f"   - record_id={fr.record_id} step={fr.step} reason={fr.reason}")
-        print("\nFix dropped rows before tweaking strategy. See docs/troubleshooting.md or https://nvidia-nemo.github.io/Anonymizer/dev/troubleshooting/.")
+        print(
+            "\nFix dropped rows before tweaking strategy. See docs/troubleshooting.md or https://nvidia-nemo.github.io/Anonymizer/dev/troubleshooting/."
+        )
         sys.exit(1)
 
     # Optional LLM-as-judge evaluation (Replace and Rewrite modes). Opt-in, separate
