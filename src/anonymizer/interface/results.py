@@ -10,10 +10,42 @@ import pandas as pd
 from anonymizer.config.anonymizer_config import DetectionScope
 from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import PrivacyGoal
+from anonymizer.engine.constants import COL_REPLACEMENT_MAP
 from anonymizer.engine.graph_core.execution import TargetOutcome
 from anonymizer.engine.graph_core.session import SessionChanges
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.interface.display import render_record_html
+from anonymizer.engine.replace.llm_replace_workflow import _is_placeholder
+from anonymizer.interface.display import _normalize_replacement_map, render_record_html
+
+
+@dataclass(frozen=True)
+class SessionCallChanges:
+    """What one call did to its stable Session; placeholders are those the call minted, by cause."""
+
+    added: int = 0
+    reused: int = 0
+    revised: int = 0
+    ignored: int = 0
+    fallbacks: int = 0
+    placeholders_protected: int = 0
+    placeholders_taken: int = 0
+    placeholders_session: int = 0
+
+    @classmethod
+    def _of(cls, changes: SessionChanges, placeholders: dict[str, int]) -> SessionCallChanges:
+        added = changes.accepted - changes.fallbacks
+        counts = (placeholders.get(cause, 0) for cause in ("protected", "taken", "session"))
+        return cls(added, changes.reused, changes.revised, changes.ignored, changes.fallbacks, *counts)
+
+
+@dataclass(frozen=True)
+class Replacement:
+    """One replacement map entry; ``placeholder`` is true for a token minted in place of a colliding substitute."""
+
+    original: str
+    label: str
+    synthetic: str
+    placeholder: bool
 
 
 class _DisplayMixin:
@@ -41,6 +73,20 @@ class _DisplayMixin:
         if row < 0 or row >= len(outcomes):
             raise IndexError(f"Record index {row} is out of bounds for {len(outcomes)} records.")
         return outcomes[row]
+
+    def replacement_map(self, row: int) -> tuple[Replacement, ...]:
+        """The replacement map of output row ``row``; empty when the trace carries no map.
+
+        Raises:
+            IndexError: ``row`` is not an output row.
+        """
+        if row < 0 or row >= len(self.trace_dataframe):
+            raise IndexError(f"Record index {row} is out of bounds for {len(self.trace_dataframe)} records.")
+        if COL_REPLACEMENT_MAP not in self.trace_dataframe.columns:
+            return ()
+        entries = _normalize_replacement_map(self.trace_dataframe[COL_REPLACEMENT_MAP].iloc[row])
+        parts = [(str(e.get("original", "")), str(e.get("label", "")), str(e.get("synthetic", ""))) for e in entries]
+        return tuple(Replacement(o, lb, s, _is_placeholder(s)) for o, lb, s in parts if o and lb and s)
 
     def display_record(self, index: int | None = None) -> None:
         """Render a record with entity highlights and replacement map in a notebook.
@@ -122,7 +168,7 @@ class AnonymizerResult(_DisplayMixin):
     effective_entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
-    _session_changes: SessionChanges | None = field(default=None, repr=False, compare=False)
+    session_changes: SessionCallChanges | None = field(default=None, repr=False, compare=False)
 
     def __repr__(self) -> str:
         return (
@@ -192,7 +238,7 @@ class PreviewResult(_DisplayMixin):
     effective_entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
-    _session_changes: SessionChanges | None = field(default=None, repr=False, compare=False)
+    session_changes: SessionCallChanges | None = field(default=None, repr=False, compare=False)
 
     def __repr__(self) -> str:
         return (

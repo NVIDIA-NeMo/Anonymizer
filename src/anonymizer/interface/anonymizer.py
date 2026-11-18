@@ -99,7 +99,7 @@ from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.row_partitioning import try_resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.interface.errors import InvalidConfigError
-from anonymizer.interface.results import AnonymizerResult, PreviewResult
+from anonymizer.interface.results import AnonymizerResult, PreviewResult, SessionCallChanges
 from anonymizer.logging import LOG_INDENT, configure_logging, reapply_log_levels
 from anonymizer.measurement import (
     record_record_metrics,
@@ -642,7 +642,7 @@ class Anonymizer:
                 detection_scope=result.detection_scope,
                 data_summary=result.data_summary,
                 _outcomes=result._outcomes,
-                _session_changes=result._session_changes,
+                session_changes=result.session_changes,
             )
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
@@ -1064,7 +1064,7 @@ class Anonymizer:
             return result
 
         t0 = time.perf_counter()
-        session_changes: SessionChanges | None = None
+        session_changes: SessionCallChanges | None = None
         if config.replace is not None and self._replace_runner.__class__.run is not ReplacementWorkflow.run:
             # A caller's runner overrides run(): detect, then call that override with the detection frame.
             detection_result = detect(input_df)
@@ -1102,7 +1102,11 @@ class Anonymizer:
             final_df = replace_result.dataframe
             post_detection_failures = replace_result.failed_records[len(detection_failures) :]
             outcomes = replace_result.outcomes
-            session_changes = getattr(replace_result, "session_changes", None)
+            if session is not None and session.mode.stable_replacements:
+                placeholders = getattr(replace_result, "placeholder_counts", {})
+                session_changes = SessionCallChanges._of(
+                    getattr(replace_result, "session_changes", SessionChanges()), placeholders
+                )
         else:
             assert config.rewrite is not None
             privacy_goal = admitted_goal
@@ -1165,10 +1169,10 @@ class Anonymizer:
             len(post_detection_failures),
             replacement_elapsed,
         )
-        if session_changes is not None and session is not None and session.mode.stable_replacements:
+        if session_changes is not None:
             logger.info(
-                LOG_INDENT + "session changes: %d accepted, %d reused, %d revised, %d ignored",
-                *dataclasses.astuple(session_changes),
+                LOG_INDENT + "session changes: %s",
+                ", ".join(f"{n} {name}" for name, n in dataclasses.asdict(session_changes).items()),
             )
 
         all_failures = [*detection_failures, *post_detection_failures]
@@ -1206,7 +1210,7 @@ class Anonymizer:
             ),
             data_summary=data.data_summary,
             _outcomes=outcomes,
-            _session_changes=session_changes,
+            session_changes=session_changes,
             effective_entity_labels=effective_labels,
         )
 

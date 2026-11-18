@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import json
 import threading
+from collections import Counter
 from collections.abc import Generator, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -114,12 +115,13 @@ class Decision:
 @dataclass(frozen=True)
 class SessionChanges:
     """Content-free counts of one invocation's acceptance: new slots, equal re-emissions, revisions, and decisions
-    that differ from a retained assignment without superseding it (kept, not applied)."""
+    that differ from a retained assignment without superseding it (kept, not applied); ``fallbacks`` of ``accepted``."""
 
     accepted: int = 0
     reused: int = 0
     revised: int = 0
     ignored: int = 0
+    fallbacks: int = 0
 
 
 @dataclass(frozen=True)
@@ -274,6 +276,17 @@ class Session:
         return self._mode
 
     @property
+    def size(self) -> int:
+        """Assignments held; fallback slots are left out."""
+        return sum(slot[0] is not FALLBACK for slot in list(self._slots))  # one-step copy: safe during protect
+
+    def label_counts(self) -> dict[str, int]:
+        """Assignments held per label, sorted by label; fallback slots are left out."""
+        with self._hold():
+            counts = Counter(slot[1] for slot in self._slots if slot[0] is not FALLBACK)
+        return dict(sorted(counts.items()))
+
+    @property
     def revision(self) -> int:
         """A high-water mark, not one step per call: a call that supersedes a slot it fixed advances it by more than
         one, and entries accepted in one call can carry different revisions."""
@@ -315,13 +328,14 @@ class Session:
         in this invocation or a later one, at a later revision than the one it replaces. Off/off retains nothing."""
         if not self._mode.stable_replacements:
             return SessionChanges()
-        accepted = reused = revised = ignored = 0
+        accepted = reused = revised = ignored = fallbacks = 0
         revision = self._revision + 1
         for d, by in decisions:
             current = self._slots.get(d.slot)
             if current is None:
                 self._slots[d.slot] = _Entry(d.value, revision, by)
                 accepted += 1
+                fallbacks += d.slot[0] is FALLBACK
             elif current.assignment == d.value:
                 reused += 1
             elif d.supersedes:
@@ -333,7 +347,7 @@ class Session:
                 ignored += 1
         if accepted or revised:
             self._revision = revision
-        return SessionChanges(accepted, reused, revised, ignored)
+        return SessionChanges(accepted, reused, revised, ignored, fallbacks)
 
 
 SESSION_VIEW = register_kind("session-view", lambda v: isinstance(v, SessionView))

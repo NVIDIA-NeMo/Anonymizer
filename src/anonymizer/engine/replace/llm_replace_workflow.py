@@ -8,7 +8,7 @@ import logging
 import re
 from collections import Counter
 from collections.abc import Container
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import pandas as pd
@@ -53,6 +53,7 @@ class LlmReplaceResult:
     failed_records: list[FailedRecord]
     source_positions: tuple[int, ...] | None = None
     decisions: tuple[tuple[Decision, ...], ...] = ()  # per returned row, under a stable Session only
+    placeholder_counts: dict[str, int] = field(default_factory=dict)  # minted this call, by cause
 
 
 class LlmReplaceWorkflow:
@@ -151,8 +152,11 @@ class LlmReplaceWorkflow:
             fields["entry_count"] = sum(len(m.get("replacements", [])) for m in maps)
             fields["records_with_placeholder"] = tally.pop(("records_with_placeholder",), 0)
             fallbacks: dict[str, dict[str, int]] = {}
+            placeholder_counts: Counter[str] = Counter()
             for (label, step), n in sorted(tally.items()):
                 fallbacks.setdefault(label, {})[step] = n
+                if step.startswith("placeholder_"):
+                    placeholder_counts[step.removeprefix("placeholder_")] += n
             fields["fallback_counts"] = fallbacks
         combined[COL_REPLACEMENT_MAP] = maps
         return LlmReplaceResult(
@@ -160,6 +164,7 @@ class LlmReplaceWorkflow:
             failed_records=run_result.failed_records,
             source_positions=positions,
             decisions=tuple(decisions),
+            placeholder_counts=dict(placeholder_counts),
         )
 
 
@@ -201,7 +206,8 @@ def _fold_replacement_maps(
     placeholder.
 
     When given, ``tally`` counts each fallback as ``(label, step)`` with step ``own``, ``placeholder_taken``
-    (``"run"`` only) or ``placeholder_protected`` (its own proposal folds to a value in its record), plus
+    (``"run"`` only: another key emitted it), ``placeholder_session`` (only the Session's view rules it out) or
+    ``placeholder_protected`` (its own proposal folds to a value in its record), plus
     ``("records_with_placeholder",)``.
 
     With a stable Session's ``view`` (``"run"`` mode only), a key the run has not mapped yet takes the Session's
@@ -257,8 +263,9 @@ def _fold_replacement_maps(
                 synthetic = entry["synthetic"]
                 value = _fold(synthetic)
                 if value in originals if consistency == "record" else collides(value, key, shared=False):
-                    in_record = value in originals
-                    step = "placeholder_protected" if in_record else "placeholder_taken"
+                    rival = (emitted.get(value, set()) | taken.get(value, set())) - {key}
+                    cause = "protected" if value in originals else "taken" if rival else "session"
+                    step = f"placeholder_{cause}"
                     placeholders[entry["label"]] += 1
                     used += 1
                     protected: tuple[Container[str], ...] = (originals, proposed, emitted, taken)

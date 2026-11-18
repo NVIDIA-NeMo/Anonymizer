@@ -7,6 +7,7 @@ Redact, Annotate and Hash leave the Session unchanged; Rewrite and overriding ru
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import logging
 import re
@@ -49,6 +50,7 @@ from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWor
 from anonymizer.graph import SessionSnapshot
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import InvalidConfigError
+from anonymizer.interface.results import Replacement, SessionCallChanges
 from tests.engine import test_replace_detect_failures as rejected
 
 LABELS = {"Alice": "first_name", "ALICE": "first_name", "Bob": "first_name", "Carol": "first_name"}
@@ -92,13 +94,14 @@ def _protect(
     texts: list[str],
     proposals: dict[str, str],
     session: Session | None = _UNSET,
-    results: list[SessionChanges | None] | None = None,
+    results: list[Any] | None = None,
     rejecting: bool = False,
     trace: bool = False,
     preview: bool = False,
     strategy: ReplaceMethod | None = None,
     anonymizer: Anonymizer | None = None,
     detector: Any = None,
+    kept: list[Any] | None = None,
 ) -> pd.DataFrame:
     """One ``Anonymizer.run`` (or ``preview``) with Substitute (or ``strategy``), passing ``session`` unless unset and
     keeping the result's session changes in ``results``; the model proposes ``proposals[value]`` for each value."""
@@ -128,7 +131,9 @@ def _protect(
     with patch.object(NddAdapter, "run_workflow", run_workflow):
         result = call(config=config, data=AnonymizerInput(source=str(source)), **keyword)
     if results is not None:
-        results.append(result._session_changes)
+        results.append(result.session_changes)
+    if kept is not None:
+        kept.append(result)
     return result.trace_dataframe if trace else result.dataframe
 
 
@@ -149,7 +154,7 @@ def test_a_stable_session_reuses_substitutes_across_calls(tmp_path: Path, previe
     assert list(first["text_replaced"]) == ["Bob lives in Lyon."]
     # The retained substitutes win over the new proposals, re-cased against the normalized original.
     assert list(second["text_replaced"]) == ["BOB met Dana in Lyon."]
-    assert results == [SessionChanges(accepted=2), SessionChanges(accepted=1, reused=2)]
+    assert results == [SessionCallChanges(added=2), SessionCallChanges(added=1, reused=2)]
     assert _slots(session) == {
         ("first_name", "alice"): "Bob",
         ("city", "paris"): "Lyon",
@@ -170,7 +175,7 @@ def test_without_a_stable_session_nothing_changes(tmp_path: Path, session: Sessi
     for a, b in zip(plain, with_session):
         pd.testing.assert_frame_equal(a, b)
     assert list(with_session[1]["text_replaced"]) == ["Zed met Dana in Nice.", "Dana saw Zed."]
-    assert results == [SessionChanges(), SessionChanges()]
+    assert results == [None, None]
     assert session is None or session.revision == 0
 
 
@@ -206,7 +211,8 @@ def test_a_record_local_placeholder_is_not_reused_in_a_later_call(tmp_path: Path
     assert _slots(session, "substitute-fallback") == {
         ("first_name", "[substitute_first_name_1]"): "[substitute_first_name_1]"
     }
-    assert results == [SessionChanges(accepted=3), SessionChanges(accepted=1)]
+    protected = SessionCallChanges(added=1, placeholders_protected=1)
+    assert results == [SessionCallChanges(added=2, fallbacks=1, placeholders_protected=1), protected]
 
 
 def test_a_record_local_fallback_is_given_to_no_value_in_a_later_call(tmp_path: Path) -> None:
@@ -232,10 +238,11 @@ def test_a_record_local_fallback_is_given_to_no_value_in_a_later_call(tmp_path: 
         ("first_name", "zed"),
         ("first_name", "[substitute_first_name_2]"),
     }
-    # Call 2 accepts Bob's slot and the Zed marker; call 3 Carol's slot and the placeholder marker.
+    # Call 2 adds Bob's slot and the Zed marker; call 3 Carol's slot and the placeholder marker. Only the Session
+    # rules Zed out in call 3, so both placeholders count under that cause.
     assert results[1:] == [
-        SessionChanges(accepted=2, reused=1),
-        SessionChanges(accepted=2, reused=2),
+        SessionCallChanges(added=1, reused=1, fallbacks=1),
+        SessionCallChanges(added=1, reused=2, fallbacks=1, placeholders_session=2),
     ]
     # A real Zed, whose original is the marker's substitute, gets an assignment of its own, never the marker's.
     fourth = _protect(tmp_path, ["Zed is here."], {"Zed": "Yuri"}, session, results)
@@ -250,7 +257,7 @@ def test_one_value_on_several_rows_of_a_call_is_decided_once(tmp_path: Path) -> 
     first = _protect(tmp_path, texts, {"Alice": "Bob"}, session, results)
     second = _protect(tmp_path, texts, {"Alice": "Zed"}, session, results)
     assert list(first["text_replaced"]) == list(second["text_replaced"]) == ["Bob one.", "Bob two.", "Bob three."]
-    assert results == [SessionChanges(accepted=1), SessionChanges(reused=1)]
+    assert results == [SessionCallChanges(added=1), SessionCallChanges(reused=1)]
 
 
 def test_a_substitute_equal_to_an_earlier_original_is_rejected(tmp_path: Path) -> None:
@@ -275,7 +282,7 @@ def test_a_row_rejected_at_detect_contributes_nothing_to_the_session(tmp_path: P
     texts = [rejected.REJECTED, rejected.VALID]
     output = _protect(tmp_path, texts, proposals, session, results, rejecting=True)
     assert list(output["text_replaced"]) == ["Dave lives in Nice."]
-    assert results == [SessionChanges(accepted=2)]
+    assert results == [SessionCallChanges(added=2)]
     # Only the valid row's slots, and Paris holds the valid row's substitute, not the rejected row's.
     assert _slots(session) == {("first_name", "bob"): "Dave", ("city", "paris"): "Nice"}
     # A later call reuses the valid row's substitute.
@@ -321,7 +328,7 @@ def test_a_local_strategy_leaves_a_stable_session_unchanged(tmp_path: Path, stra
     plain = _protect(tmp_path, texts, {}, strategy=strategy, trace=True)
     with_session = _protect(tmp_path, texts, {}, session, results, strategy=strategy, trace=True)
     pd.testing.assert_frame_equal(plain, with_session)
-    assert results[1] == SessionChanges()
+    assert results[1] == SessionCallChanges()
     assert session.snapshot().to_bytes() == before
 
 
@@ -415,8 +422,10 @@ def test_a_stock_runner_with_its_own_llm_workflow_takes_a_stable_session(
     with caplog.at_level(logging.INFO, logger="anonymizer"):
         second = _protect(tmp_path, ["Alice again."], {"Alice": "Zed"}, session, results, anonymizer=anonymizer)
     assert list(second["text_replaced"]) == ["Bob again."]
-    assert results == [SessionChanges(accepted=1), SessionChanges(reused=1)]
-    assert "session changes: 0 accepted, 1 reused, 0 revised, 0 ignored" in caplog.text
+    assert results == [SessionCallChanges(added=1), SessionCallChanges(reused=1)]
+    assert (
+        "session changes: 0 added, 1 reused, 0 revised, 0 ignored, 0 fallbacks, 0 placeholders_protected" in caplog.text
+    )
 
 
 @pytest.mark.parametrize("combined", [False, True], ids=["rewrite", "combined"])
@@ -433,7 +442,7 @@ def test_an_overriding_rewrite_runner_runs_as_before_with_an_off_session(tmp_pat
     with_session = anonymizer.run(config=config, data=data, session=Session())
     pd.testing.assert_frame_equal(plain.trace_dataframe, with_session.trace_dataframe)
     assert list(with_session.dataframe["text_rewritten"]) == ["custom"]
-    assert with_session._session_changes is None
+    assert with_session.session_changes is None
 
 
 class _Unresolved(_Detector):
@@ -452,7 +461,7 @@ def test_the_reroute_takes_a_stable_session(tmp_path: Path) -> None:
     first = _protect(tmp_path, texts, proposals, session, results, detector=_Unresolved())
     second = _protect(tmp_path, texts, {"Alice": "Zed", "Paris": "Nice"}, session, results, detector=_Unresolved())
     assert list(first["text_replaced"]) == list(second["text_replaced"]) == ["Bob lives in Lyon."]
-    assert results == [SessionChanges(accepted=2), SessionChanges(reused=2)]
+    assert results == [SessionCallChanges(added=2), SessionCallChanges(reused=2)]
 
 
 class _OldSignature(ReplacementWorkflow):
@@ -527,3 +536,27 @@ def test_is_placeholder_accepts_exactly_the_minted_tokens() -> None:
             assert _is_placeholder(token), token
     for value in ("[SUBSTITUTE_X_01]", "[SUBSTITUTE_A_0]", "[SUBSTITUTE_First_1]", "[REDACTED_FIRST_NAME]"):
         assert not _is_placeholder(value), value
+
+
+@pytest.mark.parametrize("preview", [False, True], ids=["run", "preview"])
+def test_the_result_reads_each_rows_replacement_map(tmp_path: Path, preview: bool) -> None:
+    """Each entry says whether its substitute is a placeholder, also after the trace goes through parquet."""
+    session, kept = Session(stable_replacements=True), []
+    texts = ["Alice and Carol.", "Paris."]
+    _protect(tmp_path, texts, {"Alice": "Bob", "Carol": "Bob", "Paris": "Lyon"}, session, preview=preview, kept=kept)
+    result = kept[0]
+    assert result.session_changes == SessionCallChanges(added=3, placeholders_taken=1)
+    expected = (
+        Replacement("Alice", "first_name", "Bob", False),
+        Replacement("Carol", "first_name", "[SUBSTITUTE_FIRST_NAME_1]", True),
+    )
+    assert result.replacement_map(0) == expected
+    assert result.replacement_map(1) == (Replacement("Paris", "city", "Lyon", False),)
+    with pytest.raises(IndexError):
+        result.replacement_map(2)
+    path = tmp_path / "trace.parquet"
+    result.trace_dataframe[[COL_REPLACEMENT_MAP]].to_parquet(path)
+    reloaded = dataclasses.replace(result, trace_dataframe=pd.read_parquet(path))
+    assert reloaded.replacement_map(0) == expected
+    no_map = dataclasses.replace(result, trace_dataframe=result.trace_dataframe.drop(columns=[COL_REPLACEMENT_MAP]))
+    assert no_map.replacement_map(0) == ()

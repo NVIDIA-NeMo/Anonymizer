@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 import anonymizer.graph as graph
-from anonymizer.engine.graph_core.session import SessionChanges
+from anonymizer.engine.graph_core.session import BY_VALUE, FALLBACK, SessionChanges
 
 ORIGINAL = "Alice"
 SLOT = (graph.SubjectKey("subject-alice"), "first_name", "alice")
@@ -350,7 +350,13 @@ def test_an_ignored_decision_is_visible_only_as_a_count() -> None:
     p = prepared(emit(lambda i: (graph.Decision(SLOT, f"V{i}"),)), texts=("0", "1"), session=session)
     result = graph.protect(p, session=session)
     assert result.session_changes == changes(1, 0, 0, 1)
-    assert [f.name for f in dataclasses.fields(result.session_changes)] == ["accepted", "reused", "revised", "ignored"]
+    assert [f.name for f in dataclasses.fields(result.session_changes)] == [
+        "accepted",
+        "reused",
+        "revised",
+        "ignored",
+        "fallbacks",
+    ]
     assert b"V1" not in session.snapshot().to_bytes() and b"V0" in session.snapshot().to_bytes()
     assert "V1" not in repr(result) + repr(session) + repr(session.snapshot())
     assert result.value(result.targets[1], "decisions") == (graph.Decision(SLOT, "V1"),)
@@ -440,3 +446,33 @@ def test_a_supersede_in_the_same_call_takes_a_later_revision() -> None:
     (entry,) = json.loads(session.snapshot().to_bytes())["slots"]
     assert (entry["assignment"], entry["revision"]) == ("V1", 2)
     assert entry["superseded"] == [{"assignment": "V0", "revision": 1, "by": "emit"}]
+
+
+def test_fallback_slots_are_counted_apart_and_left_out_of_size_and_label_counts() -> None:
+    """A new fallback slot counts in ``accepted`` and in ``fallbacks``; ``size`` and ``label_counts`` skip it."""
+    session = graph.Session(stable_replacements=True)
+    assert session.size == 0 and session.label_counts() == {} and bool(session)
+    decisions = (
+        graph.Decision((BY_VALUE, "first_name", "alice"), "Bob"),
+        graph.Decision((BY_VALUE, "city", "paris"), "Lyon"),
+        graph.Decision((BY_VALUE, "first_name", "carol"), "Dana"),
+        graph.Decision((FALLBACK, "first_name", "zed"), "zed"),
+    )
+    result = graph.protect(prepared(emit(lambda i: decisions), texts=("0",), session=session), session=session)
+    assert result.session_changes == SessionChanges(accepted=4, fallbacks=1)
+    assert session.size == 3
+    assert session.label_counts() == {"city": 1, "first_name": 2}
+    assert list(session.label_counts()) == ["city", "first_name"]
+
+
+def test_label_counts_is_busy_during_protect_and_size_still_reads() -> None:
+    session = graph.Session(stable_replacements=True)
+    seen: list[Any] = []
+
+    def during(i: int) -> tuple[graph.Decision, ...]:
+        seen.append(session.size)
+        seen.append(rejection(session.label_counts))
+        return (graph.Decision(SLOT, "Bob"),)
+
+    graph.protect(prepared(emit(during), texts=("0",), session=session), session=session)
+    assert seen == [0, "session_busy"]

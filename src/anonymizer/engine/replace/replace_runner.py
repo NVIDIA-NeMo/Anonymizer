@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import cast
 
 import pandas as pd
@@ -55,6 +55,7 @@ class ReplacementResult:
     detection_elapsed: float = 0.0
     outcomes: tuple[TargetOutcome, ...] | None = None  # one per output row, when the rows ran as one invocation
     session_changes: SessionChanges = SessionChanges()
+    placeholder_counts: dict[str, int] = field(default_factory=dict)  # Substitute placeholders minted, by cause
 
 
 def _drop_malformed_entities(dataframe: pd.DataFrame) -> tuple[pd.DataFrame, list[FailedRecord]]:
@@ -112,7 +113,7 @@ class ReplacementWorkflow:
         with stage_timer("ReplacementWorkflow.run", strategy=strategy, input_row_count=len(dataframe)) as measurement:
             logger.debug("replacement starting on %d records", len(dataframe))
             dataframe, failed_records = _drop_malformed_entities(dataframe)
-            changes = SessionChanges()
+            changes, placeholders = SessionChanges(), {}
             if isinstance(replace_method, (Annotate, Redact, Hash)):
                 local_df = apply_local_replace_strategy(dataframe, strategy=replace_method)
             elif isinstance(replace_method, Substitute):
@@ -132,11 +133,14 @@ class ReplacementWorkflow:
                     session=session,
                 )
                 local_df, changes = substituted.dataframe, substituted.session_changes
+                placeholders = substituted.placeholder_counts
                 failed_records.extend(substituted.failed_records)
             else:
                 raise ValueError(f"Unsupported replace method: {type(replace_method).__name__}")
 
-            result = ReplacementResult(dataframe=local_df, failed_records=failed_records, session_changes=changes)
+            result = ReplacementResult(
+                local_df, failed_records, session_changes=changes, placeholder_counts=placeholders
+            )
             measurement.update(
                 output_row_count=len(result.dataframe),
                 failed_record_count=len(result.failed_records),

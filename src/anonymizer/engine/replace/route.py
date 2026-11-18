@@ -21,6 +21,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import time
+from collections import Counter
 from collections.abc import Callable, Sequence
 from itertools import repeat
 from typing import Any
@@ -115,8 +116,9 @@ def run_substitute_route(
 ) -> ReplacementResult:
     """Run Substitute as one invocation: the whole-frame LLM map step, then ``replace`` and the verifier per row."""
     failures: list[FailedRecord] = []
+    placeholders: Counter[str] = Counter()
     map_step = _substitute_map_step(
-        llm_workflow, replace_method, map_arguments, failures, lambda target: (dataframe, target)
+        llm_workflow, replace_method, map_arguments, failures, lambda target: (dataframe, target), placeholders
     )
     graph = _lower(dataframe, COL_TEXT, COL_FINAL_ENTITIES)
     result = _protect_rows(graph, "substitute", None, False, map_step, session=session)
@@ -127,7 +129,9 @@ def run_substitute_route(
     output_df[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
     output_df[COL_REPLACED_TEXT] = [result.value(d) for d in targets]
     output_df[COL_REPLACEMENT_APPLICATION] = [result.value(d, "application") for d in targets]
-    return ReplacementResult(dataframe=output_df, failed_records=failures, session_changes=result.session_changes)
+    return ReplacementResult(
+        output_df, failures, session_changes=result.session_changes, placeholder_counts=dict(placeholders)
+    )
 
 
 def _substitute_map_step(
@@ -136,6 +140,7 @@ def _substitute_map_step(
     map_arguments: dict[str, Any],
     failures: list[FailedRecord],
     frame: Callable[[tuple[Datum, ...]], tuple[pd.DataFrame, Sequence[Datum]]],
+    placeholders: Counter[str],
 ) -> Operation:
     """One ``generate_map_only`` call over ``frame(target)``'s frame and the target each of its rows belongs to.
 
@@ -151,6 +156,7 @@ def _substitute_map_step(
             **map_arguments,
         )
         failures.extend(result.failed_records)
+        placeholders.update(result.placeholder_counts)
         positions = resolve_source_positions(source, result.dataframe, result.source_positions)
         maps = (
             result.dataframe[COL_REPLACEMENT_MAP]
@@ -197,6 +203,7 @@ def run_replace_pipeline(
     state = DetectState()
     failures, detected, owners, elapsed = state.failures, state.detected, state.owners, state.elapsed
     malformed: list[FailedRecord] = []
+    placeholders: Counter[str] = Counter()
 
     def detect_replaceable(frame: pd.DataFrame) -> EntityDetectionResult:
         """``detect``, less the rows whose entity payload is malformed; those fail at ``replace``."""
@@ -220,6 +227,7 @@ def run_replace_pipeline(
             map_arguments,
             failures,
             lambda target: _ready_rows(detected[0].dataframe, owners, target),
+            placeholders,
         )
     else:
 
@@ -273,7 +281,9 @@ def run_replace_pipeline(
         failed_record_count=len(failures) - len(detected[0].failed_records),
     )
     outcomes = tuple(result.outcome(d) for d in targets)
-    return ReplacementResult(output_df, failures, detected[0], elapsed[0], outcomes, result.session_changes)
+    return ReplacementResult(
+        output_df, failures, detected[0], elapsed[0], outcomes, result.session_changes, dict(placeholders)
+    )
 
 
 def _ready_rows(

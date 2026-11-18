@@ -107,7 +107,11 @@ class StageMeasurement(_MeasurementEnvelope):
     entry_count: NonNegativeInt | None = None
     records_with_placeholder: NonNegativeInt | None = None
     fallback_counts: (
-        dict[StrictStr, dict[Literal["own", "placeholder_taken", "placeholder_protected"], NonNegativeInt]] | None
+        dict[
+            StrictStr,
+            dict[Literal["own", "placeholder_taken", "placeholder_protected", "placeholder_session"], NonNegativeInt],
+        ]
+        | None
     ) = None
 
 

@@ -15,6 +15,7 @@ from data_designer.config.models import ModelConfig
 
 from anonymizer.config.models import ReplaceModelSelection
 from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_REPLACEMENT_MAP, COL_TEXT
+from anonymizer.engine.graph_core.session import BY_VALUE, SessionMode, SessionView
 from anonymizer.engine.ndd.adapter import WorkflowRunResult
 from anonymizer.engine.replace.llm_replace_workflow import (
     _INTERNAL_COLUMNS,
@@ -646,3 +647,21 @@ def test_generate_map_only_records_fold_when_no_row_has_entities(
         "records_with_placeholder": 0,
     }
     assert stage["fallback_counts"] == {}
+
+
+def test_the_fold_counts_each_placeholder_cause() -> None:
+    """Alice's proposal is her own original, Carol's is the substitute Bob took, and Dave's is free in the call but
+    held by another value in the Session: one placeholder each, under its own cause."""
+    from collections import Counter
+
+    from anonymizer.engine.replace.llm_replace_workflow import _fold_replacement_maps
+
+    maps = _maps(
+        [("first_name", "Alice", "Alice"), ("first_name", "Bob", "Maya")],
+        [("first_name", "Carol", "Maya"), ("first_name", "Dave", "Zed")],
+    )
+    view = SessionView(SessionMode(True, False), 1, {(BY_VALUE, "first_name", "eve"): "Zed"})
+    tally: Counter[tuple[str, ...]] = Counter()
+    _fold_replacement_maps(maps, "run", None, tally, view, [])
+    placeholders = {key[-1]: n for key, n in tally.items() if key[-1].startswith("placeholder_")}
+    assert placeholders == {"placeholder_protected": 1, "placeholder_taken": 1, "placeholder_session": 1}
