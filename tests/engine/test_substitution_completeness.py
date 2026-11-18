@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from unittest.mock import Mock
 
@@ -18,6 +19,7 @@ from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
     COL_REPLACED_TEXT,
     COL_REPLACEMENT_MAP,
+    COL_REPLACEMENT_RETRY_CONTEXT,
     COL_TAGGED_TEXT,
     COL_TEXT,
 )
@@ -376,3 +378,139 @@ def test_preview_retries_only_records_in_the_requested_entity_sample(
     assert all(frame[RECORD_ID_COLUMN].tolist() == ["partial"] for frame in calls)
     assert result.dataframe[RECORD_ID_COLUMN].tolist() == ["partial", "empty"]
     assert result.failed_records == []
+
+
+@pytest.mark.parametrize(
+    ("first_round", "retry", "expected"),
+    [
+        pytest.param(
+            [("Paris", "Lyon"), ("Lyon", "Nantes")],
+            [("Berlin", "Lyon")],
+            {"Paris": "[SUBSTITUTE_CITY_1]", "Lyon": "Nantes", "Berlin": "[SUBSTITUTE_CITY_2]"},
+            id="collision-on-both-attempts",
+        ),
+        pytest.param(
+            [("Paris", "[SUBSTITUTE_CITY_1]")],
+            [("Berlin", "Berlin")],
+            {"Paris": "[SUBSTITUTE_CITY_1]", "Berlin": "[SUBSTITUTE_CITY_2]"},
+            id="accepted-model-placeholder",
+        ),
+        pytest.param(
+            [("Paris", "[SUBSTITUTE_CITY_1]")],
+            [("Berlin", "Berlin"), ("Rome", "Rome")],
+            {"Paris": "[SUBSTITUTE_CITY_1]", "Berlin": "[SUBSTITUTE_CITY_2]", "Rome": "[SUBSTITUTE_CITY_3]"},
+            id="multiple-retry-placeholders",
+        ),
+        pytest.param(
+            [("Paris", "[SUBSTITUTE_CITY_1]")],
+            [("Berlin", "Berlin"), ("Rome", "[SUBSTITUTE_CITY_2]")],
+            {"Paris": "[SUBSTITUTE_CITY_1]", "Berlin": "[SUBSTITUTE_CITY_3]", "Rome": "[SUBSTITUTE_CITY_2]"},
+            id="later-model-placeholder-in-retry",
+        ),
+        pytest.param(
+            [("Paris", "[SUBSTITUTE_CITY_1]"), ("[SUBSTITUTE_CITY_2]", "Nantes")],
+            [("Berlin", "Berlin"), ("Rome", "Rome")],
+            {
+                "Paris": "[SUBSTITUTE_CITY_1]",
+                "[SUBSTITUTE_CITY_2]": "Nantes",
+                "Berlin": "[SUBSTITUTE_CITY_3]",
+                "Rome": "[SUBSTITUTE_CITY_4]",
+            },
+            id="original-and-accepted-placeholder-skip-chain",
+        ),
+    ],
+)
+def test_retry_collision_fallbacks_avoid_occupied_values_and_preserve_accepted_mappings(
+    first_round: list[tuple[str, str]],
+    retry: list[tuple[str, str]],
+    expected: dict[str, str],
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    source = pd.DataFrame(
+        {
+            RECORD_ID_COLUMN: ["cities"],
+            COL_ENTITIES_BY_VALUE: [
+                {"entities_by_value": [{"value": value, "labels": ["city"]} for value in expected]}
+            ],
+        }
+    )
+    calls: list[pd.DataFrame] = []
+
+    def generate(frame: pd.DataFrame, **_: object) -> WorkflowRunResult:
+        calls.append(frame.copy())
+        output = frame.copy()
+        output[COL_REPLACEMENT_MAP] = [
+            {
+                "replacements": [
+                    {"original": original, "label": "city", "synthetic": synthetic}
+                    for original, synthetic in (first_round if len(calls) == 1 else retry)
+                ]
+            }
+        ]
+        return WorkflowRunResult(dataframe=output, failed_records=[])
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = generate
+    result = LlmReplaceWorkflow(adapter=adapter).generate_validated_maps(
+        source,
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+
+    assert len(calls) == 2
+    assert result.failed_records == []
+    replacements = result.dataframe[COL_REPLACEMENT_MAP].iloc[0]["replacements"]
+    assert {entry["original"]: entry["synthetic"] for entry in replacements} == expected
+    assert len({entry["synthetic"] for entry in replacements}) == len(replacements)
+    accepted = json.loads(calls[1][COL_REPLACEMENT_RETRY_CONTEXT].iloc[0])["replacements"]
+    assert {entry["original"]: entry["synthetic"] for entry in accepted} == {
+        original: expected[original] for original, _ in first_round
+    }
+
+
+def test_retry_preserves_shared_non_original_substitutions(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    source = pd.DataFrame(
+        {
+            RECORD_ID_COLUMN: ["cities"],
+            COL_ENTITIES_BY_VALUE: [
+                {
+                    "entities_by_value": [
+                        {"value": "Paris", "labels": ["city"]},
+                        {"value": "Berlin", "labels": ["city"]},
+                    ]
+                }
+            ],
+        }
+    )
+    calls: list[pd.DataFrame] = []
+
+    def generate(frame: pd.DataFrame, **_: object) -> WorkflowRunResult:
+        calls.append(frame.copy())
+        output = frame.copy()
+        output[COL_REPLACEMENT_MAP] = [
+            {
+                "replacements": [
+                    {"original": "Paris" if len(calls) == 1 else "Berlin", "label": "city", "synthetic": "Lyon"}
+                ]
+            }
+        ]
+        return WorkflowRunResult(dataframe=output, failed_records=[])
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = generate
+    result = LlmReplaceWorkflow(adapter=adapter).generate_validated_maps(
+        source,
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+
+    assert len(calls) == 2
+    assert result.failed_records == []
+    assert result.dataframe[COL_REPLACEMENT_MAP].iloc[0]["replacements"] == [
+        {"original": "Paris", "label": "city", "synthetic": "Lyon"},
+        {"original": "Berlin", "label": "city", "synthetic": "Lyon"},
+    ]

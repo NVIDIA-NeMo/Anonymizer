@@ -134,6 +134,9 @@ class LlmReplaceWorkflow:
                     parsed_entities=expected[position],
                     record_id=str(source[RECORD_ID_COLUMN].iloc[position]),
                     reconcile_unicode_whitespace=True,
+                    occupied_values={entry["synthetic"] for entry in accepted[position]["replacements"]}
+                    if attempt
+                    else None,
                 )
                 additions = [
                     entry
@@ -313,12 +316,15 @@ def _filter_replacement_map_to_input_entities(
     parsed_entities: EntitiesByValueSchema,
     record_id: str = "",
     reconcile_unicode_whitespace: bool = False,
+    occupied_values: set[str] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
     """Keep requested entries, optionally reconciling unambiguous Unicode spaces.
 
     Exact entries take precedence. Reconciliation compares the original under
     the same exact label against the full requested inventory, then restores
     the trusted original. Ambiguous or otherwise changed originals are dropped.
+    When supplied, occupied values are reserved for fallback allocation only;
+    repeated valid synthetic proposals remain allowed.
     """
     if isinstance(raw_map, BaseModel):
         raw_map = raw_map.model_dump(mode="python")
@@ -339,6 +345,15 @@ def _filter_replacement_map_to_input_entities(
         if entity.value and label
     }
     folded_protected_values = {_fold(value) for value, _ in allowed_pairs}
+    folded_fallback_values = folded_protected_values
+    if occupied_values is not None:
+        # Reserve proposals up front so a fallback cannot take a token returned
+        # later in the same retry response.
+        folded_fallback_values = (
+            folded_protected_values
+            | {_fold(value) for value in occupied_values}
+            | {_fold(entry.synthetic) for entry in parsed_map.replacements}
+        )
     exact_pairs = {(entry.original, entry.label) for entry in parsed_map.replacements} & allowed_pairs
     equivalent_pairs: dict[tuple[str, str], set[tuple[str, str]]] = {}
     if reconcile_unicode_whitespace:
@@ -366,16 +381,19 @@ def _filter_replacement_map_to_input_entities(
             reconciled_labels[replacement.label] += 1
         if _fold(replacement.synthetic) in folded_protected_values:
             synthetic_collision_labels[replacement.label] += 1
+            synthetic = _collision_safe_synthetic(
+                replacement.label,
+                index=synthetic_collision_labels[replacement.label],
+                folded_protected_values=folded_fallback_values,
+            )
+            if occupied_values is not None:
+                folded_fallback_values.add(_fold(synthetic))
             seen.add(key)
             filtered.append(
                 {
                     "original": replacement.original,
                     "label": replacement.label,
-                    "synthetic": _collision_safe_synthetic(
-                        replacement.label,
-                        index=synthetic_collision_labels[replacement.label],
-                        folded_protected_values=folded_protected_values,
-                    ),
+                    "synthetic": synthetic,
                 }
             )
             continue
