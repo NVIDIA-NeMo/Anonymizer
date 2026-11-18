@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#MISE description="Validate Fern version alignment, configuration, internal links, and MDX."
+
+#MISE depends=["docs:fern:notebooks"]
+
+set -euo pipefail
+
+REPO_ROOT="${MISE_CONFIG_ROOT:-$(git rev-parse --show-toplevel)}"
+pinned_version="$(yq -p toml -o json -r '.tools."npm:fern-api"' "${REPO_ROOT}/.mise.toml")"
+configured_version="$(jq -r '.version' "${REPO_ROOT}/docs/fern/fern.config.json")"
+if [[ "${pinned_version}" != "${configured_version}" ]]; then
+  echo "Fern version mismatch: mise pins ${pinned_version}, fern.config.json selects ${configured_version}." >&2
+  exit 1
+fi
+
+cd "${REPO_ROOT}/docs/fern"
+# Local validation needs no publishing token. Avoid passing an inherited token
+# to the check process; only the hosted preview task needs it.
+unset FERN_TOKEN
+# Fern can report MDX parse failures with exit code zero. Keep a temporary copy
+# for the guard while streaming output normally; no persistent logs or artifacts.
+check_log="$(mktemp)"
+trap 'rm -f "${check_log}"' EXIT
+fern check --local --warnings --strict-broken-links 2>&1 | tee "${check_log}"
+if grep -q 'Markdown failed to parse' "${check_log}"; then
+  echo "Fern reported an MDX parse failure." >&2
+  exit 1
+fi

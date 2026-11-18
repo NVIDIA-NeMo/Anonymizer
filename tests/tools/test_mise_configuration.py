@@ -232,6 +232,7 @@ def test_mise_uses_native_task_composition() -> None:
 
     assert set(quality_tasks["check"]["depends"]) == {
         "check:format",
+        "check:docs:pairs",
         "check:license:headers",
         "check:lint",
         "check:lock",
