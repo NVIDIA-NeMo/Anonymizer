@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Base class for LLM-as-judge workflows.
@@ -27,6 +27,7 @@ from data_designer.config.models import ModelConfig
 from pydantic import BaseModel
 
 from anonymizer.config.models import EvaluateModelSelection
+from anonymizer.engine.constants import COL_REPLACEMENT_APPLICATION
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder
@@ -180,9 +181,10 @@ class _BaseJudgeWorkflow(ABC):
         selected_models: EvaluateModelSelection,
         preview_num_records: int | None = None,
     ) -> JudgeResult:
-        """Standalone single-judge entry point. The orchestrator in
-        ``ReplacementWorkflow`` does not go through this; tests and callers
-        that want to run one judge in isolation do.
+        """Run a single judge for ``RewriteWorkflow.evaluate()`` or isolated callers.
+
+        The orchestrator in ``ReplacementWorkflow`` runs combined judges
+        without going through this entry point.
         """
         working_df = self.prepare(dataframe)
         # `prepare()` returns a fresh copy (per its contract), so we can stamp
@@ -211,8 +213,11 @@ class _BaseJudgeWorkflow(ABC):
         effective_preview_num_records = (
             min(preview_num_records, len(with_content)) if preview_num_records is not None else None
         )
+        # Judges do not read replacement telemetry, whose all-empty nested
+        # skipped-label mappings cannot be written to DataDesigner's Parquet seed.
+        workflow_input = with_content.drop(columns=[COL_REPLACEMENT_APPLICATION], errors="ignore")
         run_result = self._adapter.run_workflow(
-            with_content,
+            workflow_input,
             model_configs=model_configs,
             columns=[self.column_config(selected_models)],
             workflow_name=self.WORKFLOW_NAME,
@@ -220,6 +225,14 @@ class _BaseJudgeWorkflow(ABC):
         )
 
         judged_df = run_result.dataframe.copy()
+        if COL_REPLACEMENT_APPLICATION in with_content.columns:
+            judged_df = judged_df.merge(
+                with_content[[ROW_ORDER_COL, COL_REPLACEMENT_APPLICATION]],
+                on=ROW_ORDER_COL,
+                how="left",
+                sort=False,
+                validate="one_to_one",
+            )
         flattened = judged_df[self.RAW_COL].apply(self._flatten_judgment)
         judged_df[self.VALID_COL] = flattened.apply(lambda pair: pair[0])
         judged_df[self.INVALID_COL] = flattened.apply(lambda pair: pair[1])
