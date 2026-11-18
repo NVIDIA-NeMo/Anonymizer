@@ -437,7 +437,6 @@ _SHARED_THREE_RUN = _maps(
     [("city", "Paris", "Lyon"), ("city", "Berlin", "[SUBSTITUTE_CITY_1]"), ("city", "Rome", "[SUBSTITUTE_CITY_2]")]
 )
 _SAME_VALUE_LABELS = _maps([("first_name", "Jordan", "Alex"), ("last_name", "Jordan", "Alex")])
-_SAME_VALUE_LABELS_RUN = _maps([("first_name", "Jordan", "Alex"), ("last_name", "Jordan", "[SUBSTITUTE_LAST_NAME_1]")])
 _REAL_VALUE = _maps([("city", "Paris", "London"), ("city", "London", "Berlin")])
 _REAL_VALUE_FOLDED = _maps([("city", "Paris", "[SUBSTITUTE_CITY_1]"), ("city", "London", "Berlin")])
 _SELF = _maps([("city", "Paris", "Paris")])
@@ -473,7 +472,7 @@ _RUN_VARIANT = _maps(
             (_SHARED, _SHARED, _SHARED_RUN),
             (_SHARED_LABELS, _SHARED_LABELS, _SHARED_LABELS_RUN),
             (_SHARED_THREE, _SHARED_THREE, _SHARED_THREE_RUN),
-            (_SAME_VALUE_LABELS, _SAME_VALUE_LABELS, _SAME_VALUE_LABELS_RUN),
+            (_SAME_VALUE_LABELS, _SAME_VALUE_LABELS, _SAME_VALUE_LABELS),
             (_REAL_VALUE, *[_REAL_VALUE_FOLDED] * 2),
             (_SELF, *[_SELF_FOLDED] * 2),
         ]
@@ -541,11 +540,11 @@ def test_fold_never_emits_a_colliding_substitute(consistency: Literal["record", 
             value = _fold(e["synthetic"])
             assert value not in originals, (raw, out)
             by_value.setdefault(value, set()).add((e["label"], _fold(e["original"])))
-        assert consistency == "record" or all(len(keys) == 1 for keys in by_value.values()), (raw, out)
+        assert consistency == "record" or all(len({k[1] for k in keys}) == 1 for keys in by_value.values()), (raw, out)
         for value, keys in by_value.items():
             run_wide.setdefault(value, set()).update(keys)
     if consistency == "run":
-        assert all(len(keys) == 1 for keys in run_wide.values()), run_wide
+        assert all(len({k[1] for k in keys}) == 1 for keys in run_wide.values()), run_wide
 
 
 _FALLBACKS = _maps(
@@ -646,3 +645,91 @@ def test_generate_map_only_records_fold_when_no_row_has_entities(
         "records_with_placeholder": 0,
     }
     assert stage["fallback_counts"] == {}
+
+
+# A value detected under two labels is shown to the model with its labels joined ("Jordan (first_name, last_name)").
+_TWO_LABEL_ENTITIES = {"entities_by_value": [{"value": "Jordan", "labels": ["first_name", "last_name"]}]}
+_FILLED = [
+    {"original": "Jordan", "label": "first_name", "synthetic": "Alex"},
+    {"original": "Jordan", "label": "last_name", "synthetic": "Alex"},
+]
+
+
+@pytest.mark.parametrize(
+    ("replacements", "expected"),
+    [
+        ([{"original": "Jordan", "label": "first_name, last_name", "synthetic": "Alex"}], _FILLED),
+        ([{"original": "jordan", "label": "person", "synthetic": "Alex"}], _FILLED),
+        ([{"original": "Jordan", "label": "first_name", "synthetic": "Alex"}], _FILLED),
+        (
+            [
+                {"original": "JORDAN", "label": "person", "synthetic": "Alex"},
+                {"original": "jordan", "label": "person", "synthetic": "Sam"},
+            ],
+            _FILLED,
+        ),
+        (
+            [
+                {"original": "Jordan", "label": "person", "synthetic": "Sam"},
+                {"original": "Jordan", "label": "last_name", "synthetic": "Alex"},
+                {"original": "Jordan", "label": "last_name", "synthetic": "Lee"},
+            ],
+            [_FILLED[1], _FILLED[0]],
+        ),
+        (
+            [
+                {"original": "Jordan", "label": "first_name", "synthetic": "Alex"},
+                {"original": "Jordan", "label": "last_name", "synthetic": "Reed"},
+            ],
+            [_FILLED[0], {**_FILLED[1], "synthetic": "Reed"}],
+        ),
+    ],
+    ids=[
+        "joined-label",
+        "folded-original",
+        "single-entry",
+        "first-folded-match",
+        "same-value-before-folded",
+        "exact-pair-wins",
+    ],
+)
+@pytest.mark.parametrize("consistency", ["record", "run"])
+def test_generate_map_only_fills_every_label_of_a_value(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+    consistency: Literal["record", "run"],
+    replacements: list[dict[str, str]],
+    expected: list[dict[str, str]],
+) -> None:
+    text = "Jordan Jordan"
+    adapter = Mock()
+    adapter.run_workflow.return_value = _positional(
+        dataframe=pd.DataFrame(
+            {
+                COL_TEXT: [text],
+                COL_ENTITIES_BY_VALUE: [_TWO_LABEL_ENTITIES],
+                "tagged_text": [text],
+                "_anonymizer_row_order": [0],
+                COL_REPLACEMENT_MAP: [{"replacements": replacements}],
+            }
+        ),
+        failed_records=[],
+    )
+    input_df = pd.DataFrame({COL_TEXT: [text], COL_ENTITIES_BY_VALUE: [_TWO_LABEL_ENTITIES], "tagged_text": [text]})
+    result = LlmReplaceWorkflow(adapter=adapter).generate_map_only(
+        input_df,
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+        consistency=consistency,
+    )
+    assert result.dataframe[COL_REPLACEMENT_MAP].tolist() == [{"replacements": expected}]
+
+
+def test_fold_record_mode_does_not_block_a_key_on_its_own_value() -> None:
+    maps = _maps([("last_name", "Jordan", "Alex"), ("first_name", "Jordan", "Alex"), ("first_name", "JORDAN", "Bob")])
+
+    assert [e["synthetic"] for e in _fold_replacement_maps(maps, "record")[0]["replacements"]] == [
+        "Alex",
+        "Alex",
+        "ALEX",
+    ]

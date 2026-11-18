@@ -179,11 +179,12 @@ def _fold_replacement_maps(
     one.
 
     In ``"run"`` mode the fallback also collides with a substitute another key emitted in the record, and a substitute
-    emitted for one key anywhere in the run collides for every other key, so two keys never share one; placeholders are
-    numbered across the run. A key holding a run-wide mapping ignores other keys' proposals, so its run-wide substitute
-    wins over them. When that substitute collides in a record and the key falls back, its fallback is checked like any
-    other key's: a key earlier in the record that already emitted the same value keeps it, and the holder moves on to a
-    placeholder.
+    emitted for one key anywhere in the run collides for every key of another value, so different values never
+    share one (one value under two labels may); placeholders are numbered across the run. A key holding a run-wide
+    mapping ignores other keys' proposals, so its run-wide substitute wins over them. When that substitute collides in a
+    record and the key falls back, its fallback is checked like any other key's: a key earlier in the record that
+    already emitted the same value keeps it, and the holder moves on to a placeholder. In both modes a key is never
+    blocked by another key for the same normalized value (one value under two labels).
 
     When given, ``tally`` counts each fallback as ``(label, step)`` with step ``own``, ``placeholder_taken``
     (``"run"`` only) or ``placeholder_protected`` (its own proposal folds to a value in its record), plus
@@ -204,7 +205,7 @@ def _fold_replacement_maps(
         def collides(value: str, key: tuple[str, str], *, shared: bool) -> bool:
             rivals = proposed.get(value, set()) if shared and key not in run_wide else set()
             others = rivals | emitted.get(value, set()) | taken.get(value, set())
-            return value in originals or bool(others - {key})
+            return value in originals or any(other[1] != key[1] for other in others)
 
         record: dict[tuple[str, str], tuple[str, str]] = {}
         placeholders: Counter[str] = run_placeholders if consistency == "run" else Counter()
@@ -295,13 +296,28 @@ def _filter_replacement_map_to_input_entities(
         if entity.value and label
     }
     filtered: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    exact: dict[tuple[str, str], str] = {}
     for replacement in parsed_map.replacements:
         key = (replacement.original, replacement.label)
-        if key not in allowed_pairs or key in seen:
+        if key not in allowed_pairs or key in exact:
             continue
-        seen.add(key)
+        exact[key] = replacement.synthetic
         filtered.append(replacement.model_dump())
+    by_folded: dict[str, str] = {}
+    for replacement in parsed_map.replacements:
+        by_folded.setdefault(_fold(replacement.original), replacement.synthetic)
+    # An unfilled pair (the model echoed joined labels, or returned one entry for a value detected under several
+    # labels) takes an exact entry of the same value under another label, else the first entry whose folded original
+    # matches. It keeps the requested original and label, since Replace resolves by the exact pair first.
+    for entity in parsed_entities.entities_by_value:
+        same_value = next((exact[(entity.value, lb)] for lb in entity.labels if (entity.value, lb) in exact), None)
+        for label in entity.labels:
+            if not (entity.value and label) or (entity.value, label) in exact:
+                continue
+            synthetic = same_value or by_folded.get(_fold(entity.value))
+            if synthetic is not None:
+                exact[(entity.value, label)] = synthetic
+                filtered.append({"original": entity.value, "label": label, "synthetic": synthetic})
 
     if logger.isEnabledFor(logging.DEBUG):
         raw_pairs = {(r.original, r.label) for r in parsed_map.replacements}

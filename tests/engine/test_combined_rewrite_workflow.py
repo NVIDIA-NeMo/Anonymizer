@@ -812,6 +812,17 @@ def test_filter_step_lets_two_values_of_a_row_share_a_substitute() -> None:
     assert [r["synthetic"] for r in replacements] == ["Lyon", "Lyon"]
 
 
+def test_filter_step_fills_every_label_from_one_entry() -> None:
+    row = {
+        COL_REPLACEMENT_MAP_RAW: {"replacements": [{"original": "Jordan", "label": "first_name", "synthetic": "Alex"}]},
+        COL_ENTITIES_BY_VALUE: {"entities_by_value": [{"value": "Jordan", "labels": ["first_name", "last_name"]}]},
+    }
+
+    replacements = _filter_replacement_map(row)[COL_REPLACEMENT_MAP]["replacements"]
+
+    assert [(r["label"], r["synthetic"]) for r in replacements] == [("first_name", "Alex"), ("last_name", "Alex")]
+
+
 def test_combined_graph_passes_summary_to_disposition(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
