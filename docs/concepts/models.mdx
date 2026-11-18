@@ -163,7 +163,7 @@ You can pass `model_configs` as either a YAML file path or a YAML string.
 
 Reasoning models need a larger `max_tokens` than non-reasoning ones because hidden reasoning spends the budget before the answer is written; the bundled configs use 8192-16384. Raise `inference_parameters.max_tokens` for an alias when dropped rows' `failed_records` reason names `max_tokens`. A larger budget also takes longer to generate: the bundled configs pair it with `timeout: 300` (seconds). Without `inference_parameters.timeout`, a request times out after 60 seconds, and dropped rows' reason says the request `timed out`.
 
-Schema-constrained output has not been measured on reasoning models with thinking enabled. Anonymizer sends the augmenter's constraint the same way; the `_augmentation_response_format` trace column records, per row, whether the reply was constrained, fell back, or appears to have ignored the constraint. See [Detection](/concepts/detection#how-it-works).
+Schema-constrained output has not been measured on reasoning models with thinking enabled. Anonymizer sends the augmenter's constraint the same way; the `_augmentation_response_format` trace column records, per row, whether the constraint was sent, fell back, or appears to have been ignored. See [Detection](/concepts/detection#how-it-works).
 
 Roles you don't override keep their default alias selections, but those aliases must still exist in your `model_configs` pool.
 
