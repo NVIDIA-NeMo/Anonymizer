@@ -659,3 +659,57 @@ def test_execution_times_appear_in_full_report_and_old_results(preview: bool, tm
     del result.execution_timings
     assert "Execution Time" in result._evaluation_report_html()
     assert "Total anonymization time</th><td>Unavailable" in result._evaluation_report_html()
+
+
+@pytest.mark.parametrize("preview", [False, True])
+@pytest.mark.parametrize("include_inference", [False, True])
+def test_rewrite_leave_as_is_count_and_trailing_details(preview: bool, include_inference: bool, tmp_path: Path) -> None:
+    item = {
+        "entity_value": "USA <value>",
+        "entity_label": "country",
+        "category": "quasi_identifier",
+        "sensitivity": "low",
+        "source": "tagged",
+        "protection_method_suggestion": "leave_as_is",
+        "low_sensitivity_reason": "Broad geography <reason>",
+    }
+    trace = pd.DataFrame(
+        [
+            {
+                cols.RECORD_ID_COLUMN: "record-a",
+                cols.COL_SENSITIVITY_DISPOSITION: {"sensitivity_disposition": [item, dict(item)]},
+                cols.COL_PRIVACY_QA: {"items": []},
+                cols.COL_PRIVACY_QA_REANSWER: {"answers": []},
+            }
+        ]
+    )
+    result = _result(
+        trace, preview, rewrite_evaluation=EvaluationCriteria(), privacy_inference_enabled=include_inference
+    )
+    assert result.privacy_summary["entities_left_as_is"] == 1
+    path = result.export_evaluation_report(tmp_path / "leave-as-is.html")
+    report = path.read_text()
+    assert "Entities assigned leave_as_is</th><td>1</td>" in report
+    assert report.index("Entities Assigned leave_as_is") > report.index("Privacy &amp; Quality Judge Issues")
+    if include_inference:
+        assert report.index("Entities Assigned leave_as_is") > report.index("Privacy Inference Issues")
+    assert "USA &lt;value&gt;" in report
+    assert "Broad geography &lt;reason&gt;" in report
+    assert "USA <value>" not in report
+    privacy = result.export_privacy_report(tmp_path / "privacy.html").read_text()
+    assert "Entities assigned leave_as_is</th><td>1</td>" in privacy
+    assert "Entities Assigned leave_as_is" in privacy
+
+
+@pytest.mark.parametrize("payload, expected", [(None, "Unavailable"), ({"sensitivity_disposition": []}, "0")])
+def test_rewrite_leave_as_is_zero_and_missing_have_no_details(payload: object, expected: str) -> None:
+    trace = pd.DataFrame([{}] if payload is None else [{cols.COL_SENSITIVITY_DISPOSITION: payload}])
+    result = _result(trace, rewrite_evaluation=EvaluationCriteria())
+    report = result._evaluation_report_html()
+    assert f"Entities assigned leave_as_is</th><td>{expected}</td>" in report
+    assert "Entities Assigned leave_as_is" not in report
+
+
+def test_replace_report_has_no_leave_as_is_section() -> None:
+    result = _result(pd.DataFrame(), replace_method=Substitute())
+    assert "leave_as_is" not in result._evaluation_report_html()

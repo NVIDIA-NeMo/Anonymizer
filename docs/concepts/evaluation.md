@@ -115,7 +115,8 @@ screens and when printing:
   pooled entity coverage from candidate counts, unavailable counts, and separate
   high/medium/low distributions for Rewrite's privacy, quality, and style rubrics.
 - **Privacy Inference Summary:** the existing inference metrics, plus saved
-  Rewrite risk tolerance, repair threshold, repair limit, and iterations taken.
+  Rewrite risk tolerance, repair threshold, repair limit, iterations taken, and
+  the number of entity targets assigned `leave_as_is`.
 
 Full-width **Privacy & Quality Judge Issues** and **Privacy Inference Issues**
 sections follow when applicable. Rewrite's judge issues are split into Entity
@@ -145,6 +146,16 @@ overwrites existing files, and requires an existing parent directory. It include
 original entity values and can be opened in a browser to print to PDF.
 The existing `display_privacy_report()` and `export_privacy_report()` remain
 available for inference-only reports.
+
+Rewrite reports end with **Entities Assigned leave_as_is** when saved assignments
+exist. The table shows record, entity value, label, source, type, sensitivity, and
+the saved reason for leaving the target unprotected. Counts include explicit and
+latent entities, counting each value/label pair once per record rather than
+repeated spans. These describe assigned dispositions, not a guarantee that the
+final text retained the values. Zero assignments omit the detail section; missing
+saved dispositions show **Unavailable** in the summary. When inference reporting
+is disabled, the count appears under Rewrite Settings instead. Both notebook
+reports and HTML exports use the saved data without new model calls.
 
 ## Replace Evaluation
 

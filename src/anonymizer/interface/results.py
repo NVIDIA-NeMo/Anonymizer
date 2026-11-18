@@ -19,9 +19,11 @@ from anonymizer.engine.constants import (
     COL_FINDING_SENSITIVITY_REASON,
     COL_FINDING_STATUS,
     COL_REPAIR_ITERATIONS,
+    COL_SENSITIVITY_DISPOSITION,
 )
 from anonymizer.engine.evaluation.judge_findings import build_judge_report
 from anonymizer.engine.evaluation.privacy_findings import build_privacy_findings, summarize_privacy_findings
+from anonymizer.engine.evaluation.rewrite_dispositions import build_leave_as_is_findings
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.interface.display import render_record_html
 from anonymizer.interface.evaluation_report import render_evaluation_report_html, write_report_html
@@ -84,6 +86,13 @@ class _DisplayMixin:
         possible weight, excluding entire unavailable records from both sums.
         """
         summary = summarize_privacy_findings(self.trace_dataframe)
+        if (
+            self.rewrite_config is not None
+            or self.rewrite_evaluation is not None
+            or COL_SENSITIVITY_DISPOSITION in self.trace_dataframe
+        ):
+            left_as_is = build_leave_as_is_findings(self.trace_dataframe)
+            summary["entities_left_as_is"] = len(left_as_is) if left_as_is is not None else None
         if self.rewrite_evaluation is not None:
             summary["risk_tolerance"] = self.rewrite_evaluation.risk_tolerance.value
             summary["repair_threshold"] = self.rewrite_evaluation.repair_threshold
@@ -96,7 +105,11 @@ class _DisplayMixin:
 
     def display_privacy_report(self) -> None:
         """Display a summary above reported leaks and unavailable assessments."""
-        _display_html(render_privacy_report_html(self.privacy_summary, self.privacy_findings))
+        _display_html(
+            render_privacy_report_html(
+                self.privacy_summary, self.privacy_findings, left_as_is=build_leave_as_is_findings(self.trace_dataframe)
+            )
+        )
 
     def export_privacy_report(self, path: str | Path) -> Path:
         """Write a standalone UTF-8 HTML report and return its path.
@@ -106,7 +119,9 @@ class _DisplayMixin:
         overwritten; the parent directory must exist. Open in a browser to
         view or print to PDF. Original entity values are included.
         """
-        report = render_privacy_report_html(self.privacy_summary, self.privacy_findings)
+        report = render_privacy_report_html(
+            self.privacy_summary, self.privacy_findings, left_as_is=build_leave_as_is_findings(self.trace_dataframe)
+        )
         return write_report_html(path, report, title="Privacy evaluation report")
 
     def _evaluation_report_html(self) -> str:
@@ -123,6 +138,7 @@ class _DisplayMixin:
         return render_evaluation_report_html(
             include_inference=include_inference,
             strategy=strategy,
+            left_as_is=build_leave_as_is_findings(self.trace_dataframe) if strategy == "Rewrite" else None,
             failed_records=self.failed_records,
             warning_metadata=getattr(self, "warning_metadata", {}),
             execution_timings=getattr(self, "execution_timings", {}),

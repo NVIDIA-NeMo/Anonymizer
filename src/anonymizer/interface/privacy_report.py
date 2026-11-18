@@ -70,6 +70,9 @@ def render_privacy_report_sections(
                 else "Unavailable",
             ),
         ]
+    if "entities_left_as_is" in summary:
+        count = summary["entities_left_as_is"]
+        rows.append(("Entities assigned leave_as_is", str(count) if count is not None else "Unavailable"))
     for level, mass in summary["leakage_mass_by_sensitivity"].items():
         rows.append((f"Leakage mass — {level} sensitivity", _number(mass)))
     metrics = "".join(f"<tr><th>{html.escape(label)}</th><td>{html.escape(value)}</td></tr>" for label, value in rows)
@@ -151,11 +154,17 @@ def privacy_report_styles() -> str:
         ".anonymizer-privacy-report .privacy-problems td:nth-child(11)"
         "{width:200px!important;min-width:200px!important;max-width:200px!important;"
         "white-space:normal!important;overflow-wrap:anywhere!important;}"
+        ".anonymizer-privacy-report .leave-as-is td:nth-child(2){min-width:110px;max-width:110px;}"
+        ".anonymizer-privacy-report .leave-as-is td:nth-child(3),"
+        ".anonymizer-privacy-report .leave-as-is td:nth-child(4){min-width:160px;}"
+        ".anonymizer-privacy-report .leave-as-is td:last-child{min-width:260px;max-width:550px;}"
         "</style>"
     )
 
 
-def render_privacy_report_html(summary: dict[str, Any], problems: pd.DataFrame) -> str:
+def render_privacy_report_html(
+    summary: dict[str, Any], problems: pd.DataFrame, *, left_as_is: pd.DataFrame | None = None
+) -> str:
     """Render the existing privacy-only report for compatibility."""
     styles, inference_summary, inference_issues = render_privacy_report_sections(summary, problems)
     return (
@@ -164,6 +173,7 @@ def render_privacy_report_html(summary: dict[str, Any], problems: pd.DataFrame) 
         + inference_summary
         + "<h3>Reported problems</h3>"
         + inference_issues
+        + render_leave_as_is_section(left_as_is)
         + "</div>"
     )
 
@@ -174,3 +184,41 @@ def _count_and_rate(count: int, total: int, rate: float | None) -> str:
 
 def _number(value: float | None) -> str:
     return f"{value:.3f}" if value is not None else "Unavailable"
+
+
+def render_leave_as_is_section(findings: pd.DataFrame | None) -> str:
+    """List exemptions separately from inferred leaks, only when present."""
+    if findings is None or findings.empty:
+        return ""
+    table = findings.copy()
+    table[COL_FINDING_CATEGORY] = table[COL_FINDING_CATEGORY].replace(
+        {"direct_identifier": "direct", "quasi_identifier": "quasi", "latent_identifier": "latent"}
+    )
+    table[COL_FINDING_SENSITIVITY] = table[COL_FINDING_SENSITIVITY].replace({"medium": "med"})
+    table = table.rename(
+        columns={
+            COL_FINDING_RECORD_INDEX: "Row",
+            COL_FINDING_RECORD_ID: "Record ID",
+            COL_FINDING_ENTITY_VALUE: "Entity",
+            COL_FINDING_ENTITY_LABEL: "Label",
+            COL_FINDING_SOURCE: "Source",
+            COL_FINDING_CATEGORY: "Type",
+            COL_FINDING_SENSITIVITY: "Sens.",
+            COL_FINDING_REASON: "Reason",
+        }
+    )
+    table = table.where(table.notna(), "Unavailable")
+    with pd.option_context("display.max_colwidth", None):
+        details = table.to_html(index=False, escape=True, border=0, classes="leave-as-is")
+    return (
+        "<section><h2>Entities Assigned leave_as_is</h2>"
+        "<p>When <code>strict_entity_protection=False</code>, entities assigned "
+        "<strong>low sensitivity</strong> receive the protection method <code>leave_as_is</code>. "
+        "This means the sensitivity assessment judged that retaining the entity value would not "
+        "meaningfully increase re-identification risk in the context of the rewritten text, "
+        "with other sensitive entities protected. This is a contextual assessment—not a guarantee of zero risk.</p>"
+        "<p>Saved Rewrite decisions to leave these entity targets unprotected. "
+        "Each value/label pair counts once per record, including latent entities; repeated spans do not add to the count. "
+        "These are assignments, not a check that the final text retained the values.</p>"
+        '<div class="privacy-details">' + details + "</div></section>"
+    )

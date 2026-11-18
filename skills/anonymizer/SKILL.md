@@ -336,3 +336,9 @@ augmentation when available. Stages may overlap and are not additive. Repeated
 `evaluate()` calls refresh evaluation timings and preserve run timings. Older
 results without timing metadata show Unavailable; report display/export does not
 rerun model calls.
+
+Rewrite evaluation reports include the number of saved `leave_as_is`
+assignments and, when nonzero, a final **Entities Assigned leave_as_is** table
+with entity values, labels, sources, types, sensitivities, and saved reasons.
+Counts are distinct value/label pairs per record, including latent entities;
+repeated spans count once. These are assignments, not final-text retention checks.

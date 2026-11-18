@@ -16,6 +16,7 @@ from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.interface.privacy_report import (
     PRIVACY_INFERENCE_DESCRIPTION,
     privacy_report_styles,
+    render_leave_as_is_section,
     render_privacy_report_sections,
 )
 
@@ -241,6 +242,7 @@ def render_evaluation_report_html(
     judge_summary: pd.DataFrame,
     judge_issues: pd.DataFrame,
     execution_timings: dict[str, dict[str, float | None]] | None = None,
+    left_as_is: pd.DataFrame | None = None,
 ) -> str:
     """Render summaries side by side and problem details below, with escaped data."""
     failed_count, failure_summary = _render_failed_records(failed_records)
@@ -254,6 +256,10 @@ def render_evaluation_report_html(
             inference = (
                 "<h3>Privacy Inference Summary</h3><p>" + PRIVACY_INFERENCE_DESCRIPTION + "</p><p>Not evaluated.</p>"
             )
+            if "entities_left_as_is" in privacy_summary:
+                count = privacy_summary["entities_left_as_is"]
+                value = str(count) if count is not None else "Unavailable"
+                inference += "<table><tr><th>Entities assigned leave_as_is</th><td>" + value + "</td></tr></table>"
             inference_issues = "<p>Not evaluated.</p>"
     display_issues = judge_issues.copy()
     if strategy.startswith("Replace - "):
@@ -285,7 +291,15 @@ def render_evaluation_report_html(
         rewrite_settings = (
             "<section><h3>Rewrite Settings</h3><table><tr><th>strict_entity_protection</th><td>"
             + html.escape(strict_protection)
-            + "</td></tr></table></section>"
+            + "</td></tr>"
+            + (
+                "<tr><th>Entities assigned leave_as_is</th><td>"
+                + (str(len(left_as_is)) if left_as_is is not None else "Unavailable")
+                + "</td></tr>"
+                if not include_inference
+                else ""
+            )
+            + "</table></section>"
         )
     return (
         '<div class="anonymizer-privacy-report anonymizer-evaluation-report">'
@@ -344,6 +358,7 @@ def render_evaluation_report_html(
         + issues
         + "</div>"
         + ("<h2>Privacy Inference Issues</h2>" + inference_issues if include_inference else "")
+        + (render_leave_as_is_section(left_as_is) if strategy == "Rewrite" else "")
         + "</div>"
     )
 
