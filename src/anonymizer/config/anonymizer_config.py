@@ -216,48 +216,6 @@ class Detect(BaseModel):
         ),
     )
 
-    detector_offset_unit: str | None = Field(
-        default=None,
-        description=(
-            "Declared offset unit of the detector's spans. None declares nothing. The pipeline consumes "
-            "Unicode code point offsets, so any other declared unit is rejected before work starts."
-        ),
-    )
-    detector_labels: list[str] | None = Field(
-        default=None, description="Declared label set the detector supports. None declares nothing."
-    )
-    detector_labels_fixed: bool = Field(
-        default=False,
-        description=(
-            "True declares that detector_labels is fixed (the detector cannot take caller-selected labels): "
-            "every effective label must then be in detector_labels, or the run is rejected before work starts."
-        ),
-    )
-
-    def detector_declaration_conflicts(self) -> list[str]:
-        """Conflicts between the declared detector facts and this configuration; empty when consistent."""
-        conflicts = []
-        if self.detector_offset_unit is not None and self.detector_offset_unit != "code_point":
-            conflicts.append(
-                f"detector_offset_unit {self.detector_offset_unit!r} is not supported; the pipeline consumes "
-                "'code_point' offsets."
-            )
-        if self.detector_labels_fixed:
-            if self.detector_labels is None:
-                conflicts.append("detector_labels_fixed=True requires detector_labels.")
-            else:
-                effective = set(
-                    resolve_effective_detection_labels(
-                        self.entity_labels,
-                        regex_rules=self.regex_rules,
-                        excluded_entity_labels=self.excluded_entity_labels,
-                    )
-                )
-                missing = sorted(effective - {normalize_entity_label(x) for x in self.detector_labels})
-                if missing:
-                    conflicts.append(f"Effective labels outside the fixed detector_labels: {missing}.")
-        return conflicts
-
     @field_validator("entity_labels")
     @classmethod
     def validate_entity_labels(cls, value: list[str] | None) -> list[str] | None:

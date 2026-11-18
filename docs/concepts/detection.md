@@ -106,9 +106,6 @@ records use the same caller-provided IDs in `result.failed_records`. Use
 | `regex_rules` | `[]` | Custom `RegexRule` patterns and per-label `BuiltinRegex` settings. |
 | `validation_max_entities_per_call` | `100` | Number of detected entities to validate per LLM call. This limit may be exceeded to keep detections covering the same text together. See [Chunked validation](#chunked-validation). |
 | `validation_excerpt_window_chars` | `500` | Characters of context included before and after a chunk's entity spans in the validator prompt. Bounds per-chunk prompt size; not the model's context-window limit. |
-| `detector_offset_unit` | `None` | Declared offset unit of the detector's spans. Only `"code_point"` is accepted; any other value raises `InvalidConfigError` before work starts. |
-| `detector_labels` | `None` | Declared label set the detector supports. Unset declares nothing. |
-| `detector_labels_fixed` | `False` | Declares `detector_labels` fixed: every effective label must be in it (and it must be set), or `run()` / `preview()` raise `InvalidConfigError` before work starts. |
 
 ---
 
