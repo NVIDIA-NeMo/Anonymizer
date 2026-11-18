@@ -128,6 +128,44 @@ AnonymizerConfig(replace=Hash(algorithm="sha1", digest_length=8))
 
 ---
 
+## Keeping substitutes across calls (provisional)
+
+To give a value the same substitute in several calls, for example across the parts of one long document, pass one
+`Session` to each call with `session=`. `Anonymizer.run` and `Anonymizer.preview` both take it. The Session is
+provisional and may change.
+
+```python
+from anonymizer import AnonymizerConfig, Substitute
+from anonymizer.graph import Session, SessionSnapshot
+
+session = Session(stable_replacements=True)
+config = AnonymizerConfig(replace=Substitute())
+for part in parts:  # each part is an AnonymizerInput or TextRecordsInput
+    result = anonymizer.run(config=config, data=part, session=session)
+
+saved = session.snapshot().to_bytes()  # to continue later, or in another process
+session = Session.restore(SessionSnapshot.from_bytes(saved))
+```
+
+- Under a stable Session, Substitute works as `consistency="run"` across every call that uses the Session. Every
+  detected label shares by value, so the outputs of those calls are linkable. Limit linkage by how widely you use one
+  Session. Each call logs its changes to the Session as counts at INFO.
+- Two different values never share a substitute across those calls, and a new substitute never equals a value an
+  earlier call replaced.
+- Redact, Annotate and Hash run unchanged and leave the Session unchanged. Hash is stable across calls only when
+  every call uses the same hash configuration.
+- Rewrite, and a custom replace or rewrite runner that overrides `run()`, reject a stable Session with
+  `InvalidConfigError` before detection starts.
+- The snapshot bytes hold original values in plain text. Protecting them is your responsibility.
+- The Session also holds record-local fallback entries: a substitute used in one record in place of a value's shared
+  one is recorded so no other value takes it later. These entries are bookkeeping, not assignments.
+- `Session()` without `stable_replacements=True` retains nothing, and the call behaves as it does without
+  `session=`.
+
+See [Graph SDK](/concepts/graph-sdk#session-provisional) for the Session itself.
+
+---
+
 ## Evaluating replace output
 
 After running `replace`, you can score detection recall and the quality of substitutions using LLM-as-judge evaluation. See [Evaluation](/concepts/evaluation) for details on the always-on entity coverage judge, the three Substitute quality judges (type fidelity, attribute fidelity, relational consistency), the opt-in detection validity judge, and how to call `Anonymizer.evaluate()`.

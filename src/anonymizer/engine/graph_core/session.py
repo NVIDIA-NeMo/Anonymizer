@@ -13,7 +13,7 @@ from __future__ import annotations
 import contextlib
 import json
 import threading
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
@@ -299,7 +299,7 @@ class Session:
         raise TypeError("Session is process-local and not serializable; use snapshot()")
 
     @contextlib.contextmanager
-    def _hold(self) -> Iterator[None]:
+    def _hold(self) -> Generator[None]:
         if not self._lock.acquire(blocking=False):
             raise GraphRejection("session_busy")
         try:
