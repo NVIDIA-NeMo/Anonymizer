@@ -46,6 +46,7 @@ from anonymizer.engine.constants import (
     SEED_DETECTION_RESULT_ID,
     _jinja,
 )
+from anonymizer.engine.detection.capabilities import detector_labels_from
 from anonymizer.engine.detection.chunked_validation import VALIDATION_EXCERPT_VAR
 from anonymizer.engine.detection.entity_label_examples import ResolvedEntityLabelConfig, resolve_entity_label_config
 from anonymizer.engine.detection.postprocess import (
@@ -225,8 +226,7 @@ class EntityDetectionWorkflow:
             builtin_regexes=builtin_regexes,
             rules=custom_rules,
         )
-        normalized_regex_constrained_labels = normalize_labels(regex_constrained_labels)
-        model_labels = [label for label in labels if normalize_label(label) not in normalized_regex_constrained_labels]
+        model_labels = detector_labels_from(labels, builtin_regexes=builtin_regexes, rules=custom_rules)
         resolved_regex_rules = resolve_regex_rules(
             labels=labels,
             builtin_regexes=builtin_regexes,

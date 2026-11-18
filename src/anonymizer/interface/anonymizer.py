@@ -60,6 +60,14 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
+from anonymizer.engine.detection.capabilities import (
+    BUILTIN_REQUIRED_FACTS,
+    GLINER_CONTRACT,
+    DetectorCapabilities,
+    check_detector_work,
+    merge_capabilities,
+    resolve_detector_labels,
+)
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
@@ -442,6 +450,12 @@ class Anonymizer:
             self._data_designer.set_run_config(data_designer_run_config)
         self._adapter = NddAdapter(data_designer=self._data_designer)
         self._detection_workflow = detection_workflow or EntityDetectionWorkflow(adapter=self._adapter)
+        # The built-in path parses wire offsets and sends labels, so it needs both facts; a custom workflow
+        # returns pipeline entities the detect step checks, so it is held only to what it declares.
+        self._detector_capabilities = (
+            GLINER_CONTRACT if detection_workflow is None else DetectorCapabilities("configuration")
+        )
+        self._detector_required_facts = BUILTIN_REQUIRED_FACTS if detection_workflow is None else frozenset()
         self._replace_runner = replace_runner or ReplacementWorkflow(
             llm_workflow=LlmReplaceWorkflow(adapter=self._adapter),
             detection_judge=DetectionJudgeWorkflow(adapter=self._adapter),
@@ -1184,6 +1198,15 @@ class Anonymizer:
             )
         except ValueError as exc:
             raise InvalidConfigError(str(exc)) from exc
+        check_detector_work(
+            self._detector_capabilities,
+            detector_labels=resolve_detector_labels(config.detect),
+            required=self._detector_required_facts,
+        )
+
+    def _declare_detector(self, *sources: DetectorCapabilities) -> None:
+        """Merge declared detector facts with the current record; conflicting facts raise InvalidConfigError."""
+        self._detector_capabilities = merge_capabilities([self._detector_capabilities, *sources])
 
     # ------------------------------------------------------------------ telemetry
 
