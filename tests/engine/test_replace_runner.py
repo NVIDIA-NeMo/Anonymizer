@@ -742,13 +742,9 @@ def test_run_reports_each_rows_protection_outcome(omit_bob: bool, tmp_path: Path
     second = result.outcome(1)
     assert second.qualification == ("not_met" if omit_bob else "met")
     assert any(reason.check == "replacements_applied" for reason in second.reasons) is omit_bob
-    assert [(v.check, v.status) for v in result.outcome(0).advisories] == [
-        ("no_detected_value_outside_replacements", "passed")
-    ]
+    assert [(v.check, v.status) for v in result.outcome(0).advisories] == [("no_detected_value_added", "passed")]
     second_status = "failed" if omit_bob else "passed"
-    assert [(v.check, v.status) for v in second.advisories] == [
-        ("no_detected_value_outside_replacements", second_status)
-    ]
+    assert [(v.check, v.status) for v in second.advisories] == [("no_detected_value_added", second_status)]
     with pytest.raises(IndexError):
         result.outcome(2)
 
@@ -763,8 +759,8 @@ _ALICE = {("Alice", "first_name"): "Maya"}
 @pytest.mark.parametrize(
     ("text", "entities", "patches", "advisory"),
     [
-        pytest.param("Alice met Alice", [_ent("Alice", 0)], _ALICE, ("failed", ""), id="value-repeated-in-kept-text"),
-        pytest.param('{"Alice": 1} Alice', [_ent("Alice", 13)], _ALICE, ("failed", ""), id="json-key-in-kept-text"),
+        pytest.param("Alice met Alice", [_ent("Alice", 0)], _ALICE, ("passed", ""), id="value-repeated-in-kept-text"),
+        pytest.param('{"Alice": 1} Alice', [_ent("Alice", 13)], _ALICE, ("passed", ""), id="json-key-in-kept-text"),
         pytest.param(
             "Alice met Alice", [_ent("Alice", 0), _ent("Alice", 10)], _ALICE, ("passed", ""), id="all-patched"
         ),
@@ -779,39 +775,63 @@ _ALICE = {("Alice", "first_name"): "Maya"}
             "Alice and Bob",
             [_ent("Alice", 0), _ent("Bob", 10)],
             {("Alice", "first_name"): "Bob", ("Bob", "first_name"): "Alice Jr"},
-            ("passed", ""),
+            ("failed", "e0:N1,D1,O1;e1:N1,D1,O1"),
             id="substitute-equals-another-original",
         ),
-        pytest.param("Alice met ALICE", [_ent("Alice", 0)], _ALICE, ("failed", ""), id="case-insensitive"),
+        pytest.param("Alice met ALICE", [_ent("Alice", 0)], _ALICE, ("passed", ""), id="case-insensitive"),
         pytest.param(
             "IN and in", [_ent("IN", 0, "state")], {("IN", "state"): "OH"}, ("passed", ""), id="short-code-case"
         ),
         pytest.param(
-            "IN and IN", [_ent("IN", 0, "state")], {("IN", "state"): "OH"}, ("failed", ""), id="short-code-kept"
+            "IN and IN", [_ent("IN", 0, "state")], {("IN", "state"): "OH"}, ("passed", ""), id="short-code-kept"
         ),
         pytest.param("Alice met Alicea", [_ent("Alice", 0)], _ALICE, ("passed", ""), id="letter-boundary"),
-        pytest.param("Alice met x_Alice_y", [_ent("Alice", 0)], _ALICE, ("failed", ""), id="underscore-boundary"),
+        pytest.param("Alice met x_Alice_y", [_ent("Alice", 0)], _ALICE, ("passed", ""), id="underscore-boundary"),
         pytest.param(
-            "José met Jose", [_ent("José", 0)], {("José", "first_name"): "Luis"}, ("failed", ""), id="accent-folded"
+            "José met Jose", [_ent("José", 0)], {("José", "first_name"): "Luis"}, ("passed", ""), id="accent-folded"
         ),
         pytest.param(
-            "Alice is alice_smith_42", [_ent("Alice", 0)], _ALICE, ("failed", ""), id="inside-unpatched-user-id"
+            "Alice is alice_smith_42", [_ent("Alice", 0)], _ALICE, ("passed", ""), id="inside-unpatched-user-id"
         ),
-        pytest.param("Alice met Bob", [_ent("Alice", 0), _ent("Bob", 10)], _ALICE, ("failed", ""), id="map-omits"),
+        pytest.param(
+            "Alice met Bob", [_ent("Alice", 0), _ent("Bob", 10)], _ALICE, ("failed", "e1:N1,D1,O1"), id="map-omits"
+        ),
         pytest.param(
             "Alice met Bob",
             [_ent("Alice", 0)],
             {("Alice", "last_name"): "Maya"},
-            ("could_not_assess", "reconstruction_mismatch"),
+            ("passed", ""),
             id="value-only-fallback",
         ),
         pytest.param("nobody here", [], {}, ("passed", ""), id="no-mentions"),
+        pytest.param(
+            "Alice met José",
+            [_ent("Alice", 0), _ent("José", 10)],
+            {("Alice", "first_name"): "Jose Ruiz", ("José", "first_name"): "Tom"},
+            ("failed", "e1:N1,D1,O1"),
+            id="substitute-holds-another-original",
+        ),
+        pytest.param(
+            "Mayfield and May",
+            [_ent("field", 3, "street"), _ent("May", 13)],
+            {("field", "street"): "XYZ", ("May", "first_name"): "Ann"},
+            ("passed", ""),
+            id="letter-substitute-at-seam",
+        ),
+        pytest.param(
+            "John Smith called. John said hi.",
+            [_ent("John Smith", 0, "full_name"), _ent("John", 19)],
+            {("John Smith", "full_name"): "[A]", ("John", "first_name"): "John"},
+            ("failed", "e1:N2,D2,O1"),
+            id="value-inside-another-names-its-own-span",
+        ),
     ],
 )
-def test_replace_reports_replaced_values_left_in_kept_text(
+def test_replace_reports_detected_values_added(
     text: str, entities: list[dict], patches: dict, advisory: tuple[str, str]
 ) -> None:
-    """The advisory follows Rewrite's matching rule over the kept text and never touches the row's outcome."""
+    """The advisory bounds each detected value by its count outside the detected spans, under Rewrite's matching rule
+    over the whole replaced text, and never touches the row's outcome."""
 
     def build_map(index: int, rows: object) -> dict:
         return {"replacements": [{"original": o, "label": lab, "synthetic": s} for (o, lab), s in patches.items()]}
@@ -822,7 +842,7 @@ def test_replace_reports_replaced_values_left_in_kept_text(
     outcome = with_check.outcome(graph.targets[0])
 
     assert [(a.check, a.verifier, a.status, a.cause) for a in outcome.advisories] == [
-        ("no_detected_value_outside_replacements", "verify-no-original", *advisory)
+        ("no_detected_value_added", "verify-no-original", *advisory)
     ]
     without = _without_advisory_verifier(graph, build_map)
     base = without.outcome(graph.targets[0])
@@ -853,10 +873,10 @@ def test_replace_advisory_error_is_could_not_assess(monkeypatch: pytest.MonkeyPa
     """A matcher error gives could_not_assess with a code; the row stays met and released; no text leaks."""
     canary = "canary-rpc-41"
 
-    def boom(values: object) -> object:
+    def boom(*args: object) -> object:
         raise ValueError(canary)
 
-    monkeypatch.setattr(route, "compile_values", boom)
+    monkeypatch.setattr(route, "count_values", boom)
     frame = pd.DataFrame({COL_TEXT: ["Alice met Alice"], COL_FINAL_ENTITIES: [{"entities": [_ent("Alice", 0)]}]})
     graph = route._lower(frame, COL_TEXT, COL_FINAL_ENTITIES)
     complete = {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]}

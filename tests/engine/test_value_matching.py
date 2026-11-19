@@ -237,7 +237,7 @@ def test_the_bound_and_the_kept_undetected_value(output: str, over_bound: bool, 
 
 @pytest.mark.parametrize("n", [5, 60])
 def test_no_original_check_compiles_each_value_once(monkeypatch: pytest.MonkeyPatch, n: int) -> None:
-    """``n`` distinct names, each replaced, leave ``n + 1`` kept parts; each name's pattern is built once."""
+    """``n`` distinct names, each replaced: the check builds each name's pattern once."""
     calls = {"escape": 0, "compile": 0}
 
     def counted(name: str) -> Callable[..., Any]:
@@ -261,13 +261,11 @@ def test_no_original_check_compiles_each_value_once(monkeypatch: pytest.MonkeyPa
     scope = GraphScope()
     target = scope.datum(source)
     mentions = tuple(Mention(target, a, b, "first_name") for a, b in spans)
-    replacements = [{"original": name, "label": "first_name", "synthetic": f"P{j}"} for j, name in enumerate(names)]
-    rmap = {"replacements": replacements}
     text = source
     for j, (a, b) in reversed(list(enumerate(spans))):
         text = text[:a] + f"P{j}" + text[b:]
 
-    assessment = _verify_no_original(text, source, mentions, rmap, target)
+    assessment = _verify_no_original(text, source, mentions, target)
 
     assert (assessment.satisfied, assessment.reason) == (True, "")
     assert calls == {"escape": n, "compile": n}
