@@ -402,16 +402,13 @@ def test_run_keeps_review_flag_for_unavailable_utility(
     assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [True, False]
 
 
-def test_run_restores_skipped_span_label_counts_json_string_to_dict(
+def test_run_keeps_skipped_span_label_counts_json_text(
     stub_model_configs: list[ModelConfig],
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
-    """CombinedRewriteWorkflow reuses RewriteGenerationWorkflow's columns, which encode
-    ``skipped_span_label_counts`` as a JSON string for Parquet schema stability. The
-    combined-graph path must restore it to a dict in the final trace, same as the
-    legacy RewriteWorkflow path, or measurement parsing silently drops real counts to {}.
-    """
+    """``skipped_span_label_counts`` is JSON text so the trace writes to Parquet; the
+    combined path passes it through unchanged."""
     dataframe = pd.DataFrame(
         {
             COL_TEXT: ["Alice works at Acme"],
@@ -448,7 +445,7 @@ def test_run_restores_skipped_span_label_counts_json_string_to_dict(
     )
 
     counts = result.dataframe[COL_REPLACEMENT_APPLICATION].iloc[0]["skipped_span_label_counts"]
-    assert counts == {"first_name": 1}
+    assert counts == '{"first_name": 1}'
 
 
 def test_run_reports_combined_failure_and_drops_only_failed_entity_row(

@@ -171,7 +171,7 @@ def test_substitute_runner_applies_generated_map(
         "targeted_span_count": 2,
         "applied_span_count": 2,
         "skipped_span_count": 0,
-        "skipped_span_label_counts": {},
+        "skipped_span_label_counts": "{}",
     }
 
 
@@ -260,7 +260,7 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
                     "targeted_span_count": 2,
                     "applied_span_count": 2,
                     "skipped_span_count": 0,
-                    "skipped_span_label_counts": {},
+                    "skipped_span_label_counts": "{}",
                 }
             ],
         }
@@ -319,7 +319,7 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
         "targeted_span_count": 2,
         "applied_span_count": 2,
         "skipped_span_count": 0,
-        "skipped_span_label_counts": {},
+        "skipped_span_label_counts": "{}",
     }
     for col in (
         COL_TYPE_FIDELITY_VALID,

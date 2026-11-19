@@ -236,7 +236,7 @@ def test_gliner_source_value_projection_is_redacted_after_detector_normalization
         "targeted_span_count": 1,
         "applied_span_count": 1,
         "skipped_span_count": 0,
-        "skipped_span_label_counts": {},
+        "skipped_span_label_counts": "{}",
     }
 
 
