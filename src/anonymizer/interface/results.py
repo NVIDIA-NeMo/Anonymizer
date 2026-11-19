@@ -33,10 +33,12 @@ class _DisplayMixin:
         On an ``evaluate()`` result the outcome is the evaluated result's outcome for the row with the same record
         id (``not_assessed`` and unprotected when that result carries no outcomes or no single row has that id), with
         one advisory per judge appended, named by the judge, with status ``passed``, ``failed``, ``could_not_assess``,
-        ``scored`` or ``not_applicable``; ``cause`` says why (``"judge_unavailable"`` when the judge gave no score).
+        ``scored`` or ``not_applicable``; ``cause`` says why: ``"judge_unavailable"`` when the judge gave no score,
+        ``"raised"`` when its check raised, ``"blocked"`` when an earlier judge check of the row raised so it never ran.
         ``scored`` means the rewrite judge, which has no pass threshold, returned scores; read them in the judge
         evaluation column. ``not_applicable`` means the rewrite judge skipped a row with no detected entities, by
-        design. Judges never change qualification or release. The evaluated result is not changed.
+        design. Judges never change qualification or release: those still say whether the run released the row. The
+        evaluated result is not changed.
 
         Raises:
             IndexError: ``row`` is not an output row, or this result carries no outcomes (a custom runner's or
