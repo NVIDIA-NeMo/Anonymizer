@@ -838,11 +838,17 @@ class RatBenchReidentificationTableRow(_MetricTableRow):
     record_type: Literal["rat_bench_reidentification"]
     rows_processed: NonNegativeInt
     rows_failed: NonNegativeInt
+    rows_requested: NonNegativeInt | None = None
+    rows_scored: NonNegativeInt | None = None
+    rows_missing: NonNegativeInt | None = None
+    rows_excluded: NonNegativeInt | None = None
     reidentified_rows: NonNegativeInt
     direct_reidentified_rows: NonNegativeInt
     correctmatch_reidentified_rows: NonNegativeInt
     reid_error_rows: NonNegativeInt
     reidentification_rate_pct: Percentage
+    reidentification_rate_ci95_low_pct: Percentage | None = None
+    reidentification_rate_ci95_high_pct: Percentage | None = None
     coverage_pct: Percentage
     correct_guess_count: NonNegativeInt
     incorrect_guess_count: NonNegativeInt
@@ -1204,11 +1210,17 @@ OUTBOUND_FIELD_POLICIES: dict[type[BaseModel], dict[str, FieldPolicy]] = {
         "record_type",
         "rows_processed",
         "rows_failed",
+        "rows_requested",
+        "rows_scored",
+        "rows_missing",
+        "rows_excluded",
         "reidentified_rows",
         "direct_reidentified_rows",
         "correctmatch_reidentified_rows",
         "reid_error_rows",
         "reidentification_rate_pct",
+        "reidentification_rate_ci95_low_pct",
+        "reidentification_rate_ci95_high_pct",
         "coverage_pct",
         "correct_guess_count",
         "incorrect_guess_count",
