@@ -318,3 +318,21 @@ def test_entity_coverage_run_non_critical_scores_rows_that_share_an_index_label(
     fresh = _trace(_ALL_EMPTY)
 
     assert run(fresh.set_axis([0, 0])) == run(fresh) == [1.0, 1.0]
+
+
+def test_entity_coverage_run_non_critical_keeps_all_empty_telemetry_out_of_the_seed(
+    stub_evaluate_model_selection: EvaluateModelSelection,
+) -> None:
+    adapter = cast(Any, _ParquetAdapter())
+    adapter._attach_record_ids = lambda df: df.assign(**{RECORD_ID_COLUMN: [f"r{i}" for i in range(len(df))]})
+
+    out, failed = EntityCoverageWorkflow(adapter).run_non_critical(
+        _trace(_ALL_EMPTY), model_configs=[], selected_models=stub_evaluate_model_selection
+    )
+
+    assert failed == []
+    assert adapter.seeds, "the judge must run, not pass every row through"
+    assert COL_REPLACEMENT_APPLICATION not in adapter.seeds[0].columns
+    assert list(out[EntityCoverageWorkflow.RAW_COL]) == [_PAYLOADS[EntityCoverageWorkflow.RAW_COL]] * 2
+    assert list(out[EntityCoverageWorkflow.VALID_COL]) == [1.0, 1.0]
+    assert list(out[COL_REPLACEMENT_APPLICATION]) == _ALL_EMPTY
