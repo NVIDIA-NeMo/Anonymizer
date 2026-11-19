@@ -10,6 +10,7 @@ import contextlib
 import dataclasses
 import json
 import logging
+import random
 import re
 from pathlib import Path
 from typing import Any, cast
@@ -38,7 +39,7 @@ from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
     _build_entities_by_value,
 )
-from anonymizer.engine.graph_core.session import Session, SessionChanges, SessionView
+from anonymizer.engine.graph_core.session import FALLBACK, Session, SessionChanges, SessionView, normalize
 from anonymizer.engine.ndd.adapter import NddAdapter, WorkflowRunResult
 from anonymizer.engine.replace.llm_replace_workflow import (
     LlmReplaceWorkflow,
@@ -704,17 +705,21 @@ def test_assigned_to_other_value_ignores_the_same_value_under_another_label() ->
     assert view({(FALLBACK, "user_name", "kim"): "kim"}).assigned_to_other_value("kim", slot)
 
 
+def _echo(value: str, answer: str | tuple[str, str]) -> tuple[str, str]:
+    return answer if isinstance(answer, tuple) else (value, answer)
+
+
 def _scripted(
     tmp_path: Path,
     texts: list[str],
-    answers: list[dict[str, str]],
-    session: Session,
+    answers: list[dict[str, Any]],
+    session: Session | None,
     requests: list[list[tuple[list[str], str | None]]] | None = None,
     kept: list[Any] | None = None,
     preview: bool = False,
 ) -> pd.DataFrame:
     """One Substitute ``run`` (or ``preview``) whose model call ``i`` answers each requested value found in
-    ``answers[i]`` and omits the rest; ``requests`` gets each call's rows as (requested values, retry context)."""
+    ``answers[i]`` (a substitute, or an echoed original and a substitute) and omits the rest; ``requests`` gets each call's rows as (requested values, retry context)."""
     script = list(answers)
 
     def run_workflow(self: NddAdapter, df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
@@ -730,10 +735,11 @@ def _scripted(
         out[COL_REPLACEMENT_MAP] = [
             {
                 "replacements": [
-                    {"original": e["value"], "label": label, "synthetic": answer[e["value"]]}
+                    {"original": echoed, "label": label, "synthetic": synthetic}
                     for e in row
-                    for label in e["labels"]
                     if e["value"] in answer
+                    for echoed, synthetic in [_echo(e["value"], answer[e["value"]])]
+                    for label in e["labels"]
                 ]
             }
             for row in out[COL_ENTITIES_FOR_REPLACE]
@@ -764,3 +770,179 @@ def test_a_pair_the_session_holds_is_not_retried_when_the_model_omits_it(tmp_pat
     assert [[values for values, _ in call] for call in requests] == [[["Alice", "Carol"]]]
     assert kept[0].failed_records == []
     assert kept[0].session_changes == SessionCallChanges(added=1, reused=1)
+
+
+def test_a_retried_pair_cannot_take_a_substitute_the_session_holds(tmp_path: Path) -> None:
+    """The completeness retry's proposal goes through the Session's fold like a first-attempt one."""
+    session = Session(stable_replacements=True)
+    _protect(tmp_path, ["Alice lives in Paris."], {"Alice": "Bob", "Paris": "Lyon"}, session)
+    answers = [[("Carol", "Dana")], [("Dave", "Bob")]]  # the first attempt omits Dave; the retry proposes Bob
+
+    def run_workflow(self: NddAdapter, df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
+        out = df.copy().reset_index(drop=True)
+        pairs = answers.pop(0)
+        out[COL_REPLACEMENT_MAP] = [
+            {"replacements": [{"original": o, "label": "first_name", "synthetic": s} for o, s in pairs]}
+        ] * len(out)
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
+
+    source = tmp_path / "retry.csv"
+    pd.DataFrame({"text": ["Carol met Dave."]}).to_csv(source, index=False)
+    anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, _Detector()))
+    with patch.object(NddAdapter, "run_workflow", run_workflow):
+        result = anonymizer.run(
+            config=AnonymizerConfig(replace=Substitute()), data=AnonymizerInput(source=str(source)), session=session
+        )
+    assert answers == []
+    assert list(result.dataframe["text_replaced"]) == ["Dana met [SUBSTITUTE_FIRST_NAME_1]."]
+    assert _slots(session)[("first_name", "alice")] == "Bob"
+
+
+def test_the_retry_requests_only_pairs_the_session_does_not_hold(tmp_path: Path) -> None:
+    session, kept, requests = Session(stable_replacements=True), [], []
+    _scripted(tmp_path, ["Alice lives here."], [{"Alice": "Bob"}], session)
+    # The first attempt omits Alice (held) and Dave (new); only Dave is asked for again.
+    second = _scripted(
+        tmp_path, ["Alice met Carol and Dave."], [{"Carol": "Dana"}, {"Dave": "Eve"}], session, requests, kept
+    )
+    assert [[values for values, _ in call] for call in requests] == [[["Alice", "Carol", "Dave"]], [["Dave"]]]
+    context = json.loads(requests[1][0][1])
+    assert {"original": "Alice", "label": "first_name", "synthetic": "Bob"} in context["replacements"]
+    assert list(second["text_replaced"]) == ["Bob met Dana and Eve."]
+    assert kept[0].session_changes == SessionCallChanges(added=2, reused=1)
+
+
+def test_a_record_that_fails_its_retry_adds_nothing_to_the_session(tmp_path: Path) -> None:
+    session, kept = Session(stable_replacements=True), []
+    # Row 0 never gets Carol, so it fails after the retry; row 1 is complete on the first attempt.
+    output = _scripted(
+        tmp_path, ["Alice met Carol.", "Dave."], [{"Alice": "Bob", "Dave": "Eve"}, {}], session, kept=kept
+    )
+    assert list(output["text_replaced"]) == ["Eve."]
+    assert len(kept[0].failed_records) == 1
+    assert _slots(session) == {("first_name", "dave"): "Eve"}
+    assert kept[0].session_changes == SessionCallChanges(added=1)
+
+
+def test_decisions_follow_kept_rows_when_a_middle_row_fails(tmp_path: Path) -> None:
+    session, kept = Session(stable_replacements=True), []
+    texts = ["Alice.", "Carol met Dave.", "Bob."]
+    output = _scripted(tmp_path, texts, [{"Alice": "Eve", "Carol": "Dana", "Bob": "Finn"}, {}], session, kept=kept)
+    assert list(output["text_replaced"]) == ["Eve.", "Finn."]
+    assert len(kept[0].failed_records) == 1
+    assert _slots(session) == {("first_name", "alice"): "Eve", ("first_name", "bob"): "Finn"}
+
+
+def test_a_placeholder_shown_only_in_the_retry_context_is_not_counted(tmp_path: Path) -> None:
+    session, kept, requests = Session(stable_replacements=True), [], []
+    _scripted(tmp_path, ["Alice lives here."], [{"Alice": "Bob"}], session)
+    # Alice's proposal is Carol, a value in the record, so the record-level retry context shows a placeholder; the
+    # final fold gives Alice the Session's Bob instead.
+    answers = [{"Alice": "Carol", "Carol": "Dana"}, {"Dave": "Eve"}]
+    second = _scripted(tmp_path, ["Alice met Carol and Dave."], answers, session, requests, kept)
+    assert "[SUBSTITUTE_FIRST_NAME_1]" in requests[1][0][1]
+    assert list(second["text_replaced"]) == ["Bob met Dana and Eve."]
+    assert kept[0].session_changes == SessionCallChanges(added=2, reused=1)
+
+
+@pytest.mark.parametrize("session", [None, Session()], ids=["no-session", "off-session"])
+def test_without_a_stable_session_the_retry_is_unchanged(tmp_path: Path, session: Session | None) -> None:
+    requests: list[Any] = []
+    output = _scripted(tmp_path, ["Alice met Carol."], [{"Carol": "Dana"}, {"Alice": "Zoe"}], session, requests)
+    assert [[values for values, _ in call] for call in requests] == [[["Alice", "Carol"]], [["Alice"]]]
+    assert list(output["text_replaced"]) == ["Zoe met Dana."]
+
+
+def test_a_unicode_space_variant_reuses_the_session_substitute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(LABELS, "Acme Corp", "organization")
+    monkeypatch.setitem(LABELS, "Acme\u00a0Corp", "organization")
+    session, kept, requests = Session(stable_replacements=True), [], []
+    _scripted(tmp_path, ["Acme Corp hired."], [{"Acme Corp": "Nova Labs"}], session)
+    # The model echoes the no-break-space value with a plain space; it is reconciled to the requested original.
+    answers = [{"Acme\u00a0Corp": ("Acme Corp", "Other Inc")}]
+    second = _scripted(tmp_path, ["Acme\u00a0Corp hired."], answers, session, requests, kept)
+    assert len(requests) == 1
+    assert list(second["text_replaced"]) == ["Nova Labs hired."]
+    assert kept[0].session_changes == SessionCallChanges(reused=1)
+    assert _slots(session) == {("organization", "acme corp"): "Nova Labs"}
+
+
+_POOL = ["Alice", "ALICE", "Bob", "Carol", "Dave", "Zed", "Paris"]
+
+
+def _random_frame(rng: random.Random) -> pd.DataFrame:
+    rows: list[dict[str, list[dict[str, Any]]]] = []
+    texts: list[str] = []
+    for _ in range(rng.randint(1, 4)):
+        values = rng.sample(_POOL + ["Alice  ", "Jordan"], rng.randint(1, 3))
+        rows.append(
+            {
+                "entities_by_value": [
+                    {
+                        "value": v,
+                        "labels": ["first_name", "last_name"]
+                        if v == "Jordan"
+                        else [LABELS.get(v.strip(), "first_name")],
+                    }
+                    for v in values
+                ]
+            }
+        )
+        texts.append(" ".join(values))
+    return pd.DataFrame({COL_TEXT: texts, COL_ENTITIES_BY_VALUE: rows, "tagged_text": texts})
+
+
+@pytest.mark.parametrize("seed", range(300))
+def test_stable_session_substitutes_stay_unique_and_fixed_across_retried_calls(
+    seed: int, stub_model_configs: list[Any], stub_replace_model_selection: Any
+) -> None:
+    rng = random.Random(seed)
+    proposals = ["Kim", "kim", "Lee", "Max", "Bob", "Carol", "Ned", "Ola", "Kim  "]
+
+    def run_workflow(df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
+        out = df.copy().reset_index(drop=True)
+        out[COL_REPLACEMENT_MAP] = [
+            {
+                "replacements": [
+                    {"original": e["value"], "label": label, "synthetic": rng.choice(proposals)}
+                    for e in row
+                    for label in e["labels"]
+                    if rng.random() < 0.7
+                ]
+            }
+            for row in out[COL_ENTITIES_FOR_REPLACE]
+        ]
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = run_workflow
+    workflow = LlmReplaceWorkflow(adapter=adapter)
+    session = Session(stable_replacements=True)
+    values_of: dict[str, set[str]] = {}  # normalized substitute -> normalized values it was emitted for
+    substitute_of: dict[tuple[str, str], str] = {}  # key -> its normalized substitute
+    for _ in range(rng.randint(2, 4)):
+        frame = _random_frame(rng)
+        result = workflow.generate_validated_maps(
+            frame,
+            model_configs=stub_model_configs,
+            selected_models=stub_replace_model_selection,
+            session=session._view(),
+        )
+        fallbacks = {d.value.casefold() for row in result.decisions for d in row if d.slot[0] is FALLBACK}
+        assert result.source_positions is not None
+        for position, rmap in zip(result.source_positions, result.dataframe[COL_REPLACEMENT_MAP]):
+            entries = rmap["replacements"]
+            requested = {
+                (e["value"], label)
+                for e in frame[COL_ENTITIES_BY_VALUE].iloc[position]["entities_by_value"]
+                for label in e["labels"]
+            }
+            assert requested <= {(e["original"], e["label"]) for e in entries}
+            for e in entries:
+                value, synthetic = normalize(e["original"]), normalize(e["synthetic"])
+                values_of.setdefault(synthetic, set()).add(value)
+                key = (e["label"], value)
+                if synthetic not in fallbacks:
+                    assert substitute_of.setdefault(key, synthetic) == synthetic, (seed, key)
+        session._accept([(d, "test") for row in result.decisions for d in row])
+    assert all(len(values) == 1 for values in values_of.values()), (seed, values_of)

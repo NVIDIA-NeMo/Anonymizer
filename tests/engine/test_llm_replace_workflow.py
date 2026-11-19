@@ -776,3 +776,23 @@ def test_fold_record_mode_does_not_block_a_key_on_its_own_value() -> None:
         "Alex",
         "ALEX",
     ]
+
+
+@pytest.mark.parametrize(
+    ("replacements", "expected"),
+    [
+        ([{"original": "Jordan", "label": "first_name", "synthetic": "Alex"}], [_FILLED[0]]),
+        ([{"original": "Jordan", "label": "first_name, last_name", "synthetic": "Alex"}], []),
+    ],
+    ids=["single-entry", "joined-label"],
+)
+def test_substitute_filter_does_not_fill_from_another_label(
+    replacements: list[dict[str, str]], expected: list[dict[str, str]]
+) -> None:
+    """Substitute retries an unfilled pair rather than filling it locally (with Unicode reconciliation on)."""
+    filtered = _filter_replacement_map_to_input_entities(
+        raw_map={"replacements": replacements},
+        parsed_entities=EntitiesByValueSchema.from_raw(_TWO_LABEL_ENTITIES),
+        reconcile_unicode_whitespace=True,
+    )
+    assert filtered == {"replacements": expected}
