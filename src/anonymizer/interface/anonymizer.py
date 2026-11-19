@@ -399,6 +399,15 @@ class Anonymizer:
                 support and otherwise raise ``InvalidConfigError``. Methods without
                 ``entity_label_examples`` remain supported when no examples are configured;
                 configuring unsupported examples raises ``InvalidConfigError`` too.
+                Its entity spans must be half-open, within the text, non-empty,
+                labelled, and slice to their ``value`` exactly. Identical spans
+                collapse into the first labelled one, keeping its label, and a span
+                contained in a labelled span gives way to the outer span; later
+                steps and the result's ``final_entities`` see the collapsed spans; a
+                detector-supplied ``tagged_text`` is not regenerated from them.
+                Any other overlap or contract break fails the record at ``detect``
+                with ``overlapping_output_ownership``, ``mention_out_of_range`` or
+                ``mention_slice_mismatch``.
             replace_runner: Custom replacement workflow (advanced/testing).
             rewrite_runner: Custom rewrite workflow (advanced/testing).
             combined_rewrite_runner: Custom combined rewrite workflow (advanced/testing).

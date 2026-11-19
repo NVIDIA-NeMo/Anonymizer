@@ -44,6 +44,22 @@ Label eligibility is checked before overlap selection. Eligible detections with 
 
 The final selection is deterministic and greedy: longer spans are considered first, with earlier starts breaking equal-length ties, and any later candidate overlapping a selected span is discarded. This is not an optimizer for maximum total covered characters. For identical bounds, explicit acceptance outranks fallback protection, then source priority applies; native confidence scores break ties only within a shared source/model calibration domain. Touching spans do not overlap.
 
+### Custom detection workflows
+
+The spans a custom `detection_workflow` returns in `final_entities` follow one contract. Each span is half-open
+(`start_position` inclusive, `end_position` exclusive), lies within the record's text, is non-empty, and the text
+slice it covers equals its `value` exactly. Each span needs a non-empty `label`: a span without one is not replaced
+and is never resolved against a labelled span.
+
+Two overlap shapes are resolved at the `detect` step. Spans with identical bounds collapse into one, keeping the first
+labelled span in the detector's order with its label, and a span contained in a labelled span gives way to the outer
+span. Replacement, the Substitute map, rewriting and the result's `final_entities` all see the collapsed spans; a
+`tagged_text` the detector supplies is passed on as it is, not regenerated from them. Any
+other overlap, and any span that breaks the contract, fails its record at the `detect` step with the reason
+`overlapping_output_ownership`, `mention_out_of_range` (a zero-width span counts as out of range) or
+`mention_slice_mismatch`. The record is listed in `result.failed_records` and left out of the output; the rest of the
+run continues.
+
 ### Example: standard vs. latent entities
 
 Consider this short passage:
