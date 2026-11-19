@@ -23,9 +23,11 @@ from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Replace
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_ENTITIES_BY_VALUE,
+    COL_ENTITIES_FOR_REPLACE,
     COL_FINAL_ENTITIES,
     COL_LEAKAGE_MASS,
     COL_REPLACEMENT_MAP,
+    COL_REPLACEMENT_RETRY_CONTEXT,
     COL_REWRITTEN_TEXT,
     COL_TEXT,
     COL_UTILITY_SCORE,
@@ -700,3 +702,65 @@ def test_assigned_to_other_value_ignores_the_same_value_under_another_label() ->
     assert view({(BY_VALUE, "first_name", "bob"): "Kim"}).assigned_to_other_value("  KIM ", slot)
     # A fallback entry names no value, so it always counts as another value's.
     assert view({(FALLBACK, "user_name", "kim"): "kim"}).assigned_to_other_value("kim", slot)
+
+
+def _scripted(
+    tmp_path: Path,
+    texts: list[str],
+    answers: list[dict[str, str]],
+    session: Session,
+    requests: list[list[tuple[list[str], str | None]]] | None = None,
+    kept: list[Any] | None = None,
+    preview: bool = False,
+) -> pd.DataFrame:
+    """One Substitute ``run`` (or ``preview``) whose model call ``i`` answers each requested value found in
+    ``answers[i]`` and omits the rest; ``requests`` gets each call's rows as (requested values, retry context)."""
+    script = list(answers)
+
+    def run_workflow(self: NddAdapter, df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
+        out = df.copy().reset_index(drop=True)
+        answer = script.pop(0)
+        if requests is not None:
+            requests.append(
+                [
+                    ([e["value"] for e in row[COL_ENTITIES_FOR_REPLACE]], row.get(COL_REPLACEMENT_RETRY_CONTEXT))
+                    for _, row in out.iterrows()
+                ]
+            )
+        out[COL_REPLACEMENT_MAP] = [
+            {
+                "replacements": [
+                    {"original": e["value"], "label": label, "synthetic": answer[e["value"]]}
+                    for e in row
+                    for label in e["labels"]
+                    if e["value"] in answer
+                ]
+            }
+            for row in out[COL_ENTITIES_FOR_REPLACE]
+        ]
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
+
+    source = tmp_path / f"scripted-{len(list(tmp_path.iterdir()))}.csv"
+    pd.DataFrame({"text": texts}).to_csv(source, index=False)
+    anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, _Detector()))
+    call = anonymizer.preview if preview else anonymizer.run
+    with patch.object(NddAdapter, "run_workflow", run_workflow):
+        result = call(
+            config=AnonymizerConfig(replace=Substitute()), data=AnonymizerInput(source=str(source)), session=session
+        )
+    assert script == [], "the model was called fewer times than scripted"
+    if kept is not None:
+        kept.append(result)
+    return result.dataframe
+
+
+def test_a_pair_the_session_holds_is_not_retried_when_the_model_omits_it(tmp_path: Path) -> None:
+    session, kept = Session(stable_replacements=True), []
+    _scripted(tmp_path, ["Alice lives here."], [{"Alice": "Bob"}], session)
+    requests: list[Any] = []
+    # The model omits Alice, whom the Session holds; one model call, no retry and no failed record.
+    second = _scripted(tmp_path, ["Alice met Carol."], [{"Carol": "Dana"}], session, requests, kept)
+    assert list(second["text_replaced"]) == ["Bob met Dana."]
+    assert [[values for values, _ in call] for call in requests] == [[["Alice", "Carol"]]]
+    assert kept[0].failed_records == []
+    assert kept[0].session_changes == SessionCallChanges(added=1, reused=1)

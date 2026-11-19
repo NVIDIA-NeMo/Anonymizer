@@ -95,7 +95,9 @@ class LlmReplaceWorkflow:
 
         Under a stable ``session``, that fold runs in ``"run"`` mode, starts
         from the Session's assignments and returns each kept row's decisions;
-        any other ``session`` is ignored.
+        any other ``session`` is ignored. A requested pair the Session already
+        holds counts as covered when the model omits it: it takes the Session's
+        substitute, is not retried and cannot fail its record.
         """
         view = session if session is not None and session.mode.stable_replacements else None
         if view is not None:
@@ -172,6 +174,15 @@ class LlmReplaceWorkflow:
                 ]
                 accepted[position]["replacements"].extend(additions)
                 missing[position] -= {(entry["original"], entry["label"]) for entry in additions}
+                if view is not None:
+                    # A pair the Session holds is covered: the fold uses the Session's substitute for it anyway.
+                    held = [
+                        {"original": value, "label": label, "synthetic": synthetic}
+                        for value, label in sorted(missing[position])
+                        if (synthetic := view.lookup((BY_VALUE, label, _fold(value)))) is not None
+                    ]
+                    accepted[position]["replacements"].extend(held)
+                    missing[position] -= {(entry["original"], entry["label"]) for entry in held}
 
             # Positional association survives duplicate record IDs and reordered
             # workflow output. Do not retry rows already dropped by DataDesigner.
