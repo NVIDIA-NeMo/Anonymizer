@@ -236,7 +236,7 @@ Choose the domain that best reflects how the text is meant to be used or interpr
     )
 
 
-_UNAVAILABLE_DOMAIN = DomainClassificationSchema(domain=Domain.OTHER, domain_confidence=0.0).model_dump(mode="json")
+UNAVAILABLE_DOMAIN = DomainClassificationSchema(domain=Domain.OTHER, domain_confidence=0.0).model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------
@@ -280,7 +280,7 @@ class DomainClassificationWorkflow:
                 prompt=_get_domain_classification_prompt(data_summary),
                 model_alias=domain_alias,
                 output_format=DomainClassificationSchema,
-                unavailable=_UNAVAILABLE_DOMAIN,
+                unavailable=UNAVAILABLE_DOMAIN,
             ),
             CustomColumnConfig(
                 name=COL_DOMAIN_SUPPLEMENT,

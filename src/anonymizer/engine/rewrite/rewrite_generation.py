@@ -318,9 +318,9 @@ def _unique_replacements(replacements: list[ReplacementEntry]) -> dict[tuple[str
 def _extract_rewritten_text(row: dict[str, Any]) -> dict[str, Any]:
     """Extract rewritten_text from the LLM structured output.
 
-    Sets ``COL_REWRITTEN_TEXT`` to ``None`` on failure or blank output so
-    downstream steps (repair, judge, human-review flagging) can distinguish
-    a failed rewrite from a valid one.
+    Sets ``COL_REWRITTEN_TEXT`` to ``None`` on failure or blank output, so the
+    run's evaluation, repair and human-review flagging treat the rewrite as
+    missing. ``Anonymizer.evaluate()``'s final judge still renders it as text.
     """
     if not row.get(COL_REWRITE_REPLACEMENT_READY, True):
         logger.warning("Required rewrite replacement was unavailable; retaining generated rewrite for evaluation.")

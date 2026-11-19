@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -28,6 +29,7 @@ from anonymizer.engine.constants import (
     COL_DOMAIN,
     COL_ENTITIES_BY_VALUE,
     COL_ENTITY_CLASSIFICATION,
+    COL_FULL_REWRITE,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
     COL_LEAKED_PRIVACY_ITEMS,
@@ -2058,13 +2060,17 @@ class _NoRewriteReplyAdapter(_NoPrivacyReplyAdapter):
         result = super().run_workflow(seed, workflow_name=workflow_name, **kwargs)
         if workflow_name == "rewrite-pipeline":
             result.dataframe[COL_REWRITTEN_TEXT] = None
+            result.dataframe[COL_FULL_REWRITE] = None
         elif workflow_name.startswith("rewrite-evaluate-"):
             result.dataframe[COL_UTILITY_SCORE] = pd.array([None] * len(result.dataframe), dtype="double[pyarrow]")
         return result
 
 
-def test_row_without_a_rewrite_reply_is_kept_without_text_and_flagged(tmp_path: Path) -> None:
-    result = _run_one(_NoRewriteReplyAdapter({"rec": 0}), tmp_path)
+def test_row_without_a_rewrite_reply_is_kept_without_text_and_flagged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.replies"):
+        result = _run_one(_NoRewriteReplyAdapter({"rec": 0}), tmp_path)
 
     assert result.failed_records == []
     assert len(result.dataframe) == 1
@@ -2075,3 +2081,7 @@ def test_row_without_a_rewrite_reply_is_kept_without_text_and_flagged(tmp_path: 
     assert outcome.qualification == "not_met"
     assert not outcome.available
     assert not outcome.protected
+    assert [record.getMessage() for record in caplog.records if record.name == "anonymizer.rewrite.replies"] == [
+        "Rows kept without a usable model reply after their retries, by step: rewrite=1. "
+        "If most rows are listed, check that step's model."
+    ]

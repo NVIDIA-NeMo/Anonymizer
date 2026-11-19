@@ -65,6 +65,7 @@ from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
 from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
+from anonymizer.engine.rewrite.reply_summary import warn_kept_without_reply
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
     restore_empty_skipped_span_label_counts,
@@ -440,6 +441,7 @@ def _rewrite_lowered(
     result = _protect_rewrite(graph, rewrite, evaluation)
     frame = rows.frame
     _flag_review(frame, result, dict(zip(order, graph.targets)), evaluation)
+    warn_kept_without_reply(frame)
     _withhold_unassessed(frame)
     _apply_passthrough_defaults(passthrough_rows)
     return RewriteResult(
@@ -603,6 +605,7 @@ class RewriteWorkflow:
             output = merge_and_reorder(passthrough_rows)
         else:
             _flag_review(frame, result, dict(enumerate(state.owners)), evaluation)
+            warn_kept_without_reply(frame)
             _withhold_unassessed(frame)
             output = merge_and_reorder(frame, passthrough_rows)
         record_stage(

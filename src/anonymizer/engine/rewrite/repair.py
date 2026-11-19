@@ -28,6 +28,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.ndd.model_reply import no_reply
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import (
     parse_privacy_answers,
@@ -169,6 +170,7 @@ Provide ONLY the rewritten text.
     baseline = row.get(COL_REWRITE_BASELINE_TEXT)
     if baseline is None:
         baseline = row.get(COL_TEXT, "")
+    utility = row.get(COL_UTILITY_SCORE, 0.0)
     replacements = {
         "<<PRIVACY_GOAL>>": params.privacy_goal_str,
         "<<MAX_PRIVACY_LEAK>>": str(params.max_privacy_leak),
@@ -179,7 +181,7 @@ Provide ONLY the rewritten text.
         if bool(row.get(COL_ANY_HIGH_LEAKED, False))
         else "",
         "<<LEAKED_ITEMS>>": str(row.get(COL_LEAKED_PRIVACY_ITEMS, "")),
-        "<<UTILITY_SCORE>>": str(row.get(COL_UTILITY_SCORE, 0.0)),
+        "<<UTILITY_SCORE>>": "not available" if no_reply(utility) else str(utility),
     }
     return substitute_placeholders(prompt, replacements)
 
