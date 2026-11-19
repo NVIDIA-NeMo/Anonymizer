@@ -1144,7 +1144,9 @@ class Anonymizer:
 
         all_failures = [*detection_failures, *post_detection_failures]
         if all_failures:
-            logger.warning("%d record(s) failed during pipeline processing.", len(all_failures))
+            logger.warning(
+                "%d record(s) failed during pipeline processing: %s.", len(all_failures), _failure_tally(all_failures)
+            )
         text_col = context.resolved_text_column
         renamed_trace = _rename_output_columns(final_df, resolved_text_column=text_col)
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
@@ -1564,6 +1566,40 @@ def _step_to_field(step: str) -> str:
             return "rewrite_repair"
         case _:
             return "unknown"
+
+
+# The reasons the protection graph gives a failed record: an operation's own failure, or a rejected mention.
+_KNOWN_FAILURE_REASONS = frozenset(
+    {
+        "invalid_output",
+        "mention_not_on_target",
+        "mention_out_of_range",
+        "mention_slice_mismatch",
+        "missing_output",
+        "over_limit",
+        "overlapping_output_ownership",
+        "raised",
+    }
+)
+# Graph operation names a failed record can carry besides the workflow names ``_step_to_field`` knows.
+_KNOWN_FAILURE_STEPS = frozenset({"replace", "rewrite", "verify-no-original", "verify-patches"})
+
+
+def _failure_tally(failed: list[FailedRecord]) -> str:
+    """``step/reason=count`` per failure kind, for a log line: never a record id or value.
+
+    Only known steps and reason codes are named, since a caller's detector or runner can put anything in a failed
+    record. A failure with any other reason is counted under its step alone, and one with any other step under
+    ``other``.
+    """
+
+    def kind(failure: FailedRecord) -> str:
+        step, reason = failure.step, failure.reason
+        if step not in _KNOWN_FAILURE_STEPS and _step_to_field(step) == "unknown":
+            return "other"
+        return f"{step}/{reason}" if reason in _KNOWN_FAILURE_REASONS else step
+
+    return ", ".join(f"{key}={count}" for key, count in sorted(Counter(map(kind, failed)).items()))
 
 
 def _collect_failure_counts(failed: list[FailedRecord]) -> dict[str, int]:
