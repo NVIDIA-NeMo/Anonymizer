@@ -655,7 +655,9 @@ def _bind(g: ProtectionGraph, limits: Limits, cancelled: Any) -> tuple[list[Retr
         except Exception:
             status = "failed"
         sizes = None
-        try:  # a check or measure that rejects or raises on an item makes it invalid
+        try:  # a copy, check or measure that rejects or raises on an item makes it invalid
+            if status == "ok" and found.copy:  # the kind's copy is what is checked, measured and bound
+                items = [found.copy(t) for t in items]
             if status == "ok" and not all(map(found.check, items)):
                 status = "invalid_item"
             sizes = [found.measure(t) for t in items] if status == "ok" and found.measure else None
