@@ -712,14 +712,15 @@ def _echo(value: str, answer: str | tuple[str, str]) -> tuple[str, str]:
 def _scripted(
     tmp_path: Path,
     texts: list[str],
-    answers: list[dict[str, Any]],
+    answers: list[dict[Any, Any]],
     session: Session | None,
     requests: list[list[tuple[list[str], str | None]]] | None = None,
     kept: list[Any] | None = None,
     preview: bool = False,
 ) -> pd.DataFrame:
     """One Substitute ``run`` (or ``preview``) whose model call ``i`` answers each requested value found in
-    ``answers[i]`` (a substitute, or an echoed original and a substitute) and omits the rest; ``requests`` gets each call's rows as (requested values, retry context)."""
+    ``answers[i]``, by value or by (value, label), with a substitute or an echoed original and a substitute, and
+    omits the rest; ``requests`` gets each call's rows as (requested values, retry context)."""
     script = list(answers)
 
     def run_workflow(self: NddAdapter, df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
@@ -737,9 +738,10 @@ def _scripted(
                 "replacements": [
                     {"original": echoed, "label": label, "synthetic": synthetic}
                     for e in row
-                    if e["value"] in answer
-                    for echoed, synthetic in [_echo(e["value"], answer[e["value"]])]
                     for label in e["labels"]
+                    for given in [answer.get((e["value"], label), answer.get(e["value"]))]
+                    if given is not None
+                    for echoed, synthetic in [_echo(e["value"], given)]
                 ]
             }
             for row in out[COL_ENTITIES_FOR_REPLACE]
@@ -946,3 +948,28 @@ def test_stable_session_substitutes_stay_unique_and_fixed_across_retried_calls(
                     assert substitute_of.setdefault(key, synthetic) == synthetic, (seed, key)
         session._accept([(d, "test") for row in result.decisions for d in row])
     assert all(len(values) == 1 for values in values_of.values()), (seed, values_of)
+
+
+@pytest.mark.usefixtures("two_labels")
+def test_the_cover_fills_only_from_the_session_never_from_the_response(tmp_path: Path) -> None:
+    session, kept, requests = Session(stable_replacements=True), [], []
+    # The model answers the value under one label only; the Session holds nothing, so the other label is retried
+    # and, omitted again, fails the record rather than taking the response's substitute for the same value.
+    answers = [{(_USER, "user_name"): "Maya"}, {}]
+    output = _scripted(tmp_path, [f"{_USER} and {_USER}."], answers, session, requests, kept)
+    assert [[values for values, _ in call] for call in requests] == [[[_USER]], [[_USER]]]
+    assert list(output["text_replaced"]) == []
+    assert len(kept[0].failed_records) == 1
+    assert _slots(session) == {}
+
+
+def test_placeholders_are_counted_once_per_call_in_run_mode(tmp_path: Path) -> None:
+    session, kept, requests = Session(stable_replacements=True), [], []
+    _scripted(tmp_path, ["Alice lives here."], [{"Alice": "Bob"}], session)
+    # Carol's first-attempt proposal is the Session's Bob, so the run-mode fold gives her a placeholder; the row is
+    # retried for Dave, and the placeholder is still counted once for the call.
+    answers = [{"Carol": "Bob"}, {"Dave": "Eve"}]
+    second = _scripted(tmp_path, ["Carol met Dave."], answers, session, requests, kept)
+    assert len(requests) == 2
+    assert list(second["text_replaced"]) == ["[SUBSTITUTE_FIRST_NAME_1] met Eve."]
+    assert kept[0].session_changes == SessionCallChanges(added=2, placeholders_session=1)
