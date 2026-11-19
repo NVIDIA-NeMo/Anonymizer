@@ -15,7 +15,15 @@ from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
 from data_designer.config.seed_source import LocalFileSeedSource
+from data_designer.engine.errors import DataDesignerRuntimeError
+from data_designer.errors import DataDesignerError
 from data_designer.interface.data_designer import DataDesigner
+from data_designer.interface.errors import (
+    DataDesignerEarlyShutdownError,
+    DataDesignerGenerationError,
+    DataDesignerProfilingError,
+    DataDesignerWorkflowError,
+)
 
 from anonymizer.engine.constants import RECORD_ID_COLUMN
 from anonymizer.engine.detection.detection_workflow import _PrivatePromptLLMStructuredColumnConfig
@@ -233,9 +241,6 @@ def test_preview_exception_wraps_in_workflow_error_and_logs(
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
 
-    class DataDesignerRuntimeError(Exception):
-        pass
-
     mock_dd = Mock(spec=DataDesigner)
     mock_dd.preview.side_effect = DataDesignerRuntimeError("endpoint unreachable")
 
@@ -276,9 +281,6 @@ def test_create_exception_wraps_in_workflow_error_and_logs(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
-
-    class DataDesignerRuntimeError(Exception):
-        pass
 
     mock_dd = Mock(spec=DataDesigner)
     mock_dd.create.side_effect = DataDesignerRuntimeError("quota exceeded")
@@ -321,9 +323,6 @@ def test_load_dataset_exception_wraps_in_workflow_error_and_logs(
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
 
-    class DataDesignerRuntimeError(Exception):
-        pass
-
     mock_dd = Mock(spec=DataDesigner)
     mock_create_results = Mock()
     mock_create_results.load_dataset.side_effect = DataDesignerRuntimeError("corrupt parquet")
@@ -361,3 +360,69 @@ def test_load_dataset_exception_wraps_in_workflow_error_and_logs(
     assert "replace-workflow" not in debug_msg
     assert "output" not in debug_msg
     _assert_no_backend_reference(debug_msg)
+
+
+def test_workflow_failure_warning_names_exception_class_but_not_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
+
+    class EndpointUnreachableError(Exception):
+        pass
+
+    mock_dd = Mock(spec=DataDesigner)
+    mock_dd.create.side_effect = EndpointUnreachableError("SENTINEL-RECORD-TEXT")
+
+    adapter = NddAdapter(data_designer=mock_dd)
+    input_df = pd.DataFrame({"text": ["row-1", "row-2"]})
+
+    with pytest.raises(AnonymizerWorkflowError):
+        adapter.run_workflow(
+            input_df,
+            model_configs=[_make_model_config()],
+            columns=_make_columns(),
+            workflow_name="replace-workflow",
+            preview_num_records=None,
+        )
+
+    warning_records = _unique_records(caplog, level=logging.WARNING, message_contains="Workflow failed")
+    assert len(warning_records) == 1
+    warning_msg = warning_records[0].getMessage()
+    assert "EndpointUnreachableError" in warning_msg
+    assert "SENTINEL-RECORD-TEXT" not in caplog.text
+
+
+_BACKEND_EXCEPTION_LABELS = [
+    (DataDesignerError, "BackendError"),
+    (DataDesignerGenerationError, "GenerationError"),
+    (DataDesignerRuntimeError, "RuntimeError"),
+    (DataDesignerWorkflowError, "WorkflowError"),
+    (DataDesignerEarlyShutdownError, "EarlyShutdownError"),
+    (DataDesignerProfilingError, "ProfilingError"),
+]
+
+
+@pytest.mark.parametrize(("exc_class", "label"), _BACKEND_EXCEPTION_LABELS)
+def test_workflow_failure_warning_shortens_backend_exception_class(
+    caplog: pytest.LogCaptureFixture, exc_class: type[Exception], label: str
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
+    mock_dd = Mock(spec=DataDesigner)
+    mock_dd.create.side_effect = exc_class("SENTINEL-RECORD-TEXT")
+
+    adapter = NddAdapter(data_designer=mock_dd)
+    with pytest.raises(AnonymizerWorkflowError):
+        adapter.run_workflow(
+            pd.DataFrame({"text": ["row-1"]}),
+            model_configs=[_make_model_config()],
+            columns=_make_columns(),
+            workflow_name="replace-workflow",
+            preview_num_records=None,
+        )
+
+    warning_records = _unique_records(caplog, level=logging.WARNING, message_contains="Workflow failed")
+    assert len(warning_records) == 1
+    warning_msg = warning_records[0].getMessage()
+    assert warning_msg.endswith(f": {label}.")
+    _assert_no_backend_reference(warning_msg)
+    assert "SENTINEL-RECORD-TEXT" not in caplog.text

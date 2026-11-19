@@ -161,6 +161,38 @@ def test_unresolved_detection_positions_reroute_over_the_returned_frame(mode: st
     assert result.failed_records == []
 
 
+@pytest.mark.parametrize("mode", list(_MODES))
+@pytest.mark.parametrize(
+    ("given", "normalize"),
+    [("  Alice lives here.  ", str.strip), ("Alice lives here. SECRET", lambda t: t.removesuffix(" SECRET"))],
+    ids=["offsets-shift", "offsets-unchanged"],
+)
+def test_detector_returning_changed_text_reroutes_over_that_text(mode: str, given: str, normalize: Any) -> None:
+    """A detector that keeps record IDs but returns normalized text: its offsets are for the returned text, so the
+    route replaces or rewrites that text, as the frame-based path does, instead of mixing it with the input."""
+
+    class Normalizing:
+        def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+            out = dataframe.copy()
+            out[COL_TEXT] = [normalize(str(t)) for t in out[COL_TEXT]]
+            return _detected(out)
+
+    detector: Any = Normalizing()
+    anonymizer = Anonymizer(detection_workflow=detector, rewrite_runner=_StubRewrite(Mock()))
+    data = TextRecordsInput(records=[TextRecord(id="r1", text=given)])
+    with scripted(Case("pin", lambda: _MODES[mode])):
+        result = anonymizer.run(config=_MODES[mode], data=data)
+
+    column, expected = (
+        ("text_replaced", "[REDACTED_FIRST_NAME] lives here.")
+        if mode == "replace"
+        else ("text_rewritten", "R<Alice lives here.>")
+    )
+    assert list(result.dataframe["text"]) == ["Alice lives here."]
+    assert list(result.dataframe[column]) == [expected]
+    assert result.failed_records == []
+
+
 # --- 5: a Mock(spec=EntityDetectionWorkflow) and a run-overriding subclass are driven through their run ---------------
 
 
@@ -201,3 +233,38 @@ def test_caller_detector_run_is_called_once_and_its_result_used(make: Any, mode:
     column = "text_replaced" if mode == "replace" else "text_rewritten"
     assert list(result.dataframe[column]) == expected
     assert result.failed_records == []
+
+
+@pytest.mark.parametrize("mode", list(_MODES))
+def test_missing_text_cell_is_not_a_changed_text(tmp_path: Path, mode: str) -> None:
+    """An empty input cell comes back from detection as ``pd.NA``: missing on both sides is the same text, so the
+    call stays on the graph and every row keeps its protection outcome."""
+
+    class MissingAsNA:
+        def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+            out = dataframe.copy()
+            out[COL_TEXT] = [pd.NA if pd.isna(t) else t for t in out[COL_TEXT]]
+            out[COL_FINAL_ENTITIES] = [
+                {"entities": []} if pd.isna(t) else _first_word_entities(t) for t in out[COL_TEXT]
+            ]
+            out[COL_ENTITIES_BY_VALUE] = [_build_entities_by_value(e) for e in out[COL_FINAL_ENTITIES]]
+            return EntityDetectionResult(out, [], tuple(range(len(out))))
+
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"id": ["a", "b", "c"], "text": ["Alice works here.", None, "Bob lives there."]}).to_csv(
+        csv_path, index=False
+    )
+    detector: Any = MissingAsNA()
+    anonymizer = Anonymizer(detection_workflow=detector, rewrite_runner=_StubRewrite(Mock()))
+    with scripted(Case("pin", lambda: _MODES[mode])):
+        result = anonymizer.run(
+            config=_MODES[mode], data=AnonymizerInput(source=str(csv_path), text_column="text", id_column="id")
+        )
+
+    assert [str(t) for t in result.dataframe["text"]] == ["Alice works here.", "<NA>", "Bob lives there."]
+    assert [result.outcome(row).terminal for row in range(3)] == ["success"] * 3
+    if mode == "replace":
+        assert list(result.dataframe["text_replaced"])[::2] == [
+            "[REDACTED_FIRST_NAME] works here.",
+            "[REDACTED_FIRST_NAME] lives there.",
+        ]

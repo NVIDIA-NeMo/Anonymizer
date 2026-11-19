@@ -13,7 +13,7 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import Generator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
@@ -34,7 +34,7 @@ from data_designer.config.utils.trace_type import TraceType
 from anonymizer.config.regex import REGEX_WALL_CEILING_FACTOR
 from anonymizer.engine.constants import COL_REGEX_ENTITIES, RECORD_ID_COLUMN
 from anonymizer.engine.graph_core.observe import report_requests
-from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
+from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame, designer_hook
 from anonymizer.engine.ndd.failed_record import FailedRecord as FailedRecord
 from anonymizer.engine.ndd.storage import prepare_json_storage_column, prepare_json_storage_seed
 from anonymizer.interface.errors import AnonymizerWorkflowError
@@ -45,6 +45,28 @@ if TYPE_CHECKING:
     from data_designer.interface.data_designer import DataDesigner
 
 logger = logging.getLogger("anonymizer.ndd")
+
+_BACKEND_PACKAGE = "data_designer"
+_BACKEND_CLASS_PREFIX = "DataDesigner"
+
+
+def exception_class_label(exc: BaseException) -> str:
+    """Return the exception class name for a log line, never the message.
+
+    Classes from the workflow backend package lose the backend prefix so log lines do not name the backend:
+    ``DataDesignerGenerationError`` becomes ``GenerationError`` and the bare base class becomes ``BackendError``.
+    Classes from other modules keep their name.
+    """
+    cls = type(exc)
+    name = cls.__name__
+    module = cls.__module__ or ""
+    if module != _BACKEND_PACKAGE and not module.startswith(_BACKEND_PACKAGE + "."):
+        return name
+    if not name.startswith(_BACKEND_CLASS_PREFIX):
+        return name
+    stripped = name.removeprefix(_BACKEND_CLASS_PREFIX)
+    return "BackendError" if stripped in ("", "Error") else stripped
+
 
 # DataDesigner records the cause of a failed task only while task tracing is on.
 # Tracing keeps one small record per task attempt for the whole run, so this
@@ -114,7 +136,10 @@ _SAFE_FAILURE_SUMMARIES = {
     ),
 }
 # Anonymizer's own failure text, safe to show because it carries only offsets.
-_KNOWN_FAILURE = re.compile(r"Detector entity text does not match the source span at offsets \[\d+, \d+\)")
+_KNOWN_FAILURE = re.compile(
+    r"Detector entity text does not match the source span at offsets \[\d+, \d+\)"
+    r"|Detector entity span \[[0-9]+, [0-9]+\) ends past the source text of length [0-9]+(?![0-9])"
+)
 
 _TRACEABLE_LLM_COLUMN_TYPES = (LLMTextColumnConfig, LLMStructuredColumnConfig)
 _MODEL_TRACE_COLUMN: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_column", default=None)
@@ -491,8 +516,9 @@ class NddAdapter:
                     output_df, source_positions = source_frame.project(output_df, requested=record_count)
             except Exception as exc:
                 logger.warning(
-                    "Workflow failed for %d input record(s).",
+                    "Workflow failed for %d input record(s): %s.",
                     record_count,
+                    exception_class_label(exc),
                 )
                 logger.debug(
                     "Workflow failure context: input_records=%d column_count=%d",
@@ -815,8 +841,7 @@ class _DataDesignerUsageProbe:
         self._collector = collector
         self._workflow_name = workflow_name
         self._private_trace_column_names = {column.column_name for column in private_trace_columns or []}
-        self._original_create_resource_provider: Any | None = None
-        self._designer_owned_resource_provider = False
+        self._hook = ExitStack()
         self._resource_providers: list[Any] = []
         self._model_registry_patches: list[tuple[Any, Any]] = []
         self._facade_patches: dict[int, tuple[Any, dict[str, Any]]] = {}
@@ -826,31 +851,21 @@ class _DataDesignerUsageProbe:
         if not self._enabled:
             return self
 
-        original = getattr(self._data_designer, "_create_resource_provider", None)
-        if not callable(original):
+        if not callable(getattr(self._data_designer, "_create_resource_provider", None)):
             return self
 
-        self._original_create_resource_provider = original
-        self._designer_owned_resource_provider = "_create_resource_provider" in vars(self._data_designer)
-
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
+        def wrapper(original: Any, *args: Any, **kwargs: Any) -> Any:
             resource_provider = original(*args, **kwargs)
             self._resource_providers.append(resource_provider)
             self._install_private_model_trace(resource_provider)
             return resource_provider
 
-        setattr(self._data_designer, "_create_resource_provider", wrapper)
+        self._hook.enter_context(designer_hook(self._data_designer, "_create_resource_provider", wrapper))
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         self._restore_private_trace_patches()
-        if self._original_create_resource_provider is None:
-            return
-        if self._designer_owned_resource_provider:
-            setattr(self._data_designer, "_create_resource_provider", self._original_create_resource_provider)
-        else:
-            # Restoring the class's bound method as an instance attribute would tie the designer to itself.
-            vars(self._data_designer).pop("_create_resource_provider", None)
+        self._hook.close()
 
     def model_usage(self) -> dict[str, Any] | None:
         usage: dict[str, Any] = {}
@@ -1209,18 +1224,20 @@ def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | No
         yield
         return
 
-    original_run_config = getattr(data_designer, "run_config", None)
-    set_run_config = getattr(data_designer, "set_run_config", None)
-    if original_run_config is None or not callable(set_run_config):
+    if not callable(getattr(data_designer, "_create_resource_provider", None)):
         yield
         return
 
-    traced_run_config = _run_config_with_async_trace(original_run_config)
-    set_run_config(traced_run_config)
-    try:
+    def traced(original: Any, *args: Any, **kwargs: Any) -> Any:
+        # The run's own resources carry the trace flag; the designer's run config, shared by other runs, is untouched.
+        resource_provider = original(*args, **kwargs)
+        run_config = getattr(resource_provider, "run_config", None)
+        if run_config is not None:
+            resource_provider.run_config = _run_config_with_async_trace(run_config)
+        return resource_provider
+
+    with designer_hook(data_designer, "_create_resource_provider", traced):
         yield
-    finally:
-        set_run_config(original_run_config)
 
 
 def _run_config_with_async_trace(run_config: Any) -> Any:

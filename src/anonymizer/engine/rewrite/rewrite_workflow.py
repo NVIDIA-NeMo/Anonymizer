@@ -528,8 +528,8 @@ class RewriteWorkflow:
         ``rewrite`` splits the detection frame on its entities: rows with none take the passthrough defaults and the
         rest go through ``_produce``, the stages ``run`` uses. A row the detector drops, or whose mentions the graph
         rejects, fails at ``detect`` and is absent from the output. A result that is not verifiably one input row per
-        returned row fails every target at ``detect``, and ``run`` rewrites the detection frame as returned. ``stage``
-        names the measurement.
+        returned row, or that changed a row's text, fails every target at ``detect``, and ``run`` rewrites the
+        detection frame as returned. ``stage`` names the measurement.
         """
         started = time.perf_counter()
         evaluation = options["evaluation"]
