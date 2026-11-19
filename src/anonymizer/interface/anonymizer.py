@@ -281,7 +281,7 @@ def _reported_outcomes(
     that id (``ran_ids``), or an unassessed outcome when the result carries no outcomes or no single row with that
     id, with each verifier appended as an advisory naming it, in verifier order, in place of any advisory an earlier
     evaluation of the result gave the same verifier; a row whose text was edited under a kept id keeps the run's
-    verdict on the run's own text. A row that cannot be placed (no id, an unknown or a repeated one) is unassessed
+    verdict on the run's own text. A row that cannot be placed (no id, a null, an unknown or a repeated one) is unassessed
     and unprotected, and each verifier reads ``could_not_assess`` with cause ``unplaced``. A verifier that gave no
     assessment is ``could_not_assess`` with its execution code (``raised``, or ``blocked`` when an earlier verifier
     of the row failed) as the cause. The ungraded rewrite judge reports ``scored`` when it returned scores and
@@ -505,8 +505,11 @@ class Anonymizer:
                 support and otherwise raise ``InvalidConfigError``. Methods without
                 ``entity_label_examples`` remain supported when no examples are configured;
                 configuring unsupported examples raises ``InvalidConfigError`` too.
-            replace_runner: Custom replacement workflow (advanced/testing).
-            rewrite_runner: Custom rewrite workflow (advanced/testing).
+            replace_runner: Custom replacement workflow (advanced/testing). Its ``evaluate()`` must keep each row's
+                record id: ``evaluate()`` matches judge rows to records only by id, reports a row without one
+                unassessed, and reports a row given another record's id as that record.
+            rewrite_runner: Custom rewrite workflow (advanced/testing). Its ``evaluate()`` must keep each row's record
+                id, as for ``replace_runner``.
             combined_rewrite_runner: Custom combined rewrite workflow (advanced/testing).
         """
         _initialize_logging()

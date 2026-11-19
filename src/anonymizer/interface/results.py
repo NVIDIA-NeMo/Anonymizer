@@ -30,15 +30,18 @@ class _DisplayMixin:
         row did not finish or a required check failed, could not decide (a ``could_not_assess`` reason) or gave
         no assessment, and ``"not_assessed"`` only when no check is required.
 
-        On an ``evaluate()`` result each row is matched to its record only by a record id that occurs once in the
-        evaluated result. The outcome is the evaluated result's outcome for that record (``not_assessed`` and
-        unprotected when that result carries no outcomes), with one advisory per judge appended, named by the judge, with status ``passed``, ``failed``, ``could_not_assess``,
+        On an ``evaluate()`` result each row is matched to its record only by a non-null record id that occurs once
+        in the evaluated result and once among the judge's rows; ids compare as text. The outcome is the evaluated
+        result's outcome for that record (``not_assessed`` and unprotected when that result carries no outcomes or no
+        single outcome with that id, for example after its ids were changed), with one advisory per judge appended, named by the judge, with status ``passed``, ``failed``, ``could_not_assess``,
         ``scored`` or ``not_applicable``; ``cause`` says why: ``"judge_unavailable"`` when the judge gave no score,
         ``"raised"`` when its check raised, ``"blocked"`` when an earlier judge check of the row raised so it never ran.
         ``scored`` means the rewrite judge, which has no pass threshold, returned scores; read them in the judge
         evaluation column. ``not_applicable`` means the rewrite judge skipped a row with no detected entities, by
-        design. A row without such an id (a custom runner dropped or changed it) is ``not_assessed`` and unprotected,
-        and each judge reads ``could_not_assess`` with cause ``"unplaced"``. Judges never change qualification or
+        design. A row without such an id (a custom runner dropped, nulled or repeated it) is ``not_assessed`` and
+        unprotected, and each judge reads ``could_not_assess`` with cause ``"unplaced"``. A row a custom runner gave
+        another record's id, including by retyping ids so that they compare equal as text, is reported as that record,
+        with its run outcome and its judges' verdicts. Judges never change qualification or
         release: those still say whether the run released the row. The evaluated result is not changed.
 
         Raises:
