@@ -88,3 +88,42 @@ def test_preview_result_preserves_positional_data_summary_contract() -> None:
 
     assert result.data_summary == "Customer support transcripts."
     assert result.excluded_entity_labels is None
+
+
+def test_anonymizer_result_positional_label_list_lands_in_effective_entity_labels() -> None:
+    result = AnonymizerResult(
+        pd.DataFrame(),
+        pd.DataFrame(),
+        "bio",
+        [],
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        ["custom_id"],
+    )
+
+    assert result.effective_entity_labels == ["custom_id"]
+    assert result.detection_scope is None
+
+
+def test_preview_result_positional_label_list_lands_in_effective_entity_labels() -> None:
+    result = PreviewResult(
+        pd.DataFrame(),
+        pd.DataFrame(),
+        "bio",
+        [],
+        3,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        ["custom_id"],
+    )
+
+    assert result.effective_entity_labels == ["custom_id"]
+    assert result.detection_scope is None

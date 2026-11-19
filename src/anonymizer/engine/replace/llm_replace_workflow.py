@@ -24,16 +24,20 @@ from anonymizer.engine.constants import (
     COL_ENTITY_EXAMPLES,
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_SOURCE,
+    COL_REPLACEMENT_RETRY_CONTEXT,
     ENTITY_LABEL_EXAMPLES,
+    RECORD_ID_COLUMN,
+    _jinja,
 )
 from anonymizer.engine.graph_core.session import BY_VALUE, FALLBACK, Decision, SessionView, Slot
 from anonymizer.engine.graph_core.session import normalize as _fold
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.backend import DataDesignerBackend
+from anonymizer.engine.ndd.backend import BackendRun, DataDesignerBackend
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
+from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
@@ -45,6 +49,10 @@ REPLACEMENT_MAP_SOURCE_LLM = "llm"
 # downstream consumes them, and they carry pyarrow-backed pandas extension
 # dtypes that would break trace_dataframe.to_parquet round-trip.
 _INTERNAL_COLUMNS = (COL_ENTITY_EXAMPLES, COL_ENTITIES_FOR_REPLACE, COL_ENTITIES_FOR_REPLACE_JSON)
+
+# Compare known space variants without folding other characters, changing
+# whitespace counts, or admitting tabs and line breaks.
+_UNICODE_SPACE_TRANSLATION = str.maketrans({"\u00a0": " ", "\u2009": " ", "\u202f": " "})
 
 
 @dataclass(frozen=True)
@@ -63,7 +71,7 @@ class LlmReplaceWorkflow:
         self._adapter = adapter
         self._backend = DataDesignerBackend(adapter)
 
-    def generate_map_only(
+    def generate_validated_maps(
         self,
         dataframe: pd.DataFrame,
         *,
@@ -75,11 +83,154 @@ class LlmReplaceWorkflow:
         consistency: Literal["record", "run"] = "record",
         session: SessionView | None = None,
     ) -> LlmReplaceResult:
-        """Under a stable ``session``, the fold runs in ``"run"`` mode, starts from the Session's assignments and
-        returns each row's decisions; any other ``session`` is ignored."""
+        """Generate complete Substitute maps, retrying missing pairs once.
+
+        Expected pairs are captured before generation. Schema-valid entries are
+        filtered before checking coverage; accepted entries survive the retry.
+        Rows still incomplete after that retry are reported as failed records.
+        DataDesigner's schema-validation retries apply to each call. A failed
+        completeness retry also fails only the affected records. The complete
+        maps then go through ``_fold_replacement_maps`` under ``consistency``
+        like any other proposal.
+
+        Under a stable ``session``, that fold runs in ``"run"`` mode, starts
+        from the Session's assignments and returns each kept row's decisions;
+        any other ``session`` is ignored.
+        """
         view = session if session is not None and session.mode.stable_replacements else None
         if view is not None:
             consistency = "run"
+        source = dataframe.copy()
+        source[ROW_ORDER_COL] = range(len(source))
+        if RECORD_ID_COLUMN not in source and not source.empty:
+            source[RECORD_ID_COLUMN] = source.apply(NddAdapter._compute_record_id, axis=1)
+        expected = [EntitiesByValueSchema.from_raw(raw) for raw in source[entities_column]]
+        missing = [_entity_pairs(entities) for entities in expected]
+        accepted: list[dict[str, list[dict[str, str]]]] = [{"replacements": []} for _ in expected]
+        pending = [position for position, pairs in enumerate(missing) if pairs]
+        if preview_num_records is not None:
+            pending = pending[:preview_num_records]
+        eligible = {position for position, pairs in enumerate(missing) if not pairs} | set(pending)
+        failed: list[FailedRecord] = []
+        dropped: set[int] = set()
+
+        for attempt in range(2):
+            if not pending:
+                break
+            batch = source.iloc[pending].drop(columns=[ROW_ORDER_COL])
+            requested = [_entities_for_pairs(missing[position]) for position in pending]
+            batch[COL_ENTITY_EXAMPLES] = [_create_entity_examples(entities) for entities in requested]
+            batch[COL_ENTITIES_FOR_REPLACE] = [_enrich_entities_for_template(entities) for entities in requested]
+            batch[COL_ENTITIES_FOR_REPLACE_JSON] = batch[COL_ENTITIES_FOR_REPLACE].apply(json.dumps)
+            batch[ROW_ORDER_COL] = pending
+            if attempt:
+                # The retry sees the accepted entries as one record's fold would show them; the run's fold comes last.
+                batch[COL_REPLACEMENT_RETRY_CONTEXT] = [
+                    json.dumps(_fold_replacement_maps([accepted[p]], "record", [_requested_values(expected[p])])[0])
+                    for p in pending
+                ]
+            try:
+                result = self._run_generation(
+                    batch,
+                    model_configs=model_configs,
+                    selected_models=selected_models,
+                    instructions=instructions,
+                    preview_num_records=preview_num_records,
+                    retry=bool(attempt),
+                )
+            except AnonymizerWorkflowError:
+                if not attempt:
+                    raise
+                # A wholly failed retry may raise instead of returning an empty
+                # frame. Complete records from the first attempt still survive.
+                for position in pending:
+                    failed.append(
+                        FailedRecord(
+                            record_id=str(source[RECORD_ID_COLUMN].iloc[position]),
+                            step="replace-map-generation",
+                            reason="Replacement map retry failed before a complete map was returned",
+                        )
+                    )
+                dropped.update(pending)
+                pending = []
+                break
+            failed.extend(result.failed_records)
+            returned: set[int] = set()
+            for _, row in result.dataframe.iterrows():
+                position = int(row[ROW_ORDER_COL])
+                returned.add(position)
+                filtered = _filter_replacement_map_to_input_entities(
+                    raw_map=row.get(COL_REPLACEMENT_MAP),
+                    parsed_entities=expected[position],
+                    record_id=str(source[RECORD_ID_COLUMN].iloc[position]),
+                    reconcile_unicode_whitespace=True,
+                )
+                additions = [
+                    entry
+                    for entry in filtered["replacements"]
+                    if (entry["original"], entry["label"]) in missing[position]
+                ]
+                accepted[position]["replacements"].extend(additions)
+                missing[position] -= {(entry["original"], entry["label"]) for entry in additions}
+
+            # Positional association survives duplicate record IDs and reordered
+            # workflow output. Do not retry rows already dropped by DataDesigner.
+            reported = Counter(failure.record_id for failure in result.failed_records)
+            for position in sorted(set(pending) - returned):
+                dropped.add(position)
+                record_id = str(source[RECORD_ID_COLUMN].iloc[position])
+                if reported[record_id]:
+                    reported[record_id] -= 1
+                else:
+                    failed.append(
+                        FailedRecord(record_id, "replace-map-generation", "Record missing from workflow output")
+                    )
+            pending = [position for position in pending if position in returned and missing[position]]
+            if pending and attempt == 0:
+                logger.warning(
+                    "Substitution maps incomplete in %d record(s); retrying %d missing pair(s) once "
+                    "(missing_by_label=%s)",
+                    len(pending),
+                    sum(len(missing[position]) for position in pending),
+                    dict(sorted(Counter(label for position in pending for _, label in missing[position]).items())),
+                )
+
+        for position in pending:
+            labels = dict(sorted(Counter(label for _, label in missing[position]).items()))
+            failed.append(
+                FailedRecord(
+                    record_id=str(source[RECORD_ID_COLUMN].iloc[position]),
+                    step="replace-map-generation",
+                    reason=f"Replacement map incomplete after one retry: {len(missing[position])} requested pair(s) "
+                    f"have no mapping (missing_by_label={labels})",
+                )
+            )
+        kept = sorted(eligible - dropped - set(pending))
+        output = source.iloc[kept].drop(columns=[ROW_ORDER_COL]).copy().reset_index(drop=True)
+        output[COL_REPLACEMENT_MAP] = pd.Series([accepted[position] for position in kept], dtype=object)
+        output[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
+        output[COL_REPLACEMENT_MAP], decisions, placeholder_counts = _fold_frame(
+            output, entities_column, consistency, view
+        )
+        return LlmReplaceResult(
+            dataframe=output,
+            failed_records=failed,
+            source_positions=tuple(kept),
+            decisions=decisions,
+            placeholder_counts=placeholder_counts,
+        )
+
+    def generate_map_only(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: ReplaceModelSelection,
+        instructions: str | None = None,
+        entities_column: str = COL_ENTITIES_BY_VALUE,
+        preview_num_records: int | None = None,
+        consistency: Literal["record", "run"] = "record",
+    ) -> LlmReplaceResult:
         working_df = dataframe.copy()
 
         # Parse the per-row entity payload once, then reuse it for prompt inputs.
@@ -110,22 +261,12 @@ class LlmReplaceWorkflow:
             )
 
         # Only rows with actual entities are sent to the LLM.
-        run_result = self._backend.run(
+        run_result = self._run_generation(
             entity_rows,
             model_configs=model_configs,
-            columns=[
-                LLMStructuredColumnConfig(
-                    name=COL_REPLACEMENT_MAP,
-                    prompt=_get_replacement_mapping_prompt(
-                        entities_column=COL_ENTITIES_FOR_REPLACE,
-                        instructions=instructions,
-                    ),
-                    model_alias=resolve_model_alias("replacement_generator", selected_models),
-                    output_format=EntityReplacementMapSchema,
-                )
-            ],
-            workflow_name="replace-map-generation",
-            preview_num_records=min(preview_num_records, len(entity_rows)) if preview_num_records is not None else None,
+            selected_models=selected_models,
+            instructions=instructions,
+            preview_num_records=preview_num_records,
         )
         output_df = run_result.dataframe.copy()
         # Drop any LLM-returned replacements that were not requested for this row.
@@ -142,30 +283,88 @@ class LlmReplaceWorkflow:
         # Input positions of the rows that came back, in output order: the rows the LLM dropped are absent.
         positions = tuple(sorted((*passthrough_rows[ROW_ORDER_COL], *output_df[ROW_ORDER_COL])))
         combined = merge_and_reorder(output_df, passthrough_rows)
-        requested = [_requested_values(EntitiesByValueSchema.from_raw(v)) for v in combined[entities_column]]
-        tally: Counter[tuple[str, ...]] = Counter()
-        decisions: list[tuple[Decision, ...]] = []
-        with stage_timer("LlmReplaceWorkflow.fold", consistency=consistency, input_row_count=len(combined)) as fields:
-            maps = _fold_replacement_maps(
-                combined[COL_REPLACEMENT_MAP].tolist(), consistency, requested, tally, view, decisions
-            )
-            fields["entry_count"] = sum(len(m.get("replacements", [])) for m in maps)
-            fields["records_with_placeholder"] = tally.pop(("records_with_placeholder",), 0)
-            fallbacks: dict[str, dict[str, int]] = {}
-            placeholder_counts: Counter[str] = Counter()
-            for (label, step), n in sorted(tally.items()):
-                fallbacks.setdefault(label, {})[step] = n
-                if step.startswith("placeholder_"):
-                    placeholder_counts[step.removeprefix("placeholder_")] += n
-            fields["fallback_counts"] = fallbacks
-        combined[COL_REPLACEMENT_MAP] = maps
+        combined[COL_REPLACEMENT_MAP], _, _ = _fold_frame(combined, entities_column, consistency)
         return LlmReplaceResult(
             dataframe=combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
             failed_records=run_result.failed_records,
             source_positions=positions,
-            decisions=tuple(decisions),
-            placeholder_counts=dict(placeholder_counts),
         )
+
+    def _run_generation(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: ReplaceModelSelection,
+        instructions: str | None,
+        preview_num_records: int | None,
+        retry: bool = False,
+    ) -> BackendRun:
+        return self._backend.run(
+            dataframe,
+            model_configs=model_configs,
+            columns=[
+                LLMStructuredColumnConfig(
+                    name=COL_REPLACEMENT_MAP,
+                    prompt=_get_replacement_mapping_prompt(
+                        entities_column=COL_ENTITIES_FOR_REPLACE,
+                        instructions=instructions,
+                        retry=retry,
+                    ),
+                    model_alias=resolve_model_alias("replacement_generator", selected_models),
+                    output_format=EntityReplacementMapSchema,
+                )
+            ],
+            workflow_name="replace-map-generation",
+            preview_num_records=min(preview_num_records, len(dataframe)) if preview_num_records is not None else None,
+        )
+
+
+def _entity_pairs(entities: EntitiesByValueSchema) -> set[tuple[str, str]]:
+    return {
+        (entity.value, label)
+        for entity in entities.entities_by_value
+        for label in entity.labels
+        if entity.value and label
+    }
+
+
+def _entities_for_pairs(pairs: set[tuple[str, str]]) -> EntitiesByValueSchema:
+    grouped: dict[str, list[str]] = {}
+    for value, label in sorted(pairs):
+        grouped.setdefault(value, []).append(label)
+    return EntitiesByValueSchema.model_validate(
+        {
+            "entities_by_value": [{"value": value, "labels": labels} for value, labels in grouped.items()],
+        }
+    )
+
+
+def _fold_frame(
+    frame: pd.DataFrame,
+    entities_column: str,
+    consistency: Literal["record", "run"],
+    view: SessionView | None = None,
+) -> tuple[list[dict], tuple[tuple[Decision, ...], ...], dict[str, int]]:
+    """``_fold_replacement_maps`` over ``frame``'s maps, recorded as the ``LlmReplaceWorkflow.fold`` stage: the maps,
+    each row's decisions under ``view`` and the placeholders minted, by cause."""
+    requested = [_requested_values(EntitiesByValueSchema.from_raw(v)) for v in frame[entities_column]]
+    tally: Counter[tuple[str, ...]] = Counter()
+    decisions: list[tuple[Decision, ...]] = []
+    placeholder_counts: Counter[str] = Counter()
+    with stage_timer("LlmReplaceWorkflow.fold", consistency=consistency, input_row_count=len(frame)) as fields:
+        maps = _fold_replacement_maps(
+            frame[COL_REPLACEMENT_MAP].tolist(), consistency, requested, tally, view, decisions
+        )
+        fields["entry_count"] = sum(len(m.get("replacements", [])) for m in maps)
+        fields["records_with_placeholder"] = tally.pop(("records_with_placeholder",), 0)
+        fallbacks: dict[str, dict[str, int]] = {}
+        for (label, step), n in sorted(tally.items()):
+            fallbacks.setdefault(label, {})[step] = n
+            if step.startswith("placeholder_"):
+                placeholder_counts[step.removeprefix("placeholder_")] += n
+        fields["fallback_counts"] = fallbacks
+    return maps, tuple(decisions), dict(placeholder_counts)
 
 
 def _recase(synthetic: str, *, like: str, source: str) -> str:
@@ -335,8 +534,16 @@ def _filter_replacement_map_to_input_entities(
     raw_map: object,
     parsed_entities: EntitiesByValueSchema,
     record_id: str = "",
+    reconcile_unicode_whitespace: bool = False,
 ) -> dict[str, list[dict[str, str]]]:
-    """Keep only replacement entries that correspond to actual requested entities."""
+    """Keep requested entries, optionally reconciling unambiguous Unicode spaces.
+
+    Exact entries take precedence. Reconciliation compares the original under
+    the same exact label against the full requested inventory, then restores
+    the trusted original. Ambiguous or otherwise changed originals are dropped.
+    Collisions between a substitute and a value are left to
+    ``_fold_replacement_maps``.
+    """
     if isinstance(raw_map, BaseModel):
         raw_map = raw_map.model_dump(mode="python")
     if not isinstance(raw_map, dict):
@@ -353,13 +560,31 @@ def _filter_replacement_map_to_input_entities(
         for label in entity.labels
         if entity.value and label
     }
+    exact_pairs = {(entry.original, entry.label) for entry in parsed_map.replacements} & allowed_pairs
+    equivalent_pairs: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    if reconcile_unicode_whitespace:
+        for value, label in allowed_pairs:
+            key = (value.translate(_UNICODE_SPACE_TRANSLATION), label)
+            equivalent_pairs.setdefault(key, set()).add((value, label))
     filtered: list[dict[str, str]] = []
-    exact: dict[tuple[str, str], str] = {}
+    filled: dict[tuple[str, str], str] = {}
+    reconciled_labels: Counter[str] = Counter()
     for replacement in parsed_map.replacements:
         key = (replacement.original, replacement.label)
-        if key not in allowed_pairs or key in exact:
+        if key not in allowed_pairs:
+            normalized_key = (replacement.original.translate(_UNICODE_SPACE_TRANSLATION), replacement.label)
+            candidates = equivalent_pairs.get(normalized_key, set())
+            if len(candidates) != 1:
+                continue
+            key = next(iter(candidates))
+            if key in exact_pairs:
+                continue
+        if key in filled:
             continue
-        exact[key] = replacement.synthetic
+        if replacement.original != key[0]:
+            replacement = replacement.model_copy(update={"original": key[0]})
+            reconciled_labels[replacement.label] += 1
+        filled[key] = replacement.synthetic
         filtered.append(replacement.model_dump())
     by_folded: dict[str, str] = {}
     for replacement in parsed_map.replacements:
@@ -368,15 +593,22 @@ def _filter_replacement_map_to_input_entities(
     # labels) takes an exact entry of the same value under another label, else the first entry whose folded original
     # matches. It keeps the requested original and label, since Replace resolves by the exact pair first.
     for entity in parsed_entities.entities_by_value:
-        same_value = next((exact[(entity.value, lb)] for lb in entity.labels if (entity.value, lb) in exact), None)
+        same_value = next((filled[(entity.value, lb)] for lb in entity.labels if (entity.value, lb) in filled), None)
         for label in entity.labels:
-            if not (entity.value and label) or (entity.value, label) in exact:
+            if not (entity.value and label) or (entity.value, label) in filled:
                 continue
             synthetic = same_value or by_folded.get(_fold(entity.value))
             if synthetic is not None:
-                exact[(entity.value, label)] = synthetic
+                filled[(entity.value, label)] = synthetic
                 filtered.append({"original": entity.value, "label": label, "synthetic": synthetic})
 
+    if reconciled_labels:
+        logger.debug(
+            "Replacement map reconciled Unicode whitespace for record %s; reconciled=%d (reconciled_by_label=%s)",
+            record_id or "<unknown>",
+            sum(reconciled_labels.values()),
+            dict(sorted(reconciled_labels.items())),
+        )
     if logger.isEnabledFor(logging.DEBUG):
         raw_pairs = {(r.original, r.label) for r in parsed_map.replacements}
         filtered_pairs = {(f["original"], f["label"]) for f in filtered}
@@ -430,10 +662,15 @@ def _collision_safe_synthetic(label: str, *, index: int, protected_original_valu
         index += 1
 
 
-def _get_replacement_mapping_prompt(*, entities_column: str, instructions: str | None = None) -> str:
+def _get_replacement_mapping_prompt(
+    *,
+    entities_column: str,
+    instructions: str | None = None,
+    retry: bool = False,
+) -> str:
     instruction_block = f"\nAdditional instructions: {instructions}\n" if instructions else ""
     prompt = """Generate synthetic replacements for sensitive entities. ONE value per entity, used consistently.
-<<INSTRUCTION_BLOCK>>
+<<INSTRUCTION_BLOCK>><<RETRY_BLOCK>>
 
 The replacements must:
    - prevent re-identification
@@ -444,7 +681,7 @@ The replacements must:
 
 The replacements must NOT:
    - be a synonym or near-synonym of the original value
-   - e a closely related specialization of the same role
+   - be a closely related specialization of the same role
 
 Prefer replacements that shift the concept to a different but plausible value within a related domain, \
 or a nearby role that is clearly distinct from the original.
@@ -503,6 +740,14 @@ Before generating replacements, verify:
         prompt,
         {
             "<<INSTRUCTION_BLOCK>>": instruction_block,
+            "<<RETRY_BLOCK>>": (
+                "\nThis is the one retry for missing mappings. Generate mappings only for the entities listed below. "
+                "Keep them consistent with these accepted mappings; do not change the accepted values:\n"
+                + _jinja(COL_REPLACEMENT_RETRY_CONTEXT)
+                + "\n"
+                if retry
+                else ""
+            ),
             "<<ENTITIES_COLUMN>>": entities_column,
             "<<ENTITY_EXAMPLES_COLUMN>>": COL_ENTITY_EXAMPLES,
         },

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime
 from typing import ClassVar, cast
@@ -199,22 +198,10 @@ outside the JSON object. Your entire response must be a single valid JSON object
 
 def _replacements_for_judge(raw_map: object) -> list[dict[str, str]]:
     """Flatten COL_REPLACEMENT_MAP into Jinja-friendly dicts."""
-    if raw_map is None:
-        return []
-    if isinstance(raw_map, BaseModel):
-        raw_map = raw_map.model_dump(mode="python")
-    if isinstance(raw_map, str):
-        try:
-            raw_map = json.loads(raw_map)
-        except (json.JSONDecodeError, ValueError):
-            return []
-    if not isinstance(raw_map, dict):
-        return []
-    try:
-        parsed = EntityReplacementMapSchema.model_validate(raw_map)
-    except Exception:
-        return []
-    return [{"original": r.original, "label": r.label, "synthetic": r.synthetic} for r in parsed.replacements]
+    return [
+        {"original": r.original, "label": r.label, "synthetic": r.synthetic}
+        for r in EntityReplacementMapSchema.from_raw(raw_map, on_invalid="drop")
+    ]
 
 
 # ---------------------------------------------------------------------------

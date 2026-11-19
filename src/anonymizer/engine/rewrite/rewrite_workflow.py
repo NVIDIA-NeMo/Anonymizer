@@ -61,6 +61,7 @@ from anonymizer.engine.ndd.backend import (
     rows_as_graph,
     run_invocation,
 )
+from anonymizer.engine.ndd.workflow_utils import run_columns
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
@@ -71,10 +72,8 @@ from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
-    restore_empty_skipped_span_label_counts,
 )
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
-from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
 from anonymizer.engine.row_partitioning import (
     ROW_ORDER_COL,
     merge_and_reorder,
@@ -522,8 +521,8 @@ class RewriteWorkflow:
         ``rewrite`` splits the detection frame on its entities: rows with none take the passthrough defaults and the
         rest go through ``_produce``, the stages ``run`` uses. A row the detector drops, or whose mentions the graph
         rejects, fails at ``detect`` and is absent from the output. A result that is not verifiably one input row per
-        returned row fails every target at ``detect``, and ``run`` rewrites the detection frame as returned. ``stage``
-        names the measurement.
+        returned row, or that changed a row's text, fails every target at ``detect``, and ``run`` rewrites the
+        detection frame as returned. ``stage`` names the measurement.
         """
         started = time.perf_counter()
         evaluation = options["evaluation"]
@@ -689,15 +688,14 @@ class RewriteWorkflow:
                 data_summary=data_summary,
             ),
         ]
-        pipeline_seed = select_seed_cols(rows.frame, derive_seed_columns(pipeline_columns, rows.frame))
-        pipeline_result = self._adapter.run_workflow(
-            pipeline_seed,
+        pipeline_result, _ = run_columns(
+            self._adapter,
+            rows.frame,
+            pipeline_columns,
             model_configs=model_configs,
-            columns=pipeline_columns,
             workflow_name="rewrite-pipeline",
             preview_num_records=preview_num_records,
         )
-        restore_empty_skipped_span_label_counts(pipeline_result.dataframe)
         rows.frame = _join_new_columns(
             rows.frame, pipeline_result.dataframe, source_positions=pipeline_result.source_positions
         )
@@ -729,12 +727,12 @@ class RewriteWorkflow:
             effective_threshold=evaluation.repair_threshold,
         )
 
-        def run_columns(df: pd.DataFrame, columns: list, name: str, *, overwrite: bool = False) -> pd.DataFrame:
-            seed_cols = derive_seed_columns(columns, df)
-            result = self._adapter.run_workflow(
-                select_seed_cols(df, seed_cols),
+        def run_and_join(df: pd.DataFrame, columns: list, name: str, *, overwrite: bool = False) -> pd.DataFrame:
+            result, seed_cols = run_columns(
+                self._adapter,
+                df,
+                columns,
                 model_configs=model_configs,
-                columns=columns,
                 workflow_name=name,
                 preview_num_records=preview_num_records,
             )
@@ -744,7 +742,7 @@ class RewriteWorkflow:
             )
 
         def evaluate(df: pd.DataFrame, iteration: int) -> pd.DataFrame:
-            df = run_columns(df, eval_columns, f"rewrite-evaluate-{iteration}", overwrite=True)
+            df = run_and_join(df, eval_columns, f"rewrite-evaluate-{iteration}", overwrite=True)
             _normalize_evaluation_payloads(df)
             return df
 
@@ -771,7 +769,7 @@ class RewriteWorkflow:
                 len(df),
             )
             # Repair failing rows only
-            repaired = run_columns(rows.failing, repair_columns, f"rewrite-repair-{iteration}", overwrite=True)
+            repaired = run_and_join(rows.failing, repair_columns, f"rewrite-repair-{iteration}", overwrite=True)
             if COL_REWRITTEN_TEXT_NEXT in repaired.columns:
                 repaired[COL_REWRITTEN_TEXT] = repaired[COL_REWRITTEN_TEXT_NEXT]
             repaired[COL_REPAIR_ITERATIONS] = repaired[COL_REPAIR_ITERATIONS].apply(lambda x: int(x) + 1)
@@ -805,11 +803,11 @@ class RewriteWorkflow:
                 privacy_goal=privacy_goal,
             )
             effective_preview = min(preview_num_records, len(df)) if preview_num_records is not None else None
-            judge_seed = select_seed_cols(df, derive_seed_columns(judge_columns, df))
-            judge_result = self._adapter.run_workflow(
-                judge_seed,
+            judge_result, _ = run_columns(
+                self._adapter,
+                df,
+                judge_columns,
                 model_configs=model_configs,
-                columns=judge_columns,
                 workflow_name="rewrite-final-judge",
                 preview_num_records=effective_preview,
             )
@@ -820,8 +818,12 @@ class RewriteWorkflow:
                 source_positions=judge_result.source_positions,
             )
             return df, judge_result.failed_records
-        except Exception:
-            logger.debug("Rewrite judge workflow failed; scores may be unavailable.")
+        except Exception as exc:
+            logger.warning(
+                "Rewrite final judge failed (%s); judge_evaluation is unavailable for %d row(s).",
+                type(exc).__name__,
+                len(df),
+            )
             df[COL_JUDGE_EVALUATION] = None
             return df, []
 
@@ -885,8 +887,12 @@ class RewriteWorkflow:
                 # Convert bool all_valid → 0–1 fraction so detection validity sits on the
                 # same scale as utility_score and leakage_mass in the rewrite scores section.
                 rows.frame[COL_DETECTION_VALID] = rows.frame.apply(_detection_valid_fraction, axis=1)
-            except Exception:
-                logger.debug("Detection validity judge failed; scores may be unavailable.")
+            except Exception as exc:
+                logger.warning(
+                    "Detection validity judge failed (%s); detection_valid is unavailable for %d row(s).",
+                    type(exc).__name__,
+                    len(rows.frame),
+                )
                 rows.frame[COL_DETECTION_VALID] = None
                 rows.frame[COL_DETECTION_INVALID_ENTITIES] = None
 

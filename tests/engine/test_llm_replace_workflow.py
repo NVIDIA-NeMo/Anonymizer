@@ -359,6 +359,29 @@ def test_fold_repairs_synthetic_original_collisions_without_pii(
     _assert_no_pii_in_logs(caplog, extra_secrets=("1979-01-01", "1980-02-02", "1991-03-04"))
 
 
+@pytest.mark.parametrize(
+    "colliding_synthetic",
+    [
+        pytest.param("Maya Chen", id="exact"),
+        pytest.param("MAYA CHEN", id="case"),
+        pytest.param(" Maya \t Chen ", id="whitespace"),
+    ],
+)
+def test_fold_repairs_folded_synthetic_original_collisions(colliding_synthetic: str) -> None:
+    """A synthetic that matches another protected original up to case or whitespace is a collision too."""
+    maps = _maps(
+        [("full_name", "Alice Wong", colliding_synthetic), ("full_name", "Maya Chen", "Priya Nair")],
+    )
+
+    result = _fold_replacement_maps(maps, "record")
+
+    assert result == _maps(
+        [("full_name", "Alice Wong", "[SUBSTITUTE_FULL_NAME_1]"), ("full_name", "Maya Chen", "Priya Nair")],
+    )
+    synthetics = {" ".join(entry["synthetic"].casefold().split()) for entry in result[0]["replacements"]}
+    assert synthetics.isdisjoint({"maya chen", "alice wong"})
+
+
 def test_filter_replacement_map_empty_warning_does_not_leak_pii(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

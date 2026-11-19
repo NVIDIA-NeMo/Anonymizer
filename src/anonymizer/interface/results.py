@@ -147,11 +147,11 @@ class AnonymizerResult(_DisplayMixin):
         id_column: Record identifier column retained in ``dataframe`` for
             in-memory record input. File-backed input currently leaves this as
             ``None``.
+        effective_entity_labels: Resolved detection labels used as coverage-prompt
+            guidance, without restricting permissive evaluation.
         detection_scope: The resolved detection scope the run used: effective
             labels, allowed labels (``None`` when ``entity_labels`` is unset),
             exclusions, and GLiNER threshold. ``None`` on ``evaluate()`` and hand-built results.
-        effective_entity_labels: Resolved detection labels used as coverage-prompt
-            guidance, without restricting permissive evaluation.
     """
 
     dataframe: pd.DataFrame
@@ -164,8 +164,8 @@ class AnonymizerResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
-    detection_scope: DetectionScope | None = None
     effective_entity_labels: list[str] | None = None
+    detection_scope: DetectionScope | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
     session_changes: SessionCallChanges | None = field(default=None, repr=False, compare=False)
@@ -216,11 +216,11 @@ class PreviewResult(_DisplayMixin):
         id_column: Record identifier column retained in ``dataframe`` for
             in-memory record input. File-backed input currently leaves this as
             ``None``.
+        effective_entity_labels: Resolved detection labels used as coverage-prompt
+            guidance, without restricting permissive evaluation.
         detection_scope: The resolved detection scope the run used: effective
             labels, allowed labels (``None`` when ``entity_labels`` is unset),
             exclusions, and GLiNER threshold. ``None`` on ``evaluate()`` and hand-built results.
-        effective_entity_labels: Resolved detection labels used as coverage-prompt
-            guidance, without restricting permissive evaluation.
     """
 
     dataframe: pd.DataFrame
@@ -234,8 +234,8 @@ class PreviewResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
-    detection_scope: DetectionScope | None = None
     effective_entity_labels: list[str] | None = None
+    detection_scope: DetectionScope | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
     session_changes: SessionCallChanges | None = field(default=None, repr=False, compare=False)

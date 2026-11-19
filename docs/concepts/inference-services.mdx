@@ -392,6 +392,14 @@ own port, so the servers can run side by side on one host.
 For the detector request and response contract, chunking behavior, and a live
 PII request, see [Self-hosting GLiNER](/concepts/self-hosting-gliner).
 
+On an OpenAI-compatible server, the entity augmenter sends a `response_format`
+with a JSON schema; to turn this off for a model, set `response_format` in that
+model's or provider's `extra_body`, even to `null`. If the server rejects that
+field with an HTTP 400 or 422 error that mentions `response_format`,
+`json_schema`, `guided`, or `grammar`, Anonymizer retries that request without
+it and, if the retry succeeds, asks for a fenced JSON reply for the rest of the
+run; a failed retry or any other error is raised.
+
 Validation checks the serving arguments. The launch probe observes
 the endpoint shape and required task behavior. Run Anonymizer preview and
 evaluation before accepting a model for a privacy-sensitive workload.
