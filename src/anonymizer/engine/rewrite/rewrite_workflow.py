@@ -49,7 +49,6 @@ from anonymizer.engine.graph_core.authoring import (
     ProtectionGraph,
     Requests,
     Workflow,
-    register_plain_kind,
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult, TargetOutcome
 from anonymizer.engine.graph_core.stages import run_stages
@@ -58,6 +57,7 @@ from anonymizer.engine.ndd.backend import (
     call_on_empty_input,
     per_target,
     raise_if_cancelled,
+    register_plain_kind,
     rows_as_graph,
     run_invocation,
 )

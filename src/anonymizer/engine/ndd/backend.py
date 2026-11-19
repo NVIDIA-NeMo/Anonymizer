@@ -7,14 +7,17 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import Any, TypeVar
 
+import numpy as np
 import pandas as pd
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig
+from pydantic_core import to_jsonable_python
 
 from anonymizer.engine.graph_core.authoring import GraphScope, Limits, Operation, ProtectionGraph, Workflow
 from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
+from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.interface.errors import AnonymizerWorkflowError
@@ -57,6 +60,29 @@ class DataDesignerBackend:
         )
         positions = resolve_source_positions(dataframe, result.dataframe, result.source_positions)
         return BackendRun(result.dataframe, result.failed_records, positions, result.observed_requests)
+
+
+def _numpy_plain(value: object) -> object:
+    """pydantic-core's fallback: a numpy array or scalar as Python; dates and durations (``tolist`` can give an int at
+    nanoseconds) and every other unknown type have no plain form."""
+    if isinstance(value, (np.ndarray, np.generic)) and value.dtype.kind not in "mM":
+        return value.tolist()
+    raise TypeError(f"{type(value).__name__} has no plain Python form")
+
+
+def _plain(value: Any) -> Any:
+    """``value`` converted deeply to JSON-compatible Python by pydantic-core, NaN and infinity as ``None``; else
+    ``TypeError``."""
+    try:
+        return to_jsonable_python(value, inf_nan_mode="null", fallback=_numpy_plain)
+    except ValueError as exc:  # pydantic-core's serialization error, or bytes that are not UTF-8
+        raise TypeError(f"{type(value).__name__} has no plain Python form") from exc
+
+
+def register_plain_kind(name: str) -> str:
+    """Register ``name`` as a dict kind copied by ``_plain``, so ``json.dumps(..., allow_nan=False)`` accepts its values;
+    a value with no plain form fails its target as ``invalid_output``."""
+    return register_kind(name, lambda v: isinstance(v, dict), copy=_plain)
 
 
 def per_target(items: Sequence[T], positions: Sequence[int], size: int) -> list[T | None]:

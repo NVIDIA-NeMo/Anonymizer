@@ -75,12 +75,11 @@ from anonymizer.engine.graph_core.authoring import (
     Operation,
     Requests,
     Workflow,
-    register_plain_kind,
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.backend import per_target, rows_as_graph, run_invocation
+from anonymizer.engine.ndd.backend import per_target, register_plain_kind, rows_as_graph, run_invocation
 from anonymizer.engine.ndd.model_loader import (
     parse_model_configs,
     parse_model_providers,

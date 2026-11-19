@@ -52,11 +52,16 @@ from anonymizer.engine.graph_core.authoring import (
     ProtectionGraph,
     Requests,
     Workflow,
-    register_plain_kind,
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, rows_as_graph, run_invocation
+from anonymizer.engine.ndd.backend import (
+    call_on_empty_input,
+    per_target,
+    register_plain_kind,
+    rows_as_graph,
+    run_invocation,
+)
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
     LlmReplaceWorkflow,

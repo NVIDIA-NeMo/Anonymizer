@@ -5,6 +5,9 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import decimal
+import enum
 import json
 import subprocess
 import sys
@@ -21,11 +24,10 @@ from anonymizer.engine.graph_core.authoring import (
     Limits,
     Operation,
     Workflow,
-    register_plain_kind,
 )
 from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd import backend
-from anonymizer.engine.ndd.backend import rows_as_graph, run_invocation
+from anonymizer.engine.ndd.backend import register_plain_kind, rows_as_graph, run_invocation
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
 PLAIN_KINDS = ("replacement-map", "replacement-application", "replace-metrics", "rewrite-metrics", "coverage-metrics")
@@ -48,7 +50,7 @@ def test_every_dict_kind_copies_to_plain_whatever_the_import_order(first: str) -
     script = "\n".join(
         [
             *(f"import {m}" for m in (first, *rest)),
-            "from anonymizer.engine.graph_core.authoring import _plain",
+            "from anonymizer.engine.ndd.backend import _plain",
             "from anonymizer.engine.graph_core.kernel import kind",
             f"print(all(kind(n).copy is _plain for n in {PLAIN_KINDS!r}))",
         ]
@@ -68,12 +70,14 @@ def _metrics_workflow(value: Any) -> Workflow:
     "bad",
     [
         pd.NA,
-        pd.Timestamp("2026-01-01"),
+        pd.NaT,
         np.datetime64("2026-01-01"),
         np.datetime64("2026-01-01T00:00:00.000000000"),
         np.timedelta64(5, "ns"),
         np.timedelta64(5, "D"),
-        {1: "a", "1": "b"},
+        pd.Series([1, 2]),
+        b"\xff",
+        object(),
     ],
 )
 def test_a_value_with_no_plain_form_fails_its_target(bad: object) -> None:
@@ -98,17 +102,48 @@ def test_numpy_values_tuples_and_keys_are_converted_to_plain_python() -> None:
     assert port["array"] == [1, 2] and [type(v) for v in port["array"]] == [int, int]
     assert port["pair"] == ["a", 0.5] and type(port["pair"][1]) is float
     assert type(port["count"]) is int and port["count"] == 3
-    assert type(port["nan"]) is float and port["nan"] != port["nan"]
+    assert port["nan"] is None
     assert port["1"] == {"nested": [True, None]}
 
 
-def test_a_plain_value_is_copied_deeply_and_keeps_nan() -> None:
-    value = {"score": float("nan"), "nested": {"items": [1, "x", None, True]}}
+@pytest.mark.parametrize("number", [float("nan"), float("inf"), float("-inf"), np.float64("nan")])
+def test_nan_and_infinity_become_none_so_the_value_is_strict_json(number: float) -> None:
+    graph = rows_as_graph(["a"])
+    port = run_invocation(graph, _metrics_workflow({"score": number, "items": [number]}), LIMITS).value(
+        graph.targets[0], "metrics"
+    )
+    assert port == {"score": None, "items": [None]}
+    json.dumps(port, allow_nan=False)
+
+
+def test_a_plain_value_is_copied_deeply() -> None:
+    value = {"score": 0.5, "nested": {"items": [1, "x", None, True]}}
     graph = rows_as_graph(["a"])
     result = run_invocation(graph, _metrics_workflow(value), LIMITS)
     port = result.value(graph.targets[0], "metrics")
+    assert port == value
     assert port is not value and port["nested"] is not value["nested"]
-    assert json.dumps(port) == json.dumps(value)
+
+
+@pytest.mark.parametrize(
+    ("value", "plain"),
+    [
+        (pd.Timestamp("2026-01-01"), "2026-01-01T00:00:00"),
+        (dt.date(2026, 1, 1), "2026-01-01"),
+        (dt.timedelta(days=1), "P1D"),
+        (decimal.Decimal("1.5"), "1.5"),
+        (b"ab", "ab"),
+        ({2, 1}, [1, 2]),
+        (enum.IntEnum("Level", "LOW HIGH").HIGH, 2),
+        (complex(0, 1), "1j"),
+        ({1: "a", "1": "b"}, {"1": "b"}),
+        ({True: 1, None: 2, (1, 2): 3}, {"true": 1, "None": 2, "1,2": 3}),
+    ],
+)
+def test_values_pydantic_core_converts(value: object, plain: object) -> None:
+    graph = rows_as_graph(["a"])
+    port = run_invocation(graph, _metrics_workflow({"v": value}), LIMITS).value(graph.targets[0], "metrics")
+    assert port == {"v": plain}
 
 
 def _failing(error: Exception, *, verifier: bool) -> Workflow:
