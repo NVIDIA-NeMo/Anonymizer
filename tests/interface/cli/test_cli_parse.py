@@ -225,3 +225,12 @@ def test_rewrite_mode_warns_on_replace_flags(caplog: pytest.LogCaptureFixture) -
     with caplog.at_level("WARNING", logger="anonymizer.cli"):
         CliOpts(rewrite=True, format_template="[{label}]")
     assert "--format-template" in caplog.text
+
+
+def test_cli_defaults_are_the_model_defaults() -> None:
+    opts = CliOpts()
+    rewrite, redact, hash_ = Rewrite(), Redact(), Hash()
+    assert RiskTolerance(opts.risk_tolerance) == rewrite.risk_tolerance
+    assert opts.max_repair_iterations == rewrite.max_repair_iterations
+    assert opts.normalize_label == redact.normalize_label
+    assert (opts.algorithm, opts.digest_length) == (hash_.algorithm, hash_.digest_length)

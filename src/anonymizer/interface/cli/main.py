@@ -41,6 +41,11 @@ app = cyclopts.App(help="NeMo Anonymizer CLI")
 ReplaceChoice = Literal["redact", "hash", "annotate", "substitute"]
 RiskToleranceChoice = Literal["minimal", "low", "moderate", "high"]
 
+
+# The CLI flags take their defaults from these default models, so a flag cannot drift from its model.
+_REWRITE, _REDACT, _HASH = Rewrite(), Redact(), Hash()
+
+
 _STRATEGY_CLS = {
     "substitute": Substitute,
     "redact": Redact,
@@ -104,15 +109,19 @@ class CliOpts:
             )
         ),
     ] = None
-    normalize_label: bool = True
-    algorithm: Annotated[Literal["sha256", "sha1", "md5"], cyclopts.Parameter(help="Hash algorithm.")] = "sha256"
-    digest_length: Annotated[int, cyclopts.Parameter(help="Hash digest length (6-64).")] = 12
+    normalize_label: bool = _REDACT.normalize_label
+    algorithm: Annotated[Literal["sha256", "sha1", "md5"], cyclopts.Parameter(help="Hash algorithm.")] = _HASH.algorithm
+    digest_length: Annotated[int, cyclopts.Parameter(help="Hash digest length (6-64).")] = _HASH.digest_length
 
     # -- rewrite-specific --
     protect: Annotated[str | None, cyclopts.Parameter(help="What to protect (privacy goal).")] = None
     preserve: Annotated[str | None, cyclopts.Parameter(help="What to preserve (utility goal).")] = None
-    risk_tolerance: Annotated[RiskToleranceChoice, cyclopts.Parameter(help="Risk tolerance preset.")] = "low"
-    max_repair_iterations: Annotated[int, cyclopts.Parameter(help="Max evaluate-repair iterations.")] = 3
+    risk_tolerance: Annotated[RiskToleranceChoice, cyclopts.Parameter(help="Risk tolerance preset.")] = (
+        _REWRITE.risk_tolerance.value
+    )
+    max_repair_iterations: Annotated[int, cyclopts.Parameter(help="Max evaluate-repair iterations.")] = (
+        _REWRITE.max_repair_iterations
+    )
 
     # -- substitute-specific --
     instructions: Annotated[str | None, cyclopts.Parameter(help="Extra instructions for the Substitute LLM.")] = None
