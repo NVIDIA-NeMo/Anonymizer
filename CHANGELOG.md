@@ -141,12 +141,6 @@ does not pass, or when the utility score is missing or below the preset's floor.
 - What to do: read `result.outcome(row)` for the reason a row is flagged.
 - Changed in: #368, #319 (`3af11141`, `cb015ae3`, `7523154b`).
 
-**The combined Rewrite path always returns a boolean review flag.** With `Rewrite(use_combined_graph=True)`,
-`needs_human_review` is `True` or `False` on every row. Earlier versions could return `None`, so the column was stored
-as `object` in Parquet; it is now `bool`.
-- What to do: replace `is None` checks on this column.
-- Changed in: #319 (`3af11141`), reported in #319 (comment).
-
 **Rows that fail detection in Rewrite are failed records.** They are absent from the output and listed in
 `failed_records` with step `detect`. They used to be rewritten anyway.
 - What to do: read `failed_records`.
