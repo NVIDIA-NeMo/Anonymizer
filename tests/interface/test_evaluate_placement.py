@@ -99,24 +99,38 @@ def _evaluate(anonymizer: Any, run: Any, judges: _Judges) -> Any:
         return anonymizer.evaluate(run, config=EvaluateConfig(compute_detection_validity=True))
 
 
-def _violations(evaluated: Any, judges: _Judges, source_ids: list[str]) -> list[str]:
-    """Rows that show another record's outcome or advisory, or that are unplaced but not reported so."""
+def _ids(frame: pd.DataFrame) -> list[str | None]:
+    if RECORD_ID_COLUMN not in frame.columns:
+        return [None] * len(frame)
+    return [None if pd.isna(i) else str(i) for i in frame[RECORD_ID_COLUMN]]
+
+
+def _violations(evaluated: Any, judges: _Judges, evaluated_from: pd.DataFrame) -> list[str]:
+    """Rows that show another record's outcome or advisory, or whose placement is not what their ids allow.
+
+    ``evaluated_from`` is the trace of the result that was evaluated: a row is placed exactly when it carries the id its
+    record had there, and that id occurs once there and once among the evaluated rows. An earlier evaluation may have
+    retyped it."""
     if evaluated._outcomes is None:
         return []
     found = []
-    trace = evaluated.trace_dataframe
-    ids: list[str | None] = (
-        [str(i) for i in trace[RECORD_ID_COLUMN]] if RECORD_ID_COLUMN in trace.columns else [None] * len(trace)
-    )
-    for k, truth in enumerate(int(t) for t in trace[_TRUTH]):
+    ids, before = _ids(evaluated.trace_dataframe), _ids(evaluated_from)
+    for k, truth in enumerate(int(t) for t in evaluated.trace_dataframe[_TRUTH]):
         outcome = evaluated.outcome(k)
         bare = dataclasses.replace(outcome, advisories=())
         if bare not in (_ran(truth), _UNASSESSED):
             found.append(f"row {k} (record {truth}) shows outcome {bare}")
-        if bare == _UNASSESSED and ids.count(ids[k]) == 1 and ids[k] == source_ids[truth]:
+        placeable = (
+            ids[k] is not None
+            and ids.count(ids[k]) == 1
+            and before.count(ids[k]) == 1
+            and int(evaluated_from[_TRUTH].iloc[before.index(ids[k])]) == truth
+        )
+        unplaced = [a.cause == "unplaced" for a in outcome.advisories]
+        if placeable and any(unplaced):
             found.append(f"row {k} (record {truth}) carries its unique id but was not placed")
-        if bare == _UNASSESSED and any(a.cause != "unplaced" for a in outcome.advisories):
-            found.append(f"row {k} (record {truth}) is unplaced but reports judges")
+        if not placeable and (bare != _UNASSESSED or not all(unplaced)):
+            found.append(f"row {k} (record {truth}) cannot be placed but reports {outcome}")
         own = {check: codes[judges.verdicts[truth][col]] for col, (check, codes) in _STATUS.items()}
         for a in outcome.advisories:
             if a.check in own and a.status not in (own[a.check], "could_not_assess"):
@@ -174,13 +188,47 @@ def test_each_judge_stage_places_its_own_rows_whatever_its_order(tmp_path: Path)
 
     evaluated = _evaluate(anonymizer, run, judges)
 
-    assert _violations(evaluated, judges, list(run._outcome_ids)) == []
+    assert _violations(evaluated, judges, run.trace_dataframe) == []
     bob = [int(t) for t in evaluated.trace_dataframe[_TRUTH]].index(1)
     assert {a.check: a.status for a in evaluated.outcome(bob).advisories} == {
         "coverage": "failed",
         "rewrite-judge": "could_not_assess",
         "detection-validity": "failed",
     }
+
+
+def _null_id_of(record: int) -> Change:
+    def change(frame: pd.DataFrame) -> pd.DataFrame:
+        out = frame.assign(**{RECORD_ID_COLUMN: frame[RECORD_ID_COLUMN].astype(object)})
+        out.loc[out[_TRUTH] == record, RECORD_ID_COLUMN] = None
+        return out
+
+    return change
+
+
+def test_a_null_record_id_never_places_a_row_on_reevaluation(tmp_path: Path) -> None:
+    """A null id is no id. Read as the text "None", the null left by the first evaluation matched the null of another
+    record in the second, which then showed the first record's advisories."""
+    verdicts = {
+        0: {COL_JUDGE_EVALUATION: "scored", COL_DETECTION_VALID: True, COL_ENTITY_COVERAGE: 1.0},
+        1: {COL_JUDGE_EVALUATION: None, COL_DETECTION_VALID: False, COL_ENTITY_COVERAGE: 0.0},
+        2: {COL_JUDGE_EVALUATION: "scored", COL_DETECTION_VALID: None, COL_ENTITY_COVERAGE: None},
+    }
+    texts = ["Alice A is here", "Bob B is here", "Carol C is here"]
+    anonymizer, run = _anonymizer(tmp_path, "rewrite", texts, _Judges(verdicts, {}))
+    first = _Judges(verdicts, {"coverage": _null_id_of(0)})
+    once = _evaluate(anonymizer, run, first)
+    assert _violations(once, first, run.trace_dataframe) == []
+
+    def drop_record_0_and_null_record_1(frame: pd.DataFrame) -> pd.DataFrame:
+        return _null_id_of(1)(frame[frame[_TRUTH] != 0].reset_index(drop=True))
+
+    second = _Judges(verdicts, {"coverage": drop_record_0_and_null_record_1})
+    twice = _evaluate(anonymizer, once, second)
+
+    assert _violations(twice, second, once.trace_dataframe) == []
+    record_1 = [int(t) for t in twice.trace_dataframe[_TRUTH]].index(1)
+    assert {a.cause for a in twice.outcome(record_1).advisories} == {"unplaced"}
 
 
 # The randomized invariant.
@@ -211,7 +259,7 @@ def _random_change(rng: random.Random, *, last: bool) -> Change:
                 out[RECORD_ID_COLUMN] = out[RECORD_ID_COLUMN].astype(object)
                 out.loc[rng.randrange(n), RECORD_ID_COLUMN] = None
             elif step == "float_id" and n and RECORD_ID_COLUMN in out:
-                out[RECORD_ID_COLUMN] = [f"{i}.0" for i in out[RECORD_ID_COLUMN]]
+                out[RECORD_ID_COLUMN] = [None if pd.isna(i) else f"{i}.0" for i in out[RECORD_ID_COLUMN]]
             elif step == "no_ids" and RECORD_ID_COLUMN in out:
                 out = out.drop(columns=[RECORD_ID_COLUMN])
         return out
@@ -219,18 +267,26 @@ def _random_change(rng: random.Random, *, last: bool) -> Change:
     return change
 
 
-@pytest.mark.parametrize("seed", range(200))
+@pytest.mark.parametrize("seed", range(300))
 def test_no_row_shows_another_records_outcome_or_advisory(tmp_path: Path, seed: int) -> None:
+    """One to three chained evaluations, each evaluating the previous result, with random reshaping per stage."""
     rng = random.Random(seed)
     mode = rng.choice(list(_MODES))
     size = rng.randint(2, 5)
     texts = [f"{rng.choice(['Alice', 'Bob'])} Smith is here" for _ in range(size)]  # duplicate texts are common
     verdicts = {k: {col: rng.choice(list(codes)) for col, (_, codes) in _STATUS.items()} for k in range(size)}
-    judges = _Judges(
-        verdicts, {"judge": _random_change(rng, last=mode == "replace"), "coverage": _random_change(rng, last=True)}
-    )
-    anonymizer, run = _anonymizer(tmp_path, mode, texts, judges)
+    rounds = rng.randint(1, 3)
+    anonymizer, result = _anonymizer(tmp_path, mode, texts, _Judges(verdicts, {}))
 
-    evaluated = _evaluate(anonymizer, run, judges)
-
-    assert _violations(evaluated, judges, list(run._outcome_ids)) == []
+    for n in range(rounds):
+        # Only the final stage of the final evaluation may duplicate an id: dropping one of two rows that share an id
+        # later would relabel the other, which the id contract trusts.
+        last = n == rounds - 1
+        changes = {
+            "judge": _random_change(rng, last=last and mode == "replace"),
+            "coverage": _random_change(rng, last=last),
+        }
+        judges = _Judges(verdicts, changes)
+        evaluated = _evaluate(anonymizer, result, judges)
+        assert _violations(evaluated, judges, result.trace_dataframe) == [], f"evaluation {n + 1}"
+        result = evaluated

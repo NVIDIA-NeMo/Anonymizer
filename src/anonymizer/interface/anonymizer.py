@@ -256,13 +256,15 @@ def _source_positions(source: pd.DataFrame, returned: pd.DataFrame) -> tuple[int
 
     A row is placed only by its record id, and only when that id occurs exactly once in ``source`` and once in
     ``returned``. Row order and text are never read: records may share their text, and a judge may reorder rows.
-    A row without an id, with an unknown id or with a repeated id cannot be placed."""
-    source_ids, ids = _record_ids(source), _record_ids(returned)
-    if source_ids is None or ids is None:
+    A row without an id (missing column or a null), with an unknown id or with a repeated id cannot be placed. Ids
+    compare as text, so a judge that retypes an id onto another record's text (``"1"`` and ``1.0`` as ``"1.0"``)
+    relabels the row, which the id contract trusts."""
+    if RECORD_ID_COLUMN not in source.columns or RECORD_ID_COLUMN not in returned.columns:
         return (None,) * len(returned)
+    source_ids, ids = (tuple(None if pd.isna(i) else str(i) for i in f[RECORD_ID_COLUMN]) for f in (source, returned))
     in_source, in_returned = Counter(source_ids), Counter(ids)
-    where = {i: p for p, i in enumerate(source_ids) if in_source[i] == 1}
-    return tuple(where.get(i) if in_returned[i] == 1 else None for i in ids)
+    where = {i: p for p, i in enumerate(source_ids) if i is not None and in_source[i] == 1}
+    return tuple(where.get(i) if i is not None and in_returned[i] == 1 else None for i in ids)
 
 
 def _reported_outcomes(
