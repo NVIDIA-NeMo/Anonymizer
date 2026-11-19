@@ -265,7 +265,8 @@ def _reported_outcomes(
     or an unassessed outcome when no single such row exists (the row has no id, the ids changed, or the result
     carries no outcomes), with each verifier appended as an advisory naming it, in verifier order, in place of any
     advisory an earlier evaluation of the result gave the same verifier. Matching by id, not position, keeps a
-    reordered or replaced trace from taking another row's outcome. A verifier that gave no assessment is
+    reordered or filtered trace from taking another row's outcome; a row whose text was edited under a kept id
+    keeps the run's verdict on the run's own text. A verifier that gave no assessment is
     ``could_not_assess`` with its execution code (``raised``, or ``blocked`` when an earlier verifier of the row
     failed) as the cause. The ungraded rewrite judge reports ``scored`` when it returned scores and
     ``not_applicable`` on a row it skips by design."""
