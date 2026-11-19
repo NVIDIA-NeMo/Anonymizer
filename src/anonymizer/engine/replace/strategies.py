@@ -37,12 +37,14 @@ class ReplacementApplication:
     skipped_span_count: int
     skipped_span_label_counts: dict[str, int]
 
-    def to_metrics(self) -> dict[str, int | dict[str, int]]:
+    def to_metrics(self) -> dict[str, int | str]:
+        # Label counts are JSON text: an empty dict infers as a childless Arrow struct,
+        # which Parquet cannot write, and dict cells infer differently per batch.
         return {
             "targeted_span_count": self.targeted_span_count,
             "applied_span_count": self.applied_span_count,
             "skipped_span_count": self.skipped_span_count,
-            "skipped_span_label_counts": self.skipped_span_label_counts,
+            "skipped_span_label_counts": json.dumps(self.skipped_span_label_counts, sort_keys=True),
         }
 
 
