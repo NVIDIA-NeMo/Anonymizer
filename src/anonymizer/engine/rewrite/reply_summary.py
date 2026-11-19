@@ -10,7 +10,7 @@ import logging
 import pandas as pd
 
 from anonymizer.engine.constants import (
-    COL_DOMAIN,
+    COL_DOMAIN_UNAVAILABLE,
     COL_FULL_REWRITE,
     COL_MEANING_UNITS,
     COL_PRIVACY_QA_REANSWER,
@@ -20,8 +20,6 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT,
 )
 from anonymizer.engine.ndd.model_reply import no_reply
-from anonymizer.engine.rewrite.domain_classification import UNAVAILABLE_DOMAIN
-from anonymizer.engine.rewrite.parsers import normalize_payload
 
 logger = logging.getLogger("anonymizer.rewrite.replies")
 
@@ -30,7 +28,8 @@ def warn_kept_without_reply(frame: pd.DataFrame) -> None:
     """Log one WARNING with the number of rows each step kept without a usable reply, when there are any.
 
     Each such row already logged its own warning; this makes a model that never returns a parsable reply visible
-    once per run. Only counts are logged, never values. Call it before the rewritten text is withheld.
+    once per run. Only counts are logged, never values. Call it before the rewritten text is withheld. It removes the
+    internal domain marker column from ``frame``, which is not part of the trace.
     """
 
     def null(column: str) -> pd.Series:
@@ -41,9 +40,10 @@ def warn_kept_without_reply(frame: pd.DataFrame) -> None:
     def present(column: str) -> pd.Series:
         return ~null(column) if column in frame.columns else pd.Series(False, index=frame.index)
 
+    # A reply can equal the fallback value, so the domain step marks when it wrote the fallback.
     domain = (
-        frame[COL_DOMAIN].map(lambda cell: normalize_payload(cell) == UNAVAILABLE_DOMAIN).astype(bool)
-        if COL_DOMAIN in frame.columns
+        frame.pop(COL_DOMAIN_UNAVAILABLE).eq(True)
+        if COL_DOMAIN_UNAVAILABLE in frame.columns
         else pd.Series(False, index=frame.index)
     )
     steps = {

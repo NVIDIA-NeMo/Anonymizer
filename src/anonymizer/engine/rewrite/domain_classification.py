@@ -15,6 +15,7 @@ from anonymizer.engine.constants import (
     COL_DOMAIN,
     COL_DOMAIN_SUPPLEMENT,
     COL_DOMAIN_SUPPLEMENT_PRIVACY,
+    COL_DOMAIN_UNAVAILABLE,
     COL_TEXT,
     _jinja,
 )
@@ -281,6 +282,7 @@ class DomainClassificationWorkflow:
                 model_alias=domain_alias,
                 output_format=DomainClassificationSchema,
                 unavailable=UNAVAILABLE_DOMAIN,
+                unavailable_marker=COL_DOMAIN_UNAVAILABLE,
             ),
             CustomColumnConfig(
                 name=COL_DOMAIN_SUPPLEMENT,

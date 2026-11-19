@@ -46,10 +46,15 @@ class ReplyColumnGenerator(ColumnGeneratorWithModelChatCompletion[ReplyColumnCon
                 "%s unavailable after %d replies (%s); keeping the row.", self.config.name, reply.requests, reply.cause
             )
             return self._unavailable(data)
-        return self._process_generation_result(data, reply.value, trace)
+        data = self._process_generation_result(data, reply.value, trace)
+        if self.config.unavailable_marker:
+            data[self.config.unavailable_marker] = False
+        return data
 
     def _unavailable(self, data: dict[str, Any]) -> dict[str, Any]:
         data[self.config.name] = None if self.config.unavailable is None else dict(self.config.unavailable)
+        if self.config.unavailable_marker:
+            data[self.config.unavailable_marker] = True
         if self.config.with_trace != TraceType.NONE:
             data[self.config.name + TRACE_COLUMN_POSTFIX] = []
         if self.config.extract_reasoning_content:

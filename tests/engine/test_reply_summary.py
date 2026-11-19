@@ -10,6 +10,7 @@ import pytest
 
 from anonymizer.engine.constants import (
     COL_DOMAIN,
+    COL_DOMAIN_UNAVAILABLE,
     COL_FULL_REWRITE,
     COL_MEANING_UNITS,
     COL_PRIVACY_QA_REANSWER,
@@ -28,6 +29,7 @@ _DOMAIN = {"domain": "FINANCIAL", "domain_confidence": 0.9}
 def _row(**overrides: object) -> dict[str, object]:
     row: dict[str, object] = {
         COL_DOMAIN: _DOMAIN,
+        COL_DOMAIN_UNAVAILABLE: False,
         COL_MEANING_UNITS: {"units": []},
         COL_QUALITY_QA: {"items": []},
         COL_FULL_REWRITE: {"rewritten_text": "Secret value 7312."},
@@ -43,7 +45,7 @@ def test_one_warning_counts_each_step_and_holds_no_values(caplog: pytest.LogCapt
     frame = pd.DataFrame(
         [
             _row(),
-            _row(**{COL_DOMAIN: dict(UNAVAILABLE_DOMAIN)}),
+            _row(**{COL_DOMAIN: dict(UNAVAILABLE_DOMAIN), COL_DOMAIN_UNAVAILABLE: True}),
             # The rewrite never parsed: nothing downstream was asked, and only the rewrite is counted.
             _row(
                 **{
@@ -72,6 +74,27 @@ def test_one_warning_counts_each_step_and_holds_no_values(caplog: pytest.LogCapt
         "meaning units=1, quality questions=1, rewrite=2, privacy evaluation=1, quality evaluation=1."
     )
     assert "7312" not in caplog.text
+
+
+def test_a_valid_other_reply_with_no_confidence_is_not_counted_as_the_fallback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The model said OTHER at confidence 0.0: the same value as the fallback, but a reply that was used.
+    assert {"domain": "OTHER", "domain_confidence": 0.0} == UNAVAILABLE_DOMAIN
+    frame = pd.DataFrame([_row(**{COL_DOMAIN: dict(UNAVAILABLE_DOMAIN), COL_DOMAIN_UNAVAILABLE: False})])
+
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.replies"):
+        warn_kept_without_reply(frame)
+
+    assert [record for record in caplog.records if record.name == "anonymizer.rewrite.replies"] == []
+
+
+def test_the_marker_is_internal_and_leaves_the_frame_after_the_summary() -> None:
+    frame = pd.DataFrame([_row()])
+
+    warn_kept_without_reply(frame)
+
+    assert COL_DOMAIN_UNAVAILABLE not in frame.columns
 
 
 def test_no_warning_when_every_reply_was_used(caplog: pytest.LogCaptureFixture) -> None:

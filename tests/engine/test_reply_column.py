@@ -150,3 +150,24 @@ def test_reply_is_not_asked_when_an_ask_only_if_column_has_no_value(missing: obj
 
     assert row["_answer"] is None
     assert client.requests == []
+
+
+def test_marker_column_says_whether_the_unavailable_value_was_written() -> None:
+    config = _config(unavailable={"answer": "unknown"}, unavailable_marker="_answer_unavailable")
+    assert config.side_effect_columns == ["_answer_unavailable"]
+
+    generator, _ = _generator(config, ['{"answer": "unknown"}'])
+    used = asyncio.run(generator.agenerate({"text": "a"}))
+    assert used["_answer"] == {"answer": "unknown"}
+    assert used["_answer_unavailable"] is False
+
+    generator, _ = _generator(config, ["no json"])
+    fallback = asyncio.run(generator.agenerate({"text": "a"}))
+    assert fallback["_answer"] == {"answer": "unknown"}
+    assert fallback["_answer_unavailable"] is True
+
+    generator, _ = _generator(
+        _config(unavailable={"answer": "unknown"}, ask_only_if=["text"], unavailable_marker="_m"), []
+    )
+    skipped = asyncio.run(generator.agenerate({"text": None}))
+    assert skipped["_m"] is True

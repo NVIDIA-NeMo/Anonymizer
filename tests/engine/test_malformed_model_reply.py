@@ -32,6 +32,7 @@ from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_DOMAIN,
     COL_DOMAIN_SUPPLEMENT,
+    COL_DOMAIN_UNAVAILABLE,
     COL_FULL_REWRITE,
     COL_LEAKAGE_MASS,
     COL_MEANING_UNITS,
@@ -455,6 +456,7 @@ def test_domain_reply_unparsed_on_every_attempt_keeps_the_row_as_other(
     assert len(result.dataframe) == 2
     row = result.dataframe.iloc[0]
     assert row[COL_DOMAIN]["domain"] == "OTHER"
+    assert row[COL_DOMAIN_UNAVAILABLE]
     assert row[COL_DOMAIN_SUPPLEMENT] == _DOMAIN_BY_ENUM[Domain.OTHER].quality_supplement
     assert calls[_DOMAIN] == 6  # the run config's budget (DataDesigner default: 5 restarts)
 
@@ -483,7 +485,21 @@ def test_domain_reply_that_parses_is_kept_as_returned(
 
     assert result.failed_records == []
     assert result.dataframe.iloc[0][COL_DOMAIN] == {"domain": "FINANCIAL", "domain_confidence": 0.9}
+    assert not result.dataframe.iloc[0][COL_DOMAIN_UNAVAILABLE]
     assert calls[_DOMAIN] == 2
+
+
+def test_domain_reply_of_other_at_zero_confidence_is_a_reply_not_the_fallback(
+    tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
+) -> None:
+    script, calls = scripted
+    script[_DOMAIN] = ['{"domain": "OTHER", "domain_confidence": 0.0}']
+
+    result = _domain(tmp_path)
+
+    row = result.dataframe.iloc[0]
+    assert row[COL_DOMAIN] == {"domain": "OTHER", "domain_confidence": 0.0}
+    assert not row[COL_DOMAIN_UNAVAILABLE]
 
 
 _MEANING = "scripted-meaning"
