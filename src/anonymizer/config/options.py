@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Protocol
 from anonymizer.config.anonymizer_config import DetectionScope
 from anonymizer.config.models import ModelSelection
 from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
-from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 
 if TYPE_CHECKING:
     from data_designer.config.models import ModelConfig
@@ -62,16 +61,3 @@ class RunContext:
     models: ModelSelection
     data_summary: str | None = None
     preview_num_records: int | None = None
-
-
-class RewriteOptions(Protocol):
-    """What rewrite reads from `Rewrite`."""
-
-    @property
-    def privacy_goal(self) -> PrivacyGoal: ...
-
-    @property
-    def evaluation(self) -> EvaluationCriteria: ...
-
-    @property
-    def strict_entity_protection(self) -> bool: ...

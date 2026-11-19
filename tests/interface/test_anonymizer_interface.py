@@ -412,9 +412,8 @@ def test_detection_workflow_receives_options_and_context(tmp_path: Path, mode: s
     assert context.data_summary == "Support tickets"
     assert context.preview_num_records == (None if mode == "run" else 3)
     assert context.model_configs == tuple(anonymizer._model_configs)
-    assert all(a is not b for a, b in zip(context.model_configs, anonymizer._model_configs, strict=True))
-    assert context.models == anonymizer._selected_models
-    assert context.models is not anonymizer._selected_models
+    assert all(a is b for a, b in zip(context.model_configs, anonymizer._model_configs, strict=True))
+    assert context.models is anonymizer._selected_models
 
 
 def test_export_paths_pass_options_and_context(stub_input: AnonymizerInput, tmp_path: Path) -> None:

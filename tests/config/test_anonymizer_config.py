@@ -22,7 +22,7 @@ from anonymizer.config.anonymizer_config import (
     infer_input_source_suffix,
     resolve_effective_detection_labels,
 )
-from anonymizer.config.regex import BuiltinRegex, RegexCandidate, RegexRule, RegexValidationResult
+from anonymizer.config.regex import BuiltinRegex, RegexCandidate, RegexLimits, RegexRule, RegexValidationResult
 from anonymizer.config.replace_strategies import (
     Annotate,
     Hash,
@@ -940,6 +940,9 @@ _FROZEN_FIELDS: list[tuple[Any, str, Any]] = [
     (Redact(), "format_template", "[{label}]"),
     (Annotate(), "format_template", "<{text}|{label}>"),
     (Hash(), "digest_length", 8),
+    (RegexLimits(), "max_matches_per_rule", 7),
+    (BuiltinRegex(label="email"), "enabled", False),
+    (RegexRule(label="case_id", pattern=r"CASE-\d+"), "label", "other"),
 ]
 
 
@@ -1018,14 +1021,6 @@ def test_detect_derivation_matches_resolve_entity_label_config(kwargs: dict[str,
     assert detect.strict_labels is resolved.strict_labels
     assert [(k, list(v)) for k, v in detect.validator_examples.items()] == list(resolved.validator_examples.items())
     assert [(k, list(v)) for k, v in detect.augmenter_examples.items()] == list(resolved.augmenter_examples.items())
-
-
-def test_detect_derivation_is_not_cached() -> None:
-    detect = Detect(entity_labels=["a_label"])
-    assert detect.entity_labels is not None
-    assert "b_label" not in detect.scope.effective_labels
-    detect.entity_labels.append("b_label")
-    assert "b_label" in detect.scope.effective_labels
 
 
 def test_rewrite_instructions_is_removed_with_a_message() -> None:

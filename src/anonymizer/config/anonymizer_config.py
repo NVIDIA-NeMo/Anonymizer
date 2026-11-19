@@ -240,8 +240,8 @@ class Detect(BaseModel):
     def ordered_labels(self) -> tuple[str, ...]:
         """The effective labels in resolution order, computed on every read.
 
-        This is the order sent to the detector and the detection prompts: the default label order followed by the
-        labels of enabled custom regex rules, or the `entity_labels` order, minus exclusions.
+        This is the order sent to the detector and the detection prompts, minus exclusions: the default label order
+        followed by the labels of enabled custom regex rules, or `entity_labels`, which validation already sorted.
         `scope.effective_labels` holds the same labels sorted.
         """
         return tuple(

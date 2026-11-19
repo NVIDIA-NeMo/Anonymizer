@@ -7,9 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from anonymizer.config.anonymizer_config import Detect, Rewrite
-from anonymizer.config.options import DetectionOptions, RewriteOptions
-from anonymizer.config.rewrite import default_privacy_goal
+from anonymizer.config.anonymizer_config import Detect
+from anonymizer.config.options import DetectionOptions
 
 
 def _read(options: DetectionOptions) -> tuple[Any, ...]:
@@ -45,17 +44,3 @@ def _raw_labels(options: DetectionOptions) -> object:
 def test_raw_field_read_through_the_view_is_a_type_error() -> None:
     detect = Detect(entity_labels=["first_name"])
     assert _raw_labels(detect) == ["first_name"]
-
-
-def _goal(options: RewriteOptions) -> str:
-    return options.privacy_goal.protect
-
-
-def _raw_risk(options: RewriteOptions) -> object:
-    return options.risk_tolerance  # ty: ignore[unresolved-attribute]
-
-
-def test_rewrite_satisfies_the_rewrite_options_view() -> None:
-    rewrite = Rewrite()
-    assert _goal(rewrite) == default_privacy_goal().protect
-    assert _raw_risk(rewrite) == rewrite.risk_tolerance

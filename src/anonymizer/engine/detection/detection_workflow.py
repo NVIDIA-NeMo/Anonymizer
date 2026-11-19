@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import functools
 import json
 import logging
 from collections.abc import Mapping, Sequence
@@ -153,10 +152,6 @@ class EntityDetectionWorkflow:
         so both paths run exactly the same workflow.
         """
         labels = list(options.ordered_labels)
-        if not labels:
-            logger.warning(
-                "excluded_entity_labels removed all labels from the effective detection set. No entities will be detected."
-            )
         strict_labels = options.strict_labels
         allowed = labels if strict_labels else None
         excluded = list(options.scope.excluded_labels)
@@ -425,9 +420,11 @@ class EntityDetectionWorkflow:
                 rows.positions = detected_result.source_positions
                 rows.failed = detected_result.failed_records
 
-            def tag_latent(goal: PrivacyGoal) -> None:
+            def tag_latent() -> None:
+                if latent_goal is None:  # the stage is only added when it is set; this narrows the type
+                    return
                 latent_result = self.identify_latent_entities(
-                    rows.frame, options=options, context=context, latent_goal=goal
+                    rows.frame, options=options, context=context, latent_goal=latent_goal
                 )
                 rows.frame = latent_result.dataframe
                 rows.positions = tuple(rows.positions[position] for position in latent_result.source_positions)
@@ -454,11 +451,7 @@ class EntityDetectionWorkflow:
                     "detection",
                     [
                         ("detect", detect),
-                        *(
-                            [("tag-latent", functools.partial(tag_latent, latent_goal))]
-                            if latent_goal is not None
-                            else []
-                        ),
+                        *([("tag-latent", tag_latent)] if latent_goal is not None else []),
                         ("finalize", finalize),
                     ],
                 )

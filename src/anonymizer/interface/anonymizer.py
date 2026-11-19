@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import contextvars
-import copy
 import functools
 import logging
 import os
@@ -501,10 +500,10 @@ class Anonymizer:
         return workflow
 
     def _run_context(self, *, data_summary: str | None, preview_num_records: int | None) -> RunContext:
-        """One context per call, holding copies: a workflow that mutates it cannot reach this Anonymizer's state."""
+        """One context per call."""
         return RunContext(
-            model_configs=tuple(copy.deepcopy(self._model_configs)),
-            models=self._selected_models.model_copy(deep=True),
+            model_configs=tuple(self._model_configs),
+            models=self._selected_models,
             data_summary=data_summary,
             preview_num_records=preview_num_records,
         )

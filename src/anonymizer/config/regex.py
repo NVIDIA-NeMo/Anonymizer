@@ -70,7 +70,7 @@ class RegexLimits(BaseModel):
     process was too busy to run.
     """
 
-    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
     max_matches_per_rule: int = Field(default=DEFAULT_MAX_MATCHES_PER_RULE, gt=0, strict=True)
     min_timeout_seconds: float = Field(
@@ -90,7 +90,7 @@ class RegexLimits(BaseModel):
 class BuiltinRegex(BaseModel):
     """Configuration for one recognizer from the built-in regex registry."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     label: str
     enabled: bool = True
@@ -117,7 +117,7 @@ class BuiltinRegex(BaseModel):
 class RegexRule(BaseModel):
     """A user-defined regex rule for producing entity candidates."""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True, extra="forbid")
 
     label: str
     pattern: str
