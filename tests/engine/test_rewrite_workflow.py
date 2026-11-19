@@ -1906,6 +1906,11 @@ def test_run_reports_each_rows_protection_outcome(tmp_path: Path) -> None:
 
 def _run_outcome(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
     """Run one ``Alice`` row through ``Anonymizer.run()`` with ``adapter`` and return its outcome."""
+    return _run_one(adapter, tmp_path).outcome(0)
+
+
+def _run_one(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
+    """Run one ``Alice`` row through ``Anonymizer.run()`` with ``adapter`` and return the result."""
     entities = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
     detector = Mock(spec=EntityDetectionWorkflow)
     detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
@@ -1927,7 +1932,7 @@ def _run_outcome(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
             ),
             data=AnonymizerInput(source=str(csv_path), text_column="text"),
         )
-    return result.outcome(0)
+    return result
 
 
 @pytest.mark.parametrize(
@@ -2013,3 +2018,34 @@ def test_no_original_value_skips_latent_entities() -> None:
     latent = _disposition(("Maria", "replace", "tagged"), ("a company", "replace", "latent"))
     assert _no_original_value("Ana works at a company", latent) is True
     assert _no_original_value("Maria works at a company", latent) is False
+
+
+class _NoPrivacyReplyAdapter(_ScriptedAdapter):
+    """Evaluation has no privacy reply: the reply and its metrics are missing, typed as DataDesigner returns them."""
+
+    def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **kwargs: object) -> WorkflowRunResult:
+        result = super().run_workflow(seed, workflow_name=workflow_name, **kwargs)
+        if workflow_name.startswith("rewrite-evaluate-"):
+            frame, missing = result.dataframe, [None] * len(result.dataframe)
+            frame[COL_PRIVACY_QA_REANSWER] = None
+            for column in (COL_LEAKAGE_MASS, COL_WEIGHTED_LEAKAGE_RATE):
+                frame[column] = pd.array(missing, dtype="double[pyarrow]")
+            frame[COL_ANY_HIGH_LEAKED] = pd.array(missing, dtype="bool[pyarrow]")
+            frame[COL_NEEDS_REPAIR] = pd.array([False] * len(frame), dtype="bool[pyarrow]")
+        return result
+
+
+def test_row_without_a_privacy_reply_is_kept_withheld_and_flagged(tmp_path: Path) -> None:
+    result = _run_one(_NoPrivacyReplyAdapter({"rec": 0}), tmp_path)
+
+    assert result.failed_records == []
+    assert len(result.dataframe) == 1
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row["text_rewritten"])
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [
+        ("could_not_assess", "high_leak", "metric_unavailable"),
+        ("could_not_assess", "leakage_within_threshold", "metric_unavailable"),
+    ]

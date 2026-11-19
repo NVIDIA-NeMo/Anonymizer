@@ -61,6 +61,7 @@ from anonymizer.engine.rewrite.domain_classification import DomainClassification
 from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
+from anonymizer.engine.rewrite.model_reply import no_reply
 from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
@@ -397,6 +398,19 @@ def _flag_review(
     frame[COL_NEEDS_HUMAN_REVIEW] = pd.Series(review, index=frame.index, dtype=dtype)
 
 
+def _withhold_unassessed(frame: pd.DataFrame) -> None:
+    """Null the rewritten text of rows whose privacy evaluation had no usable reply.
+
+    The final checks have already run on the text and could not assess it; without a privacy verdict it is not
+    released. Rows whose text is already null are left alone (see ``_withhold_rewritten_text`` on null columns).
+    """
+    if COL_PRIVACY_QA_REANSWER not in frame.columns:
+        return
+    unassessed = frame[COL_PRIVACY_QA_REANSWER].map(no_reply).astype(bool) & frame[COL_REWRITTEN_TEXT].notna()
+    if unassessed.any():
+        frame.loc[unassessed, COL_REWRITTEN_TEXT] = None
+
+
 def _rewrite_lowered(
     entity_rows: pd.DataFrame,
     passthrough_rows: pd.DataFrame,
@@ -426,6 +440,7 @@ def _rewrite_lowered(
     result = _protect_rewrite(graph, rewrite, evaluation)
     frame = rows.frame
     _flag_review(frame, result, dict(zip(order, graph.targets)), evaluation)
+    _withhold_unassessed(frame)
     _apply_passthrough_defaults(passthrough_rows)
     return RewriteResult(
         dataframe=merge_and_reorder(frame, passthrough_rows),
@@ -588,6 +603,7 @@ class RewriteWorkflow:
             output = merge_and_reorder(passthrough_rows)
         else:
             _flag_review(frame, result, dict(enumerate(state.owners)), evaluation)
+            _withhold_unassessed(frame)
             output = merge_and_reorder(frame, passthrough_rows)
         record_stage(
             stage,

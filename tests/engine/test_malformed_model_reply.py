@@ -12,6 +12,7 @@ import json
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pandas as pd
 import pytest
@@ -22,17 +23,30 @@ from data_designer.engine.models.clients import factory as client_factory
 from data_designer.engine.models.clients.types import AssistantMessage, ChatCompletionRequest, ChatCompletionResponse
 from data_designer.interface.data_designer import DataDesigner
 
+from anonymizer.config.anonymizer_config import Rewrite
 from anonymizer.config.models import DetectionModelSelection, RewriteModelSelection
+from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
+    COL_ANY_HIGH_LEAKED,
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
+    COL_LEAKAGE_MASS,
     COL_MEANING_UNITS_SERIALIZED,
+    COL_NEEDS_REPAIR,
+    COL_PRIVACY_QA,
+    COL_PRIVACY_QA_REANSWER,
     COL_QUALITY_QA,
+    COL_QUALITY_QA_COMPARE,
+    COL_QUALITY_QA_REANSWER,
+    COL_REWRITTEN_TEXT,
     COL_TEXT,
+    COL_UTILITY_SCORE,
+    COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import load_default_model_selection
+from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 
 _PROVIDER = ModelProvider(name="scripted", endpoint="http://scripted.invalid/v1", api_key="unused")
@@ -239,3 +253,153 @@ def test_quality_qa_reply_malformed_on_every_attempt_still_fails_the_record(
     assert len(result.dataframe) == 1
     assert [record.step for record in result.failed_records] == ["rewrite-pipeline"]
     assert calls[alias] == 6
+
+
+# --- Rewrite evaluation: a reply that never parses keeps the row with its evaluation unavailable ---
+
+_EVALUATOR = "scripted-evaluator"
+_EVAL_TEXT = "A card will be charged."
+_EVAL_QUALITY_QA = {
+    "items": [
+        {"id": 1, "aspect": "Charge", "importance": "important", "question": "What?", "reference_answer": "Card."}
+    ]
+}
+_EVAL_PRIVACY_QA = {
+    "items": [
+        {
+            "id": 1,
+            "question": "Is the card number 7312?",
+            "sensitivity": "high",
+            "entity_label": "card_last_four",
+            "entity_value": "7312",
+            "category": "direct_identifier",
+        }
+    ]
+}
+_PRIVACY_GOAL = PrivacyGoal(protect="Card numbers and other direct identifiers", preserve="That a charge happens")
+_QUALITY_REPLY = '{"answers": [{"id": 1, "answer": "A card."}]}'
+_COMPARE_REPLY = '{"per_item": [{"id": 1, "score": 0.8, "reason": "Close."}]}'
+
+
+def _privacy_reply(reason: str) -> str:
+    return json.dumps({"answers": [{"id": 1, "answer": "no", "confidence": 0.9, "reason": reason, "evidence": []}]})
+
+
+def _ask_kind(request: ChatCompletionRequest) -> str:
+    prompt = json.dumps(request.messages, default=str)
+    if "privacy auditor" in prompt:
+        return "privacy"
+    return "compare" if "A student took" in prompt else "quality"
+
+
+class _EvaluatorClient(_ScriptedClient):
+    """Replies per evaluate call (``quality``, ``privacy``, ``compare``) for the record under test, else well formed."""
+
+    def _reply(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
+        kind = _ask_kind(request)
+        if _OTHER_TEXT in json.dumps(request.messages, default=str):
+            good = {"quality": _QUALITY_REPLY, "privacy": _privacy_reply("Absent."), "compare": _COMPARE_REPLY}
+            return ChatCompletionResponse(message=AssistantMessage(content=good[kind]))
+        replies = self._script.get(kind) or [_QUALITY_REPLY if kind == "quality" else _COMPARE_REPLY]
+        index = self._calls[kind]
+        self._calls[kind] += 1
+        _MESSAGE_COUNTS[kind].append(len(request.messages))
+        return ChatCompletionResponse(message=AssistantMessage(content=replies[min(index, len(replies) - 1)]))
+
+
+@pytest.fixture
+def evaluator(monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str, list[str]], dict[str, int]]:
+    script: dict[str, list[str]] = {"privacy": [_privacy_reply("Absent.")]}
+    calls: dict[str, int] = defaultdict(int)
+    _MESSAGE_COUNTS.clear()
+
+    def create_model_client(model_config: ModelConfig, *args: Any, **kwargs: Any) -> _EvaluatorClient:
+        return _EvaluatorClient(model_config.alias, script, calls)
+
+    monkeypatch.setattr(client_factory, "create_model_client", create_model_client)
+    return script, calls
+
+
+def _evaluate(tmp_path: Path) -> Any:
+    selection = RewriteModelSelection.model_validate(
+        {**load_default_model_selection().rewrite.model_dump(), "evaluator": _EVALUATOR}
+    )
+    evaluation = Rewrite(privacy_goal=_PRIVACY_GOAL).evaluation
+    other_quality = {"items": [{**_EVAL_QUALITY_QA["items"][0], "reference_answer": _OTHER_TEXT}]}
+    return _adapter(tmp_path).run_workflow(
+        pd.DataFrame(
+            {
+                COL_REWRITTEN_TEXT: [_EVAL_TEXT, _OTHER_TEXT],
+                COL_QUALITY_QA: [_EVAL_QUALITY_QA, other_quality],
+                COL_PRIVACY_QA: [_EVAL_PRIVACY_QA, _EVAL_PRIVACY_QA],
+            }
+        ),
+        model_configs=[_model(_EVALUATOR)],
+        columns=EvaluateWorkflow(adapter=Mock()).columns(selected_models=selection, evaluation=evaluation),
+        workflow_name="rewrite-evaluate-0",
+    )
+
+
+def test_privacy_reply_unparsed_on_every_attempt_keeps_the_row_without_a_privacy_verdict(
+    tmp_path: Path, evaluator: tuple[dict[str, list[str]], dict[str, int]]
+) -> None:
+    script, calls = evaluator
+    script["privacy"] = ["I cannot answer that."]
+
+    result = _evaluate(tmp_path)
+
+    assert result.failed_records == []
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row[COL_PRIVACY_QA_REANSWER])
+    assert all(pd.isna(row[c]) for c in (COL_LEAKAGE_MASS, COL_WEIGHTED_LEAKAGE_RATE, COL_ANY_HIGH_LEAKED))
+    assert row[COL_UTILITY_SCORE] == pytest.approx(0.8)
+    assert not row[COL_NEEDS_REPAIR]  # unavailable evidence goes to review, not repair
+
+
+def test_evaluate_calls_restart_once_after_their_corrections(
+    tmp_path: Path, evaluator: tuple[dict[str, list[str]], dict[str, int]]
+) -> None:
+    script, calls = evaluator
+    script["privacy"] = ["I cannot answer that."]
+
+    _evaluate(tmp_path)
+
+    # Two conversations, each a first request plus 3 corrections that grow the conversation.
+    first = _MESSAGE_COUNTS["privacy"][0]
+    assert _MESSAGE_COUNTS["privacy"] == [first, first + 2, first + 4, first + 6] * 2
+    assert calls["privacy"] == 8
+
+
+def test_quality_reply_unparsed_skips_the_comparison_and_leaves_utility_unavailable(
+    tmp_path: Path, evaluator: tuple[dict[str, list[str]], dict[str, int]]
+) -> None:
+    script, calls = evaluator
+    script["quality"] = ["I cannot answer that."]
+
+    result = _evaluate(tmp_path)
+
+    assert result.failed_records == []
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row[COL_QUALITY_QA_REANSWER])
+    assert pd.isna(row[COL_QUALITY_QA_COMPARE])
+    assert pd.isna(row[COL_UTILITY_SCORE])
+    assert row[COL_LEAKAGE_MASS] == 0.0
+    assert calls["compare"] == 0
+
+
+@pytest.mark.parametrize(
+    ("reason", "kept"),
+    [("x" * 201, "x" * 200), ("", "Model returned an empty reason.")],
+    ids=["too-long", "empty"],
+)
+def test_privacy_reason_outside_its_limits_does_not_reject_the_reply(
+    tmp_path: Path, evaluator: tuple[dict[str, list[str]], dict[str, int]], reason: str, kept: str
+) -> None:
+    script, calls = evaluator
+    script["privacy"] = [_privacy_reply(reason)]
+
+    result = _evaluate(tmp_path)
+
+    assert result.failed_records == []
+    assert calls["privacy"] == 1
+    assert result.dataframe.iloc[0][COL_PRIVACY_QA_REANSWER]["answers"][0]["reason"] == kept
