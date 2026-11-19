@@ -154,8 +154,9 @@ as `object` in Parquet; it is now `bool`.
 
 **Sensitivity disposition was reworked.** Default labels are classified locally as direct or quasi identifiers, and
 custom labels by a new `entity_classifier` model role. The model must return exactly one decision per entity. The
-disposition prompt no longer receives `data_summary` or the domain supplement. The `_sensitivity_disposition` trace
-column has a new shape.
+disposition prompt no longer receives the domain supplement. It still receives `data_summary`, now as a separate block
+whose explicit sensitivity guidance the model applies where it agrees with the privacy goal. The
+`_sensitivity_disposition` trace column has a new shape.
 - What to do: nothing required. `selected_models.rewrite.entity_classifier` defaults to the `disposition_analyzer`
   alias. Expect one more model call for a record with custom labels.
 - Changed in: #333.
@@ -254,7 +255,7 @@ These are additions and break nothing.
   (#212).
 - `anonymizer.graph`, the graph SDK (#319). It is provisional, and its names may change. `prepare` rejects two
   operations with the same flattened name (`duplicate_operation_name`).
-- `Finding` in `anonymizer.config.rewrite`, and `EvaluationCriteria.repair_on` and `flag_on` (#368).
+- `Finding` in `anonymizer.config.rewrite`, and `EvaluationCriteria.repair_on` (#368).
 
 ## Pending changes
 
