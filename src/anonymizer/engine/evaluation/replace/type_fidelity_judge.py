@@ -252,22 +252,10 @@ def _replacements_for_judge(raw_map: object) -> list[dict[str, str]]:
     ``EntityReplacementMapSchema`` instance, or a JSON string. Returns an
     empty list for anything malformed.
     """
-    if raw_map is None:
-        return []
-    if isinstance(raw_map, BaseModel):
-        raw_map = raw_map.model_dump(mode="python")
-    if isinstance(raw_map, str):
-        try:
-            raw_map = json.loads(raw_map)
-        except (json.JSONDecodeError, ValueError):
-            return []
-    if not isinstance(raw_map, dict):
-        return []
-    try:
-        parsed = EntityReplacementMapSchema.model_validate(raw_map)
-    except Exception:
-        return []
-    return [{"original": r.original, "label": r.label, "synthetic": r.synthetic} for r in parsed.replacements]
+    return [
+        {"original": r.original, "label": r.label, "synthetic": r.synthetic}
+        for r in EntityReplacementMapSchema.from_raw(raw_map, on_invalid="drop")
+    ]
 
 
 def _label_examples_for_judge(replacements: list[dict[str, str]]) -> str:

@@ -16,7 +16,7 @@ from anonymizer.engine.constants import (
     COL_TEXT,
 )
 from anonymizer.engine.detection.postprocess import EntitySpan
-from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.schemas import EntitiesSchema, EntityReplacementMapSchema
 
 logger = logging.getLogger("anonymizer")
 
@@ -37,12 +37,14 @@ class ReplacementApplication:
     skipped_span_count: int
     skipped_span_label_counts: dict[str, int]
 
-    def to_metrics(self) -> dict[str, int | dict[str, int]]:
+    def to_metrics(self) -> dict[str, int | str]:
+        # Label counts are JSON text: an empty dict infers as a childless Arrow struct,
+        # which Parquet cannot write, and dict cells infer differently per batch.
         return {
             "targeted_span_count": self.targeted_span_count,
             "applied_span_count": self.applied_span_count,
             "skipped_span_count": self.skipped_span_count,
-            "skipped_span_label_counts": self.skipped_span_label_counts,
+            "skipped_span_label_counts": json.dumps(self.skipped_span_label_counts, sort_keys=True),
         }
 
 
@@ -199,28 +201,7 @@ def _resolve_synthetic(
 
 def _parse_replacements(raw: str | dict | object) -> list[ReplacementEntry]:
     """Parse raw replacement map (JSON string or dict) into typed entries."""
-    parsed = raw
-    model_dump = getattr(raw, "model_dump", None)
-    if callable(model_dump):
-        parsed = model_dump(mode="python")
-    if isinstance(raw, str):
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            return []
-    if not isinstance(parsed, dict):
-        return []
-    replacements = parsed.get("replacements", [])
-    if not isinstance(replacements, list):
-        return []
-    normalized: list[ReplacementEntry] = []
-    for replacement in replacements:
-        if not isinstance(replacement, dict):
-            continue
-        original = str(replacement.get("original", ""))
-        label = str(replacement.get("label", ""))
-        synthetic = str(replacement.get("synthetic", ""))
-        if not original or not label or not synthetic:
-            continue
-        normalized.append(ReplacementEntry(original=original, label=label, synthetic=synthetic))
-    return normalized
+    return [
+        ReplacementEntry(original=e.original, label=e.label, synthetic=e.synthetic)
+        for e in EntityReplacementMapSchema.from_raw(raw, on_invalid="skip")
+    ]

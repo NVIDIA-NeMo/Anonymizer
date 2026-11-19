@@ -124,7 +124,7 @@ Detection validity is disabled by default. To enable it, set `compute_detection_
 
 ### Entity Replacement Judges
 
-When the source result used the **Substitute** mode, three additional LLM judges run in parallel — one per quality dimension.
+When the source result used the **Substitute** mode, three additional LLM judges run, one per quality dimension. Each judge runs on its own, so a judge that cannot answer for a record leaves the other judges' scores for that record in place.
 
 #### Type Fidelity
 

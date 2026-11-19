@@ -10,8 +10,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from anonymizer.engine.ndd.model_loader import load_default_model_providers, parse_model_configs
-from anonymizer.interface.anonymizer import _resolve_model_providers
+from anonymizer.engine.ndd.model_loader import load_default_model_providers, parse_model_configs, parse_model_providers
 from anonymizer.interface.cli.main import app
 
 # ---------------------------------------------------------------------------
@@ -123,7 +122,7 @@ def test_model_providers_directory_path_raises_file_not_found(tmp_path: Path) ->
     yaml_dir = tmp_path / "providers.yaml"
     yaml_dir.mkdir()
     with pytest.raises(FileNotFoundError, match="Providers config file not found"):
-        _resolve_model_providers(str(yaml_dir))
+        parse_model_providers(str(yaml_dir))
 
 
 def test_model_configs_tilde_path_expanded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -154,7 +153,7 @@ def test_model_providers_tilde_path_expanded(tmp_path: Path, monkeypatch: pytest
                 provider_type: openai
         """)
     )
-    result = _resolve_model_providers("~/providers.yaml")
+    result = parse_model_providers("~/providers.yaml")
     assert result is not None
     assert "tilde-provider" in {p.name for p in result}
 
@@ -179,13 +178,13 @@ def test_model_configs_path_object_still_works(model_configs_yaml: Path) -> None
 
 
 # ---------------------------------------------------------------------------
-# _resolve_model_providers: file-path detection
+# parse_model_providers: file-path detection
 # ---------------------------------------------------------------------------
 
 
 def test_model_providers_yaml_path_loads_file(providers_yaml: Path) -> None:
     """A string ending in .yaml that exists on disk is loaded as a file."""
-    result = _resolve_model_providers(str(providers_yaml))
+    result = parse_model_providers(str(providers_yaml))
     assert result is not None
     names = {p.name for p in result}
     assert "nvidia" in names
@@ -194,19 +193,19 @@ def test_model_providers_yaml_path_loads_file(providers_yaml: Path) -> None:
 def test_model_providers_missing_yaml_file_raises_file_not_found() -> None:
     """A .yaml path that does not exist raises FileNotFoundError."""
     with pytest.raises(FileNotFoundError, match="Providers config file not found"):
-        _resolve_model_providers("does_not_exist/providers.yaml")
+        parse_model_providers("does_not_exist/providers.yaml")
 
 
 def test_model_providers_missing_yaml_message_names_the_file() -> None:
     """The FileNotFoundError message includes the bad file path."""
     bad_path = "configs/providers_typo.yaml"
     with pytest.raises(FileNotFoundError, match="providers_typo.yaml"):
-        _resolve_model_providers(bad_path)
+        parse_model_providers(bad_path)
 
 
 def test_model_providers_none_returns_bundled_defaults() -> None:
     """None loads Anonymizer's bundled providers — not DataDesigner's global defaults."""
-    result = _resolve_model_providers(None)
+    result = parse_model_providers(None)
     bundled = load_default_model_providers()
     assert {p.name for p in result} == {p.name for p in bundled}
 
@@ -216,20 +215,20 @@ def test_model_providers_list_passthrough() -> None:
     from anonymizer import ModelProvider
 
     providers = [ModelProvider(name="my-provider", endpoint="https://example.com/v1")]
-    result = _resolve_model_providers(providers)
+    result = parse_model_providers(providers)
     assert result is providers
 
 
 def test_model_providers_empty_list_raises() -> None:
     with pytest.raises(ValueError, match="at least one provider"):
-        _resolve_model_providers([])
+        parse_model_providers([])
 
 
 def test_model_providers_empty_yaml_list_raises(tmp_path: Path) -> None:
     path = tmp_path / "providers.yaml"
     path.write_text("providers: []\n")
     with pytest.raises(ValueError, match="at least one provider"):
-        _resolve_model_providers(str(path))
+        parse_model_providers(str(path))
 
 
 # ---------------------------------------------------------------------------
