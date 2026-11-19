@@ -554,3 +554,62 @@ def test_detector_offset_mismatch_reason_is_reported(tmp_path: Path) -> None:
     assert reason.startswith(_PREFIX)
     assert "does not match the source span" in reason
     assert text not in reason
+
+
+def test_detector_span_past_text_reason_is_reported(tmp_path: Path) -> None:
+    text = "Hollingsworth-Featherstonehaugh lives at 17 Marlborough Crescent"
+    healthy = "Quillfeather-Ashworth was born in Lancaster"
+
+    def script(model: str, prompt: str, _earlier: int) -> tuple[int, str, str]:
+        if model == "gliner":
+            if healthy in prompt:
+                return 200, json.dumps({"entities": []}), "stop"
+            # Offsets that run past the end of the text.
+            entity = {"text": "Crescent", "label": "street_address", "start": 56, "end": 66, "score": 0.9}
+            return 200, json.dumps({"entities": [entity]}), "stop"
+        return 200, json.dumps({"decisions": [], "entities": []}), "stop"
+
+    with stub_provider(script) as provider:
+        data_designer = DataDesigner(
+            artifact_path=tmp_path / "artifacts", model_providers=[provider], auto_configure_logging=False
+        )
+        result = EntityDetectionWorkflow(NddAdapter(data_designer)).detect_and_validate_entities(
+            pd.DataFrame({COL_TEXT: [text, healthy]}),
+            options=Detect(gliner_threshold=0.3),
+            context=detection_context(
+                [
+                    ModelConfig(alias="gliner", model="gliner", provider="stub"),
+                    ModelConfig(alias="llm", model="llm", provider="stub"),
+                ],
+                DetectionModelSelection(
+                    entity_detector="gliner", entity_validator="llm", entity_augmenter="llm", latent_detector="llm"
+                ),
+            ),
+        )
+
+    assert [record.step for record in result.failed_records] == ["entity-detection"]
+    reason = result.failed_records[0].reason
+    assert reason.startswith(_PREFIX)
+    assert reason.endswith(": Detector entity span [56, 66) ends past the source text of length 64")
+    assert text not in reason
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "Detector entity span [Alice, 66) ends past the source text of length 64",
+        "Detector entity span [56, 66) ends past the source text of length first_name",
+        "Detector entity span 'Alice' ends past the source text",
+        "Detector entity span [56, 66) ends past the source text of length \u0666\u0664",
+    ],
+)
+def test_known_failure_allowlist_rejects_non_offset_content(error: str) -> None:
+    assert adapter._KNOWN_FAILURE.search(error) is None
+
+
+def test_known_failure_allowlist_keeps_only_offsets_and_length() -> None:
+    error = "boom: Detector entity span [56, 66) ends past the source text of length 64 (text='Alice')"
+    known = adapter._KNOWN_FAILURE.search(error)
+
+    assert known is not None
+    assert known.group(0) == "Detector entity span [56, 66) ends past the source text of length 64"

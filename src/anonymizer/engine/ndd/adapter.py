@@ -114,7 +114,10 @@ _SAFE_FAILURE_SUMMARIES = {
     ),
 }
 # Anonymizer's own failure text, safe to show because it carries only offsets.
-_KNOWN_FAILURE = re.compile(r"Detector entity text does not match the source span at offsets \[\d+, \d+\)")
+_KNOWN_FAILURE = re.compile(
+    r"Detector entity text does not match the source span at offsets \[\d+, \d+\)"
+    r"|Detector entity span \[[0-9]+, [0-9]+\) ends past the source text of length [0-9]+(?![0-9])"
+)
 
 _TRACEABLE_LLM_COLUMN_TYPES = (LLMTextColumnConfig, LLMStructuredColumnConfig)
 _MODEL_TRACE_COLUMN: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_column", default=None)
