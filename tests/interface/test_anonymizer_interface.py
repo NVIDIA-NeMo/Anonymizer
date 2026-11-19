@@ -72,6 +72,7 @@ from anonymizer.engine.replace.replace_runner import ReplacementResult, Replacem
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer, _accepts_entity_label_examples, _resolve_model_providers
 from anonymizer.interface.errors import AnonymizerWorkflowError, InvalidConfigError, InvalidInputError
+from anonymizer.interface.results import AnonymizerResult
 from tests.conftest import stub_run_with_detection
 
 
@@ -1480,7 +1481,12 @@ def test_evaluate_keeps_the_run_outcome_of_a_row(stub_input: AnonymizerInput) ->
         (Reason("failed", "replacements_applied", "verify-replaced"),),
         advisories=(Advisory("no_replaced_value_remains", "verify-no-original", "failed"),),
     )
-    run_result = dataclasses.replace(run_result, _outcomes=(ran,))
+    run_result = dataclasses.replace(
+        run_result,
+        trace_dataframe=run_result.trace_dataframe.assign(**{RECORD_ID_COLUMN: ["r1"]}),
+        _outcomes=(ran,),
+        _outcome_ids=("r1",),
+    )
     eval_df = pd.DataFrame(
         {
             COL_TEXT: ["Alice works at Acme"],
@@ -2030,7 +2036,7 @@ def test_evaluate_keeps_partial_result_from_custom_runner(tmp_path: Path, mode: 
 @pytest.mark.parametrize("mode", list(_MODES))
 def test_evaluate_outcome_describes_the_surviving_row(tmp_path: Path, mode: str) -> None:
     anonymizer, _, data = _two_row_anonymizer(tmp_path, keep=1, record_ids=True)
-    run_result = anonymizer.run(config=_MODES[mode], data=data)
+    run_result = _with_outcomes(anonymizer.run(config=_MODES[mode], data=data))
 
     def coverage_zero_for_alice(_self: object, dataframe: pd.DataFrame, **_: object):
         scores = [0.0 if "Alice" in str(t) else 1.0 for t in dataframe[COL_TEXT]]
@@ -2041,7 +2047,7 @@ def test_evaluate_outcome_describes_the_surviving_row(tmp_path: Path, mode: str)
 
     assert len(evaluated.dataframe) == 1
     assert "Bob" in str(evaluated.dataframe["text"].iloc[0])
-    ran, outcome = run_result.outcome(1), evaluated.outcome(0)
+    ran, outcome = _BOB, evaluated.outcome(0)
     assert (outcome.terminal, outcome.qualification, outcome.available, outcome.protected, outcome.reasons) == (
         ran.terminal,
         ran.qualification,
@@ -2049,10 +2055,66 @@ def test_evaluate_outcome_describes_the_surviving_row(tmp_path: Path, mode: str)
         ran.protected,
         ran.reasons,
     )
-    assert outcome.advisories[: len(ran.advisories)] == ran.advisories
-    assert {a.check: a.status for a in outcome.advisories[len(ran.advisories) :]}["coverage"] == "passed"
+    assert {a.check: a.status for a in outcome.advisories}["coverage"] == "passed"
     with pytest.raises(IndexError):
         evaluated.outcome(1)
+
+
+_ALICE = TargetOutcome("success", "not_met", True, False, (Reason("failed", "replacements_applied", "v"),))
+_BOB = TargetOutcome("success", "met", True, True)
+
+
+def _with_outcomes(run_result: AnonymizerResult) -> AnonymizerResult:
+    """``run_result`` with distinct outcomes for its two rows: Alice ``not_met``, Bob ``met``."""
+    assert run_result.trace_dataframe["text"].str.startswith("Alice").tolist() == [True, False]
+    return dataclasses.replace(run_result, _outcomes=(_ALICE, _BOB))
+
+
+class _AllRowsReplaceRunner(ReplacementWorkflow):
+    """``evaluate`` scores every row it is given."""
+
+    def evaluate(self, dataframe: pd.DataFrame, **_: object) -> ReplacementResult:
+        return ReplacementResult(dataframe=dataframe.assign(**{COL_ENTITY_COVERAGE: 1.0}), failed_records=[])
+
+
+def _reversed(trace: pd.DataFrame) -> pd.DataFrame:
+    return trace.iloc[::-1].reset_index(drop=True)
+
+
+def _other_ids(trace: pd.DataFrame) -> pd.DataFrame:
+    return trace.assign(**{RECORD_ID_COLUMN: ["other-0", "other-1"]})
+
+
+def _bob_only(trace: pd.DataFrame) -> pd.DataFrame:
+    return trace.iloc[[1]].reset_index(drop=True)
+
+
+@pytest.mark.parametrize(
+    ("change", "expected"),
+    [
+        (_reversed, {"Bob": _BOB, "Alice": _ALICE}),
+        (_other_ids, {"Alice": None, "Bob": None}),
+        (_bob_only, {"Bob": _BOB}),
+    ],
+    ids=["reversed", "other-frame", "filtered"],
+)
+def test_evaluate_matches_run_outcomes_by_record_id(
+    tmp_path: Path, change: Callable[[pd.DataFrame], pd.DataFrame], expected: dict[str, TargetOutcome | None]
+) -> None:
+    anonymizer, _, data = _two_row_anonymizer(tmp_path, record_ids=True)
+    anonymizer._replace_runner = _AllRowsReplaceRunner()
+    run_result = _with_outcomes(anonymizer.run(config=_MODES["replace"], data=data))
+    changed = dataclasses.replace(run_result, trace_dataframe=change(run_result.trace_dataframe))
+
+    with patch.object(EntityCoverageWorkflow, "run_non_critical", _stub_coverage):
+        evaluated = anonymizer.evaluate(changed)
+
+    unassessed = TargetOutcome("success", "not_assessed", False, False)
+    observed = {
+        str(text).split()[0]: dataclasses.replace(evaluated.outcome(i), advisories=())
+        for i, text in enumerate(evaluated.trace_dataframe["text"])
+    }
+    assert observed == {name: outcome or unassessed for name, outcome in expected.items()}
 
 
 @pytest.mark.parametrize("mode", list(_MODES))

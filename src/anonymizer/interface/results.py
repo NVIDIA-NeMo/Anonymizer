@@ -30,13 +30,13 @@ class _DisplayMixin:
         row did not finish or a required check failed, could not decide (a ``could_not_assess`` reason) or gave
         no assessment, and ``"not_assessed"`` only when no check is required.
 
-        On an ``evaluate()`` result the outcome is the row's outcome from the evaluated result (``not_assessed`` and
-        unprotected when that result carries none) with one advisory per judge appended, named by the judge, with
-        status ``passed``, ``failed``, ``could_not_assess``, ``scored`` or ``not_applicable``; ``cause`` says why
-        (``"judge_unavailable"`` when the judge gave no score). ``scored`` means the rewrite judge, which has no pass
-        threshold, returned scores; read them in the judge evaluation column. ``not_applicable`` means the rewrite
-        judge skipped a row with no detected entities, by design. Judges never change qualification or release. The
-        evaluated result is not changed.
+        On an ``evaluate()`` result the outcome is the evaluated result's outcome for the row with the same record
+        id (``not_assessed`` and unprotected when that result carries no outcomes or no single row has that id), with
+        one advisory per judge appended, named by the judge, with status ``passed``, ``failed``, ``could_not_assess``,
+        ``scored`` or ``not_applicable``; ``cause`` says why (``"judge_unavailable"`` when the judge gave no score).
+        ``scored`` means the rewrite judge, which has no pass threshold, returned scores; read them in the judge
+        evaluation column. ``not_applicable`` means the rewrite judge skipped a row with no detected entities, by
+        design. Judges never change qualification or release. The evaluated result is not changed.
 
         Raises:
             IndexError: ``row`` is not an output row, or this result carries no outcomes (a custom runner's or
@@ -129,6 +129,7 @@ class AnonymizerResult(_DisplayMixin):
     effective_entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
+    _outcome_ids: tuple[str, ...] | None = field(default=None, repr=False, compare=False)
 
     def __repr__(self) -> str:
         return (
@@ -198,6 +199,7 @@ class PreviewResult(_DisplayMixin):
     effective_entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
+    _outcome_ids: tuple[str, ...] | None = field(default=None, repr=False, compare=False)
 
     def __repr__(self) -> str:
         return (

@@ -60,6 +60,7 @@ from anonymizer.engine.constants import (
     COL_TYPE_FIDELITY_VALID,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
@@ -244,16 +245,29 @@ def _evaluate_on_graph(
     return current, failures, result
 
 
+def _record_ids(frame: pd.DataFrame) -> tuple[str, ...] | None:
+    """The record id of each row, ``None`` when the frame carries none."""
+    if RECORD_ID_COLUMN not in frame.columns:
+        return None
+    return tuple(str(i) for i in frame[RECORD_ID_COLUMN])
+
+
 def _reported_outcomes(
-    result: ProtectionResult, source: pd.DataFrame, output: pd.DataFrame, ran: Sequence[TargetOutcome] | None
+    result: ProtectionResult,
+    source: pd.DataFrame,
+    output: pd.DataFrame,
+    ran: Sequence[TargetOutcome] | None,
+    ran_ids: Sequence[str] | None,
 ) -> tuple[TargetOutcome, ...] | None:
     """Each ``output`` row's outcome, ``None`` when a judge dropped rows that cannot be placed in ``source``.
 
-    A row's outcome is its outcome in ``ran``, the evaluated result's outcomes by ``source`` row, or an unassessed
-    outcome when there are none, with each verifier appended as an advisory naming it, in verifier order. A verifier
-    that gave no assessment is ``could_not_assess`` with its execution code (``raised``, or ``blocked`` when an
-    earlier verifier of the row failed) as the cause. The ungraded rewrite judge reports ``scored`` when it returned
-    scores and ``not_applicable`` on a row it skips by design."""
+    A row's outcome is the evaluated result's outcome (``ran``) of the row with the same record id (``ran_ids``),
+    or an unassessed outcome when no single such row exists (the row has no id, the ids changed, or the result
+    carries no outcomes), with each verifier appended as an advisory naming it, in verifier order. Matching by id,
+    not position, keeps a reordered or replaced trace from taking another row's outcome. A verifier that gave no
+    assessment is ``could_not_assess`` with its execution code (``raised``, or ``blocked`` when an earlier verifier
+    of the row failed) as the cause. The ungraded rewrite judge reports ``scored`` when it returned scores and
+    ``not_applicable`` on a row it skips by design."""
     codes: dict[bool | None, AdvisoryStatus] = {True: "passed", False: "failed", None: "could_not_assess"}
     ungraded = _ASSESSMENTS[COL_JUDGE_EVALUATION][0]
     names = result.prepared.names
@@ -264,8 +278,13 @@ def _reported_outcomes(
     verifiers = [i for i, (_, op) in enumerate(result.prepared.workflow.flatten()) if op.is_verifier]
     errors = {(e.unit, e.node): e.reason for e in result.state.entries if e.status == Status.FAILED}
     ledger = result.ledger()  # target-major; a verifier that never ran is ``blocked``
-    if ran is None or len(ran) != len(source):
-        ran = [TargetOutcome("success", "not_assessed", False, False)] * len(source)
+    unassessed = TargetOutcome("success", "not_assessed", False, False)
+    by_id: dict[str, TargetOutcome] = {}
+    if ran is not None and ran_ids is not None and len(ran) == len(ran_ids):
+        counts = Counter(ran_ids)
+        by_id = {i: outcome for i, outcome in zip(ran_ids, ran) if counts[i] == 1}
+    ids = _record_ids(source)
+    base = [unassessed] * len(source) if ids is None else [by_id.get(i, unassessed) for i in ids]
 
     def advisory(p: int, i: int) -> Advisory:
         row = result.state.rows[p]
@@ -279,7 +298,7 @@ def _reported_outcomes(
         return Advisory(names[i], names[i], status, a.reason)
 
     return tuple(
-        replace(ran[p], advisories=(*ran[p].advisories, *(advisory(p, i) for i in verifiers))) for p in positions
+        replace(base[p], advisories=(*base[p].advisories, *(advisory(p, i) for i in verifiers))) for p in positions
     )
 
 
@@ -679,6 +698,7 @@ class Anonymizer:
                 detection_scope=result.detection_scope,
                 data_summary=result.data_summary,
                 _outcomes=result._outcomes,
+                _outcome_ids=result._outcome_ids,
             )
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
@@ -927,6 +947,13 @@ class Anonymizer:
                 ],
             )
         renamed_trace = _rename_output_columns(judged_df, resolved_text_column=text_column)
+        outcomes = _reported_outcomes(
+            evaluation,
+            internal_df,
+            judged_df,
+            getattr(output, "_outcomes", None),  # absent on results pickled before outcomes were kept
+            getattr(output, "_outcome_ids", None),
+        )
         result = AnonymizerResult(
             dataframe=_build_user_dataframe(
                 renamed_trace,
@@ -944,7 +971,8 @@ class Anonymizer:
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
-            _outcomes=_reported_outcomes(evaluation, internal_df, judged_df, getattr(output, "_outcomes", None)),
+            _outcomes=outcomes,
+            _outcome_ids=None if outcomes is None else _record_ids(judged_df),
         )
         if result.failed_records:
             logger.debug("%d evaluation failed record(s).", len(result.failed_records))
@@ -1239,6 +1267,7 @@ class Anonymizer:
             ),
             data_summary=data.data_summary,
             _outcomes=outcomes,
+            _outcome_ids=None if outcomes is None else _record_ids(final_df),
             effective_entity_labels=effective_labels,
         )
 
