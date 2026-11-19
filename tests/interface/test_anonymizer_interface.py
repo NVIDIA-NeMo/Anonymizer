@@ -1435,7 +1435,8 @@ def test_evaluate_rewrite_result_adds_detection_valid(stub_input: AnonymizerInpu
 def _assessments(result: object, row: int) -> dict[str, tuple[str, str]]:
     outcome = result.outcome(row)  # ty: ignore[unresolved-attribute]
     assert outcome.qualification == "not_assessed" and not outcome.protected
-    return {reason.check: (reason.code, reason.cause) for reason in outcome.reasons}
+    assert outcome.reasons == ()
+    return {advisory.check: (advisory.status, advisory.cause) for advisory in outcome.advisories}
 
 
 def test_evaluate_replace_reports_each_judge_through_outcome(stub_input: AnonymizerInput) -> None:
@@ -1487,7 +1488,7 @@ def test_evaluate_reports_a_raising_verifier_as_the_reason(stub_input: Anonymize
     outcome = anonymizer.evaluate(run_result).outcome(0)
 
     assert (outcome.terminal, outcome.qualification, outcome.reason) == ("failed", "not_met", "raised")
-    assert ("passed", "coverage") in [(r.code, r.check) for r in outcome.reasons]
+    assert ("passed", "coverage") in [(a.status, a.check) for a in outcome.advisories]
 
 
 def test_evaluate_rewrite_reports_each_judge_through_outcome(stub_input: AnonymizerInput) -> None:
@@ -1516,7 +1517,8 @@ def test_evaluate_rewrite_reports_each_judge_through_outcome(stub_input: Anonymi
         "rewrite-judge": ("could_not_assess", "judge_unavailable"),
         "detection-validity": ("passed", ""),
     }
-    assert [r.code for r in evaluated.outcome(0).reasons] == ["passed", "could_not_assess", "failed"]
+    assert [a.check for a in evaluated.outcome(0).advisories] == ["coverage", "rewrite-judge", "detection-validity"]
+    assert evaluated.outcome(0).reason == ""
     assert run_result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False]
 
 
@@ -1545,10 +1547,9 @@ def test_evaluate_reports_a_scoring_rewrite_judge_as_scored(stub_input: Anonymiz
         "rewrite-judge": ("scored", ""),
         "detection-validity": ("passed", ""),
     }
-    assert outcomes[0][1] == "scored"
     assert outcomes[1][0]["rewrite-judge"] == ("scored", "")
     assert outcomes[1][0]["coverage"] == ("failed", "entities_leaked")
-    assert outcomes[1][1] == "failed"
+    assert [reason for _, reason in outcomes] == ["", ""]
 
 
 def test_evaluate_config_detection_validity_defaults_off() -> None:
@@ -1985,7 +1986,7 @@ def test_evaluate_outcome_describes_the_surviving_row(tmp_path: Path, mode: str)
 
     assert len(evaluated.dataframe) == 1
     assert "Bob" in str(evaluated.dataframe["text"].iloc[0])
-    assert {r.check: r.code for r in evaluated.outcome(0).reasons}["coverage"] == "passed"
+    assert {a.check: a.status for a in evaluated.outcome(0).advisories}["coverage"] == "passed"
     with pytest.raises(IndexError):
         evaluated.outcome(1)
 

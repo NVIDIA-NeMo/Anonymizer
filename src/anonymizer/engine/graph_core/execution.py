@@ -42,6 +42,7 @@ from anonymizer.engine.graph_core.authoring import (
 Terminal = Literal["success", "failed", "cancelled", "blocked"]
 Qualification = Literal["met", "not_met", "not_assessed"]
 AttemptStatus = Literal["running", "succeeded", "failed", "blocked", "cancelled"]
+AdvisoryStatus = Literal["passed", "failed", "could_not_assess", "scored"]
 
 SEEDS = {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "context": CONTEXT, "target": DATUM, "record": RECORD}
 _SEAL_KEY = secrets.token_bytes(32)
@@ -294,11 +295,14 @@ class Reason:
 class Advisory:
     """A check the workflow does not require, as a final-text verifier assessed it: ``passed``, ``failed`` or
     ``could_not_assess``; ``cause`` is the verifier's stated cause for ``failed`` and ``could_not_assess``. It never
-    changes qualification or release. Fields hold codes and declared names, never record text."""
+    changes qualification or release. Fields hold codes and declared names, never record text.
+
+    The kernel emits only those three. The ``Anonymizer`` facade also reports ``evaluate()`` judges as advisories
+    and adds ``scored`` (an ungraded judge returned scores)."""
 
     check: str
     verifier: str
-    status: Literal["passed", "failed", "could_not_assess"]
+    status: AdvisoryStatus
     cause: str = ""
 
 

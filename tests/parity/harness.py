@@ -431,6 +431,7 @@ def _outcomes(result: Any) -> list[dict[str, Any]] | None:
             "available": o.available,
             "protected": o.protected,
             "reasons": [_cell(vars(r)) if hasattr(r, "__dict__") else str(r) for r in o.reasons],
+            "advisories": [_cell(vars(a)) for a in o.advisories],
         }
         for o in outcomes
     ]

@@ -30,11 +30,11 @@ class _DisplayMixin:
         row did not finish or a required check failed, could not decide (a ``could_not_assess`` reason) or gave
         no assessment, and ``"not_assessed"`` only when no check is required.
 
-        On an ``evaluate()`` result the outcome only reports and is never protected: its ``reasons`` hold one
-        ``passed``, ``scored``, ``could_not_assess`` or ``failed`` reason per judge check, in that order (worst last),
-        then any execution error such as ``raised``, which is then the ``reason``. A judge reason's ``cause`` says why
-        (``"judge_unavailable"`` when the judge gave no score). ``scored`` means the rewrite judge, which has no pass
-        threshold, returned scores; read them in the judge evaluation column. The evaluated result is not changed.
+        On an ``evaluate()`` result the outcome only reports and is never protected: its ``advisories`` hold one
+        advisory per judge, named by the judge, with status ``passed``, ``failed``, ``could_not_assess`` or
+        ``scored``, and ``cause`` says why (``"judge_unavailable"`` when the judge gave no score). ``scored`` means the
+        rewrite judge, which has no pass threshold, returned scores; read them in the judge evaluation column.
+        ``reasons`` is empty unless a judge raised. The evaluated result is not changed.
 
         Raises:
             IndexError: ``row`` is not an output row, or this result carries no outcomes (a custom runner's or

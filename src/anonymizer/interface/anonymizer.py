@@ -79,7 +79,14 @@ from anonymizer.engine.graph_core.authoring import (
     Requests,
     Workflow,
 )
-from anonymizer.engine.graph_core.execution import ProtectionResult, Reason, TargetOutcome, prepare, protect
+from anonymizer.engine.graph_core.execution import (
+    Advisory,
+    AdvisoryStatus,
+    ProtectionResult,
+    TargetOutcome,
+    prepare,
+    protect,
+)
 from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
@@ -230,36 +237,30 @@ def _reported_outcomes(
     result: ProtectionResult, source: pd.DataFrame, output: pd.DataFrame
 ) -> tuple[TargetOutcome, ...] | None:
     """Each ``output`` row's outcome, ``None`` when a judge dropped rows that cannot be placed in ``source``, with
-    every verifier's assessment as a reason naming the verifier, ordered ``passed``, ``scored``, ``could_not_assess``,
-    ``failed`` (worst last) so ``reason`` names the worst check; an execution error, such as a verifier that raised,
-    comes after them and is the ``reason``. The ungraded rewrite judge reports ``scored`` when it returned scores.
-    Qualification and release stay as derived."""
-    codes = {True: "passed", False: "failed", None: "could_not_assess"}
-    rank = {"passed": 0, "scored": 1, "could_not_assess": 2, "failed": 3}
+    every verifier's assessment appended as an advisory naming the verifier, in verifier order. The ungraded rewrite
+    judge reports ``scored`` when it returned scores. Reasons, qualification and release stay as derived."""
+    codes: dict[bool | None, AdvisoryStatus] = {True: "passed", False: "failed", None: "could_not_assess"}
     ungraded = _ASSESSMENTS[COL_JUDGE_EVALUATION][0]
     names = result.prepared.names
     same = len(output) == len(source)  # as ``_evaluate_on_graph`` reads a judge's frame
     positions = range(len(source)) if same else try_resolve_source_positions(source, output, None)
     if positions is None:
         return None
+
+    def advisory(i: int, a: Assessment) -> Advisory:
+        status = "scored" if a.satisfied and names[i] == ungraded else codes[a.satisfied]
+        return Advisory(names[i], names[i], status, a.reason)
+
     return tuple(
         replace(
             outcome,
-            reasons=(
-                *sorted(
-                    (
-                        Reason(
-                            "scored" if a.satisfied and names[i] == ungraded else codes[a.satisfied],
-                            names[i],
-                            names[i],
-                            a.reason,
-                        )
-                        for i, out in sorted(row.outputs.items())
-                        if isinstance(a := out.get("assessment"), Assessment)
-                    ),
-                    key=lambda r: rank[r.code],
+            advisories=(
+                *outcome.advisories,
+                *(
+                    advisory(i, a)
+                    for i, out in sorted(row.outputs.items())
+                    if isinstance(a := out.get("assessment"), Assessment)
                 ),
-                *outcome.reasons,
             ),
         )
         for row, outcome in ((result.state.rows[p], result.outcomes[p]) for p in positions)
