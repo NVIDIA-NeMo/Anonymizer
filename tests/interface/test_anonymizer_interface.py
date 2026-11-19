@@ -1875,14 +1875,18 @@ def test_detection_scope_reports_the_run_label_policy(stub_input: AnonymizerInpu
 
 
 class _FirstWordDetector:
-    """Detects each row's first word as a ``first_name``; records the row count of every call."""
+    """Detects each row's first word as a ``first_name``; records the row count of every call. With ``record_ids``
+    each row carries a record ID, as rows that went through the NDD adapter do."""
 
-    def __init__(self) -> None:
+    def __init__(self, record_ids: bool = False) -> None:
         self.calls: list[int] = []
+        self.record_ids = record_ids
 
     def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
         self.calls.append(len(dataframe))
         frame = dataframe.copy()
+        if self.record_ids:
+            frame[RECORD_ID_COLUMN] = [f"rid-{i}" for i in range(len(frame))]
         names = [str(text).split()[0] for text in frame[COL_TEXT]]
         entities = [
             {"entities": [{"id": "a", "value": n, "label": "first_name", "start_position": 0, "end_position": len(n)}]}
@@ -1893,20 +1897,30 @@ class _FirstWordDetector:
         return EntityDetectionResult(frame, [], tuple(range(len(frame))))
 
 
-def _dropped_second(dataframe: pd.DataFrame) -> list[FailedRecord]:
+def _dropped(dataframe: pd.DataFrame, row: int) -> list[FailedRecord]:
     ids = dataframe[RECORD_ID_COLUMN] if RECORD_ID_COLUMN in dataframe.columns else dataframe.index
-    return [FailedRecord(str(ids[1]), "judge", "dropped")]
+    return [FailedRecord(str(list(ids)[row]), "judge", "dropped")]
 
 
 class _PartialReplaceRunner(ReplacementWorkflow):
+    """``evaluate`` keeps row ``keep`` of two and fails the other."""
+
+    def __init__(self, keep: int = 0) -> None:
+        super().__init__()
+        self.keep = keep
+
     def evaluate(self, dataframe: pd.DataFrame, **_: object) -> ReplacementResult:
-        kept = dataframe.iloc[[0]].copy()
+        kept = dataframe.iloc[[self.keep]].copy()
         kept[COL_ENTITY_COVERAGE] = 1.0
-        return ReplacementResult(dataframe=kept, failed_records=_dropped_second(dataframe))
+        return ReplacementResult(dataframe=kept, failed_records=_dropped(dataframe, 1 - self.keep))
 
 
 class _StubRewriteRunner(RewriteWorkflow):
-    """Rewrite with the model stages stubbed; ``evaluate`` keeps the first row and fails the second."""
+    """Rewrite with the model stages stubbed; ``evaluate`` keeps row ``keep`` of two and fails the other."""
+
+    def __init__(self, adapter: Mock, keep: int = 0) -> None:
+        super().__init__(adapter)
+        self.keep = keep
 
     def _produce(self, rows, **options):
         def produce() -> None:
@@ -1918,20 +1932,22 @@ class _StubRewriteRunner(RewriteWorkflow):
         return produce
 
     def evaluate(self, dataframe: pd.DataFrame, **_: object) -> RewriteResult:  # ty: ignore[invalid-method-override]
-        kept = dataframe.iloc[[0]].copy()
+        kept = dataframe.iloc[[self.keep]].copy()
         kept[COL_JUDGE_EVALUATION] = [{"privacy": 1}]
-        return RewriteResult(kept, _dropped_second(dataframe))
+        return RewriteResult(kept, _dropped(dataframe, 1 - self.keep))
 
 
-def _two_row_anonymizer(tmp_path: Path) -> tuple[Anonymizer, _FirstWordDetector, AnonymizerInput]:
+def _two_row_anonymizer(
+    tmp_path: Path, *, keep: int = 0, record_ids: bool = False
+) -> tuple[Anonymizer, _FirstWordDetector, AnonymizerInput]:
     csv_path = tmp_path / "input.csv"
     pd.DataFrame({"text": ["Alice Smith lives here", "Bob Jones is here"]}).to_csv(csv_path, index=False)
-    detector = _FirstWordDetector()
+    detector = _FirstWordDetector(record_ids)
     anonymizer = Anonymizer(
         artifact_path=tmp_path / "artifacts",
         detection_workflow=cast(EntityDetectionWorkflow, detector),
-        replace_runner=_PartialReplaceRunner(),
-        rewrite_runner=_StubRewriteRunner(Mock()),
+        replace_runner=_PartialReplaceRunner(keep),
+        rewrite_runner=_StubRewriteRunner(Mock(), keep),
     )
     return anonymizer, detector, AnonymizerInput(source=str(csv_path))
 
@@ -1953,6 +1969,25 @@ def test_evaluate_keeps_partial_result_from_custom_runner(tmp_path: Path, mode: 
 
     assert len(evaluated.dataframe) == 1
     assert [(r.step, r.reason) for r in evaluated.failed_records] == [("judge", "dropped")]
+
+
+@pytest.mark.parametrize("mode", list(_MODES))
+def test_evaluate_outcome_describes_the_surviving_row(tmp_path: Path, mode: str) -> None:
+    anonymizer, _, data = _two_row_anonymizer(tmp_path, keep=1, record_ids=True)
+    run_result = anonymizer.run(config=_MODES[mode], data=data)
+
+    def coverage_zero_for_alice(_self: object, dataframe: pd.DataFrame, **_: object):
+        scores = [0.0 if "Alice" in str(t) else 1.0 for t in dataframe[COL_TEXT]]
+        return dataframe.assign(**{COL_ENTITY_COVERAGE: scores}), []
+
+    with patch.object(EntityCoverageWorkflow, "run_non_critical", coverage_zero_for_alice):
+        evaluated = anonymizer.evaluate(run_result)
+
+    assert len(evaluated.dataframe) == 1
+    assert "Bob" in str(evaluated.dataframe["text"].iloc[0])
+    assert {r.check: r.code for r in evaluated.outcome(0).reasons}["coverage"] == "passed"
+    with pytest.raises(IndexError):
+        evaluated.outcome(1)
 
 
 @pytest.mark.parametrize("mode", list(_MODES))

@@ -226,15 +226,22 @@ def _evaluate_on_graph(
     return current, failures, result
 
 
-def _reported_outcomes(result: ProtectionResult) -> tuple[TargetOutcome, ...]:
-    """Each row's outcome with every verifier's assessment as a reason naming the verifier, ordered ``passed``,
-    ``scored``, ``could_not_assess``, ``failed`` (worst last) so ``reason`` names the worst check; an execution error,
-    such as a verifier that raised, comes after them and is the ``reason``. The ungraded rewrite judge reports
-    ``scored`` when it returned scores. Qualification and release stay as derived."""
+def _reported_outcomes(
+    result: ProtectionResult, source: pd.DataFrame, output: pd.DataFrame
+) -> tuple[TargetOutcome, ...] | None:
+    """Each ``output`` row's outcome, ``None`` when a judge dropped rows that cannot be placed in ``source``, with
+    every verifier's assessment as a reason naming the verifier, ordered ``passed``, ``scored``, ``could_not_assess``,
+    ``failed`` (worst last) so ``reason`` names the worst check; an execution error, such as a verifier that raised,
+    comes after them and is the ``reason``. The ungraded rewrite judge reports ``scored`` when it returned scores.
+    Qualification and release stay as derived."""
     codes = {True: "passed", False: "failed", None: "could_not_assess"}
     rank = {"passed": 0, "scored": 1, "could_not_assess": 2, "failed": 3}
     ungraded = _ASSESSMENTS[COL_JUDGE_EVALUATION][0]
     names = result.prepared.names
+    same = len(output) == len(source)  # as ``_evaluate_on_graph`` reads a judge's frame
+    positions = range(len(source)) if same else try_resolve_source_positions(source, output, None)
+    if positions is None:
+        return None
     return tuple(
         replace(
             outcome,
@@ -255,7 +262,7 @@ def _reported_outcomes(result: ProtectionResult) -> tuple[TargetOutcome, ...]:
                 *outcome.reasons,
             ),
         )
-        for row, outcome in zip(result.state.rows, result.outcomes)
+        for row, outcome in ((result.state.rows[p], result.outcomes[p]) for p in positions)
     )
 
 
@@ -908,7 +915,7 @@ class Anonymizer:
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
-            _outcomes=_reported_outcomes(evaluation),
+            _outcomes=_reported_outcomes(evaluation, internal_df, judged_df),
         )
         if result.failed_records:
             logger.debug("%d evaluation failed record(s).", len(result.failed_records))
