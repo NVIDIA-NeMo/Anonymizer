@@ -7,7 +7,7 @@
 
 The surface is provisional. Names, signatures and defaults may change before it is published, and the `Anonymizer` facade does not depend on that stability.
 
-The [provider-free example](../examples/graph_sdk/local_workflows.py) uses only names exported by `anonymizer.graph`. Save the file and run it in an environment that has `nemo-anonymizer`:
+The provider-free example, [`examples/graph_sdk/local_workflows.py`](../examples/graph_sdk/local_workflows.py), uses only names exported by `anonymizer.graph`. Save the file and run it in an environment that has `nemo-anonymizer`:
 
 ```bash
 python local_workflows.py
