@@ -56,12 +56,12 @@ from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
+from anonymizer.engine.ndd.model_reply import no_reply
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
-from anonymizer.engine.rewrite.model_reply import no_reply
 from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow

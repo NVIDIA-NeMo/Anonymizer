@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 from data_designer.engine.models.errors import ModelGenerationValidationFailureError, ModelTimeoutError
 
-from anonymizer.engine.rewrite.model_reply import ModelReply, RetryBudget, ask, no_reply
+from anonymizer.engine.ndd.model_reply import ModelReply, RetryBudget, ask, no_reply
 
 
 class _Facade:

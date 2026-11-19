@@ -30,9 +30,9 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.ndd.model_reply import ModelReply, RetryBudget, ask, no_reply
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.findings import needs_repair
-from anonymizer.engine.rewrite.model_reply import ModelReply, RetryBudget, ask, no_reply
 from anonymizer.engine.rewrite.parsers import (
     parse_privacy_answers,
     parse_privacy_qa,
