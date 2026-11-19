@@ -17,6 +17,7 @@ from anonymizer.engine.schemas import (
     Observation,
     SourceView,
 )
+from anonymizer.engine.spans import Span
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +60,9 @@ class _GlinerDetectionBackend:
                 f"source view end {source_view.end_position} exceeds canonical text length {len(canonical_text)}"
             )
 
-        view_text = canonical_text[source_view.start_position : source_view.end_position]
+        view_text = canonical_text[source_view.span.slice]
         raw_entities = _extract_raw_entities(raw_output)
-        candidates: list[tuple[int, int, str, float | None, int]] = []
+        candidates: list[tuple[Span, str, float | None, int]] = []
         for raw_index, raw_entity in enumerate(raw_entities):
             raw_text = raw_entity.get("text")
             raw_label = raw_entity.get("label")
@@ -84,27 +85,24 @@ class _GlinerDetectionBackend:
                     f"Detector entity span [{view_relative_start}, {view_relative_end}) "
                     f"ends past the source text of length {len(view_text)}"
                 )
-            canonical_start = source_view.start_position + view_relative_start
-            canonical_end = source_view.start_position + view_relative_end
-            source_value = canonical_text[canonical_start:canonical_end]
+            span = Span(view_relative_start, view_relative_end).shifted(source_view.start_position)
+            source_value = canonical_text[span.slice]
             if detector_text.casefold() != source_value.strip().casefold():
                 raise ValueError(
-                    "Detector entity text does not match the source span at offsets "
-                    f"[{canonical_start}, {canonical_end})"
+                    f"Detector entity text does not match the source span at offsets [{span.start}, {span.end})"
                 )
-            canonical_start += len(source_value) - len(source_value.lstrip())
-            canonical_end -= len(source_value) - len(source_value.rstrip())
-            candidates.append((canonical_start, canonical_end, label, score, raw_index))
+            leading = len(source_value) - len(source_value.lstrip())
+            trailing = len(source_value) - len(source_value.rstrip())
+            candidates.append((Span(span.start + leading, span.end - trailing), label, score, raw_index))
 
         sorted_candidates = sorted(
             candidates,
             key=lambda item: (
                 item[0],
-                item[1],
-                item[2].strip().casefold(),
-                item[3] is None,
-                -(item[3] or 0.0),
-                item[4],
+                item[1].strip().casefold(),
+                item[2] is None,
+                -(item[2] or 0.0),
+                item[3],
             ),
         )
         observations = tuple(
@@ -112,16 +110,16 @@ class _GlinerDetectionBackend:
                 detection_result_id=detection_result_id,
                 observation_id=f"o{observation_index}",
                 source_text_ref=source_view.source_text_ref,
-                value=canonical_text[start_position:end_position],
+                value=canonical_text[span.slice],
                 label=label,
-                start_position=start_position,
-                end_position=end_position,
+                start_position=span.start,
+                end_position=span.end,
                 source_kind=self.source_kind,
                 source_instance=self.source_instance,
                 admission_route=AdmissionRoute.llm_validation,
                 native_score=score,
             )
-            for observation_index, (start_position, end_position, label, score, _) in enumerate(
+            for observation_index, (span, label, score, _) in enumerate(
                 sorted_candidates,
                 start=1,
             )
