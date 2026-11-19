@@ -113,6 +113,10 @@ To run both the unit and end-to-end suites:
 mise run test:all
 ```
 
+`make test-e2e` calls the bundled default providers: export `OPENROUTER_API_KEY` and start a GLiNER2
+server on `127.0.0.1:8001` first (see [Self-hosting GLiNER2](docs/concepts/self-hosting-gliner.md)); the
+test skips otherwise.
+
 For docs changes:
 
 ```bash
