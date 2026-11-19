@@ -204,6 +204,8 @@ session = Session.restore(SessionSnapshot.from_bytes(saved))
   earlier call replaced.
 - A value the Session already holds needs no new mapping from the model: it is not retried and cannot fail its
   record. A record can still fail for a value the Session does not hold.
+  If the model omits a held value whose substitute equals a value detected in the new record, that value gets a
+  placeholder in that record.
 - Redact, Annotate and Hash run unchanged and leave the Session unchanged. Hash is stable across calls only when
   every call uses the same hash configuration.
 - Rewrite, and a custom replace or rewrite runner that overrides `run()`, reject a stable Session with
