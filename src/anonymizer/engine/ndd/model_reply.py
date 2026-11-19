@@ -58,6 +58,25 @@ async def ask(
     A reply that still does not parse once the budget is spent is ``unavailable``. Any other error, such as a
     provider failure, propagates.
     """
+    reply, _ = await ask_with_trace(
+        model,
+        parser,
+        prompt=prompt,
+        max_correction_steps=budget.corrections,
+        max_conversation_restarts=budget.restarts,
+    )
+    return reply
+
+
+async def ask_with_trace(
+    model: Any,
+    parser: Callable[[str], tuple[T, bool]],
+    **request: Any,
+) -> tuple[ModelReply[T], list[Any]]:
+    """``ask`` with the facade's request arguments passed as given, returning the conversation trace too.
+
+    The trace is empty when the reply is unavailable.
+    """
     requests = 0
 
     def counted(response: str) -> tuple[T, bool]:
@@ -66,15 +85,10 @@ async def ask(
         return parser(response)
 
     try:
-        (value, defaulted), _ = await model.agenerate(
-            prompt=prompt,
-            parser=counted,
-            max_correction_steps=budget.corrections,
-            max_conversation_restarts=budget.restarts,
-        )
+        (value, defaulted), trace = await model.agenerate(parser=counted, **request)
     except ModelGenerationValidationFailureError:
-        return ModelReply("unavailable", None, UNPARSEABLE_REPLY, requests)
-    return ModelReply("defaulted" if defaulted else "parsed", value, "", requests)
+        return ModelReply("unavailable", None, UNPARSEABLE_REPLY, requests), []
+    return ModelReply("defaulted" if defaulted else "parsed", value, "", requests), trace
 
 
 def no_reply(cell: object) -> bool:

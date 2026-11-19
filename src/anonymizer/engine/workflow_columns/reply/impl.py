@@ -1,0 +1,60 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+from __future__ import annotations
+
+import functools
+import logging
+from typing import Any, cast
+
+from data_designer.config.utils.constants import REASONING_CONTENT_COLUMN_POSTFIX, TRACE_COLUMN_POSTFIX
+from data_designer.config.utils.storage_schema import compile_json_storage_schema
+from data_designer.config.utils.trace_type import TraceType
+from data_designer.engine.column_generators.generators.llm_completion import ColumnGeneratorWithModelChatCompletion
+from data_designer.engine.models.recipes.response_recipes import StructuredResponseRecipe
+from data_designer.engine.processing.utils import deserialize_json_values
+
+from anonymizer.engine.ndd.model_reply import ask_with_trace, no_reply
+from anonymizer.engine.workflow_columns.reply.config import ReplyColumnConfig
+
+logger = logging.getLogger("anonymizer.ndd.reply")
+
+
+class ReplyColumnGenerator(ColumnGeneratorWithModelChatCompletion[ReplyColumnConfig]):
+    """DataDesigner's structured generator, except that a reply that never parses keeps the row."""
+
+    @functools.cached_property
+    def response_recipe(self) -> StructuredResponseRecipe:  # ty: ignore[invalid-mutable-override]
+        # DataDesigner picks the recipe by column type; this is the one it gives ``llm-structured``. The config's
+        # validator has already turned a Pydantic ``output_format`` into its JSON schema.
+        schema = cast(dict[str, Any], self.config.output_format)
+        return StructuredResponseRecipe(json_schema=compile_json_storage_schema(schema)[0])
+
+    def generate(self, data: dict) -> dict:
+        raise NotImplementedError("ReplyColumnGenerator is async-only; use agenerate().")
+
+    async def agenerate(self, data: dict) -> dict:
+        missing = [column for column in self.config.ask_only_if if no_reply(data.get(column))]
+        if missing:
+            logger.debug("%s not asked: %s has no value.", self.config.name, ", ".join(missing))
+            return self._unavailable(data)
+        kwargs = self._prepare_generation_kwargs(data)
+        parse = kwargs.pop("parser")
+        reply, trace = await ask_with_trace(self.model, lambda response: (parse(response), False), **kwargs)
+        if reply.state == "unavailable":
+            logger.warning(
+                "%s unavailable after %d replies (%s); keeping the row.", self.config.name, reply.requests, reply.cause
+            )
+            return self._unavailable(data)
+        return self._process_generation_result(data, reply.value, trace)
+
+    def _unavailable(self, data: dict[str, Any]) -> dict[str, Any]:
+        data[self.config.name] = None if self.config.unavailable is None else dict(self.config.unavailable)
+        if self.config.with_trace != TraceType.NONE:
+            data[self.config.name + TRACE_COLUMN_POSTFIX] = []
+        if self.config.extract_reasoning_content:
+            data[self.config.name + REASONING_CONTENT_COLUMN_POSTFIX] = None
+        return data
+
+    def _process_serialized_output(self, serialized_output: str) -> dict | list:
+        return deserialize_json_values(serialized_output)

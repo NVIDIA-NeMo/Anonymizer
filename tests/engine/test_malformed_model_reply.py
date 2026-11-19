@@ -30,6 +30,8 @@ from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
+    COL_DOMAIN,
+    COL_DOMAIN_SUPPLEMENT,
     COL_LEAKAGE_MASS,
     COL_MEANING_UNITS_SERIALIZED,
     COL_NEEDS_REPAIR,
@@ -46,8 +48,10 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import load_default_model_selection
+from anonymizer.engine.rewrite.domain_classification import _DOMAIN_BY_ENUM, DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
+from anonymizer.engine.schemas import Domain
 
 _PROVIDER = ModelProvider(name="scripted", endpoint="http://scripted.invalid/v1", api_key="unused")
 _DETECTOR = "scripted-detector"
@@ -59,6 +63,7 @@ _OTHER_TEXT = "Nothing to see."
 _OTHER_REPLIES = {
     "scripted-detector": '{"entities": []}',
     "scripted-augmenter": '```json\n{"entities": []}\n```',
+    "scripted-domain": '{"domain": "META_TEXT", "domain_confidence": 0.5}',
 }
 
 # The 11-14 reply shape: malformed JSON at context_after, which the parser's repair turns into an item without label.
@@ -403,3 +408,63 @@ def test_privacy_reason_outside_its_limits_does_not_reject_the_reply(
     assert result.failed_records == []
     assert calls["privacy"] == 1
     assert result.dataframe.iloc[0][COL_PRIVACY_QA_REANSWER]["answers"][0]["reason"] == kept
+
+
+# --- Rewrite pipeline: a reply that never parses keeps the row with the site's unavailable value ---
+
+_DOMAIN = "scripted-domain"
+
+
+def _domain(tmp_path: Path, run_config: RunConfig | None = None):
+    selection = RewriteModelSelection.model_validate(
+        {**load_default_model_selection().rewrite.model_dump(), "domain_classifier": _DOMAIN}
+    )
+    return _adapter(tmp_path, run_config).run_workflow(
+        pd.DataFrame({COL_TEXT: [_TEXT, _OTHER_TEXT]}),
+        model_configs=[_model(_DOMAIN)],
+        columns=DomainClassificationWorkflow().columns(selected_models=selection),
+        workflow_name="rewrite-pipeline",
+    )
+
+
+def test_domain_reply_unparsed_on_every_attempt_keeps_the_row_as_other(
+    tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
+) -> None:
+    script, calls = scripted
+    script[_DOMAIN] = ["I cannot answer that."]
+
+    result = _domain(tmp_path)
+
+    assert result.failed_records == []
+    assert len(result.dataframe) == 2
+    row = result.dataframe.iloc[0]
+    assert row[COL_DOMAIN]["domain"] == "OTHER"
+    assert row[COL_DOMAIN_SUPPLEMENT] == _DOMAIN_BY_ENUM[Domain.OTHER].quality_supplement
+    assert calls[_DOMAIN] == 6  # the run config's budget (DataDesigner default: 5 restarts)
+
+
+def test_domain_reply_uses_the_run_config_restarts_and_corrections(
+    tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
+) -> None:
+    script, calls = scripted
+    script[_DOMAIN] = ["I cannot answer that."]
+
+    result = _domain(tmp_path, RunConfig(max_conversation_restarts=1, max_conversation_correction_steps=2))
+
+    assert result.failed_records == []
+    first = _MESSAGE_COUNTS[_DOMAIN][0]
+    assert _MESSAGE_COUNTS[_DOMAIN] == [first, first + 2, first + 4] * 2
+    assert calls[_DOMAIN] == 6
+
+
+def test_domain_reply_that_parses_is_kept_as_returned(
+    tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
+) -> None:
+    script, calls = scripted
+    script[_DOMAIN] = ["I cannot answer that.", '{"domain": "FINANCIAL", "domain_confidence": 0.9}']
+
+    result = _domain(tmp_path)
+
+    assert result.failed_records == []
+    assert result.dataframe.iloc[0][COL_DOMAIN] == {"domain": "FINANCIAL", "domain_confidence": 0.9}
+    assert calls[_DOMAIN] == 2

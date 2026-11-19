@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from data_designer.config import custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 
 from anonymizer.config.models import RewriteModelSelection
@@ -21,6 +21,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import Domain, DomainClassificationSchema
+from anonymizer.engine.workflow_columns.reply.config import ReplyColumnConfig
 
 # ---------------------------------------------------------------------------
 # Single source of truth for rewrite-domain metadata.
@@ -235,6 +236,9 @@ Choose the domain that best reflects how the text is meant to be used or interpr
     )
 
 
+_UNAVAILABLE_DOMAIN = DomainClassificationSchema(domain=Domain.OTHER, domain_confidence=0.0).model_dump(mode="json")
+
+
 # ---------------------------------------------------------------------------
 # Custom column generators
 # ---------------------------------------------------------------------------
@@ -270,11 +274,13 @@ class DomainClassificationWorkflow:
     ) -> list[ColumnConfigT]:
         domain_alias = resolve_model_alias("domain_classifier", selected_models)
         return [
-            LLMStructuredColumnConfig(
+            # The domain only selects prompt guidance, so a reply that never parses falls back to OTHER.
+            ReplyColumnConfig(
                 name=COL_DOMAIN,
                 prompt=_get_domain_classification_prompt(data_summary),
                 model_alias=domain_alias,
                 output_format=DomainClassificationSchema,
+                unavailable=_UNAVAILABLE_DOMAIN,
             ),
             CustomColumnConfig(
                 name=COL_DOMAIN_SUPPLEMENT,
