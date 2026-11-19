@@ -1,0 +1,248 @@
+---
+title: "Add a verifier and require a check"
+description: ""
+---
+{/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */}
+{/* SPDX-License-Identifier: Apache-2.0 */}
+
+# Add a verifier and require a check
+
+After reading this page you can write a verifier, make a workflow require its check, add checks that only advise,
+and avoid the one mistake `prepare` refuses most often: checking text that a later step changes.
+
+## A verifier
+
+A verifier is a function that returns an `Assessment` for the target it was given. Build it with
+`Operation.verifier`, naming the checks it answers and its subject, the input ports its verdict is about:
+
+```python
+from anonymizer import graph as g
+
+
+def no_names(text: str, target: g.Datum) -> g.Assessment:
+    found = [n for n in ("Alice", "Bob") if n in text]
+    return g.Assessment(not found, target, "name_present" if found else "")
+
+
+check_names = g.Operation.verifier(
+    "check-names", no_names, {"text": "text", "target": "datum"}, checks=("names_removed",), subject=("text",)
+)
+print(check_names.is_verifier, check_names.checks, check_names.subject)
+```
+
+```text
+True ('names_removed',) ('text',)
+```
+
+Rules for the `Assessment`:
+
+- `satisfied` is `True` (passed), `False` (failed) or `None` (could not decide, for example the checker was down).
+- `target` must be the target the verifier was called for. That is why the function reads the `target` seed. An
+  assessment without a target, or for another target, makes the whole run inconsistent: `result.consistent` is
+  `False` and no target qualifies.
+- `reason` is a short code you choose. It is reported for `None` verdicts and on advisories.
+
+## Require the check, and add an advisory one
+
+The workflow's `requires` decides which checks count. A check a verifier answers but the workflow does not require
+becomes an advisory: reported, never deciding release.
+
+```python
+from anonymizer import graph as g
+
+NAMES = ("Alice", "Bob")
+
+
+def redact(text: str) -> str:
+    for name in NAMES:
+        text = text.replace(name, "[NAME]")
+    return text
+
+
+def no_names(text: str, target: g.Datum) -> g.Assessment:
+    found = [n for n in NAMES if n in text]
+    return g.Assessment(not found, target, "name_present" if found else "")
+
+
+def no_emails(text: str, target: g.Datum) -> g.Assessment:
+    return g.Assessment("@" not in text, target, "email_present" if "@" in text else "")
+
+
+inputs = {"text": "text", "target": "datum"}
+check_names = g.Operation.verifier("check-names", no_names, inputs, checks=("names_removed",), subject=("text",))
+check_emails = g.Operation.verifier("check-emails", no_emails, inputs, checks=("emails_removed",), subject=("text",))
+
+scope = g.GraphScope()
+msg = scope.datum("Alice wrote to bob@example.test")
+graph = g.ProtectionGraph(scope, (msg,))
+
+workflow = g.Workflow("redact", (g.Operation("redact", redact), check_names, check_emails), requires=("names_removed",))
+result = g.protect(g.prepare(graph, workflow))
+outcome = result.outcome(msg)
+print(outcome.qualification, outcome.protected)
+print(outcome.advisories)
+print(result.protected[msg])
+```
+
+```text
+met True
+(Advisory(check='emails_removed', verifier='check-emails', status='failed', cause='email_present'),)
+[NAME] wrote to bob@example.test
+```
+
+The text is released because the only required check passed. The email check failed, and that is reported as an
+advisory with its cause. Promote it to a requirement with `requires=("names_removed", "emails_removed")` and the
+target would be withheld.
+
+## Check the final text, not a draft
+
+A required check counts only when it was made on the text you would release. If a workflow checks the text and a
+later step changes it again, the check no longer describes the output, so `prepare` refuses the workflow:
+
+```python
+from anonymizer import graph as g
+
+
+def no_names(text: str, target: g.Datum) -> g.Assessment:
+    return g.Assessment("Alice" not in text, target)
+
+
+check_names = g.Operation.verifier(
+    "check-names", no_names, {"text": "text", "target": "datum"}, checks=("names_removed",), subject=("text",)
+)
+redact = g.Operation("redact", lambda text: text.replace("Alice", "[NAME]"))
+
+scope = g.GraphScope()
+graph = g.ProtectionGraph(scope, (scope.datum("Alice wrote this."),))
+try:
+    g.prepare(graph, g.Workflow("early", (check_names, redact), requires=("names_removed",)))
+except g.GraphRejection as exc:
+    print(exc.code, "|", exc.detail)
+```
+
+```text
+required_check_not_final | names_removed
+```
+
+The `detail` names the checks with no verifier of the final text. The same code is raised when no verifier at all
+declares a required check, for example after a typo in `requires`.
+
+`prepare` decides what a verifier looked at from its declared `subject` alone. It traces each port back to the
+text it came from: the seeds `text`, `source`, `mentions` and `target` come from the original text; each step with
+a `text` output makes a new candidate; and every output of that step counts as being about that new candidate.
+`prepare` does not read your function, so it cannot tell if a verifier that declares `text` actually judges
+something else. Keep the declaration honest.
+
+## Keep a draft check as a diagnostic
+
+A verifier of earlier text is allowed. It answers no required check and produces no advisory, but its assessment
+stays readable by the verifier's name with `result.value(target, "assessment", producer=name)`:
+
+```python
+from anonymizer import graph as g
+
+
+def no_names(text: str, target: g.Datum) -> g.Assessment:
+    return g.Assessment("Alice" not in text and "Bob" not in text, target)
+
+
+inputs = {"text": "text", "target": "datum"}
+workflow = g.Workflow(
+    "draft-then-final",
+    (
+        g.Operation("draft", lambda text: text.replace("Alice", "[NAME]")),
+        g.Operation.verifier("check-draft", no_names, inputs, checks=("draft_clean",), subject=("text",)),
+        g.Operation("final", lambda text: text.replace("Bob", "[NAME]")),
+        g.Operation.verifier("check-final", no_names, inputs, checks=("names_removed",), subject=("text",)),
+    ),
+    requires=("names_removed",),
+)
+scope = g.GraphScope()
+msg = scope.datum("Alice met Bob.")
+result = g.protect(g.prepare(g.ProtectionGraph(scope, (msg,)), workflow))
+draft = result.value(msg, "assessment", producer="check-draft")
+print(draft.satisfied, result.outcome(msg).qualification)
+```
+
+```text
+False met
+```
+
+The draft still named Bob, so its check failed, yet the target is `met`: only the final check is required.
+
+## When a verifier cannot decide
+
+Return `Assessment(None, target, reason)`. The target is `not_met`, and the reason carries your code as its `cause`:
+
+```python
+from anonymizer import graph as g
+
+
+def unsure(text: str, target: g.Datum) -> g.Assessment:
+    return g.Assessment(None, target, "checker_unavailable")
+
+
+scope = g.GraphScope()
+msg = scope.datum("Alice wrote this.")
+workflow = g.Workflow(
+    "w",
+    (
+        g.Operation.verifier(
+            "unsure", unsure, {"text": "text", "target": "datum"}, checks=("names_removed",), subject=("text",)
+        ),
+    ),
+    requires=("names_removed",),
+)
+print(g.protect(g.prepare(g.ProtectionGraph(scope, (msg,)), workflow)).outcome(msg).reasons)
+```
+
+```text
+(Reason(code='could_not_assess', check='names_removed', verifier='unsure', cause='checker_unavailable'),)
+```
+
+For a verdict of `False`, the `Reason` has code `failed` and an empty `cause`; the assessment's `reason` string
+appears only on advisories and on `could_not_assess`.
+
+## Nested workflows
+
+A workflow may contain workflows. A nested workflow's `requires` apply to the whole run, and its steps are named
+by path:
+
+```python
+from anonymizer import graph as g
+
+check = g.Operation.verifier(
+    "check-names",
+    lambda text, target: g.Assessment("Alice" not in text, target),
+    {"text": "text", "target": "datum"},
+    checks=("names_removed",),
+    subject=("text",),
+)
+inner = g.Workflow(
+    "names", (g.Operation("redact", lambda text: text.replace("Alice", "[NAME]")), check), requires=("names_removed",)
+)
+outer = g.Workflow("outer", (inner,))
+
+scope = g.GraphScope()
+msg = scope.datum("Alice wrote this.")
+prepared = g.prepare(g.ProtectionGraph(scope, (msg,)), outer)
+print(prepared.summary().operations)
+print(g.protect(prepared).outcome(msg).qualification)
+```
+
+```text
+('names/redact', 'names/check-names')
+met
+```
+
+Two rules apply: names must be unique after this flattening (`duplicate_operation_name`), and a workflow that
+releases output may not contain an annotation workflow at any depth (`annotation_in_protected`).
+
+## Rejections to expect
+
+| Code | Cause | Fix |
+|---|---|---|
+| `required_check_not_final` | A required check is answered only by a verifier of earlier text, or by none. | Move the verifier after the last step that outputs `text`, or fix the check name. |
+| `verifier_subject_invalid` | A verifier declares `checks` without `subject`; a subject is not one of its inputs or traces to no text (for example `context`); or a non-verifier declares `subject`. | Declare `subject=("text",)` and include `text` in the inputs. |
+| `verifier_ports` | An operation declares an `assessment` output alongside others or under another name, or a port named `assessment` of another kind. | Use `Operation.verifier`; a verifier's only output is `{"assessment": "assessment"}`. |
+| `names_not_tuple` | `checks`, `subject` or `requires` given as a string. | Write `("names_removed",)`. |

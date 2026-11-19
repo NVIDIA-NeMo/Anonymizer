@@ -1,0 +1,211 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# Rebuild a document from protected parts
+
+After reading this page you can split a long document into sections, protect each section as its own target so a
+failure stays local, put the protected sections back together, and check the assembled document before you
+release it.
+
+## Why split
+
+A target is the unit the SDK checks and releases. If a whole document is one target, one failed step withholds all
+of it. With one target per section, a failure stays in its section: you can see exactly which section failed, and
+the other sections keep their candidates. Splitting does not change what release needs. Each section still has to
+pass a required check, and a policy that spans sections, such as "this name appears nowhere in the document", has to
+be checked on the assembled document as well.
+
+## Three ways to join candidates
+
+| Method | Joins | Use it when |
+|---|---|---|
+| `result.assemble_regions(source, regions)` | The original document with each `(start, end, target)` range replaced by that target's candidate | Sections are ranges of one string, and the text between them should stay |
+| `result.compose(parts)` | The candidates of `parts`, in the order you list them | You choose the order yourself |
+| `result.reconstruct(parts, source)` | The candidates of `parts`, ordered by the positions in the mapping `source` | Each part has a known position, and every position must be filled |
+
+All three use each target's final candidate and refuse a target without one with `unavailable_input`. They never
+fill a listed part with original text, and they never run a step again. They do not look at qualification or
+release either: the joined text is a new candidate, not released output.
+
+## When a section fails
+
+This workflow redacts each line of a document. The step times out on the second line:
+
+```python
+from anonymizer import graph as g
+
+document = "Intro: Dana joined in May.\nBody: Dana moved to Oakland.\nEnd: thanks, Dana."
+ranges, start = [], 0
+for line in document.split("\n"):
+    ranges.append((start, start + len(line)))
+    start += len(line) + 1
+
+scope = g.GraphScope()
+sections = tuple(scope.datum(document[a:b]) for a, b in ranges)
+graph = g.ProtectionGraph(scope, sections)
+
+
+def redact(text: str) -> str:
+    if "Oakland" in text:
+        raise RuntimeError("model timed out")
+    return text.replace("Dana", "[NAME]")
+
+
+result = g.protect(g.prepare(graph, g.Workflow("doc", (g.Operation("redact", redact),))))
+for section, candidate in result.content():
+    outcome = result.outcome(section)
+    print(outcome.terminal, outcome.available, outcome.qualification, outcome.protected, repr(candidate))
+
+regions = [(a, b, section) for (a, b), section in zip(ranges, sections)]
+try:
+    print(result.assemble_regions(document, regions))
+except g.GraphRejection as exc:
+    print(exc.code, "|", exc.detail)
+```
+
+```text
+success True not_assessed False 'Intro: [NAME] joined in May.'
+failed False not_met False None
+success True not_assessed False 'End: thanks, [NAME].'
+unavailable_input | raised
+```
+
+After the timeout, the first and third sections have candidates (`available` is `True`) and the second has none.
+`assemble_regions` refuses the document, and its `detail` is the failed section's reason. No section is released,
+not even the two that succeeded: this workflow has no required check, so their qualification is `not_assessed`.
+Their candidates are there for inspection, not for delivery.
+
+Ranges always refer to positions in the original `source`, however long the replacements are. Text outside every
+range is copied unchanged. Ranges must lie inside `source` (`region_out_of_bounds`) and must not overlap
+(`overlapping_region`).
+
+!!! warning "Leaving a range out keeps its original text"
+
+    Text outside the listed ranges is copied from `source`. If you drop a failed section's range from `regions`
+    to make assembly succeed, that section's original, unprotected text appears in the result. If you insert text
+    of your own for a failed section instead, such as a `[section withheld]` marker, the document that contains it
+    is a new candidate: run the applicable checks on it, as in the next section, before you release it.
+
+## A document you can release
+
+To deliver a document, every part of it has to be accounted for and checked. The program below does that in three
+steps:
+
+1. It checks that every character of the document lies in some section, apart from the newlines between sections,
+   so that no unprotected text is copied from the source by accident.
+2. It protects each section with a required check and assembles the document only if every section was released.
+3. It checks the assembled document as a whole, as a new target of a second run, and releases only what passes
+   that check.
+
+```python
+from anonymizer import graph as g
+
+NAME = "Dana"
+CHECK = {"text": "text", "target": "datum"}
+
+
+def redact(text: str) -> str:
+    return text.replace(NAME, "[NAME]")
+
+
+def no_name(text: str, target: g.Datum) -> g.Assessment:
+    return g.Assessment(NAME not in text, target)
+
+
+def checked(name: str, steps: tuple[g.Operation, ...]) -> g.Workflow:
+    verifier = g.Operation.verifier("no-name", no_name, CHECK, checks=("no_name",), subject=("text",))
+    return g.Workflow(name, (*steps, verifier), requires=("no_name",))
+
+
+def protect_document(document: str, ranges: list[tuple[int, int]]) -> str:
+    # 1. Every character outside the ranges is copied from the source, so allow only separators there.
+    covered = set().union(*(range(a, b) for a, b in ranges))
+    uncovered = [i for i in range(len(document)) if i not in covered and document[i] != "\n"]
+    if uncovered:
+        return f"not assembled: {len(uncovered)} characters outside every section"
+
+    # 2. Protect each section, with a required check on each.
+    scope = g.GraphScope()
+    sections = tuple(scope.datum(document[a:b]) for a, b in ranges)
+    graph = g.ProtectionGraph(scope, sections)
+    result = g.protect(g.prepare(graph, checked("sections", (g.Operation("redact", redact),))))
+    withheld = [i for i, s in enumerate(sections) if not result.outcome(s).protected]
+    if withheld:
+        return f"not assembled: sections {withheld} withheld"
+    assembled = result.assemble_regions(document, [(a, b, s) for (a, b), s in zip(ranges, sections)])
+
+    # 3. The assembled document is a new candidate: check it as a whole before release.
+    whole = g.GraphScope()
+    target = whole.datum(assembled)
+    final = g.protect(g.prepare(g.ProtectionGraph(whole, (target,)), checked("document", ())))
+    if not final.outcome(target).protected:
+        return f"not released: {[r.code for r in final.outcome(target).reasons]} in {assembled!r}"
+    return final.protected[target]
+
+
+def line_ranges(document: str) -> list[tuple[int, int]]:
+    ranges, start = [], 0
+    for line in document.split("\n"):
+        ranges.append((start, start + len(line)))
+        start += len(line) + 1
+    return ranges
+
+
+def chunk_ranges(document: str, size: int) -> list[tuple[int, int]]:
+    return [(a, min(a + size, len(document))) for a in range(0, len(document), size)]
+
+
+letter = "Intro: Dana joined in May.\nBody: Dana moved to Oakland."
+print(protect_document(letter, line_ranges(letter)))
+print(protect_document(letter, line_ranges(letter)[:1]))
+
+note = "Notes from Dana Lee about the May launch."
+print([note[a:b] for a, b in chunk_ranges(note, 13)])
+print(protect_document(note, chunk_ranges(note, 13)))
+```
+
+```text
+Intro: [NAME] joined in May.
+Body: [NAME] moved to Oakland.
+not assembled: 28 characters outside every section
+['Notes from Da', 'na Lee about ', 'the May launc', 'h.']
+not released: ['failed'] in 'Notes from Dana Lee about the May launch.'
+```
+
+The first document is split by line, every section passes, and the assembled document passes the whole-document
+check, so it is released. The second call lists only the first line, so 28 characters of the second line would be
+copied from the source; the program refuses to assemble it.
+
+The third document is split into chunks of 13 characters, and a chunk boundary falls inside the name: one chunk
+ends with `Da` and the next starts with `na`. Neither chunk contains `Dana`, so both local checks pass and both
+sections are released. Only the check on the assembled document finds the name. A check that runs on each section
+alone cannot see a value that crosses a section boundary, so when your policy covers the whole document, check the
+whole document.
+
+## Joining in your own order
+
+```python
+from anonymizer import graph as g
+
+scope = g.GraphScope()
+first, second = scope.datum("Dana wrote."), scope.datum(" Sam replied.")
+graph = g.ProtectionGraph(scope, (first, second))
+workflow = g.Workflow("w", (g.Operation("redact", lambda text: text.replace("Dana", "[A]").replace("Sam", "[B]")),))
+result = g.protect(g.prepare(graph, workflow))
+
+print(result.compose([second, first]))
+print(result.reconstruct([second, first], {first: 0, second: 1}))
+try:
+    result.reconstruct([first], {first: 0, second: 1})
+except g.GraphRejection as exc:
+    print(exc.code, "|", exc.detail)
+```
+
+```text
+ [B] replied.[A] wrote.
+[A] wrote. [B] replied.
+missing_source_part | 1
+```
+
+`reconstruct` also refuses a part missing from the mapping (`not_in_source`) and two parts at one position
+(`conflicting_position`).

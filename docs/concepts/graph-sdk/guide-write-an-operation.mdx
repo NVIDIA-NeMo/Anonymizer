@@ -1,0 +1,157 @@
+---
+title: "Write an operation"
+description: ""
+---
+{/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */}
+{/* SPDX-License-Identifier: Apache-2.0 */}
+
+# Write an operation
+
+After reading this page you can wrap any Python function as a step, give it the inputs it needs, return more than
+one value from it, and handle a step that fails.
+
+## The function and its ports
+
+An operation calls your function with keyword arguments, one per input port, so the parameter names must match the
+port names. The default ports are one input and one output, both named `text`, so a function from string to string
+needs nothing else:
+
+```python
+from anonymizer import graph as g
+
+step = g.Operation("strip", str.strip)
+print(dict(step.inputs), dict(step.outputs))
+```
+
+```text
+{'text': 'text'} {'text': 'text'}
+```
+
+To read other values, declare them in `inputs` as `{port name: kind}`. Any input port that no earlier step
+outputs is filled from a seed: `text` (current candidate), `source` (original text), `mentions`, `context`,
+`target` and `record`. The [concepts page](/concepts/graph-sdk/concepts#compose-operations-ports-and-workflows) lists their kinds.
+
+## Return several values
+
+With one output port, return the value itself. With several, return a mapping with exactly those port names. A
+later step reads an output by declaring an input port of the same name and kind.
+
+This workflow masks phone numbers, returns how many it masked as a second output, and a later step reads that count
+together with the original text:
+
+```python
+import re
+
+from anonymizer import graph as g
+
+COUNT = g.register_kind("count", lambda v: isinstance(v, int) and v >= 0)
+PHONE = re.compile(r"\b\d{3}-\d{4}\b")
+
+
+def mask_phones(text: str) -> dict:
+    masked, n = PHONE.subn("[PHONE]", text)
+    return {"text": masked, "phones_masked": n}
+
+
+def log_change(text: str, source: str, phones_masked: int) -> str:
+    print(f"masked {phones_masked} phone number(s); length {len(source)} -> {len(text)}")
+    return text
+
+
+scope = g.GraphScope()
+note = scope.datum("Call Dana at 555-0100 or 555-0199.")
+graph = g.ProtectionGraph(scope, (note,))
+
+workflow = g.Workflow(
+    "mask-phones",
+    (
+        g.Operation("mask", mask_phones, outputs={"text": "text", "phones_masked": COUNT}),
+        g.Operation("log", log_change, inputs={"text": "text", "source": "text", "phones_masked": COUNT}),
+    ),
+)
+result = g.protect(g.prepare(graph, workflow))
+outcome = result.outcome(note)
+print(outcome.terminal, outcome.qualification, outcome.protected)
+print(result.value(note, "text"))
+print(result.value(note, "phones_masked"))
+```
+
+```text
+masked 2 phone number(s); length 34 -> 32
+success not_assessed False
+Call Dana at [PHONE] or [PHONE].
+2
+```
+
+Three things to notice:
+
+- `"count"` is not a built-in kind, so the program registers it with `register_kind(name, check)`. The check
+  receives each value the step returns; a value that fails it fails the target with `invalid_output`. Kinds are
+  registered for the whole process and the first registration of a name wins, so choose distinctive names.
+- `result.value(target, port)` reads the latest value of any port for a target.
+- The target is not released: the workflow requires no checks, so qualification is `not_assessed` and nothing is
+  protected. To release output, add a verifier ([next guide](/concepts/graph-sdk/guide-verify-and-require-checks)). To read the text
+  anyway, use `result.value` or `result.content()`, which make no protection claim.
+
+## When a step fails
+
+If your function raises an `Exception`, that target fails and the remaining steps skip it. `protect` does not
+raise; the exception is kept on the outcome.
+
+```python
+from anonymizer import graph as g
+
+
+def flaky(text: str) -> str:
+    raise TimeoutError("service did not answer")
+
+
+scope = g.GraphScope()
+note = scope.datum("Call Dana.")
+result = g.protect(g.prepare(g.ProtectionGraph(scope, (note,)), g.Workflow("w", (g.Operation("flaky", flaky),))))
+outcome = result.outcome(note)
+print(outcome.terminal, outcome.reason, type(outcome.error).__name__)
+print(result.content()[0][1])
+```
+
+```text
+failed raised TimeoutError
+None
+```
+
+The failed target has no final candidate: `content()` gives `None`, never the original text. Use `outcome.error` to
+log or re-raise the exception; it is never printed in summaries.
+
+A step that returns the wrong kind of value, or a mapping with the wrong port names, fails its target with
+`invalid_output`.
+
+## Mistakes `prepare` catches
+
+Wiring errors are found before anything runs:
+
+```python
+from anonymizer import graph as g
+
+scope = g.GraphScope()
+graph = g.ProtectionGraph(scope, (scope.datum("Call Dana."),))
+
+for step in (
+    g.Operation("needs-summary", lambda summary: summary, inputs={"summary": "text"}),
+    g.Operation("wrong-kind", lambda target: "x", inputs={"target": "text"}),
+):
+    try:
+        g.prepare(graph, g.Workflow("w", (step,)))
+    except g.GraphRejection as exc:
+        print(exc.code, "|", exc.detail)
+```
+
+```text
+unbound_port | needs-summary.summary
+port_kind_mismatch | wrong-kind.target: datum != text
+```
+
+`unbound_port` means no earlier step outputs that port and no seed has its name. `port_kind_mismatch` means the
+port exists with another kind.
+
+Other rules checked when you build an operation: an output may not be named `record` (`seed_output_reserved`),
+and `checks` and `subject` must be tuples, so write `("text",)`, not `"text"` (`names_not_tuple`).

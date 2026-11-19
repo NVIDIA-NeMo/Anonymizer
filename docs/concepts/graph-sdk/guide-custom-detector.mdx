@@ -1,0 +1,168 @@
+---
+title: "Write your own detector"
+description: ""
+---
+{/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */}
+{/* SPDX-License-Identifier: Apache-2.0 */}
+
+# Write your own detector
+
+After reading this page you can plug any detector (a regular expression, a local model, a service) into a
+workflow, have the SDK check the spans it returns, and replace those spans in a later step.
+
+## Mentions
+
+A **mention** (`Mention`) marks one span of a target: `Mention(datum, start, end, label, text)`. `start` and `end`
+are a half-open character range `[start, end)` of the target's **original** text. `text`, if given, must equal
+that slice; the SDK checks it, which catches off-by-one offsets.
+
+A detector is an operation with an output port of kind `mentions`. It returns a tuple of `Mention` values for its
+target. A later step that declares an input port named `mentions` receives them.
+
+## Detect, replace, rescan
+
+This workflow finds email addresses with a regular expression, replaces each with its label, and has a separate
+verifier rescan the result:
+
+```python
+import re
+
+from anonymizer import graph as g
+
+EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def find_emails(source: str, target: g.Datum) -> tuple[g.Mention, ...]:
+    return tuple(g.Mention(target, m.start(), m.end(), "email", m.group()) for m in EMAIL.finditer(source))
+
+
+def replace_mentions(text: str, mentions: tuple[g.Mention, ...]) -> str:
+    for m in sorted(mentions, key=lambda m: m.start, reverse=True):
+        text = text[: m.start] + f"[{m.label.upper()}]" + text[m.end :]
+    return text
+
+
+def no_email(text: str, target: g.Datum) -> g.Assessment:
+    return g.Assessment(EMAIL.search(text) is None, target, "email_present")
+
+
+scope = g.GraphScope()
+targets = (scope.datum("Write to ana@example.test or ops@example.test."), scope.datum("No address here."))
+graph = g.ProtectionGraph(scope, targets)
+
+workflow = g.Workflow(
+    "emails",
+    (
+        g.Operation("detect", find_emails, {"source": "text", "target": "datum"}, {"mentions": "mentions"}),
+        g.Operation("replace", replace_mentions, {"text": "text", "mentions": "mentions"}),
+        g.Operation.verifier(
+            "rescan", no_email, {"text": "text", "target": "datum"}, checks=("no_email",), subject=("text",)
+        ),
+    ),
+    requires=("no_email",),
+)
+result = g.protect(g.prepare(graph, workflow))
+for target in targets:
+    print(result.outcome(target).protected, result.protected.get(target))
+print([(m.start, m.end, m.label) for m in result.value(targets[0], "mentions")])
+```
+
+```text
+True Write to [EMAIL] or [EMAIL].
+True No address here.
+[(9, 25, 'email'), (29, 45, 'email')]
+```
+
+The detector reads the `source` seed, not `text`. Offsets always refer to the original text, so a detector should
+look at the original text, or run before any step changes it. `replace_mentions` reads `text`, which here is still
+the original because no step has changed it yet; it replaces from the end so earlier offsets stay valid.
+
+Because the detector's output port is named `mentions`, it replaces the graph's declared mentions for every later
+step that reads `mentions`.
+
+The rescan shows less than it may seem to. The verifier searches the output with the same `EMAIL` regular
+expression that the detector used. That is a fair check that the replacement step did its job: every address the
+detector found is gone, and the step put no new match back. It is not an independent search for addresses. An
+address written in a form the expression does not match, such as `ana at example dot test`, passes both the
+detector and the verifier, and the target is released with it. `met` here means "no text matching `EMAIL` remains".
+If you need broader coverage, base the verifier on different evidence from the detector's, such as a second
+detector, a wider pattern or a model.
+
+## What the SDK checks
+
+Each target's mentions are checked when the detector returns them. A target whose mentions break a rule fails with
+that rule's code; other targets continue.
+
+| Code | Rule broken |
+|---|---|
+| `invalid_output` | An entry is not a `Mention`. |
+| `mention_not_on_target` | The mention's datum is not the target being processed. |
+| `mention_out_of_range` | `start` and `end` are not integers with `0 <= start < end <= len(text)`. |
+| `mention_slice_mismatch` | The mention's `text` differs from the slice of the original text. |
+| `overlapping_output_ownership` | Two mentions of the target overlap. |
+| `over_limit` | The mentions of one call would pass `Limits.max_mentions`; every target of that call fails. |
+
+```python
+import re
+
+from anonymizer import graph as g
+
+EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def off_by_one(source: str, target: g.Datum) -> tuple[g.Mention, ...]:
+    return tuple(g.Mention(target, m.start(), m.end() - 1, "email", m.group()) for m in EMAIL.finditer(source))
+
+
+scope = g.GraphScope()
+targets = (scope.datum("Write to ana@example.test."), scope.datum("No address here."))
+workflow = g.Workflow(
+    "bad", (g.Operation("detect", off_by_one, {"source": "text", "target": "datum"}, {"mentions": "mentions"}),)
+)
+result = g.protect(g.prepare(g.ProtectionGraph(scope, targets), workflow))
+print([(o.terminal, o.reason) for o in result.outcomes])
+```
+
+```text
+[('failed', 'mention_slice_mismatch'), ('success', '')]
+```
+
+The second target has no email, so the detector returned no mentions and it succeeded.
+
+## One detector call for all targets
+
+Most model-based detectors work best on a batch. Make the detector phase-scoped
+([guide](/concepts/graph-sdk/guide-batch-targets)): it receives a tuple of texts and a tuple of targets, and returns one tuple of
+mentions per target. The checks above still apply per target.
+
+```python
+import re
+
+from anonymizer import graph as g
+
+EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def detect_all(source: tuple[str, ...], target: tuple[g.Datum, ...]) -> list[tuple[g.Mention, ...]]:
+    return [
+        tuple(g.Mention(d, m.start(), m.end(), "email", m.group()) for m in EMAIL.finditer(s))
+        for s, d in zip(source, target)
+    ]
+
+
+scope = g.GraphScope()
+targets = (scope.datum("Mail ana@example.test."), scope.datum("Mail ops@example.test today."))
+detect = g.Operation.phase_scoped("detect", detect_all, {"source": "text", "target": "datum"}, {"mentions": "mentions"})
+result = g.protect(g.prepare(g.ProtectionGraph(scope, targets), g.Workflow("w", (detect,))))
+print([len(result.value(t, "mentions")) for t in targets])
+```
+
+```text
+[1, 1]
+```
+
+## Mentions you already have
+
+If spans come from elsewhere, such as a labelled dataset, declare them on the graph instead:
+`ProtectionGraph(scope, targets, mentions=(Mention(...), ...))`. The constructor applies the same rules and raises
+`GraphRejection` with the rule's code on the first broken one. Steps read them through the `mentions` seed.

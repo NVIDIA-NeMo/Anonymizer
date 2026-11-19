@@ -23,7 +23,7 @@ from anonymizer.engine.graph_core.authoring import (
 from anonymizer.engine.graph_core.execution import prepare, protect
 from anonymizer.engine.graph_core.kernel import GraphRejection
 
-DOC = Path(__file__).resolve().parents[2] / "docs" / "concepts" / "graph-sdk.md"
+DOC = Path(__file__).resolve().parents[2] / "docs" / "concepts" / "graph-sdk" / "reference.md"
 
 
 def _operation(outputs: dict[str, str], fn: Any = lambda text: {}) -> Operation:
