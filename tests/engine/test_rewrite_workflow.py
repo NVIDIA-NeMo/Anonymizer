@@ -1951,12 +1951,12 @@ def _run_outcome(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
     [
         pytest.param(
             _ScriptedAdapter({"rec": 0}, initial="ALICE  works there"),
-            [("failed", "replacements_applied", "")],
+            [("failed", "replacements_applied", "e0:N1,D1,O1")],
             id="kept-by-generation",
         ),
         pytest.param(
             _ScriptedAdapter({"rec": 1}, repaired="Alice is back ({})"),
-            [("failed", "replacements_applied", "")],
+            [("failed", "replacements_applied", "e0:N1,D1,O1")],
             id="reintroduced-by-repair",
         ),
         pytest.param(
@@ -1967,7 +1967,7 @@ def _run_outcome(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
         pytest.param(_ScriptedAdapter({"rec": 0}), [], id="gone-without-map"),
         pytest.param(
             _ScriptedAdapter({"rec": 0}, initial="Alice stays", replacement_map={"replacements": []}),
-            [("failed", "replacements_applied", "")],
+            [("failed", "replacements_applied", "e0:N1,D1,O1")],
             id="kept-with-empty-map",
         ),
     ],
@@ -2016,7 +2016,7 @@ def test_a_value_copied_beyond_its_source_count_is_not_met(tmp_path: Path) -> No
     outcome = _run_result(adapter, tmp_path, text, [_span(text, "Alice"), _span(text, "Bob")]).outcome(0)
 
     assert outcome.qualification == "not_met"
-    assert [(r.code, r.check) for r in outcome.reasons] == [("failed", "replacements_applied")]
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [("failed", "replacements_applied", "e1:N1,D1,O1")]
 
 
 def test_without_detected_spans_any_occurrence_fails(tmp_path: Path) -> None:
