@@ -402,6 +402,54 @@ def test_run_keeps_review_flag_for_unavailable_utility(
     assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [True, False]
 
 
+def test_run_flags_a_placeholder_kept_in_the_rewritten_text(
+    stub_model_configs: list[ModelConfig],
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """The filter step folds Maya's proposal (another name in the row) to a placeholder; the rewrite keeps it."""
+    entities = {
+        "entities_by_value": [{"value": "Elena", "labels": ["first_name"]}, {"value": "Maya", "labels": ["first_name"]}]
+    }
+    raw = {
+        "replacements": [
+            {"original": "Elena", "label": "first_name", "synthetic": "Clara"},
+            {"original": "Maya", "label": "first_name", "synthetic": "Elena"},
+        ]
+    }
+    folded = _filter_replacement_map({COL_REPLACEMENT_MAP_RAW: raw, COL_ENTITIES_BY_VALUE: entities})
+    dataframe = pd.DataFrame({COL_TEXT: ["Maya studied with Elena"], COL_ENTITIES_BY_VALUE: [entities]})
+    output = dataframe.copy()
+    output[COL_REPLACEMENT_MAP] = [folded[COL_REPLACEMENT_MAP]]
+    output[COL_REWRITTEN_TEXT] = "[SUBSTITUTE_FIRST_NAME_1] studied with Clara"
+    policy = [
+        {"id": i, "sensitivity": "high", "protection_method_suggestion": "replace", "source": "tagged"}
+        | {"category": "direct_identifier", "entity_label": "first_name", "entity_value": value}
+        for i, value in enumerate(("Elena", "Maya"), start=1)
+    ]
+    output[COL_SENSITIVITY_DISPOSITION] = [{"sensitivity_disposition": policy}]
+    output[COL_UTILITY_SCORE] = 0.9
+    output[COL_LEAKAGE_MASS] = 0.1
+    output[COL_WEIGHTED_LEAKAGE_RATE] = 0.05
+    output[COL_ANY_HIGH_LEAKED] = False
+    output[COL_NEEDS_REPAIR] = False
+    output[COL_REPAIR_ITERATIONS] = 0
+    output[COL_NEEDS_HUMAN_REVIEW] = False
+    adapter = Mock()
+    adapter.run_workflow.return_value = _positional(dataframe=output, failed_records=[])
+
+    result = CombinedRewriteWorkflow(adapter=adapter).run(
+        dataframe,
+        model_configs=stub_model_configs,
+        selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(max_repair_iterations=0),
+    )
+
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [True]
+
+
 def test_run_restores_skipped_span_label_counts_json_string_to_dict(
     stub_model_configs: list[ModelConfig],
     stub_rewrite_model_selection: RewriteModelSelection,

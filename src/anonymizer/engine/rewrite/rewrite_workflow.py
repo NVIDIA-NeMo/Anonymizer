@@ -29,6 +29,7 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
+    COL_REPLACEMENT_MAP,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
     COL_SENSITIVITY_DISPOSITION,
@@ -57,7 +58,7 @@ from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
-from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow, is_placeholder
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
@@ -285,8 +286,32 @@ def _rewrite_entry(row: dict[str, object]) -> dict[str, object] | RewriteUnavail
         "any_high_leaked": row.get(COL_ANY_HIGH_LEAKED),
         "weighted_leakage_rate": row.get(COL_WEIGHTED_LEAKAGE_RATE),
         **_leftover_metrics(row),
+        "placeholders_absent": _no_placeholder(text, row.get(COL_REPLACEMENT_MAP)),
     }
     return {"text": text, "metrics": metrics}
+
+
+def _no_placeholder(text: str, replacement_map: object) -> bool:
+    """Whether no placeholder substitute of the row's replacement map appears in ``text``, in any case; ``True``
+    without a map.
+
+    A placeholder stands in for a substitute that collided with a value in the record. It leaks nothing, but text
+    that carries one is visibly broken, so it is not released as protected.
+    """
+    payload = normalize_payload(replacement_map)
+    entries = payload.get("replacements") if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        return True
+    placeholders = [
+        entry["synthetic"]
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("label"), str)
+        and isinstance(entry.get("synthetic"), str)
+        and is_placeholder(entry["label"], entry["synthetic"])
+    ]
+    folded = text.casefold()
+    return not any(placeholder.casefold() in folded for placeholder in placeholders)
 
 
 def _leftover_metrics(row: Mapping[str, object]) -> dict[str, bool | str | None]:
@@ -359,6 +384,7 @@ def _final_checks(evaluation: EvaluationCriteria) -> tuple[Operation, ...]:
         "high_leak": _high_leak,
         "replacements_applied": _replacements_applied,
         "leakage_within_threshold": lambda metrics: _leakage_within(metrics, limit),
+        "placeholders_absent": lambda metrics: bool(metrics["placeholders_absent"]),
     }
 
     def verifier(check: str, predicate: Callable[[dict[str, Any]], bool | None]) -> Operation:

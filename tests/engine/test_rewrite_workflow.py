@@ -41,6 +41,7 @@ from anonymizer.engine.constants import (
     COL_RAW_SENSITIVITY_DISPOSITION,
     COL_REPAIR_ITERATIONS,
     COL_REPLACEMENT_APPLICATION,
+    COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
@@ -55,12 +56,14 @@ from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.replace.llm_replace_workflow import _fold_replacement_maps
 from anonymizer.engine.rewrite.repair import RepairWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import (
     RewriteWorkflow,
     _detection_valid_fraction,
     _join_new_columns,
     _leftover_metrics,
+    _no_placeholder,
 )
 from anonymizer.engine.spans import Span
 from anonymizer.engine.value_matching import format_cause
@@ -752,6 +755,8 @@ class _ScriptedAdapter:
             output[COL_REWRITE_REPLACEMENT_READY] = True
             # The map omits the policy's values unless a test supplies one: the final text decides regardless.
             output[COL_REPLACEMENT_MAP_FOR_PROMPT] = [self.replacement_map for _ in record_ids]
+            if self.replacement_map is not None:
+                output[COL_REPLACEMENT_MAP] = [self.replacement_map for _ in record_ids]
             if self.policy is not None:
                 output[COL_SENSITIVITY_DISPOSITION] = [self.policy for _ in record_ids]
             output[COL_PRIVACY_QA] = [dict(_PRIVACY_QA) for _ in record_ids]
@@ -1945,6 +1950,62 @@ def _run_result(
 def _run_outcome(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
     """Run one ``Alice`` row through ``Anonymizer.run()`` with ``adapter`` and return its outcome."""
     return _run_result(adapter, tmp_path).outcome(0)
+
+
+@pytest.mark.parametrize(
+    ("replacements", "requested", "text"),
+    [
+        pytest.param(
+            [
+                {"original": "Elena", "label": "first_name", "synthetic": "Clara"},
+                {"original": "Maya", "label": "first_name", "synthetic": "Elena"},
+            ],
+            {"Elena", "Maya"},
+            "[SUBSTITUTE_FIRST_NAME_1] studied with Clara.",
+            id="proposal-is-another-name",
+        ),
+        pytest.param(
+            [{"original": "North Carolina", "label": "state", "synthetic": "North Carolina"}],
+            {"North Carolina"},
+            "She moved to [SUBSTITUTE_STATE_1] in 2019.",
+            id="proposal-is-itself",
+        ),
+        pytest.param(
+            [
+                {"original": "Elena", "label": "first_name", "synthetic": "Clara"},
+                {"original": "MAYA", "label": "first_name", "synthetic": "ELENA"},
+                {"original": "Maya", "label": "first_name", "synthetic": "Elena"},
+            ],
+            {"Elena", "MAYA", "Maya"},
+            "[Substitute_First_Name_1] studied with Clara.",
+            id="re-cased-for-a-variant",
+        ),
+    ],
+)
+def test_placeholder_in_released_text_fails_a_final_check(
+    replacements: list[dict[str, str]], requested: set[str], text: str, tmp_path: Path
+) -> None:
+    """A substitute that folds to a value in its record becomes a placeholder; text that keeps it is not released."""
+    (folded,) = _fold_replacement_maps([{"replacements": replacements}], "record", [requested])
+    assert any(entry["synthetic"] in text for entry in folded["replacements"])
+
+    result = _run_result(_ScriptedAdapter({"rec": 0}, initial=text, replacement_map=folded), tmp_path)
+
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [("failed", "placeholders_absent", "")]
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [True]
+
+
+def test_substitute_shaped_like_a_placeholder_for_another_label_passes() -> None:
+    """Only a placeholder built for the entry's own label counts; ordinary substitutes never do."""
+    text = "[SUBSTITUTE_CITY_1] and Clara"
+    assert _no_placeholder(text, {"replacements": [{"label": "first_name", "synthetic": "[SUBSTITUTE_CITY_1]"}]})
+    assert _no_placeholder(text, {"replacements": [{"label": "first_name", "synthetic": "Clara"}]})
+    assert not _no_placeholder(
+        text, json.dumps({"replacements": [{"label": "city", "synthetic": "[SUBSTITUTE_CITY_1]"}]})
+    )
+    assert _no_placeholder(text, None)
 
 
 @pytest.mark.parametrize(
