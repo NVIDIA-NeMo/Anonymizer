@@ -40,7 +40,7 @@ COL_AUGMENTATION_ADMISSION_RESULTS = "_augmentation_admission_results"
 COL_AUGMENTATION_ATTEMPTS = "_augmentation_attempts"
 COL_AUGMENTED_CANDIDATES = "_augmented_candidates"
 COL_AUGMENTATION_RESPONSE_FORMAT = "_augmentation_response_format"
-"""Per row: constrained, fallback, ignored or unconstrained; None when augmentation is disabled."""
+"""Per row: sent, fallback, ignored or unconstrained; None when augmentation is disabled."""
 
 # Step 3b: prepare_validation_inputs (seed-only, pre-augmentation)
 COL_SEED_VALIDATION_CANDIDATES = "_seed_validation_candidates"
@@ -65,6 +65,7 @@ COL_REPLACED_TEXT = "__nemo_anonymizer_text_output__"
 COL_REPLACEMENT_MAP = "_replacement_map"
 COL_REPLACEMENT_MAP_RAW = COL_REPLACEMENT_MAP + "__raw"
 COL_REPLACEMENT_MAP_SOURCE = "_replacement_map_source"
+COL_REPLACEMENT_RETRY_CONTEXT = "_replacement_retry_context"
 
 # LlmReplaceWorkflow internal prompt-construction columns. Created by
 # `LlmReplaceWorkflow.generate_map_only` for the replacement-generator prompt

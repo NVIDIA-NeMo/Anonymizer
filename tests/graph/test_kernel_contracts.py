@@ -49,6 +49,50 @@ def test_retrieved_context_counts_on_top_of_static_context() -> None:
     assert protect(source).outcome(target).terminal == "success"
 
 
+def _bind_with_copy(name: str, copy: Callable[[Any], Any]) -> tuple[graph.ProtectionResult, list[str]]:
+    """Source A hands over a shared dict; source B, retrieved after A was checked and measured, mutates it."""
+    kind = graph.register_kind(name, lambda v: isinstance(v, dict), lambda v: len(v["text"].encode()), copy=copy)
+    shared = {"text": "safe"}
+
+    def source_b() -> list[dict[str, str]]:
+        shared["text"] = "x" * 1000
+        return []
+
+    seen: list[str] = []
+    op = graph.Operation(
+        "consume",
+        lambda text, context: seen.extend(item.text["text"] for item in context) or text,
+        inputs={"text": "text", "context": kind},
+    )
+    scope = graph.GraphScope()
+    target = scope.datum("hello")
+    sources = (
+        graph.ContextSource("A", lambda: [shared], max_items=1, kind=kind),
+        graph.ContextSource("B", source_b, max_items=1, kind=kind),
+    )
+    g = graph.ProtectionGraph(scope, (target,), context=(graph.ContextScope(target, sources),))
+    return graph.protect(graph.prepare(g, graph.Workflow("w", (op,)), limits=graph.Limits(max_context_bytes=10))), seen
+
+
+def test_context_items_are_the_kinds_copies_checked_and_measured() -> None:
+    copies: list[object] = []
+    result, seen = _bind_with_copy("test-context-copy", lambda v: copies.append(v) or dict(v))
+    assert [(r.status, r.observed_bytes) for r in result.retrievals] == [("ok", 4), ("ok", 0)]
+    assert result.outcomes[0].terminal == "success"
+    assert len(copies) == 1
+    assert seen == ["safe"]
+
+
+def test_context_item_whose_copy_raises_is_invalid() -> None:
+    def copy(value: dict[str, str]) -> dict[str, str]:
+        raise RuntimeError("no copy")
+
+    result, seen = _bind_with_copy("test-context-copy-raises", copy)
+    assert result.retrievals[0].status == "invalid_item"
+    assert (result.outcomes[0].terminal, result.outcomes[0].reason) == ("failed", "binding_failed")
+    assert seen == []
+
+
 def test_cancel_token_is_followed_but_never_rewired() -> None:
     token, outer = graph.CancelToken(), graph.CancelToken()
     nested: list[str] = []
@@ -140,6 +184,32 @@ def test_nested_release_other_than_protected_is_rejected(release: str) -> None:
     with pytest.raises(graph.GraphRejection) as rejected:
         graph.prepare(g, outer)
     assert rejected.value.code == "annotation_in_protected"
+
+
+@pytest.mark.parametrize(
+    ("steps", "duplicate"),
+    [
+        (lambda op: (op("rewrite"), op("rewrite")), "rewrite"),
+        (lambda op: (graph.Workflow("inner", (op("step"),)), op("inner/step")), "inner/step"),
+    ],
+    ids=["flat", "nested-path"],
+)
+def test_duplicate_flattened_operation_names_are_rejected(steps: Callable[[Any], tuple], duplicate: str) -> None:
+    """A producer read selects an operation by its flattened name, so two operations may not share one."""
+    scope = graph.GraphScope()
+    g = graph.ProtectionGraph(scope, (scope.datum("Alice"),))
+    with pytest.raises(graph.GraphRejection) as rejected:
+        graph.prepare(g, graph.Workflow("w", steps(lambda name: graph.Operation(name, lambda text: text))))
+    assert (rejected.value.code, rejected.value.detail) == ("duplicate_operation_name", duplicate)
+
+
+def test_value_from_an_unknown_producer_is_none() -> None:
+    scope = graph.GraphScope()
+    target = scope.datum("Alice")
+    workflow = graph.Workflow("w", (graph.Operation("rewrite", lambda text: "candidate"),))
+    result = graph.protect(graph.prepare(graph.ProtectionGraph(scope, (target,)), workflow))
+    assert result.value(target, producer="rewrite") == "candidate"
+    assert result.value(target, producer="unknown") is None
 
 
 def test_annotation_nested_in_protected_workflow_is_rejected() -> None:

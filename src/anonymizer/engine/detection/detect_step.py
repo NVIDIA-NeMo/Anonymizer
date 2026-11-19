@@ -16,7 +16,7 @@ from itertools import repeat
 
 import pandas as pd
 
-from anonymizer.engine.constants import COL_FINAL_ENTITIES
+from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.graph_core.authoring import DATUM, MENTIONS, Datum, Mention, Operation, Requests
 from anonymizer.engine.ndd.adapter import FailedRecord
@@ -42,7 +42,8 @@ def detect_step(
 ) -> Operation:
     """The ``detect`` operation over ``dataframe``: one ``detect`` call, its outcome recorded in ``state``.
 
-    A result that is not verifiably one input row per returned row (see ``resolve_positions``) fails every target.
+    A result that is not verifiably one input row per returned row (see ``resolve_positions``), or that returns a row
+    whose text differs from its input row's, fails every target; the caller then works over the returned frame.
     """
 
     def run_detection(target: tuple[Datum, ...]) -> list[tuple[Mention, ...] | None]:
@@ -51,6 +52,16 @@ def detect_step(
         state.elapsed.append(time.perf_counter() - started)
         state.failures.extend(result.failed_records)
         positions = resolve_positions(dataframe, result)
+        returned = result.dataframe.get(COL_TEXT)
+        if positions is not None and returned is not None:
+            # The detector's offsets are for the text it returned: a changed text cannot be protected as the input.
+            # A cell missing on both sides is unchanged, however each side spells the missing value.
+            given = dataframe[COL_TEXT]
+            changed = any(
+                not (missing(t) and missing(given.iloc[p])) and str(t) != target[p].text
+                for t, p in zip(returned, positions)
+            )
+            positions = None if changed else positions
         if positions is None:
             state.unresolved.append(True)
             return [None] * len(target)

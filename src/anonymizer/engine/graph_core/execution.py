@@ -123,6 +123,9 @@ def _prepare(
     # A nested workflow's requirements are requirements of the invocation.
     workflow = replace(workflow, requires=tuple(dict.fromkeys(requirements(workflow))))
     ops = workflow.flatten()
+    # A producer read selects an operation by its flattened name, so each name must be unique.
+    if duplicates := [name for name, n in Counter(name for name, _ in ops).items() if n > 1]:
+        raise k.GraphRejection("duplicate_operation_name", ", ".join(duplicates))
     admitted = frozenset(name for name, _ in ops) if capabilities is None else frozenset(capabilities)
     _admit(graph, ops, limits, admitted)
     planned = _planned(ops, len(graph.targets))
@@ -379,7 +382,8 @@ class ProtectionResult:
         operation named ``producer`` only; None if never produced."""
         outputs = self.state.rows[self._index(target)].outputs
         if producer is not None:
-            return outputs.get(self.prepared.names.index(producer), {}).get(port)
+            names = self.prepared.names
+            return outputs.get(names.index(producer), {}).get(port) if producer in names else None
         found = [out[port] for _, out in sorted(outputs.items()) if port in out]
         return found[-1] if found else None
 
@@ -655,7 +659,9 @@ def _bind(g: ProtectionGraph, limits: Limits, cancelled: Any) -> tuple[list[Retr
         except Exception:
             status = "failed"
         sizes = None
-        try:  # a check or measure that rejects or raises on an item makes it invalid
+        try:  # a copy, check or measure that rejects or raises on an item makes it invalid
+            if status == "ok" and found.copy:  # the kind's copy is what is checked, measured and bound
+                items = [found.copy(t) for t in items]
             if status == "ok" and not all(map(found.check, items)):
                 status = "invalid_item"
             sizes = [found.measure(t) for t in items] if status == "ok" and found.measure else None

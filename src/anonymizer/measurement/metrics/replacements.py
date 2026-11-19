@@ -34,7 +34,7 @@ def _replacement_application_metrics(raw: object) -> dict[str, Any]:
         name: max(0, _coerce_int(payload.get(name), default=0))
         for name in ("targeted_span_count", "applied_span_count", "skipped_span_count")
     }
-    labels = payload.get("skipped_span_label_counts", {})
+    labels = _coerce_payload(payload.get("skipped_span_label_counts"))
     counts["replacement_targeted_span_count"] = counts.pop("targeted_span_count")
     counts["replacement_applied_span_count"] = counts.pop("applied_span_count")
     counts["replacement_skipped_span_count"] = counts.pop("skipped_span_count")

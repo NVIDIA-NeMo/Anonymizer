@@ -139,7 +139,7 @@ def test_substitute_runner_applies_generated_map(
     stub_entities: list[dict],
 ) -> None:
     llm_workflow = Mock()
-    llm_workflow.generate_map_only.return_value = LlmReplaceResult(
+    llm_workflow.generate_validated_maps.return_value = LlmReplaceResult(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works at Acme"],
@@ -164,14 +164,14 @@ def test_substitute_runner_applies_generated_map(
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
     )
-    assert llm_workflow.generate_map_only.call_count == 1
+    assert llm_workflow.generate_validated_maps.call_count == 1
     assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == "Maya works at NovaCorp"
     assert len(result.failed_records) == 1
     assert result.dataframe[COL_REPLACEMENT_APPLICATION].iloc[0] == {
         "targeted_span_count": 2,
         "applied_span_count": 2,
         "skipped_span_count": 0,
-        "skipped_span_label_counts": {},
+        "skipped_span_label_counts": "{}",
     }
 
 
@@ -188,7 +188,7 @@ def test_malformed_entities_row_fails_while_others_are_replaced(
     stub_replace_model_selection: ReplaceModelSelection,
     stub_entities: list[dict],
 ) -> None:
-    def _generate_map_only(dataframe: pd.DataFrame, **_: object) -> LlmReplaceResult:
+    def _generate_validated_maps(dataframe: pd.DataFrame, **_: object) -> LlmReplaceResult:
         replacements = [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]
         return LlmReplaceResult(
             dataframe=dataframe.assign(**{COL_REPLACEMENT_MAP: [{"replacements": replacements}] * len(dataframe)}),
@@ -196,7 +196,7 @@ def test_malformed_entities_row_fails_while_others_are_replaced(
         )
 
     llm_workflow = Mock()
-    llm_workflow.generate_map_only.side_effect = _generate_map_only
+    llm_workflow.generate_validated_maps.side_effect = _generate_validated_maps
     dataframe = pd.DataFrame({COL_TEXT: ["Alice works at Acme", "Bob works at Acme"], RECORD_ID_COLUMN: ["r0", "r1"]})
     detected = dataframe.assign(**{COL_FINAL_ENTITIES: [{"entities": stub_entities[:1]}, malformed]})
     result = ReplacementWorkflow(llm_workflow=llm_workflow).run_with_detection(
@@ -226,12 +226,12 @@ def test_substitute_without_workflow_raises(
         )
 
 
-def test_evaluate_uses_merged_dd_workflow_for_judges(
+def test_evaluate_runs_one_dd_workflow_per_judge(
     stub_model_configs: list[ModelConfig],
     stub_evaluate_model_selection: EvaluateModelSelection,
 ) -> None:
-    """``evaluate()`` runs all 4 judges as columns of a SINGLE DD workflow call
-    (DataDesigner parallelizes the columns internally — no Python threads)."""
+    """``evaluate()`` runs each judge as its own DD workflow call, so a row one
+    judge cannot answer does not take the other judges' answers with it."""
 
     # Trace-shaped input: simulates a dataframe returned by a prior ``run()``.
     saved_trace = pd.DataFrame(
@@ -260,7 +260,7 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
                     "targeted_span_count": 2,
                     "applied_span_count": 2,
                     "skipped_span_count": 0,
-                    "skipped_span_label_counts": {},
+                    "skipped_span_label_counts": "{}",
                 }
             ],
         }
@@ -306,10 +306,10 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
         selected_models=stub_evaluate_model_selection,
     )
 
-    # Exactly ONE adapter call for the judges step (proves merge, not 4 separate workflows).
-    assert adapter.run_workflow.call_count == 1
-    call_columns = adapter.run_workflow.call_args.kwargs["columns"]
-    assert {c.name for c in call_columns} == set(judge_defaults)
+    # One adapter call per judge, each with exactly that judge's column.
+    call_columns = [call.kwargs["columns"] for call in adapter.run_workflow.call_args_list]
+    assert all(len(columns) == 1 for columns in call_columns)
+    assert sorted(columns[0].name for columns in call_columns) == sorted(judge_defaults)
 
     # And each judge's output column ended up on the result.
     # Entity coverage is a float (1.0 = full coverage); replace judges use bool True.
@@ -319,7 +319,7 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
         "targeted_span_count": 2,
         "applied_span_count": 2,
         "skipped_span_count": 0,
-        "skipped_span_label_counts": {},
+        "skipped_span_label_counts": "{}",
     }
     for col in (
         COL_TYPE_FIDELITY_VALID,
@@ -472,9 +472,9 @@ def test_evaluate_preserves_all_rows_when_llm_drops_some(
     assert result.dataframe[COL_TYPE_FIDELITY_VALID].iloc[1] is None
     assert result.dataframe[COL_RELATIONAL_CONSISTENCY_VALID].iloc[1] is None
     assert result.dataframe[COL_ATTRIBUTE_FIDELITY_VALID].iloc[1] is None
-    # The drop is still visible via failed_records for downstream observability.
-    assert len(result.failed_records) == 1
-    assert result.failed_records[0].record_id == "id-1"
+    # The drop is still visible via failed_records, once per judge that dropped it.
+    assert len(result.failed_records) == len(judge_payload)
+    assert {record.record_id for record in result.failed_records} == {"id-1"}
 
 
 def test_runner_does_not_invoke_judges(
@@ -487,7 +487,7 @@ def test_runner_does_not_invoke_judges(
     The judges live behind a separate ``evaluate()`` call.
     """
     llm_workflow = Mock()
-    llm_workflow.generate_map_only.return_value = LlmReplaceResult(
+    llm_workflow.generate_validated_maps.return_value = LlmReplaceResult(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works at Acme"],
@@ -709,13 +709,13 @@ def test_run_reports_each_rows_protection_outcome(omit_bob: bool, tmp_path: Path
         *([] if omit_bob else [{"original": "Bob", "label": "first_name", "synthetic": "Ravi"}]),
     ]
 
-    def _generate_map_only(dataframe: pd.DataFrame, **_: object) -> LlmReplaceResult:
+    def _generate_validated_maps(dataframe: pd.DataFrame, **_: object) -> LlmReplaceResult:
         maps = [{"replacements": replacements}] * len(dataframe)
         frame = dataframe.assign(**{COL_REPLACEMENT_MAP: maps})
         return LlmReplaceResult(dataframe=frame, failed_records=[], source_positions=tuple(range(len(frame))))
 
     llm_workflow = Mock()
-    llm_workflow.generate_map_only.side_effect = _generate_map_only
+    llm_workflow.generate_validated_maps.side_effect = _generate_validated_maps
     texts = ["Alice works at Acme", "Bob works at Acme"]
     bob = [{"value": "Bob", "label": "first_name", "start_position": 0, "end_position": 3}, dict(stub_entities[1])]
     bob[1].update(start_position=13, end_position=17)
@@ -742,9 +742,13 @@ def test_run_reports_each_rows_protection_outcome(omit_bob: bool, tmp_path: Path
     second = result.outcome(1)
     assert second.qualification == ("not_met" if omit_bob else "met")
     assert any(reason.check == "replacements_applied" for reason in second.reasons) is omit_bob
-    assert [(v.check, v.status) for v in result.outcome(0).advisories] == [("no_replaced_value_remains", "passed")]
+    assert [(v.check, v.status) for v in result.outcome(0).advisories] == [
+        ("no_detected_value_outside_replacements", "passed")
+    ]
     second_status = "failed" if omit_bob else "passed"
-    assert [(v.check, v.status) for v in second.advisories] == [("no_replaced_value_remains", second_status)]
+    assert [(v.check, v.status) for v in second.advisories] == [
+        ("no_detected_value_outside_replacements", second_status)
+    ]
     with pytest.raises(IndexError):
         result.outcome(2)
 
@@ -818,7 +822,7 @@ def test_replace_reports_replaced_values_left_in_kept_text(
     outcome = with_check.outcome(graph.targets[0])
 
     assert [(a.check, a.verifier, a.status, a.cause) for a in outcome.advisories] == [
-        ("no_replaced_value_remains", "verify-no-original", *advisory)
+        ("no_detected_value_outside_replacements", "verify-no-original", *advisory)
     ]
     without = _without_advisory_verifier(graph, build_map)
     base = without.outcome(graph.targets[0])

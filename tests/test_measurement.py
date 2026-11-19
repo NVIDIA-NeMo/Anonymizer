@@ -1057,8 +1057,11 @@ class _TaskTraceDataDesigner:
         self.async_trace_values.append(run_config.async_trace)
         self.run_config = run_config
 
+    def _create_resource_provider(self, *_args: Any, **_kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(run_config=self.run_config)
+
     def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
-        assert self.run_config.async_trace is True
+        assert self._create_resource_provider("preview-dataset", _config_builder).run_config.async_trace is True
         if self.error is not None:
             raise self.error
         return SimpleNamespace(dataset=_seed_frame(_config_builder, num_records), task_traces=self.task_traces)
@@ -1474,7 +1477,7 @@ def test_ndd_adapter_private_model_facade_trace_write_error_does_not_mask_workfl
         )
 
 
-def test_ndd_adapter_writes_sanitized_dd_task_traces_and_restores_run_config(
+def test_ndd_adapter_writes_sanitized_dd_task_traces_and_leaves_designer_run_config(
     tmp_path: Path,
     trace_input_df: pd.DataFrame,
 ) -> None:
@@ -1502,7 +1505,7 @@ def test_ndd_adapter_writes_sanitized_dd_task_traces_and_restores_run_config(
             [_raw_detected_text_column()],
         )
 
-    assert data_designer.async_trace_values == [True, False]
+    assert data_designer.async_trace_values == []
     assert data_designer.run_config.async_trace is False
     task_trace = json.loads(task_trace_path.read_text(encoding="utf-8").strip())
     assert task_trace["record_type"] == "dd_task_trace"
@@ -1657,7 +1660,7 @@ def test_ndd_adapter_trace_write_error_is_not_wrapped_as_workflow_error(
         )
 
 
-def test_ndd_adapter_restores_run_config_when_task_traced_workflow_fails(
+def test_ndd_adapter_leaves_designer_run_config_when_task_traced_workflow_fails(
     tmp_path: Path,
     trace_input_df: pd.DataFrame,
 ) -> None:
@@ -1674,7 +1677,7 @@ def test_ndd_adapter_restores_run_config_when_task_traced_workflow_fails(
                 [_raw_detected_text_column()],
             )
 
-    assert data_designer.async_trace_values == [True, False]
+    assert data_designer.async_trace_values == []
     assert data_designer.run_config.async_trace is False
 
 
@@ -1906,7 +1909,12 @@ def test_record_metrics_counts_missing_replacement_map_entries_without_raw_value
     assert "Maya" not in serialized
 
 
-def test_record_metrics_separates_map_entries_from_span_application() -> None:
+@pytest.mark.parametrize(
+    "label_counts",
+    [{"first_name": 1}, json.dumps({"first_name": 1}, sort_keys=True)],
+    ids=["dict", "json-text"],
+)
+def test_record_metrics_separates_map_entries_from_span_application(label_counts: object) -> None:
     dataframe = pd.DataFrame(
         {
             COL_TEXT: ["Alice met Alice and Alice"],
@@ -1928,7 +1936,7 @@ def test_record_metrics_separates_map_entries_from_span_application() -> None:
                     "targeted_span_count": 3,
                     "applied_span_count": 2,
                     "skipped_span_count": 1,
-                    "skipped_span_label_counts": {"first_name": 1},
+                    "skipped_span_label_counts": label_counts,
                 }
             ],
         }

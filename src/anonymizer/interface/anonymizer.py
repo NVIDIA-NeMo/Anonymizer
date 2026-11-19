@@ -1175,8 +1175,6 @@ class Anonymizer:
         """Run semantic preflight checks shared by validate, run, and preview."""
         if config.rewrite is not None and config.rewrite.privacy_goal is None:
             raise InvalidConfigError("rewrite.privacy_goal must not be None")
-        if conflicts := config.detect.detector_declaration_conflicts():
-            raise InvalidConfigError(" ".join(conflicts))
         try:
             validate_model_alias_references(
                 self._model_configs,
@@ -1356,13 +1354,6 @@ def _count_entities(df: pd.DataFrame) -> int:
     if COL_DETECTED_ENTITIES not in df.columns:
         return 0
     return int(df[COL_DETECTED_ENTITIES].apply(lambda raw: len(_unwrap_entities(raw))).sum())
-
-
-def _resolve_model_providers(
-    model_providers: list[ModelProvider] | str | Path | None,
-) -> list[ModelProvider]:
-    """Backward-compatible private wrapper around the shared provider parser."""
-    return parse_model_providers(model_providers)
 
 
 def _rename_output_columns(df: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:

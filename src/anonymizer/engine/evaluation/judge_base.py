@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Base class for LLM-as-judge workflows.
@@ -195,9 +195,10 @@ class _BaseJudgeWorkflow(ABC):
         selected_models: EvaluateModelSelection,
         preview_num_records: int | None = None,
     ) -> JudgeResult:
-        """Standalone single-judge entry point. The orchestrator in
-        ``ReplacementWorkflow`` does not go through this; tests and callers
-        that want to run one judge in isolation do.
+        """Run a single judge for ``RewriteWorkflow.evaluate()`` or isolated callers.
+
+        The orchestrator in ``ReplacementWorkflow`` runs combined judges
+        without going through this entry point.
         """
         working_df = self.prepare(dataframe)
         # `prepare()` returns a fresh copy (per its contract), so we can stamp

@@ -5,10 +5,13 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Generator
+from collections.abc import Callable, Generator, Mapping
 from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import partial
+from threading import Lock
 from typing import Any
 
 import pandas as pd
@@ -102,9 +105,8 @@ class WorkflowSourceFrame:
         require_source_frame_capabilities(designer)
         storage_bindings = ExitStack()
         builders: list[Any] = []
-        original_builder = designer._create_dataset_builder
 
-        def builder(*args: Any, **kwargs: Any) -> Any:
+        def builder(original_builder: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
             result = original_builder(*args, **kwargs)
             storage_bindings.enter_context(self._bind_storage(require_dataset_builder_capabilities(result)))
 
@@ -124,13 +126,10 @@ class WorkflowSourceFrame:
             builders.append(result)
             return result
 
-        designer_owned_builder = "_create_dataset_builder" in vars(designer)
-        designer._create_dataset_builder = builder
         try:
-            yield
+            with designer_hook(designer, "_create_dataset_builder", builder):
+                yield
         finally:
-            # Restoring the class's bound method as an instance attribute would tie the designer to itself.
-            _restore_attribute(designer, "_create_dataset_builder", original_builder, owned=designer_owned_builder)
             storage_bindings.close()
             for built in builders:
                 # The override closes over the builder; drop it so the run's builder is freed by refcount.
@@ -203,6 +202,48 @@ class WorkflowSourceFrame:
         finally:
             for name, original in originals.items():
                 _restore_attribute(storage, name, original, owned=owned[name])
+
+
+# The run each context belongs to, by (designer id, method name). Only an opaque token: a context copied into a
+# worker thread may outlive the run, and must not keep the run's handler (and what it closes over) alive.
+_RUN_HOOKS: ContextVar[Mapping[tuple[int, str], object]] = ContextVar("anonymizer_designer_hooks", default={})
+# (designer id, method name) -> (the method the dispatcher replaced, whether the designer owned it, handlers by run)
+_INSTALLED: dict[tuple[int, str], tuple[Any, bool, dict[object, Callable[..., Any]]]] = {}
+_INSTALLED_LOCK = Lock()
+
+
+@contextmanager
+def designer_hook(designer: Any, name: str, handler: Callable[..., Any]) -> Generator[None]:
+    """Route ``designer.<name>(...)`` to ``handler(next, ...)`` for calls made in this context only.
+
+    Runs sharing one designer stay concurrent: while any run is active the designer carries one dispatcher per
+    method, and each call reaches the handler of the run whose context made it (``next`` is the method it wraps).
+    """
+    key, run = (id(designer), name), object()
+    outer = _RUN_HOOKS.get()
+    with _INSTALLED_LOCK:
+        if key not in _INSTALLED:
+            original, handlers = getattr(designer, name), {}
+            _INSTALLED[key] = (original, name in vars(designer), handlers)
+
+            def dispatch(*args: Any, **kwargs: Any) -> Any:
+                return handlers.get(_RUN_HOOKS.get().get(key), original)(*args, **kwargs)
+
+            object.__setattr__(designer, name, dispatch)
+        original, _, handlers = _INSTALLED[key]
+        handlers[run] = partial(handler, handlers.get(outer.get(key), original))
+    token = _RUN_HOOKS.set({**outer, key: run})
+    try:
+        yield
+    finally:
+        _RUN_HOOKS.reset(token)
+        with _INSTALLED_LOCK:
+            original, owned, handlers = _INSTALLED[key]
+            del handlers[run]
+            if not handlers:
+                del _INSTALLED[key]
+                # Restoring the class's bound method as an instance attribute would tie the designer to itself.
+                _restore_attribute(designer, name, original, owned=owned)
 
 
 def _restore_attribute(target: Any, name: str, original: Any, *, owned: bool) -> None:

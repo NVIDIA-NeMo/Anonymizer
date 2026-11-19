@@ -5,11 +5,15 @@
 
 from __future__ import annotations
 
+import io
 import json
+import tempfile
 
 import pytest
 
-from tests.parity.harness import CASES, Case, differences, record_case, recording_path
+from anonymizer import Anonymizer
+from anonymizer.config.anonymizer_config import TextRecord, TextRecordsInput
+from tests.parity.harness import CASES, RECORDS, Case, differences, record_case, recording_path, scripted
 
 
 @pytest.fixture(scope="module")
@@ -36,6 +40,27 @@ def test_every_run_happens_inside_an_activation_and_results_stay_consumable(
         assert consumers["user_columns_in_trace"], f"{call}: user columns are not a subset of the trace columns"
         assert all(consumers["pickle"].values()), f"{call}: pickling the result changed it: {consumers['pickle']}"
         assert consumers["parquet"]["columns"] == observed["user_frame"]["columns"], f"{call}: Parquet columns differ"
+
+
+@pytest.mark.parametrize("case", CASES, ids=lambda case: case.name)
+def test_trace_frames_write_to_parquet(case: Case) -> None:
+    """Every trace frame, for run and evaluate, must be writable with ``DataFrame.to_parquet``."""
+    data = TextRecordsInput(records=[TextRecord(id=i, text=t) for i, t in RECORDS])
+    with tempfile.TemporaryDirectory() as artifacts:
+        anonymizer = Anonymizer(artifact_path=artifacts)
+        with scripted(case):
+            run = anonymizer.run(config=case.config(), data=data)
+        with scripted(case):
+            evaluated = anonymizer.evaluate(run, config=case.evaluate)
+    for call, result in (("run", run), ("evaluate", evaluated)):
+        unwritable = []
+        for column in result.trace_dataframe.columns:
+            try:
+                result.trace_dataframe[[column]].to_parquet(io.BytesIO())
+            except Exception as error:
+                unwritable.append(f"{column}: {type(error).__name__}")
+        assert not unwritable, f"{call}: trace columns that cannot be written to Parquet: {unwritable}"
+        result.trace_dataframe.to_parquet(io.BytesIO())
 
 
 @pytest.mark.parametrize("case", [case for case in CASES if case.missed], ids=lambda case: case.name)

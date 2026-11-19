@@ -61,12 +61,13 @@ from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import (
     load_default_model_providers,
     load_models_config,
+    parse_model_providers,
     validate_model_alias_references,
 )
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
-from anonymizer.interface.anonymizer import Anonymizer, _accepts_entity_label_examples, _resolve_model_providers
+from anonymizer.interface.anonymizer import Anonymizer, _accepts_entity_label_examples
 from anonymizer.interface.errors import AnonymizerWorkflowError, InvalidConfigError, InvalidInputError
 from tests.conftest import stub_run_with_detection
 
@@ -633,12 +634,12 @@ def test_preview_propagates_excluded_entity_labels(stub_input: AnonymizerInput) 
     assert result.excluded_entity_labels == ["email"]
 
 
-def test_resolve_model_providers_raises_on_invalid_yaml(tmp_path: Path) -> None:
+def test_parse_model_providers_raises_on_invalid_yaml(tmp_path: Path) -> None:
     yaml_path = tmp_path / "bad.yaml"
     yaml_path.write_text("not_providers: []")
 
     with pytest.raises(ValueError, match="providers"):
-        _resolve_model_providers(yaml_path)
+        parse_model_providers(yaml_path)
 
 
 def test_anonymizer_default_passes_bundled_providers_to_data_designer() -> None:
@@ -1694,21 +1695,6 @@ def test_evaluate_rewrite_flags_rows_with_missed_entities(
     assert run_result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False] * len(run_result.dataframe)
 
 
-@pytest.mark.parametrize(
-    "detect",
-    [
-        {"entity_labels": ["first_name", "email"], "detector_labels": ["first_name"], "detector_labels_fixed": True},
-        {"detector_labels_fixed": True},
-        {"detector_offset_unit": "utf16_code_unit"},
-    ],
-)
-def test_conflicting_detector_declarations_rejected_before_detection(stub_input: AnonymizerInput, detect: dict) -> None:
-    anonymizer, detection_wf, _, _ = _make_anonymizer()
-    with pytest.raises(InvalidConfigError):
-        anonymizer.run(config=AnonymizerConfig(detect=detect, replace=Redact()), data=stub_input)
-    detection_wf.run.assert_not_called()
-
-
 def test_detection_scope_is_immutable_and_hashable(stub_input: AnonymizerInput) -> None:
     anonymizer, _, _, _ = _make_anonymizer()
 
@@ -1720,13 +1706,10 @@ def test_detection_scope_is_immutable_and_hashable(stub_input: AnonymizerInput) 
     assert not hasattr(scope.effective_labels, "clear")
 
 
-def test_matching_detector_declaration_runs_and_reports_scope(stub_input: AnonymizerInput) -> None:
+def test_preview_reports_scope_with_exclusions(stub_input: AnonymizerInput) -> None:
     detect = {
         "entity_labels": ["first_name", "email"],
         "excluded_entity_labels": ["email"],
-        "detector_labels": ["first_name", "email", "city"],
-        "detector_labels_fixed": True,
-        "detector_offset_unit": "code_point",
     }
     anonymizer, _, _, _ = _make_anonymizer()
 
@@ -1899,7 +1882,7 @@ def test_replace_route_in_cancelled_frame_raises(method: Redact | Substitute) ->
             token=_cancelled_token(),
         )
 
-    llm_workflow.generate_map_only.assert_not_called()
+    llm_workflow.generate_validated_maps.assert_not_called()
 
 
 _BINDING: contextvars.ContextVar[str] = contextvars.ContextVar("test_facade_binding", default="caller")

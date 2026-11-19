@@ -27,7 +27,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.postprocess import normalize_label, normalize_labels
 from anonymizer.engine.evaluation.judge_base import JudgeResult, _BaseJudgeWorkflow
-from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, exception_class_label
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import (
@@ -652,10 +652,10 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             return out, result.failed_records
         except Exception as exc:
             logger.warning(
-                "Entity coverage workflow failed (%s); scores are unavailable for %d row(s).",
-                type(exc).__name__,
-                len(dataframe),
+                "Entity coverage workflow failed (%s); scores may be unavailable.",
+                exception_class_label(exc),
             )
+            logger.debug("Entity coverage workflow failed.")
             out = dataframe.copy()
             out[self.VALID_COL] = None
             out[self.INVALID_COL] = [[] for _ in range(len(out))]

@@ -67,7 +67,6 @@ from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
-    restore_empty_skipped_span_label_counts,
 )
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
 from anonymizer.engine.row_partitioning import (
@@ -528,8 +527,8 @@ class RewriteWorkflow:
         ``rewrite`` splits the detection frame on its entities: rows with none take the passthrough defaults and the
         rest go through ``_produce``, the stages ``run`` uses. A row the detector drops, or whose mentions the graph
         rejects, fails at ``detect`` and is absent from the output. A result that is not verifiably one input row per
-        returned row fails every target at ``detect``, and ``run`` rewrites the detection frame as returned. ``stage``
-        names the measurement.
+        returned row, or that changed a row's text, fails every target at ``detect``, and ``run`` rewrites the
+        detection frame as returned. ``stage`` names the measurement.
         """
         started = time.perf_counter()
         evaluation = options["evaluation"]
@@ -704,7 +703,6 @@ class RewriteWorkflow:
             workflow_name="rewrite-pipeline",
             preview_num_records=preview_num_records,
         )
-        restore_empty_skipped_span_label_counts(pipeline_result.dataframe)
         rows.frame = _join_new_columns(
             rows.frame, pipeline_result.dataframe, source_positions=pipeline_result.source_positions
         )

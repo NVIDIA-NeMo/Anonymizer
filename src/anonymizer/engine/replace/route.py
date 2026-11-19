@@ -6,9 +6,9 @@
 Each row lowers to one target datum whose exact, non-overlapping entity spans are its mentions. A row is a transform
 (``replace``: the 0.4.0 per-row replacement) followed by a verifier (``verify-patches``: one patch per accepted
 mention, checked by source-plus-patches reconstruction). Except under Annotate, a second verifier
-(``verify-no-original``) reports the non-required check ``no_replaced_value_remains`` as an advisory. The legacy
-DataFrame projection derives from the canonical result without rerunning work; Annotate output is an annotation
-result and is never Protected.
+(``verify-no-original``) reports the non-required check ``no_detected_value_outside_replacements`` as an
+advisory. The legacy DataFrame projection derives from the canonical result without rerunning work; Annotate
+output is an annotation result and is never Protected.
 
 Substitute runs as one invocation. Its phase-scoped ``substitute-map`` step makes one ``LlmReplaceWorkflow`` call
 over the whole frame (DataDesigner batches it) and returns each row's replacement map; a row DataDesigner dropped gets
@@ -135,11 +135,11 @@ def _substitute_map_step(
     failures: list[FailedRecord],
     frame: Callable[[tuple[Datum, ...]], tuple[pd.DataFrame, Sequence[Datum]]],
 ) -> Operation:
-    """One ``generate_map_only`` call over ``frame(target)``'s frame and the target each of its rows belongs to."""
+    """One ``generate_validated_maps`` call over ``frame(target)``'s frame and the target each of its rows belongs to."""
 
     def generate_maps(target: tuple[Datum, ...]) -> list[dict[str, Any] | None]:
         source, owners = frame(target)
-        result = llm_workflow.generate_map_only(
+        result = llm_workflow.generate_validated_maps(
             source, instructions=replace_method.instructions, consistency=replace_method.consistency, **map_arguments
         )
         failures.extend(result.failed_records)
@@ -172,8 +172,8 @@ def run_replace_pipeline(
     A row the detector drops fails at ``detect`` and blocks the later steps. Output rows are the detection frame's
     rows for the targets that reached the end; a row that fails at a step for any reason other than missing output
     (which that step's workflow already reports) is returned as a failed record naming the step and the reason. A
-    result that is not verifiably one input row per returned row (see ``resolve_positions``) fails every target at
-    ``detect``, and ``reroute`` replaces over the detection frame as returned.
+    result that is not verifiably one input row per returned row (see ``resolve_positions``), or that changed a row's
+    text, fails every target at ``detect``, and ``reroute`` replaces over the detection frame as returned.
     """
     scope = GraphScope()
     graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in dataframe[COL_TEXT]))
@@ -345,7 +345,7 @@ def _protect_rows(
             "verify-no-original",
             _verify_no_original,
             {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "replacement_map": REPLACEMENT_MAP, "target": DATUM},
-            checks=("no_replaced_value_remains",),
+            checks=("no_detected_value_outside_replacements",),
             subject=("text",),
         )
         operations = (*operations, no_original)

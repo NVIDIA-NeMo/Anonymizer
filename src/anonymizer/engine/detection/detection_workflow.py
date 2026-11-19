@@ -8,7 +8,7 @@ import logging
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar, cast
+from typing import cast
 
 import pandas as pd
 from data_designer.config.base import SkipConfig
@@ -16,7 +16,6 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTe
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
-from pydantic import Field
 
 from anonymizer.config.anonymizer_config import Detect as AnonymizerDetectConfig
 from anonymizer.config.anonymizer_config import resolve_effective_detection_labels
@@ -64,7 +63,7 @@ from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import raise_if_cancelled
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
 from anonymizer.engine.prompt_utils import substitute_placeholders
-from anonymizer.engine.row_partitioning import resolve_source_positions
+from anonymizer.engine.row_partitioning import resolve_source_positions, try_resolve_source_positions
 from anonymizer.engine.schemas import (
     EntitiesByValueSchema,
     EntitiesSchema,
@@ -80,13 +79,6 @@ from anonymizer.engine.workflow_columns.detection.config import (
 from anonymizer.measurement import stage_timer
 
 logger = logging.getLogger("anonymizer.detection")
-
-
-class _PrivatePromptLLMStructuredColumnConfig(LLMStructuredColumnConfig):
-    """Structured column config whose prompt is omitted from repr-based setup logs."""
-
-    _normalize_for_data_designer: ClassVar[bool] = True
-    prompt: str = Field(repr=False)
 
 
 # Defaults for the two chunked-validation knobs. Sourced from the Detect config
@@ -591,7 +583,10 @@ class EntityDetectionWorkflow:
                     _resolved_label_config=label_config,
                 )
                 rows.frame = detected_result.dataframe
-                rows.positions = detected_result.source_positions
+                # The older two-argument result reports no positions; unique record IDs can still resolve them.
+                rows.positions = detected_result.source_positions or (
+                    try_resolve_source_positions(dataframe, detected_result.dataframe, None) or ()
+                )
                 rows.failed = detected_result.failed_records
 
             def tag_latent() -> None:
@@ -609,7 +604,10 @@ class EntityDetectionWorkflow:
                     _resolved_label_config=label_config,
                 )
                 rows.frame = latent_result.dataframe
-                rows.positions = tuple(rows.positions[position] for position in latent_result.source_positions)
+                # Positions the first stage could not resolve stay unreported; the caller falls back to record IDs.
+                rows.positions = rows.positions and tuple(
+                    rows.positions[position] for position in latent_result.source_positions
+                )
                 rows.failed = [*rows.failed, *latent_result.failed_records]
 
             def finalize() -> None:

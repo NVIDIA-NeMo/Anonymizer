@@ -44,7 +44,6 @@ from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkfl
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.storage import prepare_json_storage_column, prepare_json_storage_seed
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
-from anonymizer.engine.rewrite.rewrite_generation import restore_empty_skipped_span_label_counts
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
@@ -155,8 +154,6 @@ def test_replacement_application_seed_roundtrip_is_exact(tmp_path: Path, values:
     source = LocalFileSeedSource.from_dataframe(prepare_json_storage_seed(original), str(tmp_path / "seed.parquet"))
     restored = read_parquet_dataset(Path(source.path))
 
-    assert restored[COL_REPLACEMENT_APPLICATION].tolist() == values
-    restore_empty_skipped_span_label_counts(restored)
     assert restored[COL_REPLACEMENT_APPLICATION].tolist() == values
 
 

@@ -172,6 +172,44 @@ def test_run_with_latent_detection_calls_second_workflow(
     assert len(result.failed_records) == 1
 
 
+@pytest.mark.parametrize("with_ids", [True, False], ids=["record-ids", "no-record-ids"])
+def test_run_with_latent_detection_accepts_a_result_without_positions(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+    with_ids: bool,
+) -> None:
+    """A subclass returning the older two-argument result reports no positions: unique record IDs resolve them, and
+    without IDs the run still returns its rows, reporting no positions either."""
+
+    class OlderResult(EntityDetectionWorkflow):
+        def detect_and_validate_entities(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+            out = dataframe.iloc[::-1].reset_index(drop=True)
+            out[COL_DETECTED_ENTITIES] = [{"entities": []} for _ in range(len(out))]
+            return EntityDetectionResult(out, [])
+
+    def latent(dataframe: pd.DataFrame, **_: object) -> WorkflowRunResult:
+        return _positional(dataframe.assign(**{COL_LATENT_ENTITIES: [{"latent_entities": []}] * len(dataframe)}), [])
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = latent
+    input_df = pd.DataFrame({COL_TEXT: ["The sky is blue.", "Grass is green."]})
+    if with_ids:
+        input_df[RECORD_ID_COLUMN] = ["r1", "r2"]
+
+    result = OlderResult(adapter=adapter).run(
+        input_df,
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        tag_latent_entities=True,
+        privacy_goal=PrivacyGoal(protect="Protect direct identifiers here.", preserve="Keep the general meaning."),
+    )
+
+    assert list(result.dataframe[COL_TEXT]) == ["Grass is green.", "The sky is blue."]
+    assert result.source_positions == ((1, 0) if with_ids else ())
+    assert result.failed_records == []
+
+
 def test_latent_prompt_includes_summary_and_goal() -> None:
     prompt = _get_latent_prompt(
         data_summary="Medical visit notes",

@@ -65,9 +65,9 @@ _PROMPT_ENV = Environment(
 )
 _MAX_GROUNDING_ATTEMPTS = 2
 
-ResponseFormatMode = Literal["constrained", "fallback", "ignored", "unconstrained"]
+ResponseFormatMode = Literal["sent", "fallback", "ignored", "unconstrained"]
 # Higher wins when a row's grounding attempts were sent differently.
-_MODE_PRECEDENCE: dict[ResponseFormatMode, int] = {"unconstrained": 0, "constrained": 1, "ignored": 2, "fallback": 3}
+_MODE_PRECEDENCE: dict[ResponseFormatMode, int] = {"unconstrained": 0, "sent": 1, "ignored": 2, "fallback": 3}
 _RESPONSE_FORMAT = {
     "type": "json_schema",
     "json_schema": {"name": "AugmentedEntitiesSchema", "schema": AugmentedEntitiesSchema.model_json_schema()},
@@ -107,7 +107,7 @@ class _ResponseFormatSwitch:
 
     def mode_for_reply(self, trace: Any) -> ResponseFormatMode:
         if not _reply_is_fenced(trace):
-            return "constrained"
+            return "sent"
         if not self.warned_ignored:
             self.warned_ignored = True
             logger.warning("augmenter reply was fenced although response_format was sent; the backend may ignore it")
