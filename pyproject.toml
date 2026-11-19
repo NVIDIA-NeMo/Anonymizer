@@ -39,7 +39,7 @@ anonymizer-chunked-validation = "anonymizer.engine.workflow_columns.detection.pl
 anonymizer-regex-detection = "anonymizer.engine.workflow_columns.detection.plugins:regex_detection_plugin"
 anonymizer-augmentation = "anonymizer.engine.workflow_columns.detection.plugins:augmentation_plugin"
 anonymizer-evaluation-judge = "anonymizer.engine.workflow_columns.evaluation.judge.plugins:judge_column_plugin"
-anonymizer-structured-reply = "anonymizer.engine.workflow_columns.reply.plugins:reply_column_plugin"
+anonymizer-structured-response = "anonymizer.engine.workflow_columns.response.plugins:response_column_plugin"
 
 [dependency-groups]
 dev = [

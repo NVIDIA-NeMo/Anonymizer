@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The structured reply column: DataDesigner's structured column, except that a reply that never parses keeps the row."""
+"""The structured response column: DataDesigner's structured column, except that a response that never parses keeps the row."""
 
 from __future__ import annotations
 
@@ -25,11 +25,11 @@ from data_designer.engine.resources.resource_provider import ResourceProvider
 from data_designer.engine.testing.utils import assert_valid_plugin
 from pydantic import BaseModel
 
-from anonymizer.engine.workflow_columns.reply.config import ReplyColumnConfig
-from anonymizer.engine.workflow_columns.reply.impl import ReplyColumnGenerator
-from anonymizer.engine.workflow_columns.reply.plugins import reply_column_plugin
+from anonymizer.engine.workflow_columns.response.config import ResponseColumnConfig
+from anonymizer.engine.workflow_columns.response.impl import ResponseColumnGenerator
+from anonymizer.engine.workflow_columns.response.plugins import response_column_plugin
 
-_ALIAS = "reply-model"
+_ALIAS = "response-model"
 _MODEL = ModelConfig(alias=_ALIAS, model="test-model", provider="test-provider")
 _PROVIDER = ModelProvider(name="test-provider", endpoint="https://example.invalid/v1")
 
@@ -39,14 +39,14 @@ class _Answer(BaseModel):
 
 
 class _Client:
-    def __init__(self, replies: list[str]) -> None:
-        self.replies = replies
+    def __init__(self, responses: list[str]) -> None:
+        self.responses = responses
         self.requests: list[ChatCompletionRequest] = []
 
     async def acompletion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
         self.requests.append(request)
-        reply = self.replies[min(len(self.requests) - 1, len(self.replies) - 1)]
-        return ChatCompletionResponse(message=AssistantMessage(content=reply))
+        response = self.responses[min(len(self.requests) - 1, len(self.responses) - 1)]
+        return ChatCompletionResponse(message=AssistantMessage(content=response))
 
 
 class _Registry:
@@ -63,8 +63,8 @@ class _Registry:
         return _PROVIDER
 
 
-def _config(**overrides: Any) -> ReplyColumnConfig:
-    return ReplyColumnConfig(
+def _config(**overrides: Any) -> ResponseColumnConfig:
+    return ResponseColumnConfig(
         name="_answer",
         prompt="Answer about {{ text }}.",
         model_alias=_ALIAS,
@@ -73,30 +73,30 @@ def _config(**overrides: Any) -> ReplyColumnConfig:
     )
 
 
-def _generator(config: ReplyColumnConfig, replies: list[str]) -> tuple[ReplyColumnGenerator, _Client]:
-    client = _Client(replies)
+def _generator(config: ResponseColumnConfig, responses: list[str]) -> tuple[ResponseColumnGenerator, _Client]:
+    client = _Client(responses)
     facade = ModelFacade(_MODEL, ModelProviderRegistry(providers=[_PROVIDER]), client=cast(ModelClient, client))
     resource_provider = SimpleNamespace(
         model_registry=_Registry(facade),
         run_config=RunConfig(max_conversation_correction_steps=1, max_conversation_restarts=1),
     )
-    return ReplyColumnGenerator(config, cast(ResourceProvider, resource_provider)), client
+    return ResponseColumnGenerator(config, cast(ResourceProvider, resource_provider)), client
 
 
-def test_reply_plugin_satisfies_data_designer_contract() -> None:
-    assert_valid_plugin(reply_column_plugin)
+def test_response_plugin_satisfies_data_designer_contract() -> None:
+    assert_valid_plugin(response_column_plugin)
 
 
-def test_reply_config_declares_what_the_stock_structured_column_declares() -> None:
-    reply = _config()
+def test_response_config_declares_what_the_stock_structured_column_declares() -> None:
+    response = _config()
     stock = LLMStructuredColumnConfig(
         name="_answer", prompt="Answer about {{ text }}.", model_alias=_ALIAS, output_format=_Answer
     )
 
-    assert reply.required_columns == stock.required_columns
-    assert reply.side_effect_columns == stock.side_effect_columns
-    assert reply.output_format == stock.output_format
-    generator, _ = _generator(reply, ["{}"])
+    assert response.required_columns == stock.required_columns
+    assert response.side_effect_columns == stock.side_effect_columns
+    assert response.output_format == stock.output_format
+    generator, _ = _generator(response, ["{}"])
     stock_recipe = create_response_recipe(stock, _MODEL)
     assert generator.response_recipe.apply_recipe_to_user_prompt("Q") == stock_recipe.apply_recipe_to_user_prompt("Q")
     assert generator.response_recipe.apply_recipe_to_system_prompt(None) == stock_recipe.apply_recipe_to_system_prompt(
@@ -104,7 +104,7 @@ def test_reply_config_declares_what_the_stock_structured_column_declares() -> No
     )
 
 
-def test_reply_config_round_trips_through_the_builder(tmp_path: Any) -> None:
+def test_response_config_round_trips_through_the_builder(tmp_path: Any) -> None:
     builder = DataDesignerConfigBuilder(model_configs=[_MODEL]).add_column(
         _config(unavailable={"answer": "none"}, ask_only_if=["text"])
     )
@@ -113,12 +113,12 @@ def test_reply_config_round_trips_through_the_builder(tmp_path: Any) -> None:
 
     (restored,) = DataDesignerConfigBuilder.from_config(path).get_column_configs()
 
-    assert isinstance(restored, ReplyColumnConfig)
+    assert isinstance(restored, ResponseColumnConfig)
     assert restored.unavailable == {"answer": "none"}
     assert restored.ask_only_if == ["text"]
 
 
-def test_reply_that_parses_is_stored_as_the_stock_column_stores_it() -> None:
+def test_response_that_parses_is_stored_as_the_stock_column_stores_it() -> None:
     generator, client = _generator(_config(), ["no json", '{"answer": "yes"}'])
 
     row = asyncio.run(generator.agenerate({"text": "a"}))
@@ -127,23 +127,23 @@ def test_reply_that_parses_is_stored_as_the_stock_column_stores_it() -> None:
     assert len(client.requests) == 2
 
 
-def test_reply_that_never_parses_writes_the_unavailable_value_and_an_empty_trace(
+def test_response_that_never_parses_writes_the_unavailable_value_and_an_empty_trace(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     config = _config(unavailable={"answer": "unknown"}, with_trace=TraceType.ALL_MESSAGES)
     generator, client = _generator(config, ["no json"])
 
-    with caplog.at_level(logging.WARNING, logger="anonymizer.ndd.reply"):
+    with caplog.at_level(logging.WARNING, logger="anonymizer.ndd.response"):
         row = asyncio.run(generator.agenerate({"text": "a"}))
 
     assert row["_answer"] == {"answer": "unknown"}
     assert row["_answer__trace"] == []
     assert len(client.requests) == 4  # the run config's budget: (1 + 1 correction) * (1 + 1 restart)
-    assert "_answer unavailable after 4 replies (unparseable_reply)" in caplog.text
+    assert "_answer unavailable after 4 responses (unparseable_response)" in caplog.text
 
 
 @pytest.mark.parametrize("missing", [None, float("nan")])
-def test_reply_is_not_asked_when_an_ask_only_if_column_has_no_value(missing: object) -> None:
+def test_response_is_not_asked_when_an_ask_only_if_column_has_no_value(missing: object) -> None:
     generator, client = _generator(_config(ask_only_if=["text"]), ['{"answer": "yes"}'])
 
     row = asyncio.run(generator.agenerate({"text": missing}))

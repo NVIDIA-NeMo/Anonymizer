@@ -33,7 +33,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.postprocess import EntitySpan, build_tagged_text
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-from anonymizer.engine.ndd.model_reply import no_reply
+from anonymizer.engine.ndd.model_response import no_response
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.replace.strategies import (
     ReplacementEntry,
@@ -46,7 +46,7 @@ from anonymizer.engine.schemas import (
     EntitySchema,
     RewriteOutputSchema,
 )
-from anonymizer.engine.workflow_columns.reply.config import ReplyColumnConfig
+from anonymizer.engine.workflow_columns.response.config import ResponseColumnConfig
 
 logger = logging.getLogger("anonymizer.rewrite.generation")
 
@@ -324,8 +324,8 @@ def _extract_rewritten_text(row: dict[str, Any]) -> dict[str, Any]:
     """
     if not row.get(COL_REWRITE_REPLACEMENT_READY, True):
         logger.warning("Required rewrite replacement was unavailable; retaining generated rewrite for evaluation.")
-    if no_reply(row.get(COL_FULL_REWRITE)):
-        row[COL_REWRITTEN_TEXT] = None  # the reply column has already logged why
+    if no_response(row.get(COL_FULL_REWRITE)):
+        row[COL_REWRITTEN_TEXT] = None  # the response column has already logged why
         return row
     try:
         full_rewrite = row[COL_FULL_REWRITE]
@@ -378,8 +378,8 @@ class RewriteGenerationWorkflow:
                 name=COL_REWRITE_TAGGED_TEXT,
                 generator_function=_prepare_rewrite_tagged_text,
             ),
-            # A rewrite reply that never parses keeps the row with no rewritten text, which is never released.
-            ReplyColumnConfig(
+            # A rewrite response that never parses keeps the row with no rewritten text, which is never released.
+            ResponseColumnConfig(
                 name=COL_FULL_REWRITE,
                 prompt=_get_rewrite_prompt(privacy_goal, data_summary),
                 model_alias=rewriter_alias,

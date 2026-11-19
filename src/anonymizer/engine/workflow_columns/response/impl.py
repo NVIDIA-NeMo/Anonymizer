@@ -14,14 +14,14 @@ from data_designer.engine.column_generators.generators.llm_completion import Col
 from data_designer.engine.models.recipes.response_recipes import StructuredResponseRecipe
 from data_designer.engine.processing.utils import deserialize_json_values
 
-from anonymizer.engine.ndd.model_reply import ask_with_trace, no_reply
-from anonymizer.engine.workflow_columns.reply.config import ReplyColumnConfig
+from anonymizer.engine.ndd.model_response import ask_with_trace, no_response
+from anonymizer.engine.workflow_columns.response.config import ResponseColumnConfig
 
-logger = logging.getLogger("anonymizer.ndd.reply")
+logger = logging.getLogger("anonymizer.ndd.response")
 
 
-class ReplyColumnGenerator(ColumnGeneratorWithModelChatCompletion[ReplyColumnConfig]):
-    """DataDesigner's structured generator, except that a reply that never parses keeps the row."""
+class ResponseColumnGenerator(ColumnGeneratorWithModelChatCompletion[ResponseColumnConfig]):
+    """DataDesigner's structured generator, except that a response that never parses keeps the row."""
 
     @functools.cached_property
     def response_recipe(self) -> StructuredResponseRecipe:  # ty: ignore[invalid-mutable-override]
@@ -31,22 +31,25 @@ class ReplyColumnGenerator(ColumnGeneratorWithModelChatCompletion[ReplyColumnCon
         return StructuredResponseRecipe(json_schema=compile_json_storage_schema(schema)[0])
 
     def generate(self, data: dict) -> dict:
-        raise NotImplementedError("ReplyColumnGenerator is async-only; use agenerate().")
+        raise NotImplementedError("ResponseColumnGenerator is async-only; use agenerate().")
 
     async def agenerate(self, data: dict) -> dict:
-        missing = [column for column in self.config.ask_only_if if no_reply(data.get(column))]
+        missing = [column for column in self.config.ask_only_if if no_response(data.get(column))]
         if missing:
             logger.debug("%s not asked: %s has no value.", self.config.name, ", ".join(missing))
             return self._unavailable(data)
         kwargs = self._prepare_generation_kwargs(data)
         parse = kwargs.pop("parser")
-        reply, trace = await ask_with_trace(self.model, lambda response: (parse(response), False), **kwargs)
-        if reply.state == "unavailable":
+        response, trace = await ask_with_trace(self.model, lambda response: (parse(response), False), **kwargs)
+        if response.state == "unavailable":
             logger.warning(
-                "%s unavailable after %d replies (%s); keeping the row.", self.config.name, reply.requests, reply.cause
+                "%s unavailable after %d responses (%s); keeping the row.",
+                self.config.name,
+                response.requests,
+                response.cause,
             )
             return self._unavailable(data)
-        data = self._process_generation_result(data, reply.value, trace)
+        data = self._process_generation_result(data, response.value, trace)
         if self.config.unavailable_marker:
             data[self.config.unavailable_marker] = False
         return data

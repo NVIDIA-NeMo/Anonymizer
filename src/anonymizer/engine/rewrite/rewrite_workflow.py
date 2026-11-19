@@ -56,7 +56,7 @@ from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
-from anonymizer.engine.ndd.model_reply import no_reply
+from anonymizer.engine.ndd.model_response import no_response
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
@@ -65,7 +65,7 @@ from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
 from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
-from anonymizer.engine.rewrite.reply_summary import warn_kept_without_reply
+from anonymizer.engine.rewrite.response_summary import warn_kept_without_response
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
     restore_empty_skipped_span_label_counts,
@@ -400,14 +400,14 @@ def _flag_review(
 
 
 def _withhold_unassessed(frame: pd.DataFrame) -> None:
-    """Null the rewritten text of rows whose privacy evaluation had no usable reply.
+    """Null the rewritten text of rows whose privacy evaluation had no usable response.
 
     The final checks have already run on the text and could not assess it; without a privacy verdict it is not
     released. Rows whose text is already null are left alone (see ``_withhold_rewritten_text`` on null columns).
     """
     if COL_PRIVACY_QA_REANSWER not in frame.columns:
         return
-    unassessed = frame[COL_PRIVACY_QA_REANSWER].map(no_reply).astype(bool) & frame[COL_REWRITTEN_TEXT].notna()
+    unassessed = frame[COL_PRIVACY_QA_REANSWER].map(no_response).astype(bool) & frame[COL_REWRITTEN_TEXT].notna()
     if unassessed.any():
         frame.loc[unassessed, COL_REWRITTEN_TEXT] = None
 
@@ -441,7 +441,7 @@ def _rewrite_lowered(
     result = _protect_rewrite(graph, rewrite, evaluation)
     frame = rows.frame
     _flag_review(frame, result, dict(zip(order, graph.targets)), evaluation)
-    warn_kept_without_reply(frame)
+    warn_kept_without_response(frame)
     _withhold_unassessed(frame)
     _apply_passthrough_defaults(passthrough_rows)
     return RewriteResult(
@@ -605,7 +605,7 @@ class RewriteWorkflow:
             output = merge_and_reorder(passthrough_rows)
         else:
             _flag_review(frame, result, dict(enumerate(state.owners)), evaluation)
-            warn_kept_without_reply(frame)
+            warn_kept_without_response(frame)
             _withhold_unassessed(frame)
             output = merge_and_reorder(frame, passthrough_rows)
         record_stage(

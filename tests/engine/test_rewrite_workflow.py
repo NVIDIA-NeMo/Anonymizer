@@ -2022,8 +2022,8 @@ def test_no_original_value_skips_latent_entities() -> None:
     assert _no_original_value("Maria works at a company", latent) is False
 
 
-class _NoPrivacyReplyAdapter(_ScriptedAdapter):
-    """Evaluation has no privacy reply: the reply and its metrics are missing, typed as DataDesigner returns them."""
+class _NoPrivacyResponseAdapter(_ScriptedAdapter):
+    """Evaluation has no privacy response: the response and its metrics are missing, typed as DataDesigner returns them."""
 
     def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **kwargs: object) -> WorkflowRunResult:
         result = super().run_workflow(seed, workflow_name=workflow_name, **kwargs)
@@ -2037,8 +2037,8 @@ class _NoPrivacyReplyAdapter(_ScriptedAdapter):
         return result
 
 
-def test_row_without_a_privacy_reply_is_kept_withheld_and_flagged(tmp_path: Path) -> None:
-    result = _run_one(_NoPrivacyReplyAdapter({"rec": 0}), tmp_path)
+def test_row_without_a_privacy_response_is_kept_withheld_and_flagged(tmp_path: Path) -> None:
+    result = _run_one(_NoPrivacyResponseAdapter({"rec": 0}), tmp_path)
 
     assert result.failed_records == []
     assert len(result.dataframe) == 1
@@ -2053,8 +2053,8 @@ def test_row_without_a_privacy_reply_is_kept_withheld_and_flagged(tmp_path: Path
     ]
 
 
-class _NoRewriteReplyAdapter(_NoPrivacyReplyAdapter):
-    """The rewrite reply never parsed: no rewritten text, so evaluation asks nothing and every metric is missing."""
+class _NoRewriteResponseAdapter(_NoPrivacyResponseAdapter):
+    """The rewrite response never parsed: no rewritten text, so evaluation asks nothing and every metric is missing."""
 
     def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **kwargs: object) -> WorkflowRunResult:
         result = super().run_workflow(seed, workflow_name=workflow_name, **kwargs)
@@ -2066,11 +2066,11 @@ class _NoRewriteReplyAdapter(_NoPrivacyReplyAdapter):
         return result
 
 
-def test_row_without_a_rewrite_reply_is_kept_without_text_and_flagged(
+def test_row_without_a_rewrite_response_is_kept_without_text_and_flagged(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.replies"):
-        result = _run_one(_NoRewriteReplyAdapter({"rec": 0}), tmp_path)
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.responses"):
+        result = _run_one(_NoRewriteResponseAdapter({"rec": 0}), tmp_path)
 
     assert result.failed_records == []
     assert len(result.dataframe) == 1
@@ -2081,7 +2081,7 @@ def test_row_without_a_rewrite_reply_is_kept_without_text_and_flagged(
     assert outcome.qualification == "not_met"
     assert not outcome.available
     assert not outcome.protected
-    assert [record.getMessage() for record in caplog.records if record.name == "anonymizer.rewrite.replies"] == [
-        "Rows kept without a usable model reply after their retries, by step: rewrite=1. "
+    assert [record.getMessage() for record in caplog.records if record.name == "anonymizer.rewrite.responses"] == [
+        "Rows kept without a usable model response after their retries, by step: rewrite=1. "
         "If most rows are listed, check that step's model."
     ]

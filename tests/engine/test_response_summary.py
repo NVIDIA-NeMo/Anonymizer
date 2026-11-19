@@ -20,9 +20,9 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT,
 )
 from anonymizer.engine.rewrite.domain_classification import UNAVAILABLE_DOMAIN
-from anonymizer.engine.rewrite.reply_summary import warn_kept_without_reply
+from anonymizer.engine.rewrite.response_summary import warn_kept_without_response
 
-_REPLY = {"answers": []}
+_RESPONSE = {"answers": []}
 _DOMAIN = {"domain": "FINANCIAL", "domain_confidence": 0.9}
 
 
@@ -34,8 +34,8 @@ def _row(**overrides: object) -> dict[str, object]:
         COL_QUALITY_QA: {"items": []},
         COL_FULL_REWRITE: {"rewritten_text": "Secret value 7312."},
         COL_REWRITTEN_TEXT: "Secret value 7312.",
-        COL_QUALITY_QA_REANSWER: _REPLY,
-        COL_PRIVACY_QA_REANSWER: _REPLY,
+        COL_QUALITY_QA_REANSWER: _RESPONSE,
+        COL_PRIVACY_QA_REANSWER: _RESPONSE,
         COL_QUALITY_QA_COMPARE: {"per_item": []},
     }
     return {**row, **overrides}
@@ -65,49 +65,49 @@ def test_one_warning_counts_each_step_and_holds_no_values(caplog: pytest.LogCapt
         ]
     )
 
-    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.replies"):
-        warn_kept_without_reply(frame)
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.responses"):
+        warn_kept_without_response(frame)
 
-    (message,) = {record.getMessage() for record in caplog.records if record.name == "anonymizer.rewrite.replies"}
+    (message,) = {record.getMessage() for record in caplog.records if record.name == "anonymizer.rewrite.responses"}
     assert message.startswith(
-        "Rows kept without a usable model reply after their retries, by step: domain classification=1, "
+        "Rows kept without a usable model response after their retries, by step: domain classification=1, "
         "meaning units=1, quality questions=1, rewrite=2, privacy evaluation=1, quality evaluation=1."
     )
     assert "7312" not in caplog.text
 
 
-def test_a_valid_other_reply_with_no_confidence_is_not_counted_as_the_fallback(
+def test_a_valid_other_response_with_no_confidence_is_not_counted_as_the_fallback(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # The model said OTHER at confidence 0.0: the same value as the fallback, but a reply that was used.
+    # The model said OTHER at confidence 0.0: the same value as the fallback, but a response that was used.
     assert {"domain": "OTHER", "domain_confidence": 0.0} == UNAVAILABLE_DOMAIN
     frame = pd.DataFrame([_row(**{COL_DOMAIN: dict(UNAVAILABLE_DOMAIN), COL_DOMAIN_UNAVAILABLE: False})])
 
-    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.replies"):
-        warn_kept_without_reply(frame)
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.responses"):
+        warn_kept_without_response(frame)
 
-    assert [record for record in caplog.records if record.name == "anonymizer.rewrite.replies"] == []
+    assert [record for record in caplog.records if record.name == "anonymizer.rewrite.responses"] == []
 
 
 def test_the_marker_is_internal_and_leaves_the_frame_after_the_summary() -> None:
     frame = pd.DataFrame([_row()])
 
-    warn_kept_without_reply(frame)
+    warn_kept_without_response(frame)
 
     assert COL_DOMAIN_UNAVAILABLE not in frame.columns
 
 
-def test_no_warning_when_every_reply_was_used(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.replies"):
-        warn_kept_without_reply(
+def test_no_warning_when_every_response_was_used(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.responses"):
+        warn_kept_without_response(
             pd.DataFrame([_row(), _row(**{COL_DOMAIN: '{"domain": "OTHER", "domain_confidence": 0.4}'})])
         )
 
-    assert [record for record in caplog.records if record.name == "anonymizer.rewrite.replies"] == []
+    assert [record for record in caplog.records if record.name == "anonymizer.rewrite.responses"] == []
 
 
 def test_frames_without_the_columns_log_nothing(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.replies"):
-        warn_kept_without_reply(pd.DataFrame({"text": ["a"]}))
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.responses"):
+        warn_kept_without_response(pd.DataFrame({"text": ["a"]}))
 
-    assert [record for record in caplog.records if record.name == "anonymizer.rewrite.replies"] == []
+    assert [record for record in caplog.records if record.name == "anonymizer.rewrite.responses"] == []

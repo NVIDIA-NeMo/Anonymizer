@@ -24,7 +24,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-from anonymizer.engine.ndd.model_reply import no_reply
+from anonymizer.engine.ndd.model_response import no_response
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import parse_sensitivity_disposition
 from anonymizer.engine.schemas import (
@@ -38,7 +38,7 @@ from anonymizer.engine.schemas import (
     SensitivityDispositionSchema,
     SensitivityLevel,
 )
-from anonymizer.engine.workflow_columns.reply.config import ReplyColumnConfig
+from anonymizer.engine.workflow_columns.response.config import ResponseColumnConfig
 
 # Derived from the schema so the Jinja key stays in sync with the field name.
 _DOMAIN_KEY = next(
@@ -237,7 +237,7 @@ def _serialize_meaning_units(row: dict[str, Any]) -> dict[str, Any]:
 
     Unavailable meaning units stay unavailable, and the quality QA is then not asked.
     """
-    if no_reply(row.get(COL_MEANING_UNITS)):
+    if no_response(row.get(COL_MEANING_UNITS)):
         row[COL_MEANING_UNITS_SERIALIZED] = None
         return row
     meaning_units = MeaningUnitsSchema.model_validate(row.get(COL_MEANING_UNITS, {}))
@@ -356,8 +356,8 @@ class QAGenerationWorkflow:
                 name=COL_SENSITIVITY_DISPOSITION_BLOCK,
                 generator_function=_format_disposition_block,
             ),
-            # A meaning-units or quality-QA reply that never parses keeps the row; its utility is then unavailable.
-            ReplyColumnConfig(
+            # A meaning-units or quality-QA response that never parses keeps the row; its utility is then unavailable.
+            ResponseColumnConfig(
                 name=COL_MEANING_UNITS,
                 prompt=_get_meaning_unit_extraction_prompt(),
                 model_alias=meaning_extractor_alias,
@@ -367,7 +367,7 @@ class QAGenerationWorkflow:
                 name=COL_MEANING_UNITS_SERIALIZED,
                 generator_function=_serialize_meaning_units,
             ),
-            ReplyColumnConfig(
+            ResponseColumnConfig(
                 name=COL_QUALITY_QA,
                 prompt=_get_quality_qa_prompt(),
                 model_alias=qa_generator_alias,

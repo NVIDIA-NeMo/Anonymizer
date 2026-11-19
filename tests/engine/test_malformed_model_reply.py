@@ -114,7 +114,7 @@ class _ScriptedClient:
         self._script = script
         self._calls = calls
 
-    def _reply(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
+    def _response(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
         if _OTHER_TEXT in json.dumps(request.messages, default=str):
             content = _OTHER_REPLIES.get(self._alias, _GOOD_QA)
             return ChatCompletionResponse(message=AssistantMessage(content=content))
@@ -125,10 +125,10 @@ class _ScriptedClient:
         return ChatCompletionResponse(message=AssistantMessage(content=replies[min(index, len(replies) - 1)]))
 
     def completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
-        return self._reply(request)
+        return self._response(request)
 
     async def acompletion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
-        return self._reply(request)
+        return self._response(request)
 
     def supports_chat_completion(self) -> bool:
         return True
@@ -263,7 +263,7 @@ def test_quality_qa_already_retries_a_malformed_reply(
     assert calls[alias] == 2
 
 
-def test_quality_qa_reply_malformed_on_every_attempt_keeps_the_row_without_quality_questions(
+def test_quality_qa_response_malformed_on_every_attempt_keeps_the_row_without_quality_questions(
     tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
 ) -> None:
     script, calls = scripted
@@ -277,7 +277,7 @@ def test_quality_qa_reply_malformed_on_every_attempt_keeps_the_row_without_quali
     assert calls[alias] == 6
 
 
-# --- Rewrite evaluation: a reply that never parses keeps the row with its evaluation unavailable ---
+# --- Rewrite evaluation: a response that never parses keeps the row with its evaluation unavailable ---
 
 _EVALUATOR = "scripted-evaluator"
 _EVAL_TEXT = "A card will be charged."
@@ -299,11 +299,11 @@ _EVAL_PRIVACY_QA = {
     ]
 }
 _PRIVACY_GOAL = PrivacyGoal(protect="Card numbers and other direct identifiers", preserve="That a charge happens")
-_QUALITY_REPLY = '{"answers": [{"id": 1, "answer": "A card."}]}'
-_COMPARE_REPLY = '{"per_item": [{"id": 1, "score": 0.8, "reason": "Close."}]}'
+_QUALITY_RESPONSE = '{"answers": [{"id": 1, "answer": "A card."}]}'
+_COMPARE_RESPONSE = '{"per_item": [{"id": 1, "score": 0.8, "reason": "Close."}]}'
 
 
-def _privacy_reply(reason: str) -> str:
+def _privacy_response(reason: str) -> str:
     return json.dumps({"answers": [{"id": 1, "answer": "no", "confidence": 0.9, "reason": reason, "evidence": []}]})
 
 
@@ -315,23 +315,23 @@ def _ask_kind(request: ChatCompletionRequest) -> str:
 
 
 class _EvaluatorClient(_ScriptedClient):
-    """Replies per evaluate call (``quality``, ``privacy``, ``compare``) for the record under test, else well formed."""
+    """Responses per evaluate call (``quality``, ``privacy``, ``compare``) for the record under test, else well formed."""
 
-    def _reply(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
+    def _response(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
         kind = _ask_kind(request)
         if _OTHER_TEXT in json.dumps(request.messages, default=str):
-            good = {"quality": _QUALITY_REPLY, "privacy": _privacy_reply("Absent."), "compare": _COMPARE_REPLY}
+            good = {"quality": _QUALITY_RESPONSE, "privacy": _privacy_response("Absent."), "compare": _COMPARE_RESPONSE}
             return ChatCompletionResponse(message=AssistantMessage(content=good[kind]))
-        replies = self._script.get(kind) or [_QUALITY_REPLY if kind == "quality" else _COMPARE_REPLY]
+        responses = self._script.get(kind) or [_QUALITY_RESPONSE if kind == "quality" else _COMPARE_RESPONSE]
         index = self._calls[kind]
         self._calls[kind] += 1
         _MESSAGE_COUNTS[kind].append(len(request.messages))
-        return ChatCompletionResponse(message=AssistantMessage(content=replies[min(index, len(replies) - 1)]))
+        return ChatCompletionResponse(message=AssistantMessage(content=responses[min(index, len(responses) - 1)]))
 
 
 @pytest.fixture
 def evaluator(monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str, list[str]], dict[str, int]]:
-    script: dict[str, list[str]] = {"privacy": [_privacy_reply("Absent.")]}
+    script: dict[str, list[str]] = {"privacy": [_privacy_response("Absent.")]}
     calls: dict[str, int] = defaultdict(int)
     _MESSAGE_COUNTS.clear()
 
@@ -362,7 +362,7 @@ def _evaluate(tmp_path: Path) -> Any:
     )
 
 
-def test_privacy_reply_unparsed_on_every_attempt_keeps_the_row_without_a_privacy_verdict(
+def test_privacy_response_unparsed_on_every_attempt_keeps_the_row_without_a_privacy_verdict(
     tmp_path: Path, evaluator: tuple[dict[str, list[str]], dict[str, int]]
 ) -> None:
     script, calls = evaluator
@@ -392,7 +392,7 @@ def test_evaluate_calls_restart_once_after_their_corrections(
     assert calls["privacy"] == 8
 
 
-def test_quality_reply_unparsed_skips_the_comparison_and_leaves_utility_unavailable(
+def test_quality_response_unparsed_skips_the_comparison_and_leaves_utility_unavailable(
     tmp_path: Path, evaluator: tuple[dict[str, list[str]], dict[str, int]]
 ) -> None:
     script, calls = evaluator
@@ -414,11 +414,11 @@ def test_quality_reply_unparsed_skips_the_comparison_and_leaves_utility_unavaila
     [("x" * 201, "x" * 200), ("", "Model returned an empty reason.")],
     ids=["too-long", "empty"],
 )
-def test_privacy_reason_outside_its_limits_does_not_reject_the_reply(
+def test_privacy_reason_outside_its_limits_does_not_reject_the_response(
     tmp_path: Path, evaluator: tuple[dict[str, list[str]], dict[str, int]], reason: str, kept: str
 ) -> None:
     script, calls = evaluator
-    script["privacy"] = [_privacy_reply(reason)]
+    script["privacy"] = [_privacy_response(reason)]
 
     result = _evaluate(tmp_path)
 
@@ -427,7 +427,7 @@ def test_privacy_reason_outside_its_limits_does_not_reject_the_reply(
     assert result.dataframe.iloc[0][COL_PRIVACY_QA_REANSWER]["answers"][0]["reason"] == kept
 
 
-# --- Rewrite pipeline: a reply that never parses keeps the row with the site's unavailable value ---
+# --- Rewrite pipeline: a response that never parses keeps the row with the site's unavailable value ---
 
 _DOMAIN = "scripted-domain"
 
@@ -444,7 +444,7 @@ def _domain(tmp_path: Path, run_config: RunConfig | None = None):
     )
 
 
-def test_domain_reply_unparsed_on_every_attempt_keeps_the_row_as_other(
+def test_domain_response_unparsed_on_every_attempt_keeps_the_row_as_other(
     tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
 ) -> None:
     script, calls = scripted
@@ -461,7 +461,7 @@ def test_domain_reply_unparsed_on_every_attempt_keeps_the_row_as_other(
     assert calls[_DOMAIN] == 6  # the run config's budget (DataDesigner default: 5 restarts)
 
 
-def test_domain_reply_uses_the_run_config_restarts_and_corrections(
+def test_domain_response_uses_the_run_config_restarts_and_corrections(
     tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
 ) -> None:
     script, calls = scripted
@@ -475,7 +475,7 @@ def test_domain_reply_uses_the_run_config_restarts_and_corrections(
     assert calls[_DOMAIN] == 6
 
 
-def test_domain_reply_that_parses_is_kept_as_returned(
+def test_domain_response_that_parses_is_kept_as_returned(
     tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
 ) -> None:
     script, calls = scripted
@@ -489,7 +489,7 @@ def test_domain_reply_that_parses_is_kept_as_returned(
     assert calls[_DOMAIN] == 2
 
 
-def test_domain_reply_of_other_at_zero_confidence_is_a_reply_not_the_fallback(
+def test_domain_response_of_other_at_zero_confidence_is_a_response_not_the_fallback(
     tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
 ) -> None:
     script, calls = scripted
@@ -542,7 +542,7 @@ def _qa_pipeline(tmp_path: Path):
     )
 
 
-def test_meaning_units_reply_unparsed_keeps_the_row_and_skips_the_quality_questions(
+def test_meaning_units_response_unparsed_keeps_the_row_and_skips_the_quality_questions(
     tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
 ) -> None:
     script, calls = scripted
@@ -673,7 +673,7 @@ def _rewrite(tmp_path: Path):
     )
 
 
-def test_rewrite_reply_unparsed_on_every_attempt_keeps_the_row_without_a_rewrite(
+def test_rewrite_response_unparsed_on_every_attempt_keeps_the_row_without_a_rewrite(
     tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
 ) -> None:
     script, calls = scripted

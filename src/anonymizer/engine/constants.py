@@ -117,7 +117,7 @@ COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES = "attribute_fidelity_invalid_entities" 
 # Internal columns (prefixed with _)
 
 COL_DOMAIN = "_domain"
-COL_DOMAIN_UNAVAILABLE = "_domain_unavailable"  # internal: whether _domain holds the fallback, not a reply
+COL_DOMAIN_UNAVAILABLE = "_domain_unavailable"  # internal: whether _domain holds the fallback, not a response
 COL_DOMAIN_SUPPLEMENT = "_domain_supplement"
 COL_DOMAIN_SUPPLEMENT_PRIVACY = "_domain_supplement_privacy"
 COL_ENTITY_CLASSIFICATION_LOCAL = "_entity_classification_local"  # label -> category, from the default table

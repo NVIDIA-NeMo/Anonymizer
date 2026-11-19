@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""A model's reply to one structured question: parsed, parsed with defaults, or unavailable."""
+"""A model's response to one structured question: parsed, parsed with defaults, or unavailable."""
 
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ from data_designer.engine.models.errors import ModelGenerationValidationFailureE
 
 T = TypeVar("T")
 
-ReplyState = Literal["parsed", "defaulted", "unavailable"]
+ResponseState = Literal["parsed", "defaulted", "unavailable"]
 
-UNPARSEABLE_REPLY = "unparseable_reply"
+UNPARSEABLE_RESPONSE = "unparseable_response"
 
 
 @dataclass(frozen=True)
@@ -32,16 +32,16 @@ class RetryBudget:
 
 
 @dataclass(frozen=True)
-class ModelReply(Generic[T]):
+class ModelResponse(Generic[T]):
     """One question's answer: ``parsed``; ``defaulted`` when the parser filled items the model omitted with their
     fail-closed default (only omitted items: a field the schema fills for an explicit null does not count); or
-    ``unavailable`` when no reply parsed within the budget.
+    ``unavailable`` when no response parsed within the budget.
 
     ``value`` is ``None`` only when unavailable. ``cause`` is a fixed code, never the model's text. ``requests`` is
-    the number of replies the model returned.
+    the number of responses the model returned.
     """
 
-    state: ReplyState
+    state: ResponseState
     value: T | None
     cause: str = ""
     requests: int = 0
@@ -52,30 +52,30 @@ async def ask(
     prompt: str,
     parser: Callable[[str], tuple[T, bool]],
     budget: RetryBudget,
-) -> ModelReply[T]:
+) -> ModelResponse[T]:
     """Ask ``model`` through its facade's ``agenerate``; ``parser`` returns the value and whether it filled defaults.
 
-    A reply that still does not parse once the budget is spent is ``unavailable``. Any other error, such as a
+    A response that still does not parse once the budget is spent is ``unavailable``. Any other error, such as a
     provider failure, propagates.
     """
-    reply, _ = await ask_with_trace(
+    response, _ = await ask_with_trace(
         model,
         parser,
         prompt=prompt,
         max_correction_steps=budget.corrections,
         max_conversation_restarts=budget.restarts,
     )
-    return reply
+    return response
 
 
 async def ask_with_trace(
     model: Any,
     parser: Callable[[str], tuple[T, bool]],
     **request: Any,
-) -> tuple[ModelReply[T], list[Any]]:
+) -> tuple[ModelResponse[T], list[Any]]:
     """``ask`` with the facade's request arguments passed as given, returning the conversation trace too.
 
-    The trace is empty when the reply is unavailable.
+    The trace is empty when the response is unavailable.
     """
     requests = 0
 
@@ -87,10 +87,10 @@ async def ask_with_trace(
     try:
         (value, defaulted), trace = await model.agenerate(parser=counted, **request)
     except ModelGenerationValidationFailureError:
-        return ModelReply("unavailable", None, UNPARSEABLE_REPLY, requests), []
-    return ModelReply("defaulted" if defaulted else "parsed", value, "", requests), trace
+        return ModelResponse("unavailable", None, UNPARSEABLE_RESPONSE, requests), []
+    return ModelResponse("defaulted" if defaulted else "parsed", value, "", requests), trace
 
 
-def no_reply(cell: object) -> bool:
-    """Whether a stored reply cell holds no reply: ``None``, or the missing value a frame gives it."""
+def no_response(cell: object) -> bool:
+    """Whether a stored response cell holds no response: ``None``, or the missing value a frame gives it."""
     return cell is None or cell is pd.NA or (isinstance(cell, float) and cell != cell)

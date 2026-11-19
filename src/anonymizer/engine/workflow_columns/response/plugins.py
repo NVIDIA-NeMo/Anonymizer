@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from data_designer.plugins import Plugin, PluginType
 
-reply_column_plugin = Plugin(
-    config_qualified_name="anonymizer.engine.workflow_columns.reply.config.ReplyColumnConfig",
-    impl_qualified_name="anonymizer.engine.workflow_columns.reply.impl.ReplyColumnGenerator",
+response_column_plugin = Plugin(
+    config_qualified_name="anonymizer.engine.workflow_columns.response.config.ResponseColumnConfig",
+    impl_qualified_name="anonymizer.engine.workflow_columns.response.impl.ResponseColumnGenerator",
     plugin_type=PluginType.COLUMN_GENERATOR,
 )

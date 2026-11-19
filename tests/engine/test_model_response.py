@@ -10,47 +10,47 @@ import pandas as pd
 import pytest
 from data_designer.engine.models.errors import ModelGenerationValidationFailureError, ModelTimeoutError
 
-from anonymizer.engine.ndd.model_reply import ModelReply, RetryBudget, ask, no_reply
+from anonymizer.engine.ndd.model_response import ModelResponse, RetryBudget, ask, no_response
 
 
 class _Facade:
-    """Feeds ``replies`` to the parser in order; raises the facade's parse failure when they run out."""
+    """Feeds ``responses`` to the parser in order; raises the facade's parse failure when they run out."""
 
-    def __init__(self, *replies: str) -> None:
-        self.replies = list(replies)
+    def __init__(self, *responses: str) -> None:
+        self.responses = list(responses)
         self.kwargs: dict[str, Any] = {}
 
     async def agenerate(self, *, prompt: str, parser: Any, **kwargs: Any) -> tuple[Any, list]:
         self.kwargs = kwargs
-        for reply in self.replies:
+        for response in self.responses:
             try:
-                return parser(reply), []
+                return parser(response), []
             except ValueError:
                 continue
         raise ModelGenerationValidationFailureError("could not be parsed")
 
 
-def _parser(reply: str) -> tuple[str, bool]:
-    if reply == "bad":
-        raise ValueError(reply)
-    return reply, reply == "partial"
+def _parser(response: str) -> tuple[str, bool]:
+    if response == "bad":
+        raise ValueError(response)
+    return response, response == "partial"
 
 
 @pytest.mark.parametrize(
-    ("replies", "expected"),
+    ("responses", "expected"),
     [
-        (("ok",), ModelReply("parsed", "ok", "", 1)),
-        (("bad", "partial"), ModelReply("defaulted", "partial", "", 2)),
-        (("bad", "bad"), ModelReply("unavailable", None, "unparseable_reply", 2)),
+        (("ok",), ModelResponse("parsed", "ok", "", 1)),
+        (("bad", "partial"), ModelResponse("defaulted", "partial", "", 2)),
+        (("bad", "bad"), ModelResponse("unavailable", None, "unparseable_response", 2)),
     ],
     ids=["parsed", "defaulted", "unavailable"],
 )
-def test_ask_states(replies: tuple[str, ...], expected: ModelReply[str]) -> None:
-    facade = _Facade(*replies)
+def test_ask_states(responses: tuple[str, ...], expected: ModelResponse[str]) -> None:
+    facade = _Facade(*responses)
 
-    reply = asyncio.run(ask(facade, "prompt", _parser, RetryBudget(corrections=3, restarts=1)))
+    response = asyncio.run(ask(facade, "prompt", _parser, RetryBudget(corrections=3, restarts=1)))
 
-    assert reply == expected
+    assert response == expected
     assert facade.kwargs == {"max_correction_steps": 3, "max_conversation_restarts": 1}
 
 
@@ -68,5 +68,5 @@ def test_budget_bounds_requests() -> None:
 
 
 @pytest.mark.parametrize(("cell", "expected"), [(None, True), (pd.NA, True), (float("nan"), True), ({}, False)])
-def test_no_reply(cell: object, expected: bool) -> None:
-    assert no_reply(cell) is expected
+def test_no_response(cell: object, expected: bool) -> None:
+    assert no_response(cell) is expected

@@ -22,7 +22,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import Domain, DomainClassificationSchema
-from anonymizer.engine.workflow_columns.reply.config import ReplyColumnConfig
+from anonymizer.engine.workflow_columns.response.config import ResponseColumnConfig
 
 # ---------------------------------------------------------------------------
 # Single source of truth for rewrite-domain metadata.
@@ -275,8 +275,8 @@ class DomainClassificationWorkflow:
     ) -> list[ColumnConfigT]:
         domain_alias = resolve_model_alias("domain_classifier", selected_models)
         return [
-            # The domain only selects prompt guidance, so a reply that never parses falls back to OTHER.
-            ReplyColumnConfig(
+            # The domain only selects prompt guidance, so a response that never parses falls back to OTHER.
+            ResponseColumnConfig(
                 name=COL_DOMAIN,
                 prompt=_get_domain_classification_prompt(data_summary),
                 model_alias=domain_alias,

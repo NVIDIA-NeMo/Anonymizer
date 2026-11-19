@@ -30,7 +30,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-from anonymizer.engine.ndd.model_reply import ModelReply, RetryBudget, ask, no_reply
+from anonymizer.engine.ndd.model_response import ModelResponse, RetryBudget, ask, no_response
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.findings import needs_repair
 from anonymizer.engine.rewrite.parsers import (
@@ -299,7 +299,7 @@ def _make_qa_compare_parser(
 
 
 def _omits(raw_items: Any, expected_ids: list[int]) -> bool:
-    """Whether a reply's items leave out an expected id, which ``_normalize_answer_items`` then defaults."""
+    """Whether a response's items leave out an expected id, which ``_normalize_answer_items`` then defaults."""
     given = {item.get("id") for item in raw_items if isinstance(item, dict)} if isinstance(raw_items, list) else set()
     return not set(expected_ids) <= given
 
@@ -433,7 +433,7 @@ def _make_quality_reanswer_column(evaluator_alias: str) -> Any:
         model_aliases=[evaluator_alias],
     )
     async def _quality_reanswer(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
-        if no_reply(row.get(COL_QUALITY_QA)) or no_reply(row.get(COL_REWRITTEN_TEXT)):
+        if no_response(row.get(COL_QUALITY_QA)) or no_response(row.get(COL_REWRITTEN_TEXT)):
             row[COL_QUALITY_QA_REANSWER] = None  # no quality questions, or no rewrite, to answer from
             return row
         qa = parse_quality_qa(row.get(COL_QUALITY_QA, {}))
@@ -442,8 +442,8 @@ def _make_quality_reanswer_column(evaluator_alias: str) -> Any:
         recipe = PydanticResponseRecipe(data_type=QualityAnswersSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_quality_reanswer_prompt(row))
         parser = _make_quality_answer_parser(recipe, expected_ids)
-        reply = await ask(models[evaluator_alias], prompt, parser, EVALUATE_BUDGET)
-        row[COL_QUALITY_QA_REANSWER] = _stored(reply, COL_QUALITY_QA_REANSWER)
+        response = await ask(models[evaluator_alias], prompt, parser, EVALUATE_BUDGET)
+        row[COL_QUALITY_QA_REANSWER] = _stored(response, COL_QUALITY_QA_REANSWER)
         return row
 
     return _quality_reanswer
@@ -455,7 +455,7 @@ def _make_privacy_reanswer_column(evaluator_alias: str) -> Any:
         model_aliases=[evaluator_alias],
     )
     async def _privacy_reanswer(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
-        if no_reply(row.get(COL_REWRITTEN_TEXT)):
+        if no_response(row.get(COL_REWRITTEN_TEXT)):
             row[COL_PRIVACY_QA_REANSWER] = None  # no rewrite to assess; its text is unavailable already
             return row
         qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
@@ -464,8 +464,8 @@ def _make_privacy_reanswer_column(evaluator_alias: str) -> Any:
         recipe = PydanticResponseRecipe(data_type=PrivacyAnswersSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_privacy_reanswer_prompt(row))
         parser = _make_privacy_answer_parser(recipe, expected_ids)
-        reply = await ask(models[evaluator_alias], prompt, parser, EVALUATE_BUDGET)
-        row[COL_PRIVACY_QA_REANSWER] = _stored(reply, COL_PRIVACY_QA_REANSWER)
+        response = await ask(models[evaluator_alias], prompt, parser, EVALUATE_BUDGET)
+        row[COL_PRIVACY_QA_REANSWER] = _stored(response, COL_PRIVACY_QA_REANSWER)
         return row
 
     return _privacy_reanswer
@@ -477,7 +477,7 @@ def _make_quality_compare_column(evaluator_alias: str) -> Any:
         model_aliases=[evaluator_alias],
     )
     async def _quality_compare(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
-        if no_reply(row.get(COL_QUALITY_QA_REANSWER)):
+        if no_response(row.get(COL_QUALITY_QA_REANSWER)):
             row[COL_QUALITY_QA_COMPARE] = None  # nothing to compare
             return row
         qa = parse_quality_qa(row.get(COL_QUALITY_QA, {}))
@@ -486,21 +486,23 @@ def _make_quality_compare_column(evaluator_alias: str) -> Any:
         recipe = PydanticResponseRecipe(data_type=QACompareResultsSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_quality_compare_prompt(row))
         parser = _make_qa_compare_parser(recipe, expected_ids)
-        reply = await ask(models[evaluator_alias], prompt, parser, EVALUATE_BUDGET)
-        row[COL_QUALITY_QA_COMPARE] = _stored(reply, COL_QUALITY_QA_COMPARE)
+        response = await ask(models[evaluator_alias], prompt, parser, EVALUATE_BUDGET)
+        row[COL_QUALITY_QA_COMPARE] = _stored(response, COL_QUALITY_QA_COMPARE)
         return row
 
     return _quality_compare
 
 
-def _stored(reply: ModelReply[BaseModel], column: str) -> dict[str, Any] | None:
-    """The column value for ``reply``: its payload, or ``None`` when unavailable, which keeps the row."""
-    if reply.value is None:
-        logger.warning("%s unavailable after %d replies (%s); keeping the row.", column, reply.requests, reply.cause)
+def _stored(response: ModelResponse[BaseModel], column: str) -> dict[str, Any] | None:
+    """The column value for ``response``: its payload, or ``None`` when unavailable, which keeps the row."""
+    if response.value is None:
+        logger.warning(
+            "%s unavailable after %d responses (%s); keeping the row.", column, response.requests, response.cause
+        )
         return None
-    if reply.state == "defaulted":
-        logger.debug("%s defaulted omitted items after %d replies.", column, reply.requests)
-    return reply.value.model_dump()
+    if response.state == "defaulted":
+        logger.debug("%s defaulted omitted items after %d responses.", column, response.requests)
+    return response.value.model_dump()
 
 
 # ---------------------------------------------------------------------------
@@ -515,16 +517,16 @@ def _stored(reply: ModelReply[BaseModel], column: str) -> dict[str, Any] | None:
 def _compute_metrics_columns(row: dict[str, Any], generator_params: MetricsParams) -> dict[str, Any]:
     """Compute utility_score, leakage_mass, weighted_leakage_rate, and any_high_leaked from evaluation outputs.
 
-    A metric whose model reply is unavailable is ``None``, which the findings read as unavailable evidence.
+    A metric whose model response is unavailable is ``None``, which the findings read as unavailable evidence.
     """
     row[COL_UTILITY_SCORE] = row[COL_LEAKAGE_MASS] = row[COL_WEIGHTED_LEAKAGE_RATE] = row[COL_ANY_HIGH_LEAKED] = None
-    if not no_reply(row.get(COL_QUALITY_QA_COMPARE)):
+    if not no_response(row.get(COL_QUALITY_QA_COMPARE)):
         ids, compare_scores = parse_quality_compare(row.get(COL_QUALITY_QA_COMPARE))
         qa = parse_quality_qa(row.get(COL_QUALITY_QA, {}))
         importance_lookup = {item.id: item.importance for item in qa.items}
         importance_levels = [importance_lookup.get(i, "important") for i in ids]
         row[COL_UTILITY_SCORE] = compute_utility_score(compare_scores, importance_levels)
-    if no_reply(row.get(COL_PRIVACY_QA_REANSWER)):
+    if no_response(row.get(COL_PRIVACY_QA_REANSWER)):
         return row
     privacy_answers = parse_privacy_answers(row.get(COL_PRIVACY_QA_REANSWER))
     privacy_qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
