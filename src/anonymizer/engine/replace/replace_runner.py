@@ -187,7 +187,7 @@ class ReplacementWorkflow:
         Entity coverage always runs for every replace strategy. Substitute also
         runs type fidelity, relational consistency, and attribute fidelity.
         Detection validity runs only when ``compute_detection_validity=True``.
-        All active judges are submitted as columns of one DataDesigner workflow.
+        Each active judge runs as its own DataDesigner workflow, one after another.
 
         ``entity_labels`` and ``excluded_entity_labels`` together define the label
         scope passed to the coverage judge — only entities whose labels were in
