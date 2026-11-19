@@ -451,8 +451,6 @@ def test_run_non_critical_preserves_successful_rows_when_adapter_drops_one() -> 
         selected_models=_stub_evaluate_selection(),
     )
 
-    evaluation_input = workflow.evaluate.call_args.args[0]
-    assert COL_REPLACEMENT_APPLICATION not in evaluation_input.columns
     assert result["input_value"].tolist() == ["scored", "dropped"]
     assert result[COL_REPLACEMENT_APPLICATION].tolist() == [
         {

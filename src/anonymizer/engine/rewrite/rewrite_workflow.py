@@ -827,8 +827,12 @@ class RewriteWorkflow:
                 source_positions=judge_result.source_positions,
             )
             return df, judge_result.failed_records
-        except Exception:
-            logger.debug("Rewrite judge workflow failed; scores may be unavailable.")
+        except Exception as exc:
+            logger.warning(
+                "Rewrite final judge failed (%s); judge_evaluation is unavailable for %d row(s).",
+                type(exc).__name__,
+                len(df),
+            )
             df[COL_JUDGE_EVALUATION] = None
             return df, []
 
@@ -892,8 +896,12 @@ class RewriteWorkflow:
                 # Convert bool all_valid → 0–1 fraction so detection validity sits on the
                 # same scale as utility_score and leakage_mass in the rewrite scores section.
                 rows.frame[COL_DETECTION_VALID] = rows.frame.apply(_detection_valid_fraction, axis=1)
-            except Exception:
-                logger.debug("Detection validity judge failed; scores may be unavailable.")
+            except Exception as exc:
+                logger.warning(
+                    "Detection validity judge failed (%s); detection_valid is unavailable for %d row(s).",
+                    type(exc).__name__,
+                    len(rows.frame),
+                )
                 rows.frame[COL_DETECTION_VALID] = None
                 rows.frame[COL_DETECTION_INVALID_ENTITIES] = None
 
