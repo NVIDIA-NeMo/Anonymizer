@@ -292,7 +292,8 @@ def _rewrite_entry(row: dict[str, object]) -> dict[str, object] | RewriteUnavail
 
 
 def _no_placeholder(text: str, replacement_map: object) -> bool:
-    """Whether no placeholder substitute of the row's replacement map appears in ``text``; ``True`` without a map.
+    """Whether no placeholder substitute of the row's replacement map appears in ``text``, in any case; ``True``
+    without a map.
 
     A placeholder stands in for a substitute that collided with a value in the record. It leaks nothing, but text
     that carries one is visibly broken, so it is not released as protected.
@@ -309,7 +310,8 @@ def _no_placeholder(text: str, replacement_map: object) -> bool:
         and isinstance(entry.get("synthetic"), str)
         and is_placeholder(entry["label"], entry["synthetic"])
     ]
-    return not any(placeholder in text for placeholder in placeholders)
+    folded = text.casefold()
+    return not any(placeholder.casefold() in folded for placeholder in placeholders)
 
 
 def _leftover_metrics(row: Mapping[str, object]) -> dict[str, bool | str | None]:

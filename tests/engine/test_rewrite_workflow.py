@@ -1970,6 +1970,16 @@ def _run_outcome(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
             "She moved to [SUBSTITUTE_STATE_1] in 2019.",
             id="proposal-is-itself",
         ),
+        pytest.param(
+            [
+                {"original": "Elena", "label": "first_name", "synthetic": "Clara"},
+                {"original": "MAYA", "label": "first_name", "synthetic": "ELENA"},
+                {"original": "Maya", "label": "first_name", "synthetic": "Elena"},
+            ],
+            {"Elena", "MAYA", "Maya"},
+            "[Substitute_First_Name_1] studied with Clara.",
+            id="re-cased-for-a-variant",
+        ),
     ],
 )
 def test_placeholder_in_released_text_fails_a_final_check(

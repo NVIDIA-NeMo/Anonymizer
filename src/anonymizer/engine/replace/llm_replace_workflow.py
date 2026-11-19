@@ -549,9 +549,10 @@ def _placeholder_prefix(label: str) -> str:
 
 
 def is_placeholder(label: str, synthetic: str) -> bool:
-    """Whether ``synthetic`` is a placeholder ``_collision_safe_synthetic`` builds for ``label``."""
-    prefix = _placeholder_prefix(label)
-    return synthetic.startswith(prefix) and synthetic.endswith("]") and synthetic[len(prefix) : -1].isdigit()
+    """Whether ``synthetic`` is a placeholder ``_collision_safe_synthetic`` builds for ``label``, in any case (the fold
+    re-cases a substitute to each variant of its original)."""
+    prefix = _placeholder_prefix(label).casefold()
+    return synthetic.casefold().startswith(prefix) and synthetic.endswith("]") and synthetic[len(prefix) : -1].isdigit()
 
 
 def _collision_safe_synthetic(label: str, *, index: int, protected_original_values: tuple[Container[str], ...]) -> str:
