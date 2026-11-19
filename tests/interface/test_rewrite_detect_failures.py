@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import cast
 from unittest.mock import Mock
@@ -32,7 +33,9 @@ from anonymizer.interface.anonymizer import Anonymizer
 
 
 @pytest.mark.parametrize("rejected", [[0], [0, 1]])
-def test_rewrite_reports_rows_that_fail_detection(tmp_path: Path, rejected: list[int]) -> None:
+def test_rewrite_reports_rows_that_fail_detection(
+    tmp_path: Path, rejected: list[int], caplog: pytest.LogCaptureFixture
+) -> None:
     texts = ["Alice Smith lives here", "Bob Jones is here"]
     csv_path = tmp_path / "input.csv"
     pd.DataFrame({"text": texts}).to_csv(csv_path, index=False)
@@ -71,7 +74,8 @@ def test_rewrite_reports_rows_that_fail_detection(tmp_path: Path, rejected: list
             return produce
 
     anon = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, Detector()), rewrite_runner=StubRewrite(Mock()))
-    result = anon.run(config=AnonymizerConfig(rewrite=Rewrite()), data=AnonymizerInput(source=str(csv_path)))
+    with caplog.at_level(logging.INFO, logger="anonymizer"):
+        result = anon.run(config=AnonymizerConfig(rewrite=Rewrite()), data=AnonymizerInput(source=str(csv_path)))
 
     kept = [t for row, t in enumerate(texts) if row not in rejected]
     assert seen == ([kept] if kept else [])
@@ -79,3 +83,6 @@ def test_rewrite_reports_rows_that_fail_detection(tmp_path: Path, rejected: list
     assert result.failed_records == [
         FailedRecord(str(row), "detect", "overlapping_output_ownership") for row in rejected
     ]
+    # A record failed at detect is counted under detection, not rewrite.
+    detected = f"across {len(texts) - len(rejected)} records ({len(rejected)} failed)"
+    assert detected in caplog.text and "Rewrite complete (0 failed)" in caplog.text

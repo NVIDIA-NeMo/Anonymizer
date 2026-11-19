@@ -1123,11 +1123,13 @@ class Anonymizer:
                 outcomes = rewrite_result.outcomes
             final_df = rewrite_result.dataframe
         entity_count = _count_entities(detected_df)
-        detection_failed = len(detection_failures)
+        # Rows the graph rejects at its ``detect`` step come back with the later steps' failures; count them here.
+        rejected_at_detect = sum(f.step == "detect" for f in post_detection_failures)
+        detection_failed = len(detection_failures) + rejected_at_detect
         logger.info(
             LOG_INDENT + "📋 Detection complete — %d entities found across %d records (%d failed) [%.1fs]",
             entity_count,
-            len(detected_df),
+            len(detected_df) - rejected_at_detect,
             detection_failed,
             detection_elapsed,
         )
@@ -1138,7 +1140,7 @@ class Anonymizer:
         logger.info(
             LOG_INDENT + "📋 %s complete (%d failed) [%.1fs]",
             "Rewrite" if config.rewrite is not None else "Replacement",
-            len(post_detection_failures),
+            len(post_detection_failures) - rejected_at_detect,
             replacement_elapsed,
         )
 

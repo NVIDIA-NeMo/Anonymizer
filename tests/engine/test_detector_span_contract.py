@@ -132,6 +132,8 @@ def test_custom_detector_span_shape(shape: str, tmp_path: Path, caplog: pytest.L
         assert list(result.dataframe["text_replaced"]) == [control]
         assert result.failed_records == [FailedRecord("0", "detect", expected)]
         assert f"1 record(s) failed during pipeline processing: detect/{expected}=1." in caplog.text
+        # A record failed at detect is counted under detection, not replacement.
+        assert "across 1 records (1 failed)" in caplog.text and "Replacement complete (0 failed)" in caplog.text
     shown = [*result.dataframe["text_replaced"], *(f.reason for f in result.failed_records), caplog.text]
     assert not [value for value in PROTECTED for text in shown if value in text]
 
