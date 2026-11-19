@@ -385,8 +385,8 @@ def test_run_keeps_review_flag_for_unavailable_utility(
     output[COL_ANY_HIGH_LEAKED] = False
     output[COL_NEEDS_REPAIR] = False
     output[COL_REPAIR_ITERATIONS] = 0
-    # The combined finalizer flags the row whose utility is unavailable.
-    output[COL_NEEDS_HUMAN_REVIEW] = [True, False]
+    # The finalizer's placeholder: the review step must flag the row whose utility is unavailable.
+    output[COL_NEEDS_HUMAN_REVIEW] = [False, False]
     adapter = Mock()
     adapter.run_workflow.return_value = _positional(dataframe=output, failed_records=[])
 
