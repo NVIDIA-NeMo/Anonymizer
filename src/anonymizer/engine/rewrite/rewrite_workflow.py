@@ -68,7 +68,6 @@ from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
-    restore_empty_skipped_span_label_counts,
 )
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
 from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
@@ -765,7 +764,6 @@ class RewriteWorkflow:
             workflow_name="rewrite-pipeline",
             preview_num_records=preview_num_records,
         )
-        restore_empty_skipped_span_label_counts(pipeline_result.dataframe)
         rows.frame = _join_new_columns(
             rows.frame, pipeline_result.dataframe, source_positions=pipeline_result.source_positions
         )

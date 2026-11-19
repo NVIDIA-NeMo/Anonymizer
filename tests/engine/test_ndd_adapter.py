@@ -10,18 +10,24 @@ from unittest.mock import Mock
 
 import pandas as pd
 import pytest
-from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTextColumnConfig
+from data_designer.config.column_configs import LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
 from data_designer.config.seed_source import LocalFileSeedSource
+from data_designer.engine.errors import DataDesignerRuntimeError
+from data_designer.errors import DataDesignerError
 from data_designer.interface.data_designer import DataDesigner
+from data_designer.interface.errors import (
+    DataDesignerEarlyShutdownError,
+    DataDesignerGenerationError,
+    DataDesignerProfilingError,
+    DataDesignerWorkflowError,
+)
 
 from anonymizer.engine.constants import RECORD_ID_COLUMN
-from anonymizer.engine.detection.detection_workflow import _PrivatePromptLLMStructuredColumnConfig
 from anonymizer.engine.ndd import adapter as ndd_adapter
 from anonymizer.engine.ndd.adapter import NddAdapter
-from anonymizer.engine.schemas import AugmentedEntitiesSchema
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
 _FORBIDDEN_BACKEND_STRINGS = ("Data Designer", "DataDesigner", "data_designer", "DD")
@@ -70,25 +76,6 @@ def _make_columns() -> list[ColumnConfigT]:
 
 def test_as_alias_list_drops_none_items_before_stringifying() -> None:
     assert ndd_adapter._as_alias_list(["validator", None, "", 0]) == ["validator", "0"]
-
-
-def test_private_structured_config_normalizes_to_registered_type() -> None:
-    prompt = "Sensitive prompt content"
-    private_config = _PrivatePromptLLMStructuredColumnConfig(
-        name="entities",
-        prompt=prompt,
-        model_alias="test-model-alias",
-        output_format=AugmentedEntitiesSchema,
-    )
-
-    normalized = ndd_adapter._normalize_column_for_data_designer(private_config)
-
-    assert type(normalized) is LLMStructuredColumnConfig
-    assert normalized.prompt == prompt
-    assert normalized.output_format == private_config.output_format
-    assert isinstance(normalized.output_format, dict)
-    assert normalized.output_format["title"] == "AugmentedEntitiesSchema"
-    assert prompt not in repr(private_config)
 
 
 def test_attach_record_ids_adds_deterministic_ids() -> None:
@@ -233,9 +220,6 @@ def test_preview_exception_wraps_in_workflow_error_and_logs(
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
 
-    class DataDesignerRuntimeError(Exception):
-        pass
-
     mock_dd = Mock(spec=DataDesigner)
     mock_dd.preview.side_effect = DataDesignerRuntimeError("endpoint unreachable")
 
@@ -276,9 +260,6 @@ def test_create_exception_wraps_in_workflow_error_and_logs(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
-
-    class DataDesignerRuntimeError(Exception):
-        pass
 
     mock_dd = Mock(spec=DataDesigner)
     mock_dd.create.side_effect = DataDesignerRuntimeError("quota exceeded")
@@ -321,9 +302,6 @@ def test_load_dataset_exception_wraps_in_workflow_error_and_logs(
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
 
-    class DataDesignerRuntimeError(Exception):
-        pass
-
     mock_dd = Mock(spec=DataDesigner)
     mock_create_results = Mock()
     mock_create_results.load_dataset.side_effect = DataDesignerRuntimeError("corrupt parquet")
@@ -361,3 +339,69 @@ def test_load_dataset_exception_wraps_in_workflow_error_and_logs(
     assert "replace-workflow" not in debug_msg
     assert "output" not in debug_msg
     _assert_no_backend_reference(debug_msg)
+
+
+def test_workflow_failure_warning_names_exception_class_but_not_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
+
+    class EndpointUnreachableError(Exception):
+        pass
+
+    mock_dd = Mock(spec=DataDesigner)
+    mock_dd.create.side_effect = EndpointUnreachableError("SENTINEL-RECORD-TEXT")
+
+    adapter = NddAdapter(data_designer=mock_dd)
+    input_df = pd.DataFrame({"text": ["row-1", "row-2"]})
+
+    with pytest.raises(AnonymizerWorkflowError):
+        adapter.run_workflow(
+            input_df,
+            model_configs=[_make_model_config()],
+            columns=_make_columns(),
+            workflow_name="replace-workflow",
+            preview_num_records=None,
+        )
+
+    warning_records = _unique_records(caplog, level=logging.WARNING, message_contains="Workflow failed")
+    assert len(warning_records) == 1
+    warning_msg = warning_records[0].getMessage()
+    assert "EndpointUnreachableError" in warning_msg
+    assert "SENTINEL-RECORD-TEXT" not in caplog.text
+
+
+_BACKEND_EXCEPTION_LABELS = [
+    (DataDesignerError, "BackendError"),
+    (DataDesignerGenerationError, "GenerationError"),
+    (DataDesignerRuntimeError, "RuntimeError"),
+    (DataDesignerWorkflowError, "WorkflowError"),
+    (DataDesignerEarlyShutdownError, "EarlyShutdownError"),
+    (DataDesignerProfilingError, "ProfilingError"),
+]
+
+
+@pytest.mark.parametrize(("exc_class", "label"), _BACKEND_EXCEPTION_LABELS)
+def test_workflow_failure_warning_shortens_backend_exception_class(
+    caplog: pytest.LogCaptureFixture, exc_class: type[Exception], label: str
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
+    mock_dd = Mock(spec=DataDesigner)
+    mock_dd.create.side_effect = exc_class("SENTINEL-RECORD-TEXT")
+
+    adapter = NddAdapter(data_designer=mock_dd)
+    with pytest.raises(AnonymizerWorkflowError):
+        adapter.run_workflow(
+            pd.DataFrame({"text": ["row-1"]}),
+            model_configs=[_make_model_config()],
+            columns=_make_columns(),
+            workflow_name="replace-workflow",
+            preview_num_records=None,
+        )
+
+    warning_records = _unique_records(caplog, level=logging.WARNING, message_contains="Workflow failed")
+    assert len(warning_records) == 1
+    warning_msg = warning_records[0].getMessage()
+    assert warning_msg.endswith(f": {label}.")
+    _assert_no_backend_reference(warning_msg)
+    assert "SENTINEL-RECORD-TEXT" not in caplog.text

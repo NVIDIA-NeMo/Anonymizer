@@ -1909,7 +1909,12 @@ def test_record_metrics_counts_missing_replacement_map_entries_without_raw_value
     assert "Maya" not in serialized
 
 
-def test_record_metrics_separates_map_entries_from_span_application() -> None:
+@pytest.mark.parametrize(
+    "label_counts",
+    [{"first_name": 1}, json.dumps({"first_name": 1}, sort_keys=True)],
+    ids=["dict", "json-text"],
+)
+def test_record_metrics_separates_map_entries_from_span_application(label_counts: object) -> None:
     dataframe = pd.DataFrame(
         {
             COL_TEXT: ["Alice met Alice and Alice"],
@@ -1931,7 +1936,7 @@ def test_record_metrics_separates_map_entries_from_span_application() -> None:
                     "targeted_span_count": 3,
                     "applied_span_count": 2,
                     "skipped_span_count": 1,
-                    "skipped_span_label_counts": {"first_name": 1},
+                    "skipped_span_label_counts": label_counts,
                 }
             ],
         }

@@ -8,7 +8,7 @@ import logging
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar, cast
+from typing import cast
 
 import pandas as pd
 from data_designer.config.base import SkipConfig
@@ -16,7 +16,6 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTe
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
-from pydantic import Field
 
 from anonymizer.config.anonymizer_config import Detect as AnonymizerDetectConfig
 from anonymizer.config.anonymizer_config import resolve_effective_detection_labels
@@ -80,13 +79,6 @@ from anonymizer.engine.workflow_columns.detection.config import (
 from anonymizer.measurement import stage_timer
 
 logger = logging.getLogger("anonymizer.detection")
-
-
-class _PrivatePromptLLMStructuredColumnConfig(LLMStructuredColumnConfig):
-    """Structured column config whose prompt is omitted from repr-based setup logs."""
-
-    _normalize_for_data_designer: ClassVar[bool] = True
-    prompt: str = Field(repr=False)
 
 
 # Defaults for the two chunked-validation knobs. Sourced from the Detect config

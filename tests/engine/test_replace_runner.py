@@ -172,7 +172,7 @@ def test_substitute_runner_applies_generated_map(
         "targeted_span_count": 2,
         "applied_span_count": 2,
         "skipped_span_count": 0,
-        "skipped_span_label_counts": {},
+        "skipped_span_label_counts": "{}",
     }
 
 
@@ -227,12 +227,12 @@ def test_substitute_without_workflow_raises(
         )
 
 
-def test_evaluate_uses_merged_dd_workflow_for_judges(
+def test_evaluate_runs_one_dd_workflow_per_judge(
     stub_model_configs: list[ModelConfig],
     stub_evaluate_model_selection: EvaluateModelSelection,
 ) -> None:
-    """``evaluate()`` runs all 4 judges as columns of a SINGLE DD workflow call
-    (DataDesigner parallelizes the columns internally — no Python threads)."""
+    """``evaluate()`` runs each judge as its own DD workflow call, so a row one
+    judge cannot answer does not take the other judges' answers with it."""
 
     # Trace-shaped input: simulates a dataframe returned by a prior ``run()``.
     saved_trace = pd.DataFrame(
@@ -261,7 +261,7 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
                     "targeted_span_count": 2,
                     "applied_span_count": 2,
                     "skipped_span_count": 0,
-                    "skipped_span_label_counts": {},
+                    "skipped_span_label_counts": "{}",
                 }
             ],
         }
@@ -307,10 +307,10 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
         selected_models=stub_evaluate_model_selection,
     )
 
-    # Exactly ONE adapter call for the judges step (proves merge, not 4 separate workflows).
-    assert adapter.run_workflow.call_count == 1
-    call_columns = adapter.run_workflow.call_args.kwargs["columns"]
-    assert {c.name for c in call_columns} == set(judge_defaults)
+    # One adapter call per judge, each with exactly that judge's column.
+    call_columns = [call.kwargs["columns"] for call in adapter.run_workflow.call_args_list]
+    assert all(len(columns) == 1 for columns in call_columns)
+    assert sorted(columns[0].name for columns in call_columns) == sorted(judge_defaults)
 
     # And each judge's output column ended up on the result.
     # Entity coverage is a float (1.0 = full coverage); replace judges use bool True.
@@ -320,7 +320,7 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
         "targeted_span_count": 2,
         "applied_span_count": 2,
         "skipped_span_count": 0,
-        "skipped_span_label_counts": {},
+        "skipped_span_label_counts": "{}",
     }
     for col in (
         COL_TYPE_FIDELITY_VALID,
@@ -473,9 +473,9 @@ def test_evaluate_preserves_all_rows_when_llm_drops_some(
     assert result.dataframe[COL_TYPE_FIDELITY_VALID].iloc[1] is None
     assert result.dataframe[COL_RELATIONAL_CONSISTENCY_VALID].iloc[1] is None
     assert result.dataframe[COL_ATTRIBUTE_FIDELITY_VALID].iloc[1] is None
-    # The drop is still visible via failed_records for downstream observability.
-    assert len(result.failed_records) == 1
-    assert result.failed_records[0].record_id == "id-1"
+    # The drop is still visible via failed_records, once per judge that dropped it.
+    assert len(result.failed_records) == len(judge_payload)
+    assert {record.record_id for record in result.failed_records} == {"id-1"}
 
 
 def test_runner_does_not_invoke_judges(
