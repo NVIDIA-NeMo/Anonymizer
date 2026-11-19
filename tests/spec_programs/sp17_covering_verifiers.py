@@ -162,7 +162,7 @@ def program() -> list[dict[str, str]]:
     # E17.5 coverage verdicts per row: 1.0 satisfied, a fraction leaked, None and NaN unavailable; evaluation
     # requires no checks, so it qualifies nothing.
     nan = float("nan")
-    coverage = _Judge("coverage", "metrics", COVERAGE_METRICS, (COL_ENTITY_COVERAGE,), _keep)
+    coverage = _Judge("coverage-judge", "metrics", COVERAGE_METRICS, (COL_ENTITY_COVERAGE,), _keep)
     _, _, r5 = _evaluate_on_graph(_frame(**{COL_ENTITY_COVERAGE: [1.0, 0.5, None, nan]}), "t", [coverage])
     quals5 = [r5.outcome(t).qualification for t in r5.targets]
     verdicts5 = [(a5.satisfied, a5.reason) for a5 in (r5.state.rows[i].outputs[1]["assessment"] for i in range(4))]

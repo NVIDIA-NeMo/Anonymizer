@@ -186,6 +186,32 @@ def test_nested_release_other_than_protected_is_rejected(release: str) -> None:
     assert rejected.value.code == "annotation_in_protected"
 
 
+@pytest.mark.parametrize(
+    ("steps", "duplicate"),
+    [
+        (lambda op: (op("rewrite"), op("rewrite")), "rewrite"),
+        (lambda op: (graph.Workflow("inner", (op("step"),)), op("inner/step")), "inner/step"),
+    ],
+    ids=["flat", "nested-path"],
+)
+def test_duplicate_flattened_operation_names_are_rejected(steps: Callable[[Any], tuple], duplicate: str) -> None:
+    """A producer read selects an operation by its flattened name, so two operations may not share one."""
+    scope = graph.GraphScope()
+    g = graph.ProtectionGraph(scope, (scope.datum("Alice"),))
+    with pytest.raises(graph.GraphRejection) as rejected:
+        graph.prepare(g, graph.Workflow("w", steps(lambda name: graph.Operation(name, lambda text: text))))
+    assert (rejected.value.code, rejected.value.detail) == ("duplicate_operation_name", duplicate)
+
+
+def test_value_from_an_unknown_producer_is_none() -> None:
+    scope = graph.GraphScope()
+    target = scope.datum("Alice")
+    workflow = graph.Workflow("w", (graph.Operation("rewrite", lambda text: "candidate"),))
+    result = graph.protect(graph.prepare(graph.ProtectionGraph(scope, (target,)), workflow))
+    assert result.value(target, producer="rewrite") == "candidate"
+    assert result.value(target, producer="unknown") is None
+
+
 def test_annotation_nested_in_protected_workflow_is_rejected() -> None:
     scope = graph.GraphScope()
     target = scope.datum("Alice")
