@@ -98,6 +98,28 @@ def test_shifted() -> None:
         Span(2, 5).shifted(-3)
 
 
+@pytest.mark.parametrize(
+    ("start", "end", "expected"),
+    [
+        (0, 3, Span(0, 3)),
+        (2, 6, Span(2, 6)),
+        (3, 3, None),
+        (4, 2, None),
+        (-1, 2, None),
+        (4, 7, None),
+    ],
+)
+def test_in_text_keeps_only_non_empty_ranges_of_the_text(start: int, end: int, expected: Span | None) -> None:
+    assert Span.in_text(start, end, "abcdef") == expected
+
+
+def test_cover_is_the_smallest_span_containing_them_all() -> None:
+    assert Span.cover([Span(4, 6), Span(1, 3), Span(2, 9), Span(5, 5)]) == Span(1, 9)
+    assert Span.cover(iter([Span(3, 3)])) == Span(3, 3)
+    with pytest.raises(ValueError, match="at least one"):
+        Span.cover([])
+
+
 def test_spans_is_an_ordered_set() -> None:
     spans = Spans([Span(5, 6), Span(0, 3), Span(5, 6), Span(0, 2)])
     assert list(spans) == [Span(0, 2), Span(0, 3), Span(5, 6)]

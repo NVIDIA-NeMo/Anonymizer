@@ -41,19 +41,34 @@ class Span:
     end: int
 
     def __post_init__(self) -> None:
-        for name in ("start", "end"):
-            bound = getattr(self, name)
-            if isinstance(bound, bool):
-                raise TypeError(f"Span bounds must be integers, got {bound!r}")
-            try:
-                object.__setattr__(self, name, operator.index(bound))
-            except TypeError:
-                raise TypeError(f"Span bounds must be integers, got {bound!r}") from None
+        if type(self.start) is not int or type(self.end) is not int:  # plain ints, the common case, need no check
+            for name in ("start", "end"):
+                bound = getattr(self, name)
+                if isinstance(bound, bool):
+                    raise TypeError(f"Span bounds must be integers, got {bound!r}")
+                try:
+                    object.__setattr__(self, name, operator.index(bound))
+                except TypeError:
+                    raise TypeError(f"Span bounds must be integers, got {bound!r}") from None
         if not 0 <= self.start <= self.end:
             raise ValueError(f"Span needs 0 <= start <= end, got start={self.start}, end={self.end}")
 
     def __repr__(self) -> str:
         return f"Span({self.start}, {self.end})"
+
+    @classmethod
+    def in_text(cls, start: int, end: int, text: str) -> Span | None:
+        """``Span(start, end)`` when the bounds are a range of ``text`` holding at least one character; ``None`` for an
+        empty, inverted or out-of-range pair."""
+        return cls(start, end) if 0 <= start < end <= len(text) else None
+
+    @classmethod
+    def cover(cls, spans: Iterable[Span]) -> Span:
+        """The smallest span containing every one of ``spans``, which must not be empty."""
+        items = tuple(spans)
+        if not items:
+            raise ValueError("Span.cover needs at least one span")
+        return cls(min(span.start for span in items), max(span.end for span in items))
 
     @property
     def length(self) -> int:
