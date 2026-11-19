@@ -1,8 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""``compile_values`` and ``count_values`` match as the per-call rule did, and the Replace check compiles each value
-once per call."""
+"""``count_values`` matches as the per-call rule does, and the Replace check compiles each value once per call."""
 
 from __future__ import annotations
 
@@ -17,21 +16,21 @@ import pytest
 from anonymizer.engine import value_matching
 from anonymizer.engine.graph_core.authoring import GraphScope, Mention
 from anonymizer.engine.replace.route import _verify_no_original
+from anonymizer.engine.schemas import EntitySchema
 from anonymizer.engine.spans import Span, Spans
 from anonymizer.engine.value_matching import (
     Leftover,
     _mapped,
     _normalized,
     _occurs,
-    any_value_occurs,
-    compile_values,
     count_values,
+    entity_spans,
     format_cause,
 )
 
 
 def _reference_any_value_occurs(values: Iterable[str], text: str) -> bool:
-    """``any_value_occurs`` as it was before ``compile_values``: every value normalized and matched per call."""
+    """The matching rule applied per call: every value normalized and matched on its own."""
     plain = _normalized(text)
     folded = plain.casefold()
     return any(_occurs(_normalized(value), plain, folded) for value in values)
@@ -72,33 +71,6 @@ def _corpus(size: int, seed: int = 20261117) -> list[tuple[list[str], str]]:
             values.append(text[start : start + rng.randint(1, 4)])
         pairs.append((values, text))
     return pairs
-
-
-def test_compile_values_matches_the_reference_on_a_seeded_corpus() -> None:
-    corpus = _corpus(20_000)
-    mismatches = [(v, t) for v, t in corpus if compile_values(v)(t) != _reference_any_value_occurs(v, t)]
-    assert mismatches == []
-    assert sum(any_value_occurs(v, t) for v, t in corpus) > 2_000  # the corpus exercises matches, not only misses
-
-
-@pytest.mark.parametrize(
-    ("values", "text", "expected"),
-    [
-        (["ID"], "my id is", False),  # a short code keeps its case
-        (["ID"], "my ID is", True),
-        (["alice"], "ALICE wrote", True),
-        (["Ali"], "Alice", False),  # no match inside a word
-        (["José"], "Jose\u0301 left", True),  # combining accent
-        (["中文"], "这是中文书", True),  # unspaced script: substring
-        (["中"], "中文", False),  # one unspaced character never matches
-        (["a_b"], "xa_b", False),  # underscore is not a boundary
-        (["", "  "], "anything", False),
-    ],
-)
-def test_compile_values_examples(values: list[str], text: str, expected: bool) -> None:
-    matcher = compile_values(values)
-    assert matcher(text) is expected
-    assert matcher(text) is _reference_any_value_occurs(values, text)
 
 
 @pytest.mark.parametrize(
@@ -287,3 +259,19 @@ def test_values_named_by_a_containing_span_keep_their_own_value(
 def test_a_value_keeps_the_form_it_was_given() -> None:
     (count,) = _counts("José met Jose.", [(0, 4)], "", ["José", "Jose"])
     assert (count.value, count.in_source) == ("José", 2)
+
+
+def test_entity_spans_keep_every_position_and_only_usable_spans() -> None:
+    source = "Ann met Bob."
+    raw = [("Bob", 8, 11), ("Ann", 0, 3), ("Bo", 8, 11), ("x", 4, 99), ("", 5, 5), ("Ann", -3, 0)]
+    entities = [
+        EntitySchema(value=v, label=f"l{i}", start_position=a, end_position=b) for i, (v, a, b) in enumerate(raw)
+    ]
+    assert entity_spans(source, entities) == [
+        (None, "l5"),  # negative start
+        (Span(0, 3), "l1"),
+        (None, "l3"),  # out of range
+        (None, "l4"),  # empty
+        (Span(8, 11), "l0"),
+        (None, "l2"),  # the slice is not the value
+    ]

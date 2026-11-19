@@ -28,6 +28,7 @@ from anonymizer.engine.constants import (
     COL_DOMAIN,
     COL_ENTITIES_BY_VALUE,
     COL_ENTITY_CLASSIFICATION,
+    COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
     COL_LEAKED_PRIVACY_ITEMS,
@@ -59,7 +60,7 @@ from anonymizer.engine.rewrite.rewrite_workflow import (
     RewriteWorkflow,
     _detection_valid_fraction,
     _join_new_columns,
-    _no_original_value,
+    _leftover_metrics,
 )
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import AnonymizerWorkflowError
@@ -1904,30 +1905,45 @@ def test_run_reports_each_rows_protection_outcome(tmp_path: Path) -> None:
     assert [reason.check for reason in result.outcome(1).reasons] == ["leakage_within_threshold"]
 
 
-def _run_outcome(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
-    """Run one ``Alice`` row through ``Anonymizer.run()`` with ``adapter`` and return its outcome."""
-    entities = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
+def _span(text: str, value: str, start: int = 0, label: str = "first_name") -> dict:
+    begin = text.index(value, start)
+    return {"value": value, "label": label, "start_position": begin, "end_position": begin + len(value)}
+
+
+def _run_result(
+    adapter: _ScriptedAdapter, tmp_path: Path, text: str = "Alice works at Acme", spans: list[dict] | None = None
+) -> Any:
+    """Run one row through ``Anonymizer.run()`` with ``adapter``; ``spans`` default to ``Alice`` at the start, and an
+    empty list leaves ``final_entities`` out."""
+    spans = [_span(text, "Alice")] if spans is None else spans
+    values = sorted({span["value"] for span in spans} or {"Alice"})
+    entities = {"entities_by_value": [{"value": value, "labels": ["first_name"]} for value in values]}
+    columns: dict[str, list[object]] = {RECORD_ID_COLUMN: ["rec"], COL_ENTITIES_BY_VALUE: [entities]}
+    if spans:
+        columns[COL_FINAL_ENTITIES] = [{"entities": spans}]
     detector = Mock(spec=EntityDetectionWorkflow)
     detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
-        dataframe=frame.assign(**{RECORD_ID_COLUMN: ["rec"], COL_ENTITIES_BY_VALUE: [entities]}),
-        failed_records=[],
-        source_positions=(0,),
+        dataframe=frame.assign(**columns), failed_records=[], source_positions=(0,)
     )
     csv_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(csv_path, index=False)
+    pd.DataFrame({"text": [text]}).to_csv(csv_path, index=False)
     anonymizer = Anonymizer(detection_workflow=detector, rewrite_runner=RewriteWorkflow(adapter=Mock(wraps=adapter)))
     with patch(_REPLACE_PATCH) as mock_replace_cls:
         mock_replace_cls.return_value.generate_map_only.side_effect = lambda frame, **_: Mock(
             dataframe=frame, failed_records=[], source_positions=tuple(range(len(frame)))
         )
-        result = anonymizer.run(
+        return anonymizer.run(
             config=AnonymizerConfig(
                 rewrite=Rewrite(privacy_goal=_PRIVACY_GOAL, risk_tolerance="minimal", max_repair_iterations=1),
                 emit_telemetry=False,
             ),
             data=AnonymizerInput(source=str(csv_path), text_column="text"),
         )
-    return result.outcome(0)
+
+
+def _run_outcome(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
+    """Run one ``Alice`` row through ``Anonymizer.run()`` with ``adapter`` and return its outcome."""
+    return _run_result(adapter, tmp_path).outcome(0)
 
 
 @pytest.mark.parametrize(
@@ -1967,6 +1983,65 @@ def test_replacements_applied_assesses_the_final_text(
     assert outcome.advisories == ()
 
 
+def test_a_value_the_source_also_holds_outside_the_detected_spans_is_met_and_flagged(tmp_path: Path) -> None:
+    """The source's text and detected spans reach the final checks: an undetected homograph is allowed once."""
+    text = "May loves the month of May."
+    adapter = _ScriptedAdapter(
+        {"rec": 0}, initial="Jane loves the month of May.", policy=_disposition(("May", "replace", "tagged"))
+    )
+    result = _run_result(adapter, tmp_path, text, [_span(text, "May")])
+    outcome = result.outcome(0)
+
+    assert (outcome.qualification, outcome.reasons, outcome.advisories) == ("met", (), ())
+    assert result.dataframe["needs_human_review"].tolist() == [True]
+
+
+def test_an_undetected_occurrence_the_rewrite_drops_is_met_and_not_flagged(tmp_path: Path) -> None:
+    """Detection missed one ``Alice``, but the rewritten text holds none: nothing is kept, so nothing is flagged."""
+    text = "Call Alice. Alice will answer."
+    adapter = _ScriptedAdapter(
+        {"rec": 0}, initial="Call Sara. Sara will answer.", policy=_disposition(("Alice", "replace", "tagged"))
+    )
+    result = _run_result(adapter, tmp_path, text, [_span(text, "Alice")])
+    outcome = result.outcome(0)
+
+    assert (outcome.qualification, outcome.reasons, outcome.advisories) == ("met", (), ())
+    assert result.dataframe["needs_human_review"].tolist() == [False]
+
+
+def test_a_value_copied_beyond_its_source_count_is_not_met(tmp_path: Path) -> None:
+    text = "Alice met Bob."
+    policy = _disposition(("Alice", "replace", "tagged"), ("Bob", "replace", "tagged"))
+    adapter = _ScriptedAdapter({"rec": 0}, initial="Sara met Tom; Bob agreed.", policy=policy)
+    outcome = _run_result(adapter, tmp_path, text, [_span(text, "Alice"), _span(text, "Bob")]).outcome(0)
+
+    assert outcome.qualification == "not_met"
+    assert [(r.code, r.check) for r in outcome.reasons] == [("failed", "replacements_applied")]
+
+
+def test_without_detected_spans_any_occurrence_fails(tmp_path: Path) -> None:
+    """No ``final_entities``: every source occurrence counts as detected, so the presence rule applies."""
+    adapter = _ScriptedAdapter({"rec": 0}, initial="Sara called; Alice answered.")
+    outcome = _run_result(adapter, tmp_path, "Alice called; Alice answered.", []).outcome(0)
+
+    assert outcome.qualification == "not_met"
+
+
+def _leftover(
+    text: str, policy: object, source: str = "", spans: list[tuple[int, int]] | None = None
+) -> dict[str, bool | str | None]:
+    entities = [
+        {"value": source[a:b], "label": "first_name", "start_position": a, "end_position": b} for a, b in spans or []
+    ]
+    row = {
+        COL_REWRITTEN_TEXT: text,
+        COL_TEXT: source,
+        COL_FINAL_ENTITIES: {"entities": entities},
+        COL_SENSITIVITY_DISPOSITION: policy,
+    }
+    return _leftover_metrics(row)
+
+
 @pytest.mark.parametrize(
     ("text", "original", "expected"),
     [
@@ -1990,26 +2065,68 @@ def test_replacements_applied_assesses_the_final_text(
         ("김철수 씨가 왔다", "김철수", False),
     ],
 )
-def test_no_original_value_matching(text: str, original: str, expected: bool) -> None:
+def test_leftover_metrics_matching(text: str, original: str, expected: bool) -> None:
+    """Without detected spans the rule is presence, matched as before."""
     policy = _disposition((original, "replace", "tagged"))
-    assert _no_original_value(text, policy) is expected
+    assert _leftover(text, policy, original)["replacements_applied"] is expected
 
 
-def test_no_original_value_reads_the_policy_not_the_map() -> None:
+def test_leftover_metrics_read_the_policy_not_the_map() -> None:
     """Values come from the policy's replace entries; kept values are not checked; no map is involved."""
     policy = _disposition(("Bob", "replace", "tagged"), ("Acme", "generalize", "tagged"))
-    assert _no_original_value("Maria met Bob at Acme", policy) is False
-    assert _no_original_value("Maria met Ana at Acme", policy) is True
+    assert _leftover("Maria met Bob at Acme", policy)["replacements_applied"] is False
+    assert _leftover("Maria met Ana at Acme", policy)["replacements_applied"] is True
 
 
-def test_no_original_value_unavailable_policy() -> None:
-    assert _no_original_value("text", None) is None
-    assert _no_original_value("text", {"sensitivity_disposition": [{"entity_value": "x"}]}) is None
-    assert _no_original_value("text", ["not a dict"]) is None
+def test_leftover_metrics_unavailable_policy() -> None:
+    assert _leftover("text", None)["replacements_applied"] is None
+    assert _leftover("text", {"sensitivity_disposition": [{"entity_value": "x"}]})["replacements_applied"] is None
+    assert _leftover("text", ["not a dict"])["replacements_applied"] is None
 
 
-def test_no_original_value_skips_latent_entities() -> None:
+def test_leftover_metrics_skip_latent_entities() -> None:
     """A latent value the policy replaces is not checked; an explicit one still is."""
     latent = _disposition(("Maria", "replace", "tagged"), ("a company", "replace", "latent"))
-    assert _no_original_value("Ana works at a company", latent) is True
-    assert _no_original_value("Maria works at a company", latent) is False
+    assert _leftover("Ana works at a company", latent)["replacements_applied"] is True
+    assert _leftover("Maria works at a company", latent)["replacements_applied"] is False
+
+
+def test_leftover_metrics_count_against_the_detected_spans() -> None:
+    policy = _disposition(("Alice", "replace", "tagged"))
+    source = "Call Alice. Alice will answer."
+    assert _leftover("Call Sara. Alice will answer.", policy, source, [(5, 10)]) == {
+        "replacements_applied": True,
+        "replacements_applied_cause": "",
+        "undetected_value_kept": True,
+    }
+    assert _leftover("Alice and Alice.", policy, source, [(5, 10)])["replacements_applied"] is False
+    assert _leftover("Alice.", policy, source, [(5, 10), (12, 17)]) == {
+        "replacements_applied": False,
+        "replacements_applied_cause": "e0:N2,D2,O1",
+        "undetected_value_kept": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("rewritten", "kept"),
+    [
+        ("Call Sara. Sara will answer.", False),  # the undetected occurrence is dropped
+        ("Call Sara. Alice will answer.", True),  # kept, within the bound
+        ("Call Alice. Sara will answer.", True),  # kept at the detected place, within the bound
+        ("Alice and Alice.", True),  # over the bound
+        ("Call Sara; alice will answer.", True),  # case-folded
+    ],
+)
+def test_leftover_metrics_fail_or_flag_exactly_when_a_value_is_kept(rewritten: str, kept: bool) -> None:
+    """Failed or flagged exactly when the rewritten text holds a replaced value at all; the bound decides which."""
+    policy = _disposition(("Alice", "replace", "tagged"))
+    metrics = _leftover(rewritten, policy, "Call Alice. Alice will answer.", [(5, 10)])
+    assert (metrics["replacements_applied"] is False or metrics["undetected_value_kept"]) is kept
+
+
+def test_leftover_metrics_name_a_value_by_its_own_span() -> None:
+    policy = _disposition(("John Smith", "replace", "tagged"), ("John", "replace", "tagged"))
+    source, spans = "John Smith called. John said hi.", [(0, 10), (19, 23)]
+    metrics = _leftover("[A] called. [B] said hi.", policy, source, spans)
+    assert (metrics["replacements_applied"], metrics["undetected_value_kept"]) == (True, False)
+    assert _leftover("[A] called. John said hi.", policy, source, spans)["replacements_applied"] is False

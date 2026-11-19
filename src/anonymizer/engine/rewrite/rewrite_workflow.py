@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import pandas as pd
@@ -20,6 +20,7 @@ from anonymizer.engine.constants import (
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_VALID,
     COL_ENTITIES_BY_VALUE,
+    COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
@@ -77,8 +78,9 @@ from anonymizer.engine.row_partitioning import (
     restore_diagnostic_columns,
     split_rows,
 )
-from anonymizer.engine.schemas import EntitiesByValueSchema
-from anonymizer.engine.value_matching import any_value_occurs
+from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
+from anonymizer.engine.spans import Spans
+from anonymizer.engine.value_matching import Leftover, count_values, entity_spans, format_cause
 from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.rewrite.workflow")
@@ -281,27 +283,53 @@ def _rewrite_entry(row: dict[str, object]) -> dict[str, object] | RewriteUnavail
         "utility_score": row.get(COL_UTILITY_SCORE),
         "leakage_mass": row.get(COL_LEAKAGE_MASS),
         "any_high_leaked": row.get(COL_ANY_HIGH_LEAKED),
-        "replacements_applied": _no_original_value(text, row.get(COL_SENSITIVITY_DISPOSITION)),
         "weighted_leakage_rate": row.get(COL_WEIGHTED_LEAKAGE_RATE),
+        **_leftover_metrics(row),
     }
     return {"text": text, "metrics": metrics}
 
 
-def _no_original_value(text: str, disposition: object) -> bool | None:
-    """Whether no value the policy replaces appears in ``text``; ``None`` when the disposition is unavailable.
+def _leftover_metrics(row: Mapping[str, object]) -> dict[str, bool | str | None]:
+    """The leftover metrics of one record, from ``rewrite_leftovers``: ``replacements_applied``, no value the policy
+    replaces is over the bound in the rewritten text (``None`` when the disposition is unavailable), with
+    ``replacements_applied_cause`` naming each value over it; and ``undetected_value_kept``, the rewritten text holds
+    such a value that the source also holds outside the detected spans."""
+    leftovers = rewrite_leftovers(
+        row.get(COL_TEXT), row.get(COL_FINAL_ENTITIES), row[COL_REWRITTEN_TEXT], row.get(COL_SENSITIVITY_DISPOSITION)
+    )
+    over = [x for x in leftovers or () if x.over_bound]
+    return {
+        "replacements_applied": None if leftovers is None else not over,
+        "replacements_applied_cause": format_cause(over),
+        "undetected_value_kept": any(x.undetected_kept for x in leftovers or ()),
+    }
 
-    The values are the non-latent disposition entries whose suggestion is ``replace``. Each is matched on its own by
-    ``_occurs``.
-    """
+
+def rewrite_leftovers(
+    source: object, final_entities: object, rewritten: object, disposition: object
+) -> tuple[Leftover, ...] | None:
+    """``count_values`` for one Rewrite record: the values the policy replaces (non-latent disposition entries
+    suggesting ``replace``) in the rewritten text, bounded by the source text and its detected spans; ``None`` when
+    the disposition is unavailable. When no value has a position (no usable detected span is the value or holds one of
+    its matches), every occurrence counts as detected (``undetected_spans`` is empty, though no detected span holds
+    the matches), so any occurrence in the rewritten text is over the bound."""
     payload = normalize_payload(disposition)
     if isinstance(payload, dict) and payload.get("sensitivity_disposition") == []:
-        return True  # no detected entities: nothing is replaced
+        return ()  # no detected entities: nothing is replaced
     try:
         entries = parse_sensitivity_disposition(payload).sensitivity_disposition
     except (ValueError, TypeError):
         return None
     values = [e.entity_value for e in entries if e.protection_method_suggestion == "replace" and e.source != "latent"]
-    return not any_value_occurs(values, text)
+    source = source if isinstance(source, str) else ""
+    try:
+        entities = entity_spans(source, EntitiesSchema.from_raw(final_entities).entities)
+    except (ValueError, TypeError):
+        entities = []
+    leftovers = count_values(source, entities, str(rewritten), values)
+    if any(x.position is not None for x in leftovers):
+        return leftovers
+    return tuple(replace(x, undetected_spans=Spans()) for x in leftovers)
 
 
 def _unavailable(value: Any) -> bool:
@@ -324,7 +352,8 @@ def _leakage_within(metrics: dict[str, Any], limit: float | None) -> bool | None
 
 
 def _final_checks(evaluation: EvaluationCriteria) -> tuple[Operation, ...]:
-    """The privacy criteria over the final candidate's metrics, one model-free verifier per check."""
+    """The privacy criteria over the final candidate's metrics, one model-free verifier per check. A failed check
+    states the metric ``<check>_cause`` when the metrics carry one."""
     limit = evaluation.flag_leakage_above
     predicates: dict[str, Callable[[dict[str, Any]], bool | None]] = {
         "high_leak": _high_leak,
@@ -336,7 +365,9 @@ def _final_checks(evaluation: EvaluationCriteria) -> tuple[Operation, ...]:
         def assess(metrics: dict[str, Any], target: Datum) -> Assessment:
             satisfied = predicate(metrics)
             missing = "replacement_policy_unavailable" if check == "replacements_applied" else "metric_unavailable"
-            return Assessment(satisfied, target, missing if satisfied is None else "")
+            if satisfied is None:
+                return Assessment(None, target, missing)
+            return Assessment(satisfied, target, "" if satisfied else str(metrics.get(f"{check}_cause", "")))
 
         inputs = {"metrics": REWRITE_METRICS, "target": DATUM}
         return Operation.verifier(f"assess-{check}", assess, inputs, checks=(check,), subject=("metrics",))
@@ -383,11 +414,11 @@ def _protect_rewrite(
 def _flag_review(
     frame: pd.DataFrame, result: ProtectionResult, target_of: Mapping[int, Datum], evaluation: EvaluationCriteria
 ) -> None:
-    """Assign ``needs_human_review``: the row's target outcome is not qualified, or its utility is unavailable or
-    below the flag."""
+    """Assign ``needs_human_review``: the row's target outcome is not qualified, its rewritten text keeps a replaced
+    value that the source also holds outside the detected spans, or its utility is unavailable or below the flag."""
     floor = evaluation.flag_utility_below
     review = [
-        result.outcome(target_of[record[ROW_ORDER_COL]]).qualification != "met"
+        _needs_review(result, target_of[record[ROW_ORDER_COL]])
         or _unavailable(record.get(COL_UTILITY_SCORE))
         or (floor is not None and float(record[COL_UTILITY_SCORE]) < floor)
         for record in frame.to_dict("records")
@@ -395,6 +426,11 @@ def _flag_review(
     # The combined finalizer's column keeps its dtype under the overwrite.
     dtype = frame[COL_NEEDS_HUMAN_REVIEW].dtype if COL_NEEDS_HUMAN_REVIEW in frame.columns else bool
     frame[COL_NEEDS_HUMAN_REVIEW] = pd.Series(review, index=frame.index, dtype=dtype)
+
+
+def _needs_review(result: ProtectionResult, target: Datum) -> bool:
+    metrics = result.value(target, "metrics") or {}
+    return result.outcome(target).qualification != "met" or bool(metrics.get("undetected_value_kept"))
 
 
 def _rewrite_lowered(
@@ -407,8 +443,7 @@ def _rewrite_lowered(
     """Run ``produce`` (the frame stages, leaving the final candidates in ``rows.frame``) as the ``rewrite`` operation.
 
     One target per entity row. The final checks qualify each target from its final evaluation, and
-    ``needs_human_review`` is set when that outcome is not qualified or the row's utility is unavailable or below the
-    flag.
+    ``_flag_review`` sets ``needs_human_review`` from that outcome and the row's utility.
     """
     scope = GraphScope()
     graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in entity_rows[COL_TEXT]))

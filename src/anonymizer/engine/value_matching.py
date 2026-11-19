@@ -7,37 +7,11 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 
+from anonymizer.engine.schemas import EntitySchema
 from anonymizer.engine.spans import Span, Spans
-
-
-def any_value_occurs(values: Iterable[str], text: str) -> bool:
-    """Whether any of ``values`` occurs in ``text`` under ``_occurs``."""
-    return compile_values(values)(text)
-
-
-def compile_values(values: Iterable[str]) -> Callable[[str], bool]:
-    """A test of whether any of ``values`` occurs in a text under ``_occurs``, normalizing and compiling each value
-    once so that one set of values can be checked against many texts."""
-    matchers: list[tuple[bool, Callable[[str], bool]]] = []  # (matches with its case, test)
-    for value in {_normalized(v) for v in values} - {""}:
-        cased = _short_code(value)
-        key = value if cased else value.casefold()
-        if _unspaced(key[0]) and _unspaced(key[-1]):
-            if len(key) >= 2:
-                matchers.append((cased, lambda text, key=key: key in text))
-        else:
-            pattern = re.compile(r"(?<![^\W_])" + re.escape(key) + r"(?![^\W_])")
-            matchers.append((cased, lambda text, search=pattern.search: search(text) is not None))
-
-    def occurs(text: str) -> bool:
-        plain = _normalized(text)
-        folded = plain.casefold()
-        return any(test(plain if cased else folded) for cased, test in matchers)
-
-    return occurs
 
 
 @dataclass(frozen=True)
@@ -126,6 +100,20 @@ def count_values(
         leftovers.append((key, leftover))
     leftovers.sort(key=lambda item: (item[1].position is None, item[1].position or 0, item[0]))
     return tuple(leftover for _, leftover in leftovers)
+
+
+def entity_spans(source: str, entities: Iterable[EntitySchema]) -> list[tuple[Span | None, str]]:
+    """``entities`` as ``count_values`` takes them: ``(span, label)`` in position order (sorted by start). An entity
+    whose offsets are not a non-empty span of ``source`` holding its value has ``None``: it keeps its position but
+    holds nothing."""
+
+    def span_of(entity: EntitySchema) -> Span | None:
+        start, end = entity.start_position, entity.end_position
+        if 0 <= start < end <= len(source) and source[start:end] == entity.value:
+            return Span(start, end)
+        return None
+
+    return [(span_of(e), e.label) for e in sorted(entities, key=lambda e: e.start_position)]
 
 
 def format_cause(leftovers: Iterable[Leftover]) -> str:
