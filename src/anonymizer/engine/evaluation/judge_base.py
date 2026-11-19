@@ -30,7 +30,7 @@ from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import BackendRun
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-from anonymizer.engine.rewrite.workflow_utils import run_columns
+from anonymizer.engine.ndd.workflow_utils import run_columns
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder
 from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeColumnConfig, JudgeKind
 

@@ -30,8 +30,8 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
 )
 from anonymizer.engine.ndd.adapter import NddAdapter, WorkflowRunResult
+from anonymizer.engine.ndd.workflow_utils import derive_seed_columns, run_columns, select_seed_cols
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
-from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, run_columns, select_seed_cols
 
 
 class _StubOutput(BaseModel):
