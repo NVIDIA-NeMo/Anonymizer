@@ -149,24 +149,31 @@ _ASSESSMENTS = {
 
 
 class _Judge(NamedTuple):
-    """One judge body: the runner call over the whole frame, its output port and the verdict columns it returns."""
+    """One judge body: the runner call over the whole frame, its output port, the verdict columns it returns and
+    the ``context`` columns its port also carries for the verifiers, which judge nothing themselves."""
 
     name: str
     port: str
     kind: str
     columns: tuple[str, ...]
     run: Callable[[pd.DataFrame], tuple[pd.DataFrame, list[FailedRecord]]]
+    context: tuple[str, ...] = ()
 
 
-def _verdict(port: str, column: str, reason: str, *, graded: bool = True) -> Callable[..., Assessment]:
+def _verdict(
+    port: str, column: str, reason: str, *, graded: bool = True, applies: Callable[[dict], bool] | None = None
+) -> Callable[..., Assessment]:
     """A model-free verifier over ``port``'s per-row metrics: ``None`` or NaN is unavailable, else ``== 1.0``.
 
     ``True == 1.0``, so one comparison serves boolean verdicts and fractions; ``graded=False`` records availability.
+    An unavailable verdict on a row ``applies`` rejects is ``not_applicable``: the judge skips such rows by design.
     """
 
     def verify(target: Any, **ports: Any) -> Assessment:
         value = ports[port].get(column)
         if value is None or value is pd.NA or (isinstance(value, float) and value != value):
+            if applies is not None and not applies(ports[port]):
+                return Assessment(None, target, "not_applicable")
             return Assessment(None, target, "judge_unavailable")
         satisfied = not graded or bool(value == 1.0)
         return Assessment(satisfied, target, "" if satisfied else reason)
@@ -195,7 +202,7 @@ def _evaluate_on_graph(
             nonlocal current
             current, failed = judge.run(current)
             failures.extend(failed)
-            present = [c for c in judge.columns if c in current.columns]
+            present = [c for c in (*judge.columns, *judge.context) if c in current.columns]
             rows = current[present].to_dict("records") if present else [{} for _ in range(len(current))]
             if len(rows) == len(target):
                 return rows
@@ -219,7 +226,11 @@ def _evaluate_on_graph(
                 verifiers.insert(0, Operation.verifier("coverage", verify, {"text": TEXT, **inputs}))
             else:
                 name, reason = _ASSESSMENTS[column]
-                verify = _verdict(judge.port, column, reason, graded=column != COL_JUDGE_EVALUATION)
+                verify = (
+                    _verdict(judge.port, column, reason, graded=False, applies=_judged_by_rewrite_judge)
+                    if column == COL_JUDGE_EVALUATION
+                    else _verdict(judge.port, column, reason)
+                )
                 verifiers.append(Operation.verifier(name, verify, inputs))
     operations = (*bodies, *verifiers)
     workflow = Workflow("evaluate", operations)
@@ -242,7 +253,7 @@ def _reported_outcomes(
     outcome when there are none, with each verifier appended as an advisory naming it, in verifier order. A verifier
     that gave no assessment is ``could_not_assess`` with its execution code (``raised``, or ``blocked`` when an
     earlier verifier of the row failed) as the cause. The ungraded rewrite judge reports ``scored`` when it returned
-    scores."""
+    scores and ``not_applicable`` on a row it skips by design."""
     codes: dict[bool | None, AdvisoryStatus] = {True: "passed", False: "failed", None: "could_not_assess"}
     ungraded = _ASSESSMENTS[COL_JUDGE_EVALUATION][0]
     names = result.prepared.names
@@ -262,6 +273,8 @@ def _reported_outcomes(
         if not isinstance(a, Assessment):
             cause = errors.get((p, i), ledger[p * len(names) + i][2])
             return Advisory(names[i], names[i], "could_not_assess", cause)
+        if a.satisfied is None and a.reason == "not_applicable":
+            return Advisory(names[i], names[i], "not_applicable")
         status = "scored" if a.satisfied and names[i] == ungraded else codes[a.satisfied]
         return Advisory(names[i], names[i], status, a.reason)
 
@@ -273,6 +286,11 @@ def _reported_outcomes(
 def _has_entities_for_evaluation(raw: object) -> bool:
     """Return whether a row should receive entity-dependent evaluation scores."""
     return bool(EntitiesByValueSchema.from_raw(raw).entities_by_value)
+
+
+def _judged_by_rewrite_judge(metrics: dict) -> bool:
+    """Whether the rewrite judge scores the row: it skips rows with no entities; unknown when the column is absent."""
+    return COL_ENTITIES_BY_VALUE not in metrics or _has_entities_for_evaluation(metrics[COL_ENTITIES_BY_VALUE])
 
 
 def _flag_missed_entities(df: pd.DataFrame) -> pd.DataFrame:
@@ -841,7 +859,14 @@ class Anonymizer:
                 internal_df,
                 COL_REWRITTEN_TEXT,
                 [
-                    _Judge("rewrite-judges", "rewrite_metrics", REWRITE_METRICS, rewrite_columns, run_rewrite_judges),
+                    _Judge(
+                        "rewrite-judges",
+                        "rewrite_metrics",
+                        REWRITE_METRICS,
+                        rewrite_columns,
+                        run_rewrite_judges,
+                        context=(COL_ENTITIES_BY_VALUE,),
+                    ),
                     _Judge(
                         "coverage-judge", "coverage_metrics", COVERAGE_METRICS, (COL_ENTITY_COVERAGE,), run_coverage
                     ),

@@ -42,7 +42,7 @@ from anonymizer.engine.graph_core.authoring import (
 Terminal = Literal["success", "failed", "cancelled", "blocked"]
 Qualification = Literal["met", "not_met", "not_assessed"]
 AttemptStatus = Literal["running", "succeeded", "failed", "blocked", "cancelled"]
-AdvisoryStatus = Literal["passed", "failed", "could_not_assess", "scored"]
+AdvisoryStatus = Literal["passed", "failed", "could_not_assess", "scored", "not_applicable"]
 
 SEEDS = {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "context": CONTEXT, "target": DATUM, "record": RECORD}
 _SEAL_KEY = secrets.token_bytes(32)
@@ -298,7 +298,8 @@ class Advisory:
     changes qualification or release. Fields hold codes and declared names, never record text.
 
     The kernel emits only those three. The ``Anonymizer`` facade also reports ``evaluate()`` judges as advisories
-    and adds ``scored`` (an ungraded judge returned scores)."""
+    and adds ``scored`` (an ungraded judge returned scores) and ``not_applicable`` (the judge skips such rows by
+    design)."""
 
     check: str
     verifier: str

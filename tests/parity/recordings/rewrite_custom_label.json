@@ -427,7 +427,7 @@
   "failed_records": [],
   "outcomes": [
    {"terminal": "success", "qualification": "not_met", "available": true, "protected": false, "reasons": [{"code": "failed", "check": "high_leak", "verifier": "assess-high_leak", "cause": ""}], "advisories": [{"check": "coverage", "verifier": "coverage", "status": "passed", "cause": ""}, {"check": "rewrite-judge", "verifier": "rewrite-judge", "status": "scored", "cause": ""}]},
-   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "coverage", "verifier": "coverage", "status": "passed", "cause": ""}, {"check": "rewrite-judge", "verifier": "rewrite-judge", "status": "could_not_assess", "cause": "judge_unavailable"}]},
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "coverage", "verifier": "coverage", "status": "passed", "cause": ""}, {"check": "rewrite-judge", "verifier": "rewrite-judge", "status": "not_applicable", "cause": ""}]},
    {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "coverage", "verifier": "coverage", "status": "passed", "cause": ""}, {"check": "rewrite-judge", "verifier": "rewrite-judge", "status": "scored", "cause": ""}]},
    {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "coverage", "verifier": "coverage", "status": "passed", "cause": ""}, {"check": "rewrite-judge", "verifier": "rewrite-judge", "status": "scored", "cause": ""}]}
   ],
