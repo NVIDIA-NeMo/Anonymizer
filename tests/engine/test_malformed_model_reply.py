@@ -9,6 +9,7 @@ Only the HTTP client is scripted: DataDesigner builds the facades, runs the colu
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,7 @@ from anonymizer.engine.constants import (
     COL_DOMAIN,
     COL_DOMAIN_SUPPLEMENT,
     COL_DOMAIN_UNAVAILABLE,
+    COL_ENTITIES_BY_VALUE,
     COL_FULL_REWRITE,
     COL_LEAKAGE_MASS,
     COL_MEANING_UNITS,
@@ -57,14 +59,16 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
-from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import load_default_model_selection
 from anonymizer.engine.rewrite import combined_rewrite_workflow as combined
+from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.domain_classification import _DOMAIN_BY_ENUM, DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.rewrite_generation import RewriteGenerationWorkflow
+from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.schemas import Domain
 
 _PROVIDER = ModelProvider(name="scripted", endpoint="http://scripted.invalid/v1", api_key="unused")
@@ -718,3 +722,166 @@ def test_combined_evaluation_of_a_missing_rewrite_keeps_the_row_withheld_and_fla
     assert row[COL_NEEDS_HUMAN_REVIEW]
     assert dict(calls) == {}
     assert frame.iloc[1][COL_REWRITTEN_TEXT] == _OTHER_TEXT
+
+
+# --- Repair: a response that never parses keeps the row, withholds its rewrite and flags it ---
+
+_REPAIRER = "scripted-repairer"
+_REPAIRED_TEXT = "A charge will happen."
+_LEAK = json.dumps(
+    {"answers": [{"id": 1, "answer": "yes", "confidence": 0.9, "reason": "Stated.", "evidence": ["7312"]}]}
+)
+
+
+class _RepairClient(_EvaluatorClient):
+    """The repairer answers from ``script["repair"]``; every other alias answers as the evaluator does."""
+
+    def _response(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
+        if self._alias != _REPAIRER:
+            return super()._response(request)
+        responses = self._script["repair"]
+        index = self._calls["repair"]
+        self._calls["repair"] += 1
+        return ChatCompletionResponse(message=AssistantMessage(content=responses[min(index, len(responses) - 1)]))
+
+
+@pytest.fixture
+def repairer(monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str, list[str]], dict[str, int]]:
+    script: dict[str, list[str]] = {"privacy": [_LEAK]}
+    calls: dict[str, int] = defaultdict(int)
+    _MESSAGE_COUNTS.clear()
+
+    def create_model_client(model_config: ModelConfig, *args: Any, **kwargs: Any) -> _RepairClient:
+        return _RepairClient(model_config.alias, script, calls)
+
+    monkeypatch.setattr(client_factory, "create_model_client", create_model_client)
+    return script, calls
+
+
+class _StagedLoop(RewriteWorkflow):
+    """Staged mode with only its evaluate-repair loop, over rows that already hold a rewrite."""
+
+    def _produce(self, rows: Any, **options: Any) -> Any:
+        stages = self._evaluate_repair_stages(
+            rows,
+            model_configs=options["model_configs"],
+            selected_models=options["selected_models"],
+            privacy_goal=options["privacy_goal"],
+            evaluation=options["evaluation"],
+            preview_num_records=None,
+        )
+        return lambda: [stage() for _, stage in stages]
+
+
+class _CombinedLoop(CombinedRewriteWorkflow):
+    """Combined mode's evaluation, repair and finalize columns in one graph, over rows that already hold a rewrite."""
+
+    def _produce(self, rows: Any, **options: Any) -> Any:
+        selection, evaluation = options["selected_models"], options["evaluation"]
+        states = [combined._evaluation_state(0, COL_REWRITTEN_TEXT_INITIAL)]
+        columns = combined._evaluation_columns(
+            Mock(), selected_models=selection, evaluation=evaluation, state=states[0]
+        )
+        internal = [COL_REWRITTEN_TEXT_INITIAL]
+        for iteration in range(evaluation.max_repair_iterations):
+            repair = combined._repair_state(iteration)
+            columns += combined._repair_columns(
+                Mock(),
+                selected_models=selection,
+                privacy_goal=options["privacy_goal"],
+                evaluation=evaluation,
+                previous=states[-1],
+                state=repair,
+            )
+            states.append(combined._evaluation_state(iteration + 1, repair.rewritten_text))
+            columns += combined._evaluation_columns(
+                Mock(), selected_models=selection, evaluation=evaluation, state=states[-1]
+            )
+            internal += [c for c in repair.__dict__.values() if isinstance(c, str)]
+        columns.append(combined._finalization_column(states, evaluation))
+        internal += [c for s in states for c in s.__dict__.values() if isinstance(c, str)]
+
+        def generate() -> None:
+            seed = rows.frame.rename(columns={COL_REWRITTEN_TEXT: COL_REWRITTEN_TEXT_INITIAL})
+            result = self._adapter.run_workflow(
+                seed, model_configs=options["model_configs"], columns=columns, workflow_name="rewrite-combined"
+            )
+            rows.failed.extend(result.failed_records)
+            rows.frame = result.dataframe.drop(columns=list(dict.fromkeys(internal)), errors="ignore")
+
+        return generate
+
+
+def _repair_run(tmp_path: Path, workflow: type[RewriteWorkflow], max_repair_iterations: int) -> Any:
+    selection = RewriteModelSelection.model_validate(
+        {**load_default_model_selection().rewrite.model_dump(), "evaluator": _EVALUATOR, "repairer": _REPAIRER}
+    )
+    other_quality = {"items": [{**_EVAL_QUALITY_QA["items"][0], "reference_answer": _OTHER_TEXT}]}
+    entities = {"entities_by_value": [{"value": "7312", "labels": ["card_last_four"]}]}
+    frame = pd.DataFrame(
+        {
+            COL_TEXT: [_TEXT, _OTHER_TEXT],
+            COL_ENTITIES_BY_VALUE: [entities, entities],
+            COL_REWRITTEN_TEXT: [_EVAL_TEXT, _OTHER_TEXT],
+            COL_REWRITE_BASELINE_TEXT: [_EVAL_TEXT, _OTHER_TEXT],
+            COL_QUALITY_QA: [_EVAL_QUALITY_QA, other_quality],
+            COL_PRIVACY_QA: [_EVAL_PRIVACY_QA, _EVAL_PRIVACY_QA],
+            COL_SENSITIVITY_DISPOSITION: [{"sensitivity_disposition": []}] * 2,
+            COL_REWRITE_REPLACEMENT_READY: [True, True],
+        }
+    )
+    detected = EntityDetectionResult(dataframe=frame, failed_records=[], source_positions=(0, 1))
+    return workflow(adapter=_adapter(tmp_path)).run_with_detection(
+        frame[[COL_TEXT]],
+        detect=lambda _: detected,
+        model_configs=[_model(_EVALUATOR), _model(_REPAIRER)],
+        selected_models=selection,
+        replace_model_selection=load_default_model_selection().replace,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=max_repair_iterations).evaluation,
+    )
+
+
+@pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])
+@pytest.mark.parametrize(
+    ("responses", "repair_calls"),
+    [
+        (["I cannot rewrite that."], 4),  # the first repair never parses
+        ([json.dumps({"rewritten_text": _REPAIRED_TEXT}), "I cannot rewrite that."], 5),  # the second one
+    ],
+    ids=["first-repair", "later-repair"],
+)
+def test_repair_response_unparsed_keeps_the_row_withheld_and_flagged(
+    tmp_path: Path,
+    repairer: tuple[dict[str, list[str]], dict[str, int]],
+    caplog: pytest.LogCaptureFixture,
+    workflow: type[RewriteWorkflow],
+    responses: list[str],
+    repair_calls: int,
+) -> None:
+    script, calls = repairer
+    script["repair"] = responses
+
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.responses"):
+        result = _repair_run(tmp_path, workflow, max_repair_iterations=3)
+
+    assert result.failed_records == []
+    assert len(result.dataframe) == 2
+    row, clean = result.dataframe.iloc[0], result.dataframe.iloc[1]
+    assert pd.isna(row[COL_REWRITTEN_TEXT])  # neither the failing candidate nor the repaired one is released
+    assert pd.isna(row[COL_LEAKAGE_MASS])
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    outcome = result.outcomes[0]
+    assert outcome.qualification == "not_met"
+    assert not outcome.available
+    assert not outcome.protected
+    assert calls["repair"] == repair_calls  # a first request and 3 corrections, then no further round
+    assert clean[COL_REWRITTEN_TEXT] == _OTHER_TEXT
+    assert not clean[COL_NEEDS_HUMAN_REVIEW]
+    assert result.outcomes[1].qualification == "met"
+    # One record, which caplog can list twice once DataDesigner has reconfigured logging in an earlier test.
+    summaries = dict.fromkeys(r for r in caplog.records if r.name == "anonymizer.rewrite.responses")
+    assert [record.getMessage() for record in summaries] == [
+        "Rows kept without a usable model response after their retries, by step: repair=1. "
+        "If most rows are listed, check that step's model."
+    ]

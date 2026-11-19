@@ -17,6 +17,7 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA,
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
+    COL_REPAIR_ITERATIONS,
     COL_REWRITTEN_TEXT,
 )
 from anonymizer.engine.ndd.model_response import no_response
@@ -46,6 +47,12 @@ def warn_kept_without_response(frame: pd.DataFrame) -> None:
         if COL_DOMAIN_UNAVAILABLE in frame.columns
         else pd.Series(False, index=frame.index)
     )
+    # Only an unparsed repair response leaves a repaired row without text; the rewrite step's rows are never repaired.
+    repaired = (
+        frame[COL_REPAIR_ITERATIONS].fillna(0).astype(int).gt(0)
+        if COL_REPAIR_ITERATIONS in frame.columns
+        else pd.Series(False, index=frame.index)
+    )
     steps = {
         "domain classification": domain,
         "meaning units": null(COL_MEANING_UNITS),
@@ -54,6 +61,7 @@ def warn_kept_without_response(frame: pd.DataFrame) -> None:
         "privacy evaluation": null(COL_PRIVACY_QA_REANSWER) & present(COL_REWRITTEN_TEXT),
         "quality evaluation": (null(COL_QUALITY_QA_REANSWER) & present(COL_QUALITY_QA) & present(COL_REWRITTEN_TEXT))
         | (null(COL_QUALITY_QA_COMPARE) & present(COL_QUALITY_QA_REANSWER)),
+        "repair": null(COL_REWRITTEN_TEXT) & repaired,
     }
     counts = {step: int(rows.sum()) for step, rows in steps.items() if rows.any()}
     if counts:
