@@ -543,10 +543,21 @@ def _filter_replacement_map_to_input_entities(
     return {"replacements": filtered}
 
 
-def _collision_safe_synthetic(label: str, *, index: int, protected_original_values: tuple[Container[str], ...]) -> str:
+def _placeholder_prefix(label: str) -> str:
     label_token = "".join(char.upper() if char.isalnum() else "_" for char in label).strip("_") or "VALUE"
+    return f"[SUBSTITUTE_{label_token}_"
+
+
+def is_placeholder(label: str, synthetic: str) -> bool:
+    """Whether ``synthetic`` is a placeholder ``_collision_safe_synthetic`` builds for ``label``."""
+    prefix = _placeholder_prefix(label)
+    return synthetic.startswith(prefix) and synthetic.endswith("]") and synthetic[len(prefix) : -1].isdigit()
+
+
+def _collision_safe_synthetic(label: str, *, index: int, protected_original_values: tuple[Container[str], ...]) -> str:
+    prefix = _placeholder_prefix(label)
     while True:
-        candidate = f"[SUBSTITUTE_{label_token}_{index}]"
+        candidate = f"{prefix}{index}]"
         if not any(_fold(candidate) in values for values in protected_original_values):
             return candidate
         index += 1
