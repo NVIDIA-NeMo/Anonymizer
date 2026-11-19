@@ -6,6 +6,10 @@
 After reading this page you will have a set of workflow patterns to start from, each built only from the public
 `anonymizer.graph` names. Two are shown as complete programs; the rest name the pieces and the guide to read.
 
+!!! warning "Provisional"
+
+    The graph SDK is provisional. Names, signatures and default values may change in a later release.
+
 ## A rewrite with a bounded repair loop
 
 A model drafts a rewrite, a quick check inside the step asks for a repair, and the step gives up after a fixed number

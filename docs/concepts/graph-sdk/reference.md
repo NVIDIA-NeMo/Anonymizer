@@ -22,7 +22,7 @@ Import the module as `from anonymizer import graph as g`.
 | `Mention` | A labelled span of a target's original text. |
 | `ContextScope` | The context one target may read. |
 | `ContextView` | A span of a datum delivered as context. |
-| `ContextSource` | A function returning context items, called once per run. |
+| `ContextSource` | A named provider of context items, with item and byte bounds, called once per run. |
 | `Dependency` | Withhold `dependent` when `on` is withheld. |
 | `OutputGroup` | Release `members` together or not at all. |
 | `Record` | A group of targets that belong together. Made only by `GraphScope.record`. |
@@ -91,7 +91,7 @@ delivered.
 - `checks`: the checks a verifier's assessment answers. `subject`: the input ports it is about. Both are tuples.
 - `is_verifier`: `True` when an output has kind `"assessment"`.
 - An output named `record` raises `seed_output_reserved`. An `assessment` output alongside other outputs or under
-  another port name, or a port named `assessment` of another kind, raises
+  another port name, or an output port named `assessment` of another kind, raises
   `GraphRejection("verifier_ports")`.
 
 **`Operation.verifier(name, fn, inputs=None, requests=Requests(), checks=(), subject=())`**: an operation with
@@ -183,14 +183,15 @@ but bases its verdict on an earlier value is still accepted. To stop a target ea
 
 - Runs no callback and no context provider.
 - `limits`: defaults to `Limits()`.
-- `capabilities`: a tuple of operation names allowed to run; default, all operations of the workflow. An operation
+- `capabilities`: a tuple of flattened operation names allowed to run, as in `PreparedProtection.names` (such as
+  `inner/step`); default, all operations of the workflow. An operation
   not listed raises `capability_not_admitted`.
 - `request_budget`: refuses a plan above it (`over_request_budget`) or one that is unknown
   (`hard_budget_without_visibility`). Not enforced during the run.
 
 **`PreparedProtection`**: fields `limits`, `names` (flattened operation names), `planned_requests`, `capabilities`;
-`summary() -> InspectionSummary`. It cannot be pickled, and `protect` refuses a copy or an altered value
-(`not_prepared`).
+`summary() -> InspectionSummary`. It cannot be pickled or copied (`TypeError`), and `protect` refuses a value with
+any field replaced after `prepare` (`not_prepared`).
 
 **`protect(prepared, *, cancel=None) -> ProtectionResult`**: runs on the calling thread. Rechecks limits and
 capabilities first. A callback's `Exception` fails its target; `protect` does not raise it. `BaseException`, such
@@ -213,7 +214,7 @@ output.
 | `outcome(target)` | The target's `TargetOutcome`; a foreign target raises `unknown_reference` |
 | `consistent` | `False` when a verifier returned an assessment for another target or none |
 | `protected` | `dict[Datum, str]` of released targets to final candidates; the original text when no step outputs `text` |
-| `content()` | `((target, final candidate or None), ...)`; no protection claim |
+| `content()` | `((target, final candidate or None), ...)`; `None` when the last step that outputs `text` produced nothing for the target, and an earlier candidate is never substituted; no protection claim |
 | `value(target, port="text", producer=None)` | The latest value of `port`, or the value from the step named `producer`; `None` if never produced or when no step is named `producer` |
 | `compose(parts)` | Final candidates of `parts` joined in the given order |
 | `reconstruct(parts, source)` | Final candidates joined in the order of the positions `source` maps them to |
@@ -241,13 +242,13 @@ is the assessment's `reason` for `failed` and `could_not_assess`.
 
 **`InspectionSummary`**: `operations`, `targets`, `planned_requests`, `terminals`, `qualifications`, `reasons`,
 `observed`, `protected`, `consistent`, `budget`; `render() -> str`. Before a run only the first three are set.
-`reasons` counts each target's `reason`, the code of its last `Reason`; the summary holds no text content.
-In `observed`, `requests` is the sum of the requests steps reported: exact when every step that could make requests
+`reasons` counts each target's `reason`, the code of its last `Reason`; the summary holds no text content. In
+`observed`, `requests` is the sum of the requests steps reported: exact when every step that could make requests
 reported (a step that declares no requests counts as reported), a lower bound when only some did, and unknown when
-none did. `total` adds the context retrievals (`binding`) to that sum with the same exactness. `budget` compares
-the observed requests with the planned count: `exceeded` when the requests reported so far already pass a known
-plan, `within` when every step that could make requests reported and their sum stays within it, and `unknown`
-otherwise.
+none did. `total` adds the context retrievals (`binding`) to that sum with the same exactness. Reported counts are
+used as reported, whatever the step declared. `budget` compares the observed requests with the planned count:
+`exceeded` when the requests reported so far already pass a known plan, `within` when every step that could make
+requests reported and their sum stays within it, and `unknown` otherwise.
 
 ### Values without an exported type
 
@@ -302,7 +303,7 @@ reported.
 | `empty_record` | `GraphScope.record`, `ProtectionGraph` | A record has no members. |
 | `invalid_request_count` | `Requests` | Count is negative or not an integer. |
 | `names_not_tuple` | `Operation`, `Workflow`, `prepare` | `checks`, `subject`, `requires` or `capabilities` given as a string. |
-| `verifier_ports` | `Operation` | An `assessment` output alongside other outputs or under another name, or a port named `assessment` of another kind. |
+| `verifier_ports` | `Operation` | An `assessment` output alongside other outputs or under another name, or an output port named `assessment` of another kind. |
 | `seed_output_reserved` | `Operation` | An output named `record`. |
 
 **When building the graph** (`ProtectionGraph`)
@@ -311,11 +312,11 @@ reported.
 |---|---|
 | `duplicate_target` | A datum listed twice as a target. |
 | `foreign_datum` | A datum or record member from another scope. `detail` says where. |
-| `unknown_reference` | A relation names a datum that is not a target. Also raised by `record_of` and `outcome` for a foreign target. |
+| `unknown_reference` | A relation names a datum that is not a target. Also raised by `outcome` for any datum that is not a target, and by `record_of` for a datum of this scope that is not a target (another scope's datum: `foreign_datum`). |
 | `view_out_of_range` | A context view outside its datum. |
 | `duplicate_context_source` | Two different sources with one name. |
 | `mention_not_on_target` | A declared mention on a context datum. |
-| `mention_out_of_range`, `mention_slice_mismatch`, `overlapping_output_ownership`, `invalid_output` | A declared mention breaks a mention rule. |
+| `mention_out_of_range`, `mention_slice_mismatch`, `overlapping_output_ownership` | A declared mention breaks a mention rule. Declared mentions must be `Mention` values. |
 | `dependency_cycle` | Dependencies form a cycle. |
 | `group_overlap` | A target in two output groups. |
 | `foreign_record` | A record from another scope. |

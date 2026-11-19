@@ -175,6 +175,8 @@ Two rows need care. A workflow with no required checks makes no protection claim
 released, even when every step succeeds. And attribution covers the whole run: if any verifier, for any target,
 returns an assessment that names a different target or no target, the SDK can no longer tell which verdict belongs
 to which text. No target in the run then qualifies, and `result.consistent` is `False`.
+This answer overrides every other one in the diagram: every target is `not_met` with `inconsistent_invocation` as
+its last reason, even a target whose step raised and even when the workflow requires no checks.
 
 A workflow with `release="annotation"` never releases anything. It is for measuring or labelling text without a
 protection claim.

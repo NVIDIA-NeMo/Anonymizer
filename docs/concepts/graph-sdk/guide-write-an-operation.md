@@ -6,6 +6,10 @@
 After reading this page you can wrap any Python function as a step, give it the inputs it needs, return more than
 one value from it, and handle a step that fails.
 
+!!! warning "Provisional"
+
+    The graph SDK is provisional. Names, signatures and default values may change in a later release.
+
 ## The function and its ports
 
 An operation calls your function with keyword arguments, one per input port, so the parameter names must match the

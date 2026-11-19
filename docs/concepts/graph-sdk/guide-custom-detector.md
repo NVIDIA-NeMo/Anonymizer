@@ -6,6 +6,10 @@
 After reading this page you can plug any detector (a regular expression, a local model, a service) into a
 workflow, have the SDK check the spans it returns, and replace those spans in a later step.
 
+!!! warning "Provisional"
+
+    The graph SDK is provisional. Names, signatures and default values may change in a later release.
+
 ## Mentions
 
 A **mention** (`Mention`) marks one span of a target: `Mention(datum, start, end, label, text)`. `start` and `end`
@@ -159,6 +163,7 @@ print([len(result.value(t, "mentions")) for t in targets])
 
 ## Mentions you already have
 
-If spans come from elsewhere, such as a labelled dataset, declare them on the graph instead:
-`ProtectionGraph(scope, targets, mentions=(Mention(...), ...))`. The constructor applies the same rules and raises
-`GraphRejection` with the rule's code on the first broken one. Steps read them through the `mentions` seed.
+If spans come from elsewhere, such as a labelled dataset, declare them on the graph instead: `ProtectionGraph(scope,
+targets, mentions=(Mention(...), ...))`. Declared mentions must be `Mention` values. The constructor applies the
+same rules and raises `GraphRejection` with the rule's code on the first broken one. Steps read them through the
+`mentions` seed.

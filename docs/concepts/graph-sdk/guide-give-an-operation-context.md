@@ -6,6 +6,10 @@
 After reading this page you can let a step read text it does not protect, such as earlier messages in a thread or
 a structured profile, and control how much of it is read.
 
+!!! warning "Provisional"
+
+    The graph SDK is provisional. Names, signatures and default values may change in a later release.
+
 Context is read, never released. It helps a step decide what to change in a target; it is not itself output.
 
 ## Declare context for a target

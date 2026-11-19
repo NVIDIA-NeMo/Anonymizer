@@ -9,6 +9,10 @@ description: ""
 
 Each term used in the graph SDK pages, defined once. Code names are given where a term has one.
 
+<Warning title="Provisional">
+The graph SDK is provisional. Names, signatures and default values may change in a later release.
+</Warning>
+
 | Term | Meaning |
 |---|---|
 | Advisory (`Advisory`) | The verdict of a verifier of the final candidate on a check the workflow does not require. Reported on the outcome; never changes qualification or release. |
@@ -20,7 +24,7 @@ Each term used in the graph SDK pages, defined once. Code names are given where 
 | Check | A name, such as `"names_removed"`, that a verifier declares its assessment answers. |
 | Context | Text, or a value of a registered kind, that a step may read while processing a target. Context is never released. |
 | Context item | One piece of context delivered to a step, with fields `source`, `index`, `text` and `kind`. |
-| Context source (`ContextSource`) | A function you supply that returns context items, called once per run. |
+| Context source (`ContextSource`) | A named provider of context items that you supply, with item and byte bounds, called once per run. |
 | Datum (`Datum`) | One text plus an identity, made by `GraphScope.datum`. Equality uses the identity, not the text. |
 | Dependency (`Dependency`) | A relation: withhold the dependent target if the target it depends on is withheld. |
 | Final candidate | The candidate made by the last step that outputs `text`. It is what the SDK releases. |

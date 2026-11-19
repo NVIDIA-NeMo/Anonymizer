@@ -6,6 +6,10 @@
 After reading this page you can read a result for one target or for a whole run, tell a failed step from a failed
 check from a withholding, and see which step ran for which target.
 
+!!! warning "Provisional"
+
+    The graph SDK is provisional. Names, signatures and default values may change in a later release.
+
 ## One program, three kinds of failure
 
 Alice's text passes. Bob's text runs but fails the check. Carol's text makes the step raise.
@@ -87,8 +91,9 @@ A `Reason` has `code`, `check`, `verifier` and `cause`. The codes:
 
 `result.ledger()` gives one `(target, operation, status)` entry for every target and step, whether the step ran or
 not. A step that never ran is `blocked` if its target had already failed, and `cancelled` if the run was cancelled
-first. `result.attempts` lists only the calls that happened, one entry per target a step was called for, in the order they ran, each with `target`, `operation`,
-`status` and `reason`. Steps run in workflow order, and each step runs for every target before the next step starts.
+first. `result.attempts` lists only the calls that happened, one entry per target a step was called for, in the
+order they ran, each with `target`, `operation`, `status` and `reason`. Steps run in workflow order, and each step
+runs for every target before the next step starts.
 
 ```python
 from anonymizer import graph as g
@@ -145,10 +150,10 @@ reasons: failed=1, raised=1; protected: 1; consistent: True
 observed: binding=exact 0, correction=exact 0, retry=exact 0, total=exact 0, requests=exact 0; budget: within
 ```
 
-That is the summary of the first program on this page. Its fields are `operations`, `targets`,
-`planned_requests`, `terminals`, `qualifications`, `reasons` (pairs of code and count, counting each target's `reason`, the code of its last `Reason`), `observed`, `protected` (a
-count), `consistent` and `budget`. `PreparedProtection.summary()` gives the same type before the run, with only
-the first three filled. The `observed` row and `budget` are described in
+That is the summary of the first program on this page. Its fields are `operations`, `targets`, `planned_requests`,
+`terminals`, `qualifications`, `reasons` (pairs of code and count, counting each target's `reason`, the code of its
+last `Reason`), `observed`, `protected` (a count), `consistent` and `budget`. `PreparedProtection.summary()` gives
+the same type before the run, with only the first three filled. The `observed` row and `budget` are described in
 [Set limits, budget requests and cancel](guide-limits-budgets-cancel.md#cap-the-plan-with-a-budget).
 
 ## Reading text

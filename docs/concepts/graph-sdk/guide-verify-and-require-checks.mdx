@@ -10,6 +10,10 @@ description: ""
 After reading this page you can write a verifier, make a workflow require its check, add checks that only advise,
 and avoid the one mistake `prepare` refuses most often: checking text that a later step changes.
 
+<Warning title="Provisional">
+The graph SDK is provisional. Names, signatures and default values may change in a later release.
+</Warning>
+
 ## A verifier
 
 A verifier is a function that returns an `Assessment` for the target it was given. Build it with
@@ -244,5 +248,5 @@ releases output may not contain an annotation workflow at any depth (`annotation
 |---|---|---|
 | `required_check_not_final` | A required check is answered only by a verifier of earlier text, or by none. | Move the verifier after the last step that outputs `text`, or fix the check name. |
 | `verifier_subject_invalid` | A verifier declares `checks` without `subject`; a subject is not one of its inputs or traces to no text (for example `context`); or a non-verifier declares `subject`. | Declare `subject=("text",)` and include `text` in the inputs. |
-| `verifier_ports` | An operation declares an `assessment` output alongside others or under another name, or a port named `assessment` of another kind. | Use `Operation.verifier`; a verifier's only output is `{"assessment": "assessment"}`. |
+| `verifier_ports` | An operation declares an `assessment` output alongside others or under another name, or an output port named `assessment` of another kind. | Use `Operation.verifier`; a verifier's only output is `{"assessment": "assessment"}`. |
 | `names_not_tuple` | `checks`, `subject` or `requires` given as a string. | Write `("names_removed",)`. |

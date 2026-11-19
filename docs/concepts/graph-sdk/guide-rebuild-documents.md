@@ -7,6 +7,10 @@ After reading this page you can split a long document into sections, protect eac
 failure stays local, put the protected sections back together, and check the assembled document before you
 release it.
 
+!!! warning "Provisional"
+
+    The graph SDK is provisional. Names, signatures and default values may change in a later release.
+
 ## Why split
 
 A target is the unit the SDK checks and releases. If a whole document is one target, one failed step withholds all

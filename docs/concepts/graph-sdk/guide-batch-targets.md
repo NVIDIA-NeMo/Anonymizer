@@ -6,6 +6,10 @@
 After reading this page you can make one model call serve every target instead of one call per target, declare the
 requests that call makes, and handle per-target failures inside a batch.
 
+!!! warning "Provisional"
+
+    The graph SDK is provisional. Names, signatures and default values may change in a later release.
+
 ## Why batch
 
 A per-target operation calls your function once for each target. With a model behind it, 1,000 targets mean 1,000

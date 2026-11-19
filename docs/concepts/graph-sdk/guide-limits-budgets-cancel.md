@@ -6,6 +6,10 @@
 After reading this page you can bound the size of a run, declare and cap the external requests your steps make,
 and stop a run that is in progress.
 
+!!! warning "Provisional"
+
+    The graph SDK is provisional. Names, signatures and default values may change in a later release.
+
 ## Limits
 
 `Limits` bounds one run. `prepare` checks it before anything runs, and `protect` checks it again before the first

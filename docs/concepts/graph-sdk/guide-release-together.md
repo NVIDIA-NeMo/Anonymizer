@@ -6,6 +6,10 @@
 After reading this page you can release the fields of one table row all together or not at all, withhold a
 derived text when its source is withheld, and find out which target caused a withholding.
 
+!!! warning "Provisional"
+
+    The graph SDK is provisional. Names, signatures and default values may change in a later release.
+
 ## Three relations
 
 | Relation | Use it when | Changes release? |
