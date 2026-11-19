@@ -8,7 +8,9 @@ import re
 from string import Formatter
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
+from pydantic import BeforeValidator, Field, field_validator
+
+from anonymizer.config.base import FrozenConfig
 
 
 def _normalize_replace_kind(value: Any) -> Any:
@@ -18,10 +20,8 @@ def _normalize_replace_kind(value: Any) -> Any:
     return value
 
 
-class ReplaceMethodBase(BaseModel):
+class ReplaceMethodBase(FrozenConfig):
     """Shared configuration for all replacement methods."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
     def _render_template(self, template: str, *, text: str, label: str, **extra: str) -> str:
         return template.format(text=text, label=label, **extra)

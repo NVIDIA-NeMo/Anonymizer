@@ -15,6 +15,7 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
     Detect,
+    DetectionScope,
     EvaluateConfig,
     Rewrite,
     TextRecord,
@@ -943,6 +944,11 @@ _FROZEN_FIELDS: list[tuple[Any, str, Any]] = [
     (RegexLimits(), "max_matches_per_rule", 7),
     (BuiltinRegex(label="email"), "enabled", False),
     (RegexRule(label="case_id", pattern=r"CASE-\d+"), "label", "other"),
+    (
+        DetectionScope(effective_labels=(), allowed_labels=None, excluded_labels=(), gliner_threshold=0.3),
+        "gliner_threshold",
+        0.5,
+    ),
 ]
 
 
@@ -950,6 +956,13 @@ _FROZEN_FIELDS: list[tuple[Any, str, Any]] = [
 def test_config_models_reject_field_assignment(model: Any, field: str, value: Any) -> None:
     with pytest.raises(ValidationError, match="frozen"):
         setattr(model, field, value)
+
+
+@pytest.mark.parametrize(("model", "field", "_value"), _FROZEN_FIELDS)
+def test_frozen_assignment_error_does_not_echo_the_value(model: Any, field: str, _value: Any) -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        setattr(model, field, "SECRET-VALUE John Smith 555-1234")
+    assert "SECRET-VALUE" not in str(excinfo.value)
 
 
 def test_frozen_assignment_is_a_type_error() -> None:

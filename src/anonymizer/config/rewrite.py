@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
+
+from anonymizer.config.base import FrozenConfig
 
 
 class RiskTolerance(str, Enum):
@@ -116,10 +118,8 @@ _RISK_TOLERANCE_BUNDLES: dict[RiskTolerance, _RiskToleranceBundle] = {
 }
 
 
-class PrivacyGoal(BaseModel):
+class PrivacyGoal(FrozenConfig):
     """Structured privacy and utility goal for rewrite mode."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
     protect: str = Field(
         min_length=10, max_length=1000, description="What to protect (e.g. direct identifiers, quasi-identifiers)."

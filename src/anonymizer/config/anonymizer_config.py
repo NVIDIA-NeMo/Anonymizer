@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from anonymizer.config.base import FrozenConfig
 from anonymizer.config.entity_labels import normalize_entity_label
 from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
 from anonymizer.config.replace_strategies import ReplaceMethod
@@ -140,10 +141,8 @@ class TextRecordsInput(BaseModel):
         return self
 
 
-class DetectionScope(BaseModel):
+class DetectionScope(FrozenConfig):
     """The detection scope a run used. Finding no entities describes the result under this scope only."""
-
-    model_config = ConfigDict(frozen=True)
 
     effective_labels: tuple[str, ...] = Field(description="Labels detection looked for, after exclusions.")
     allowed_labels: tuple[str, ...] | None = Field(
@@ -156,10 +155,8 @@ class DetectionScope(BaseModel):
     gliner_threshold: float = Field(description="GLiNER detection confidence threshold.")
 
 
-class Detect(BaseModel):
+class Detect(FrozenConfig):
     """Configuration for the entity detection stage."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
     entity_labels: list[str] | None = Field(
         default=None,
@@ -400,10 +397,8 @@ INSTRUCTIONS_REMOVED = (
 )
 
 
-class Rewrite(BaseModel):
+class Rewrite(FrozenConfig):
     """Configuration for rewrite-mode execution."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
     privacy_goal: PrivacyGoal = Field(
         default_factory=default_privacy_goal,
@@ -463,10 +458,8 @@ class Rewrite(BaseModel):
         )
 
 
-class AnonymizerConfig(BaseModel):
+class AnonymizerConfig(FrozenConfig):
     """Primary user-facing config for anonymization behavior."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
     detect: Detect = Field(default_factory=Detect, description="Entity detection configuration.")
     replace: ReplaceMethod | None = Field(
