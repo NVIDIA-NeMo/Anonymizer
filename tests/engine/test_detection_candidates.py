@@ -10,7 +10,6 @@ import pytest
 
 from anonymizer.engine.detection.admission import apply_validation_admission
 from anonymizer.engine.detection.candidates import (
-    _overlaps,
     _publication_key,
     _rank_candidates,
     _source_ref_key,
@@ -454,7 +453,7 @@ def _reference_reconcile(candidates: list[AdmittedCandidate]) -> tuple[AdmittedC
     for source_ref in sorted(by_source, key=_source_ref_key):
         accepted: list[AdmittedCandidate] = []
         for candidate in _rank_candidates(by_source[source_ref]):
-            if any(_overlaps(candidate, existing) for existing in accepted):
+            if any(candidate.span.overlaps(existing.span) for existing in accepted):
                 continue
             accepted.append(candidate)
         reconciled.extend(sorted(accepted, key=_publication_key))

@@ -193,11 +193,7 @@ def build_validation_conflict_groups(
             item.observation_id,
         ),
     )
-    return group_overlapping_spans(
-        ordered,
-        start_position=lambda observation: observation.start_position,
-        end_position=lambda observation: observation.end_position,
-    )
+    return group_overlapping_spans(ordered, span=lambda observation: observation.span)
 
 
 def chunk_validation_conflict_groups(
