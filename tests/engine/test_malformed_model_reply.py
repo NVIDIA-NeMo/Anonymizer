@@ -32,6 +32,7 @@ from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_DOMAIN,
     COL_DOMAIN_SUPPLEMENT,
+    COL_FULL_REWRITE,
     COL_LEAKAGE_MASS,
     COL_MEANING_UNITS,
     COL_MEANING_UNITS_SERIALIZED,
@@ -42,11 +43,15 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA,
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
+    COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITE_BASELINE_TEXT,
+    COL_REWRITE_DISPOSITION_BLOCK,
     COL_REWRITE_REPLACEMENT_READY,
+    COL_REWRITE_TAGGED_TEXT,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
     COL_SENSITIVITY_DISPOSITION,
+    COL_TAG_NOTATION,
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
@@ -58,6 +63,7 @@ from anonymizer.engine.rewrite import combined_rewrite_workflow as combined
 from anonymizer.engine.rewrite.domain_classification import _DOMAIN_BY_ENUM, DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
+from anonymizer.engine.rewrite.rewrite_generation import RewriteGenerationWorkflow
 from anonymizer.engine.schemas import Domain
 
 _PROVIDER = ModelProvider(name="scripted", endpoint="http://scripted.invalid/v1", api_key="unused")
@@ -71,6 +77,7 @@ _OTHER_REPLIES = {
     "scripted-detector": '{"entities": []}',
     "scripted-augmenter": '```json\n{"entities": []}\n```',
     "scripted-domain": '{"domain": "META_TEXT", "domain_confidence": 0.5}',
+    "scripted-rewriter": '{"rewritten_text": "Nothing to see."}',
     "scripted-meaning": '{"units": [{"id": 1, "aspect": "Topic", "unit": "Nothing to see.", "importance": "important"}]}',
 }
 
@@ -620,3 +627,78 @@ def test_combined_evaluation_without_quality_questions_keeps_the_privacy_metrics
     assert row[COL_LEAKAGE_MASS] == 0.0
     assert row[COL_NEEDS_HUMAN_REVIEW]  # unavailable utility is flagged
     assert calls["quality"] == 0
+
+
+_REWRITER = "scripted-rewriter"
+
+
+def _rewrite(tmp_path: Path):
+    selection = RewriteModelSelection.model_validate(
+        {**load_default_model_selection().rewrite.model_dump(), "rewriter": _REWRITER}
+    )
+    columns = [
+        column
+        for column in RewriteGenerationWorkflow().columns(selected_models=selection, privacy_goal=_PRIVACY_GOAL)
+        if column.name in (COL_FULL_REWRITE, COL_REWRITTEN_TEXT)
+    ]
+    return _adapter(tmp_path).run_workflow(
+        pd.DataFrame(
+            {
+                COL_TAG_NOTATION: ["xml", "xml"],
+                COL_REWRITE_TAGGED_TEXT: [_TEXT, _OTHER_TEXT],
+                COL_REPLACEMENT_MAP_FOR_PROMPT: ['{"replacements": []}', '{"replacements": []}'],
+                COL_REWRITE_DISPOSITION_BLOCK: ["[]", "[]"],
+                COL_REWRITE_REPLACEMENT_READY: [True, True],
+            }
+        ),
+        model_configs=[_model(_REWRITER)],
+        columns=columns,
+        workflow_name="rewrite-pipeline",
+    )
+
+
+def test_rewrite_reply_unparsed_on_every_attempt_keeps_the_row_without_a_rewrite(
+    tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
+) -> None:
+    script, calls = scripted
+    script[_REWRITER] = ["Here is your rewrite: a card is charged."]
+
+    result = _rewrite(tmp_path)
+
+    assert result.failed_records == []
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row[COL_FULL_REWRITE])
+    assert pd.isna(row[COL_REWRITTEN_TEXT])
+    assert calls[_REWRITER] == 6
+    assert result.dataframe.iloc[1][COL_REWRITTEN_TEXT] == _OTHER_TEXT
+
+
+def test_evaluation_of_a_missing_rewrite_asks_nothing_and_leaves_every_metric_unavailable(
+    tmp_path: Path, evaluator: tuple[dict[str, list[str]], dict[str, int]]
+) -> None:
+    script, calls = evaluator
+
+    result = _evaluate_rows(tmp_path, quality_qa=_EVAL_QUALITY_QA, rewritten_text=None)
+
+    assert result.failed_records == []
+    row = result.dataframe.iloc[0]
+    assert all(pd.isna(row[c]) for c in (COL_QUALITY_QA_REANSWER, COL_PRIVACY_QA_REANSWER, COL_QUALITY_QA_COMPARE))
+    assert all(pd.isna(row[c]) for c in (COL_UTILITY_SCORE, COL_LEAKAGE_MASS, COL_ANY_HIGH_LEAKED))
+    assert not row[COL_NEEDS_REPAIR]
+    assert dict(calls) == {}  # no request renders a missing text as "None"
+    assert result.dataframe.iloc[1][COL_UTILITY_SCORE] == pytest.approx(0.8)
+
+
+def test_combined_evaluation_of_a_missing_rewrite_keeps_the_row_withheld_and_flagged(
+    tmp_path: Path, evaluator: tuple[dict[str, list[str]], dict[str, int]]
+) -> None:
+    script, calls = evaluator
+
+    frame = _combined(tmp_path, quality_qa=_EVAL_QUALITY_QA, rewritten_text=None)
+
+    row = frame.iloc[0]
+    assert pd.isna(row[COL_REWRITTEN_TEXT])
+    assert pd.isna(row[COL_LEAKAGE_MASS])
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    assert dict(calls) == {}
+    assert frame.iloc[1][COL_REWRITTEN_TEXT] == _OTHER_TEXT

@@ -2049,3 +2049,29 @@ def test_row_without_a_privacy_reply_is_kept_withheld_and_flagged(tmp_path: Path
         ("could_not_assess", "high_leak", "metric_unavailable"),
         ("could_not_assess", "leakage_within_threshold", "metric_unavailable"),
     ]
+
+
+class _NoRewriteReplyAdapter(_NoPrivacyReplyAdapter):
+    """The rewrite reply never parsed: no rewritten text, so evaluation asks nothing and every metric is missing."""
+
+    def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **kwargs: object) -> WorkflowRunResult:
+        result = super().run_workflow(seed, workflow_name=workflow_name, **kwargs)
+        if workflow_name == "rewrite-pipeline":
+            result.dataframe[COL_REWRITTEN_TEXT] = None
+        elif workflow_name.startswith("rewrite-evaluate-"):
+            result.dataframe[COL_UTILITY_SCORE] = pd.array([None] * len(result.dataframe), dtype="double[pyarrow]")
+        return result
+
+
+def test_row_without_a_rewrite_reply_is_kept_without_text_and_flagged(tmp_path: Path) -> None:
+    result = _run_one(_NoRewriteReplyAdapter({"rec": 0}), tmp_path)
+
+    assert result.failed_records == []
+    assert len(result.dataframe) == 1
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row["text_rewritten"])
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert not outcome.available
+    assert not outcome.protected

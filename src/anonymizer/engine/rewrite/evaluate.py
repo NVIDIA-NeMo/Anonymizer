@@ -433,8 +433,8 @@ def _make_quality_reanswer_column(evaluator_alias: str) -> Any:
         model_aliases=[evaluator_alias],
     )
     async def _quality_reanswer(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
-        if no_reply(row.get(COL_QUALITY_QA)):
-            row[COL_QUALITY_QA_REANSWER] = None  # no quality questions to answer
+        if no_reply(row.get(COL_QUALITY_QA)) or no_reply(row.get(COL_REWRITTEN_TEXT)):
+            row[COL_QUALITY_QA_REANSWER] = None  # no quality questions, or no rewrite, to answer from
             return row
         qa = parse_quality_qa(row.get(COL_QUALITY_QA, {}))
         expected_ids = [item.id for item in qa.items]
@@ -455,6 +455,9 @@ def _make_privacy_reanswer_column(evaluator_alias: str) -> Any:
         model_aliases=[evaluator_alias],
     )
     async def _privacy_reanswer(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
+        if no_reply(row.get(COL_REWRITTEN_TEXT)):
+            row[COL_PRIVACY_QA_REANSWER] = None  # no rewrite to assess; its text is unavailable already
+            return row
         qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
         expected_ids = [item.id for item in qa.items]
 
