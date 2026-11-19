@@ -17,8 +17,9 @@ from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig, ModelProvider
 from data_designer.interface.data_designer import DataDesigner
 
+from anonymizer.config.anonymizer_config import Rewrite
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection, RewriteModelSelection
-from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
+from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_ENTITIES_BY_VALUE,
@@ -55,6 +56,7 @@ from anonymizer.engine.rewrite.combined_rewrite_workflow import (
 )
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.measurement import MeasurementCollector, measurement_session
+from tests.conftest import run_context
 
 _PRIVACY_GOAL = PrivacyGoal(
     protect="All direct identifiers including names, locations, and contact details",
@@ -154,7 +156,7 @@ def test_graph_unrolls_conditional_repairs(
         selected_models=stub_rewrite_model_selection,
         replace_model_selection=stub_replace_model_selection,
         privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=max_repair_iterations),
+        evaluation=Rewrite(max_repair_iterations=max_repair_iterations).evaluation,
     )
 
     assert len(graph.evaluation_states) == max_repair_iterations + 1
@@ -176,7 +178,7 @@ def test_finalizer_selects_last_executed_iteration(
         selected_models=stub_rewrite_model_selection,
         replace_model_selection=stub_replace_model_selection,
         privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=2),
+        evaluation=Rewrite(max_repair_iterations=2).evaluation,
     )
     initial, repaired, skipped = graph.evaluation_states
     row = {
@@ -229,7 +231,7 @@ def test_finalizer_flags_unavailable_leakage(
         selected_models=stub_rewrite_model_selection,
         replace_model_selection=stub_replace_model_selection,
         privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=0),
+        evaluation=Rewrite(max_repair_iterations=0).evaluation,
     )
     (state,) = graph.evaluation_states
     row = {
@@ -256,7 +258,7 @@ def test_combined_graph_preserves_malformed_rewrite_handling(
         selected_models=stub_rewrite_model_selection,
         replace_model_selection=stub_replace_model_selection,
         privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=0),
+        evaluation=Rewrite(max_repair_iterations=0).evaluation,
     )
     rewrite_column = next(column for column in graph.columns if column.name == COL_REWRITTEN_TEXT_INITIAL)
     assert isinstance(rewrite_column, CustomColumnConfig)
@@ -279,7 +281,7 @@ def test_conditional_repairs_execute_independently_per_row(
         selected_models=stub_rewrite_model_selection,
         replace_model_selection=stub_replace_model_selection,
         privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=2),
+        evaluation=Rewrite(max_repair_iterations=2).evaluation,
     )
     columns = _deterministic_columns(graph)
     collector = MeasurementCollector(record_hash_key="test-key")
@@ -343,11 +345,10 @@ def test_run_executes_one_data_designer_workflow(
     with measurement_session(collector):
         result = CombinedRewriteWorkflow(adapter=adapter).run(
             dataframe,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=EvaluationCriteria(max_repair_iterations=2),
+            options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=2),
+            context=run_context(
+                stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+            ),
         )
 
     adapter.run_workflow.assert_called_once()
@@ -392,11 +393,10 @@ def test_run_keeps_review_flag_for_unavailable_utility(
 
     result = CombinedRewriteWorkflow(adapter=adapter).run(
         dataframe,
-        model_configs=stub_model_configs,
-        selected_models=stub_rewrite_model_selection,
-        replace_model_selection=stub_replace_model_selection,
-        privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=0),
+        options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=0),
+        context=run_context(
+            stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+        ),
     )
 
     assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [True, False]
@@ -440,11 +440,10 @@ def test_run_restores_skipped_span_label_counts_json_string_to_dict(
 
     result = CombinedRewriteWorkflow(adapter=adapter).run(
         dataframe,
-        model_configs=stub_model_configs,
-        selected_models=stub_rewrite_model_selection,
-        replace_model_selection=stub_replace_model_selection,
-        privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=2),
+        options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=2),
+        context=run_context(
+            stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+        ),
     )
 
     counts = result.dataframe[COL_REPLACEMENT_APPLICATION].iloc[0]["skipped_span_label_counts"]
@@ -486,11 +485,10 @@ def test_run_reports_combined_failure_and_drops_only_failed_entity_row(
 
     result = CombinedRewriteWorkflow(adapter=adapter).run(
         dataframe,
-        model_configs=stub_model_configs,
-        selected_models=stub_rewrite_model_selection,
-        replace_model_selection=stub_replace_model_selection,
-        privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=2),
+        options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=2),
+        context=run_context(
+            stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+        ),
     )
 
     assert result.dataframe[RECORD_ID_COLUMN].tolist() == ["entity-ok", "passthrough"]
@@ -505,7 +503,7 @@ def test_combined_and_legacy_paths_return_equivalent_repaired_result(
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
     """Both paths keep the second repair's text when the first repair still fails evaluation."""
-    evaluation = EvaluationCriteria(max_repair_iterations=2)
+    options = Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=2)
     dataframe = pd.DataFrame(
         {
             COL_TEXT: ["Alice works at Acme"],
@@ -550,11 +548,10 @@ def test_combined_and_legacy_paths_return_equivalent_repaired_result(
         )
         legacy_result = RewriteWorkflow(adapter=legacy_adapter).run(
             dataframe,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=evaluation,
+            options=options,
+            context=run_context(
+                stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+            ),
         )
 
     # The combined side runs the real graph finalizer through the real adapter, with deterministic
@@ -565,17 +562,14 @@ def test_combined_and_legacy_paths_return_equivalent_repaired_result(
         selected_models=stub_rewrite_model_selection,
         replace_model_selection=stub_replace_model_selection,
         privacy_goal=_PRIVACY_GOAL,
-        evaluation=evaluation,
+        evaluation=options.evaluation,
     )
     deterministic_graph = dataclasses.replace(graph, columns=_deterministic_columns(graph))
     with patch.object(combined_workflow, "build_graph", return_value=deterministic_graph):
         combined_result = combined_workflow.run(
             dataframe,
-            model_configs=[],
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=evaluation,
+            options=options,
+            context=run_context([], rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection),
         )
 
     assert legacy_result.dataframe[COL_REWRITTEN_TEXT].tolist() == ["rewrite-2"]
@@ -619,7 +613,7 @@ def test_conditional_graph_handles_larger_mixed_batches(
         selected_models=stub_rewrite_model_selection,
         replace_model_selection=stub_replace_model_selection,
         privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=2),
+        evaluation=Rewrite(max_repair_iterations=2).evaluation,
     )
 
     result = adapter.run_workflow(
@@ -673,11 +667,10 @@ def test_run_preserves_mixed_row_order_and_passthrough_defaults(
 
     result = CombinedRewriteWorkflow(adapter=adapter).run(
         dataframe,
-        model_configs=stub_model_configs,
-        selected_models=stub_rewrite_model_selection,
-        replace_model_selection=stub_replace_model_selection,
-        privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=2),
+        options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=2),
+        context=run_context(
+            stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+        ),
     )
 
     assert result.dataframe[COL_TEXT].tolist() == dataframe[COL_TEXT].tolist()
@@ -709,11 +702,10 @@ def test_run_skips_data_designer_when_no_rows_have_entities(
 
     result = CombinedRewriteWorkflow(adapter=adapter).run(
         dataframe,
-        model_configs=stub_model_configs,
-        selected_models=stub_rewrite_model_selection,
-        replace_model_selection=stub_replace_model_selection,
-        privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=2),
+        options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=2),
+        context=run_context(
+            stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+        ),
     )
 
     adapter.run_workflow.assert_not_called()
@@ -744,7 +736,7 @@ def test_graph_validates_with_data_designer(
         selected_models=stub_slim_model_selection.rewrite,
         replace_model_selection=stub_slim_model_selection.replace,
         privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=max_repair_iterations),
+        evaluation=Rewrite(max_repair_iterations=max_repair_iterations).evaluation,
     )
     dataframe = pd.DataFrame(
         {
@@ -820,7 +812,7 @@ def test_combined_graph_passes_summary_to_disposition(
         selected_models=stub_rewrite_model_selection,
         replace_model_selection=stub_replace_model_selection,
         privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=0),
+        evaluation=Rewrite(max_repair_iterations=0).evaluation,
         data_summary="Customer support conversations",
     )
     disposition = next(column for column in graph.columns if column.name == COL_RAW_SENSITIVITY_DISPOSITION)

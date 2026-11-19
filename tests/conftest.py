@@ -6,7 +6,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import sys
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
@@ -166,20 +166,36 @@ def stub_slim_model_selection() -> ModelSelection:
     )
 
 
+def run_context(
+    model_configs: Sequence[ModelConfig],
+    *,
+    detection: DetectionModelSelection | None = None,
+    rewrite: RewriteModelSelection | None = None,
+    replace: ReplaceModelSelection | None = None,
+    data_summary: str | None = None,
+    preview_num_records: int | None = None,
+) -> RunContext:
+    """A RunContext for calling a workflow directly: the default model selection with the given sections replaced."""
+    sections = {"detection": detection, "rewrite": rewrite, "replace": replace}
+    models = load_default_model_selection().model_copy(update={k: v for k, v in sections.items() if v is not None})
+    return RunContext(
+        model_configs=tuple(model_configs),
+        models=models,
+        data_summary=data_summary,
+        preview_num_records=preview_num_records,
+    )
+
+
 def detection_context(
-    model_configs: list[ModelConfig],
+    model_configs: Sequence[ModelConfig],
     detection: DetectionModelSelection,
     *,
     data_summary: str | None = None,
     preview_num_records: int | None = None,
 ) -> RunContext:
     """A RunContext for calling a detection workflow directly, with `detection` as the detection models."""
-    models = load_default_model_selection().model_copy(update={"detection": detection})
-    return RunContext(
-        model_configs=tuple(model_configs),
-        models=models,
-        data_summary=data_summary,
-        preview_num_records=preview_num_records,
+    return run_context(
+        model_configs, detection=detection, data_summary=data_summary, preview_num_records=preview_num_records
     )
 
 

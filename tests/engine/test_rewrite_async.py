@@ -13,8 +13,9 @@ from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.engine.column_generators.generators.custom import CustomColumnGenerator
 from data_designer.engine.models.errors import ModelTimeoutError
 
+from anonymizer.config.anonymizer_config import Rewrite
 from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelection
-from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
+from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_LEAKAGE_MASS,
@@ -41,7 +42,7 @@ def model_columns(
 ) -> list[CustomColumnConfig]:
     adapter = Mock()
     privacy_goal = PrivacyGoal(protect="Personal names and locations", preserve="Professional meaning and context")
-    evaluation = EvaluationCriteria(max_repair_iterations=1)
+    evaluation = Rewrite(max_repair_iterations=1).evaluation
     if request.param:
         graph = CombinedRewriteWorkflow(adapter).build_graph(
             selected_models=stub_rewrite_model_selection,

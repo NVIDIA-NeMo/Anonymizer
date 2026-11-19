@@ -969,16 +969,6 @@ class Anonymizer:
             rewrite_runner = (
                 self._combined_rewrite_runner if config.rewrite.use_combined_graph else self._rewrite_runner
             )
-            rewrite_options: dict[str, Any] = dict(
-                model_configs=self._model_configs,
-                selected_models=self._selected_models.rewrite,
-                replace_model_selection=self._selected_models.replace,
-                privacy_goal=config.rewrite.privacy_goal,
-                evaluation=config.rewrite.evaluation,
-                data_summary=data.data_summary,
-                preview_num_records=preview_num_records,
-                strict_entity_protection=config.rewrite.strict_entity_protection,
-            )
             if rewrite_runner.__class__.run not in (RewriteWorkflow.run, CombinedRewriteWorkflow.run):
                 # A caller's runner overrides run(): detect, then call that override with the detection frame.
                 detection_result = detect(input_df)
@@ -986,13 +976,13 @@ class Anonymizer:
                 detected_df, detection_failures = detection_result.dataframe, list(detection_result.failed_records)
                 t0 = time.perf_counter()
                 logger.info("✏️ Running rewrite pipeline")
-                rewrite_result = rewrite_runner.run(detected_df, **rewrite_options)
+                rewrite_result = rewrite_runner.run(detected_df, options=config.rewrite, context=run_context)
                 post_detection_failures = list(rewrite_result.failed_records)
                 replacement_elapsed = time.perf_counter() - t0
                 outcomes = None
             else:
                 rewrite_result = rewrite_runner.run_with_detection(
-                    input_df, detect=detect_then_announce, **rewrite_options
+                    input_df, detect=detect_then_announce, options=config.rewrite, context=run_context
                 )
                 assert rewrite_result.detection is not None
                 detected_df, detection_failures = (

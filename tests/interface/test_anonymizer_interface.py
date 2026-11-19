@@ -1108,9 +1108,10 @@ def test_run_rewrite_calls_rewrite_runner(stub_input: AnonymizerInput) -> None:
 
     rewrite_runner.run_with_detection.assert_called_once()
     call_kwargs = rewrite_runner.run_with_detection.call_args.kwargs
-    assert config.rewrite is not None
-    assert call_kwargs["privacy_goal"] == config.rewrite.privacy_goal
-    assert call_kwargs["evaluation"] == config.rewrite.evaluation
+    assert set(call_kwargs) == {"detect", "options", "context"}
+    assert call_kwargs["options"] is config.rewrite
+    assert isinstance(call_kwargs["context"], RunContext)
+    assert call_kwargs["context"].models is anonymizer._selected_models
 
 
 def test_run_rewrite_uses_combined_runner_when_enabled(stub_input: AnonymizerInput) -> None:
@@ -1703,7 +1704,7 @@ def test_rewrite_goal_reaching_the_detector_matches_the_caller_goal(stub_input: 
 
     received = detection_workflow.run.call_args.kwargs["latent_goal"]
     assert received == goal
-    assert rewrite_runner.run_with_detection.call_args.kwargs["privacy_goal"] == goal
+    assert rewrite_runner.run_with_detection.call_args.kwargs["options"].privacy_goal == goal
 
 
 class _FirstWordDetector:

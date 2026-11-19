@@ -172,11 +172,8 @@ def _stubbed(
 
 
 _OPTIONS: dict[str, Any] = {
-    "evaluation": SimpleNamespace(flag_leakage_above=None, flag_utility_below=None),
-    "model_configs": [],
-    "selected_models": None,
-    "replace_model_selection": None,
-    "privacy_goal": None,
+    "options": SimpleNamespace(evaluation=SimpleNamespace(flag_leakage_above=None, flag_utility_below=None)),
+    "context": None,
 }
 
 

@@ -142,7 +142,7 @@ class PrivacyGoal(FrozenConfig):
 
 
 class EvaluationCriteria(BaseModel):
-    """Criteria for privacy leakage evaluation and repair.
+    """Criteria for privacy leakage evaluation and repair, built from a `Rewrite` by `Rewrite.evaluation`.
 
     `risk_tolerance` controls the leakage threshold that triggers repair,
     whether individual high-sensitivity leaks trigger repair, and the
@@ -154,15 +154,8 @@ class EvaluationCriteria(BaseModel):
     while still producing evaluation metrics.
     """
 
-    risk_tolerance: RiskTolerance = Field(
-        default=RiskTolerance.low,
-        description="Preset controlling repair and review thresholds.",
-    )
-    max_repair_iterations: int = Field(
-        default=3,
-        ge=0,
-        description="Maximum repair rounds. Set to 0 to disable repair.",
-    )
+    risk_tolerance: RiskTolerance = Field(description="Preset controlling repair and review thresholds.")
+    max_repair_iterations: int = Field(ge=0, description="Maximum repair rounds. Set to 0 to disable repair.")
 
     @property
     def _bundle(self) -> _RiskToleranceBundle:

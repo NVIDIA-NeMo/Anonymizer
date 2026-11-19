@@ -59,6 +59,7 @@ from anonymizer.engine.rewrite.rewrite_workflow import (
 )
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import AnonymizerWorkflowError
+from tests.conftest import run_context
 
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
 
@@ -70,8 +71,6 @@ _PRIVACY_GOAL = PrivacyGoal(
     protect="All direct identifiers including names, locations, and contact details",
     preserve="Career trajectory, skills, and professional context in abstract terms",
 )
-
-_EVALUATION = EvaluationCriteria()
 
 
 def _positional(dataframe: pd.DataFrame, failed_records: list) -> WorkflowRunResult:
@@ -260,11 +259,10 @@ def test_no_entities_skips_all_workflows(
 
     result = wf.run(
         stub_df_no_entities,
-        model_configs=stub_model_configs,
-        selected_models=stub_rewrite_model_selection,
-        replace_model_selection=stub_replace_model_selection,
-        privacy_goal=_PRIVACY_GOAL,
-        evaluation=_EVALUATION,
+        options=Rewrite(privacy_goal=_PRIVACY_GOAL),
+        context=run_context(
+            stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+        ),
     )
 
     adapter.run_workflow.assert_not_called()
@@ -283,11 +281,10 @@ def test_passthrough_defaults_populated(
 
     result = wf.run(
         stub_df_no_entities,
-        model_configs=stub_model_configs,
-        selected_models=stub_rewrite_model_selection,
-        replace_model_selection=stub_replace_model_selection,
-        privacy_goal=_PRIVACY_GOAL,
-        evaluation=_EVALUATION,
+        options=Rewrite(privacy_goal=_PRIVACY_GOAL),
+        context=run_context(
+            stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+        ),
     )
 
     df = result.dataframe
@@ -337,11 +334,10 @@ def test_unavailable_leakage_flags_for_review(
                 RewriteWorkflow(adapter=adapter)
                 .run(
                     stub_df_with_entities,
-                    model_configs=stub_model_configs,
-                    selected_models=stub_rewrite_model_selection,
-                    replace_model_selection=stub_replace_model_selection,
-                    privacy_goal=_PRIVACY_GOAL,
-                    evaluation=_EVALUATION,
+                    options=Rewrite(privacy_goal=_PRIVACY_GOAL),
+                    context=run_context(
+                        stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+                    ),
                 )
                 .dataframe
             )
@@ -377,12 +373,13 @@ def test_calls_sub_workflows_in_order(
         wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             stub_df_with_entities,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=_EVALUATION,
-            data_summary="Customer support conversations",
+            options=Rewrite(privacy_goal=_PRIVACY_GOAL),
+            context=run_context(
+                stub_model_configs,
+                rewrite=stub_rewrite_model_selection,
+                replace=stub_replace_model_selection,
+                data_summary="Customer support conversations",
+            ),
         )
 
     workflow_names = [call.kwargs["workflow_name"] for call in adapter.run_workflow.call_args_list]
@@ -432,11 +429,10 @@ def test_failed_records_accumulated_across_steps(
         wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             stub_df_with_entities,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=_EVALUATION,
+            options=Rewrite(privacy_goal=_PRIVACY_GOAL),
+            context=run_context(
+                stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+            ),
         )
 
     record_ids = {f.record_id for f in result.failed_records}
@@ -637,11 +633,10 @@ def test_repair_loop_exits_early_when_no_rows_need_repair(
         wf = RewriteWorkflow(adapter=adapter)
         wf.run(
             stub_df_with_entities,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=EvaluationCriteria(max_repair_iterations=3),
+            options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=3),
+            context=run_context(
+                stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+            ),
         )
 
     workflow_names = [call.kwargs["workflow_name"] for call in adapter.run_workflow.call_args_list]
@@ -698,11 +693,10 @@ def test_repair_loop_runs_up_to_max_iterations(
         wf = RewriteWorkflow(adapter=adapter)
         wf.run(
             stub_df_with_entities,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=EvaluationCriteria(max_repair_iterations=max_iters),
+            options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=max_iters),
+            context=run_context(
+                stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+            ),
         )
 
     workflow_names = [call.kwargs["workflow_name"] for call in adapter.run_workflow.call_args_list]
@@ -787,11 +781,8 @@ def _run_scripted(
         _mock_replace(mock_replace_cls, dataframe.copy())
         result = RewriteWorkflow(adapter=Mock(wraps=adapter)).run(
             dataframe,
-            model_configs=model_configs,
-            selected_models=rewrite_selection,
-            replace_model_selection=replace_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=EvaluationCriteria(max_repair_iterations=max_repair_iterations),
+            options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=max_repair_iterations),
+            context=run_context(model_configs, rewrite=rewrite_selection, replace=replace_selection),
         )
     return result.dataframe
 
@@ -981,11 +972,8 @@ def test_repair_loop_through_run_returns_each_rows_last_repair(
 
     result = workflow.run(
         df,
-        model_configs=[],
-        selected_models=stub_rewrite_model_selection,
-        replace_model_selection=stub_replace_model_selection,
-        privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=3),
+        options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=3),
+        context=run_context([], rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection),
     )
 
     out = result.dataframe
@@ -1037,11 +1025,10 @@ def test_replacement_unavailable_can_be_repaired(
         _mock_replace(mock_replace_cls, replace_df)
         result = RewriteWorkflow(adapter=adapter).run(
             stub_df_with_entities,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=EvaluationCriteria(max_repair_iterations=1),
+            options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=1),
+            context=run_context(
+                stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+            ),
         )
 
     row = result.dataframe.iloc[0]
@@ -1107,11 +1094,10 @@ def test_only_failing_rows_sent_to_repair(
         wf = RewriteWorkflow(adapter=adapter)
         wf.run(
             df,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=EvaluationCriteria(max_repair_iterations=2),
+            options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=2),
+            context=run_context(
+                stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+            ),
         )
 
     repair_calls = [
@@ -1170,11 +1156,10 @@ def test_repair_iterations_tracked_per_row(
         wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             stub_df_with_entities,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=EvaluationCriteria(max_repair_iterations=3),
+            options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=3),
+            context=run_context(
+                stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+            ),
         )
 
     assert result.dataframe[COL_REPAIR_ITERATIONS].iloc[0] == 1
@@ -1197,11 +1182,10 @@ def test_zero_max_repair_iterations_still_evaluates(
         wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             stub_df_with_entities,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=EvaluationCriteria(max_repair_iterations=0),
+            options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=0),
+            context=run_context(
+                stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+            ),
         )
 
     workflow_names = [call.kwargs["workflow_name"] for call in adapter.run_workflow.call_args_list]
@@ -1255,11 +1239,10 @@ def test_evaluate_dropping_rows_degrades_gracefully(
         wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             df,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=EvaluationCriteria(max_repair_iterations=1),
+            options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=1),
+            context=run_context(
+                stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+            ),
         )
 
     assert len(result.dataframe) == 1
@@ -1325,11 +1308,10 @@ def test_repair_dropping_rows_degrades_gracefully(
         wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             df,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=EvaluationCriteria(max_repair_iterations=1),
+            options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=1),
+            context=run_context(
+                stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+            ),
         )
 
     assert len(result.dataframe) == 1
@@ -1382,11 +1364,10 @@ def test_passthrough_rows_get_defaults(
         wf = RewriteWorkflow(adapter=adapter)
         result = wf.run(
             stub_df_mixed,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=_EVALUATION,
+            options=Rewrite(privacy_goal=_PRIVACY_GOAL),
+            context=run_context(
+                stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+            ),
         )
 
     df = result.dataframe
@@ -1434,11 +1415,10 @@ def test_rewrite_pipeline_rows_join_by_declared_correspondence(
         _mock_replace(mock_replace_cls, replace_df)
         run = lambda: RewriteWorkflow(adapter=adapter).run(
             dataframe,
-            model_configs=stub_model_configs,
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=_EVALUATION,
+            options=Rewrite(privacy_goal=_PRIVACY_GOAL),
+            context=run_context(
+                stub_model_configs, rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection
+            ),
         )
         if positions is None:
             with pytest.raises(AnonymizerWorkflowError, match="uncorrelated_output"):
@@ -1711,11 +1691,8 @@ def test_label_categories_reach_disposition_as_a_row_column(
         _mock_replace(replacement, frame)
         kind(adapter).run(
             frame,
-            model_configs=[],
-            selected_models=stub_rewrite_model_selection,
-            replace_model_selection=stub_replace_model_selection,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=EvaluationCriteria(max_repair_iterations=0),
+            options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=0),
+            context=run_context([], rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection),
         )
     seed = adapter.run_workflow.call_args.args[0]
     assert [json.loads(value) for value in seed[COL_ENTITY_CLASSIFICATION]] == [
@@ -1768,11 +1745,8 @@ def test_combined_runner_overriding_build_graph_with_release_signature_runs(
             _mock_replace(replacement, stub_df_with_entities)
             result = kind(adapter).run(
                 stub_df_with_entities,
-                model_configs=[],
-                selected_models=stub_rewrite_model_selection,
-                replace_model_selection=stub_replace_model_selection,
-                privacy_goal=_PRIVACY_GOAL,
-                evaluation=EvaluationCriteria(max_repair_iterations=0),
+                options=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=0),
+                context=run_context([], rewrite=stub_rewrite_model_selection, replace=stub_replace_model_selection),
             )
         (finalizer,) = [
             column
@@ -1791,7 +1765,7 @@ def test_combined_runner_overriding_build_graph_with_release_signature_runs(
         selected_models=stub_rewrite_model_selection,
         replace_model_selection=stub_replace_model_selection,
         privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=0),
+        evaluation=Rewrite(max_repair_iterations=0).evaluation,
     )
     state = graph.evaluation_states[0]
     row = {

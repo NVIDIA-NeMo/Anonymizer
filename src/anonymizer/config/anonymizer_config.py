@@ -435,19 +435,11 @@ class Rewrite(FrozenConfig):
 
     @property
     def evaluation(self) -> EvaluationCriteria:
-        """Construct `EvaluationCriteria` from this `Rewrite` config for the engine.
+        """The evaluation criteria for this config: `risk_tolerance` and `max_repair_iterations`, from which the
+        leakage thresholds and repair parameters derive (see `_RiskToleranceBundle` in `rewrite.py`).
 
-        `Rewrite` and `EvaluationCriteria` both carry `max_repair_iterations`.
-        This property keeps them in sync: it passes through `self.risk_tolerance`
-        and `self.max_repair_iterations`. Leakage thresholds and repair
-        parameters are derived from `risk_tolerance` via `_RiskToleranceBundle`
-        (see `rewrite.py`).
-
-        Production code that starts from a user-facing `Rewrite` should pass
-        `rewrite.evaluation` into the engine — never duplicate the mapping
-        manually. Tests and engine-internal callers may construct
-        `EvaluationCriteria` directly when they aren't routing through a
-        user-facing `Rewrite`.
+        The engine receives the `Rewrite` as `options` and reads `options.evaluation`; build `EvaluationCriteria`
+        through this property rather than copying the two fields by hand.
         """
         return EvaluationCriteria(
             risk_tolerance=self.risk_tolerance,

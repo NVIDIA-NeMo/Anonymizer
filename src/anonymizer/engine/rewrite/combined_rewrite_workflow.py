@@ -13,9 +13,10 @@ import pandas as pd
 from data_designer.config import SkipConfig, custom_column_generator
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from data_designer.config.column_types import ColumnConfigT
-from data_designer.config.models import ModelConfig
 
+from anonymizer.config.anonymizer_config import Rewrite
 from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelection
+from anonymizer.config.options import RunContext
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
@@ -478,19 +479,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
             internal_columns=list(dict.fromkeys(internal_columns)),
         )
 
-    def run(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: RewriteModelSelection,
-        replace_model_selection: ReplaceModelSelection,
-        privacy_goal: PrivacyGoal,
-        evaluation: EvaluationCriteria,
-        data_summary: str | None = None,
-        preview_num_records: int | None = None,
-        strict_entity_protection: bool = False,
-    ) -> RewriteResult:
+    def run(self, dataframe: pd.DataFrame, *, options: Rewrite, context: RunContext) -> RewriteResult:
         with stage_timer("CombinedRewriteWorkflow.run", input_row_count=len(dataframe)) as measurement:
             entity_rows, passthrough_rows = split_rows(
                 dataframe,
@@ -512,17 +501,8 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 return result
 
             rows = _Rows(entity_rows)
-            produce = self._produce(
-                rows,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                replace_model_selection=replace_model_selection,
-                privacy_goal=privacy_goal,
-                evaluation=evaluation,
-                data_summary=data_summary,
-                preview_num_records=preview_num_records,
-                strict_entity_protection=strict_entity_protection,
-            )
+            evaluation = options.evaluation
+            produce = self._produce(rows, options=options, context=context, evaluation=evaluation)
             result = _rewrite_lowered(entity_rows, passthrough_rows, rows, produce, evaluation)
             measurement.update(
                 output_row_count=len(result.dataframe),
@@ -531,26 +511,23 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
             return result
 
     def run_with_detection(
-        self, dataframe: pd.DataFrame, *, detect: Callable[[pd.DataFrame], EntityDetectionResult], **options: Any
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        detect: Callable[[pd.DataFrame], EntityDetectionResult],
+        options: Rewrite,
+        context: RunContext,
     ) -> RewriteResult:
-        """``RewriteWorkflow.run_with_detection`` with the combined graph; ``options`` are ``run``'s keywords."""
-        return self._run_detected(dataframe, detect, "CombinedRewriteWorkflow.run", options)
+        """``RewriteWorkflow.run_with_detection`` with the combined graph."""
+        return self._run_detected(dataframe, detect, "CombinedRewriteWorkflow.run", options=options, context=context)
 
     def _produce(
-        self,
-        rows: _Rows,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: RewriteModelSelection,
-        replace_model_selection: ReplaceModelSelection,
-        privacy_goal: PrivacyGoal,
-        evaluation: EvaluationCriteria,
-        data_summary: str | None = None,
-        preview_num_records: int | None = None,
-        strict_entity_protection: bool = False,
+        self, rows: _Rows, *, options: Rewrite, context: RunContext, evaluation: EvaluationCriteria
     ) -> Callable[[], None]:
         """Label classification, then one combined workflow call over ``rows``, leaving the final candidates in
         ``rows.frame``."""
+        model_configs = list(context.model_configs)
+        selected_models = context.models.rewrite
 
         def generate() -> None:
             self._entity_classification_wf.classify_rows(
@@ -558,11 +535,11 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
             )
             graph = self.build_graph(
                 selected_models=selected_models,
-                replace_model_selection=replace_model_selection,
-                privacy_goal=privacy_goal,
+                replace_model_selection=context.models.replace,
+                privacy_goal=options.privacy_goal,
                 evaluation=evaluation,
-                data_summary=data_summary,
-                strict_entity_protection=strict_entity_protection,
+                data_summary=context.data_summary,
+                strict_entity_protection=options.strict_entity_protection,
             )
             seed = select_seed_cols(rows.frame, derive_seed_columns(graph.columns, rows.frame))
             run_result = self._adapter.run_workflow(
@@ -570,7 +547,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 model_configs=model_configs,
                 columns=graph.columns,
                 workflow_name="rewrite-combined",
-                preview_num_records=preview_num_records,
+                preview_num_records=context.preview_num_records,
             )
             restore_empty_skipped_span_label_counts(run_result.dataframe)
             rows.frame = _join_new_columns(
