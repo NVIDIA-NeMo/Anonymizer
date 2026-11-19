@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum
@@ -70,11 +69,6 @@ class EntitySpan:
 def normalize_labels(labels: Iterable[str] | None) -> set[str]:
     """Normalize a collection of labels, dropping empty/whitespace-only entries."""
     return {normalized for label in labels or [] if (normalized := normalize_label(label))}
-
-
-def is_reserved_entity_label(label: str) -> bool:
-    """Return whether a label is reserved for internal prompt markup."""
-    return re.fullmatch(r"nagroup_g[1-9][0-9]*", normalize_label(label)) is not None
 
 
 class TagNotation(str, Enum):

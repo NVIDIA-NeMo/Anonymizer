@@ -5,23 +5,29 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from anonymizer.config.entity_labels import normalize_entity_label
+from anonymizer.config.base import FrozenConfig
+from anonymizer.config.entity_labels import (
+    merge_entity_label_examples,
+    normalize_entity_label,
+    normalize_entity_label_examples,
+    reject_reserved_entity_label,
+)
+from anonymizer.config.options import DetectionOptions
 from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
 from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import (
-    DEFAULT_PRESERVE_TEXT,
-    DEFAULT_PROTECT_TEXT,
     EvaluationCriteria,
     PrivacyGoal,
     RiskTolerance,
+    default_privacy_goal,
 )
 from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
-from anonymizer.engine.detection.entity_label_examples import normalize_entity_label_examples
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +91,8 @@ class AnonymizerInput(BaseModel):
     Format is inferred from the file extension of a local path or HTTP(S) URL.
     """
 
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
     source: str = Field(description="Local path or HTTP(S) URL for a .csv or .parquet input file.")
     text_column: str = Field(default="text", min_length=1, description="Column containing the text to anonymize.")
     id_column: str | None = Field(default=None, description="Optional column to use as record identifier.")
@@ -109,7 +117,9 @@ class AnonymizerInput(BaseModel):
 
 
 class TextRecord(BaseModel):
-    """One in-memory text record to anonymize."""
+    """One in-memory text record to anonymize. Keys other than `id` and `text` are ignored."""
+
+    model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
 
     id: str = Field(min_length=1, description="Caller-defined record identifier.")
     text: str = Field(description="Text to anonymize.")
@@ -117,6 +127,8 @@ class TextRecord(BaseModel):
 
 class TextRecordsInput(BaseModel):
     """Ordered in-memory text records and their dataset context."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     records: list[TextRecord] = Field(min_length=1, description="Text records to anonymize in order.")
     data_summary: str | None = Field(
@@ -131,10 +143,8 @@ class TextRecordsInput(BaseModel):
         return self
 
 
-class DetectionScope(BaseModel):
+class DetectionScope(FrozenConfig):
     """The detection scope a run used. Finding no entities describes the result under this scope only."""
-
-    model_config = ConfigDict(frozen=True)
 
     effective_labels: tuple[str, ...] = Field(description="Labels detection looked for, after exclusions.")
     allowed_labels: tuple[str, ...] | None = Field(
@@ -146,11 +156,20 @@ class DetectionScope(BaseModel):
     excluded_labels: tuple[str, ...] = Field(description="Configured exclusions (normalized).")
     gliner_threshold: float = Field(description="GLiNER detection confidence threshold.")
 
+    @classmethod
+    def of(cls, options: DetectionOptions) -> DetectionScope:
+        """The scope of a call that detected with `options`."""
+        labels = tuple(sorted(options.ordered_labels))
+        return cls(
+            effective_labels=labels,
+            allowed_labels=labels if options.strict_labels else None,
+            excluded_labels=options.excluded_labels,
+            gliner_threshold=options.gliner_threshold,
+        )
 
-class Detect(BaseModel):
+
+class Detect(FrozenConfig):
     """Configuration for the entity detection stage."""
-
-    model_config = ConfigDict(hide_input_in_errors=True)
 
     entity_labels: list[str] | None = Field(
         default=None,
@@ -216,6 +235,37 @@ class Detect(BaseModel):
         ),
     )
 
+    def resolve(self) -> DetectionOptions:
+        """Resolve this configuration into the values detection reads for one call.
+
+        The fields are validated again first: they are lists, and a caller may have edited them in place since
+        construction (for example, excluded every label).
+        """
+        detect = type(self).model_validate({name: getattr(self, name) for name in type(self).model_fields})
+        ordered_labels = tuple(
+            resolve_effective_detection_labels(
+                detect.entity_labels,
+                regex_rules=detect.regex_rules,
+                excluded_entity_labels=detect.excluded_entity_labels,
+            )
+        )
+        validator_examples, augmenter_examples = merge_entity_label_examples(
+            ordered_labels, detect.entity_label_examples
+        )
+        return DetectionOptions(
+            entity_labels=None if detect.entity_labels is None else tuple(detect.entity_labels),
+            ordered_labels=ordered_labels,
+            excluded_labels=tuple(detect.excluded_entity_labels or ()),
+            validator_examples=MappingProxyType(validator_examples),
+            augmenter_examples=MappingProxyType(augmenter_examples),
+            gliner_threshold=detect.gliner_threshold,
+            validation_max_entities_per_call=detect.validation_max_entities_per_call,
+            validation_excerpt_window_chars=detect.validation_excerpt_window_chars,
+            builtin_regexes=detect.builtin_regexes,
+            regex_rules=tuple(detect.regex_rules),
+            regex_limits=detect.regex_limits,
+        )
+
     @field_validator("entity_labels")
     @classmethod
     def validate_entity_labels(cls, value: list[str] | None) -> list[str] | None:
@@ -224,6 +274,8 @@ class Detect(BaseModel):
         cleaned = [normalize_entity_label(label) for label in value if normalize_entity_label(label)]
         if not cleaned:
             raise ValueError("entity_labels must not be empty. Use None to detect all default labels.")
+        for label in cleaned:
+            reject_reserved_entity_label(label)
         deduped = sorted(set(cleaned))
         if len(deduped) != len(cleaned):
             logger.warning("entity_labels contained duplicates, removed automatically.")
@@ -336,13 +388,19 @@ class Detect(BaseModel):
         return self
 
 
-class Rewrite(BaseModel):
+INSTRUCTIONS_REMOVED = (
+    "Rewrite.instructions was removed in v1; it never reached the rewrite model. "
+    "Put the guidance in privacy_goal.protect and privacy_goal.preserve."
+)
+
+
+class Rewrite(FrozenConfig):
     """Configuration for rewrite-mode execution."""
 
-    privacy_goal: PrivacyGoal | None = Field(
-        default=None, description="Structured privacy goal. Auto-populated with defaults if not provided."
+    privacy_goal: PrivacyGoal = Field(
+        default_factory=default_privacy_goal,
+        description="Structured privacy goal. None or omitted uses the default goal.",
     )
-    instructions: str | None = Field(default=None, description="Additional instructions for the rewrite LLM.")
     risk_tolerance: RiskTolerance = Field(
         default=RiskTolerance.low,
         description="Preset controlling repair thresholds and review flagging.",
@@ -361,30 +419,27 @@ class Rewrite(BaseModel):
         description="If True, requires every entity to receive a protective disposition during sensitivity analysis.",
     )
 
-    @model_validator(mode="after")
-    def populate_default_privacy_goal(self) -> Rewrite:
-        if self.privacy_goal is None:
-            self.privacy_goal = PrivacyGoal(
-                protect=DEFAULT_PROTECT_TEXT,
-                preserve=DEFAULT_PRESERVE_TEXT,
-            )
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def reject_instructions(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "instructions" in data:
+            if data["instructions"] is not None:
+                raise ValueError(INSTRUCTIONS_REMOVED)
+            data = {key: value for key, value in data.items() if key != "instructions"}
+        return data
+
+    @field_validator("privacy_goal", mode="before")
+    @classmethod
+    def default_goal_for_none(cls, value: Any) -> Any:
+        return default_privacy_goal() if value is None else value
 
     @property
     def evaluation(self) -> EvaluationCriteria:
-        """Construct `EvaluationCriteria` from this `Rewrite` config for the engine.
+        """The evaluation criteria for this config: `risk_tolerance` and `max_repair_iterations`, from which the
+        leakage thresholds and repair parameters derive (see `_RiskToleranceBundle` in `rewrite.py`).
 
-        `Rewrite` and `EvaluationCriteria` both carry `max_repair_iterations`.
-        This property keeps them in sync: it passes through `self.risk_tolerance`
-        and `self.max_repair_iterations`. Leakage thresholds and repair
-        parameters are derived from `risk_tolerance` via `_RiskToleranceBundle`
-        (see `rewrite.py`).
-
-        Production code that starts from a user-facing `Rewrite` should pass
-        `rewrite.evaluation` into the engine — never duplicate the mapping
-        manually. Tests and engine-internal callers may construct
-        `EvaluationCriteria` directly when they aren't routing through a
-        user-facing `Rewrite`.
+        The engine receives the `Rewrite` as `options` and reads `options.evaluation`; build `EvaluationCriteria`
+        through this property rather than copying the two fields by hand.
         """
         return EvaluationCriteria(
             risk_tolerance=self.risk_tolerance,
@@ -392,10 +447,8 @@ class Rewrite(BaseModel):
         )
 
 
-class AnonymizerConfig(BaseModel):
+class AnonymizerConfig(FrozenConfig):
     """Primary user-facing config for anonymization behavior."""
-
-    model_config = ConfigDict(hide_input_in_errors=True)
 
     detect: Detect = Field(default_factory=Detect, description="Entity detection configuration.")
     replace: ReplaceMethod | None = Field(
@@ -438,6 +491,8 @@ class EvaluateConfig(BaseModel):
     Today this is an empty placeholder; fields will be added as evaluation
     knobs are introduced.
     """
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     compute_detection_validity: bool = False
     """Run the tag-precision judge (detection_valid / detection_invalid_entities).

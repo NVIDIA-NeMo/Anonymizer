@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,10 +19,8 @@ from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
 from pydantic import Field
 
-from anonymizer.config.anonymizer_config import Detect as AnonymizerDetectConfig
-from anonymizer.config.anonymizer_config import resolve_effective_detection_labels
 from anonymizer.config.models import DetectionModelSelection
-from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
+from anonymizer.config.options import DetectionOptions, RunContext
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
@@ -47,7 +46,6 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.detection.chunked_validation import VALIDATION_EXCERPT_VAR
-from anonymizer.engine.detection.entity_label_examples import ResolvedEntityLabelConfig, resolve_entity_label_config
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     group_entities_by_value,
@@ -89,17 +87,6 @@ class _PrivatePromptLLMStructuredColumnConfig(LLMStructuredColumnConfig):
     prompt: str = Field(repr=False)
 
 
-# Defaults for the two chunked-validation knobs. Sourced from the Detect config
-# so there is a single source of truth; the workflow method defaults exist so
-# internal tests and ad-hoc callers do not have to wire plumbing by hand.
-_DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL: int = AnonymizerDetectConfig.model_fields[
-    "validation_max_entities_per_call"
-].default
-_DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS: int = AnonymizerDetectConfig.model_fields[
-    "validation_excerpt_window_chars"
-].default
-
-
 @dataclass(frozen=True)
 class EntityDetectionResult:
     dataframe: pd.DataFrame
@@ -126,21 +113,8 @@ class EntityDetectionWorkflow:
         self,
         dataframe: pd.DataFrame,
         *,
-        model_configs: list[ModelConfig],
-        selected_models: DetectionModelSelection,
-        gliner_detection_threshold: float,
-        validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
-        validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
-        validation_single_chunk_full_text: bool = True,
-        entity_labels: list[str] | None = None,
-        excluded_entity_labels: list[str] | None = None,
-        entity_label_examples: dict[str, list[str]] | None = None,
-        builtin_regexes: bool = True,
-        regex_rules: list[BuiltinRegex | RegexRule] | None = None,
-        regex_limits: RegexLimits | None = None,
-        data_summary: str | None = None,
-        preview_num_records: int | None = None,
-        _resolved_label_config: ResolvedEntityLabelConfig | None = None,
+        options: DetectionOptions,
+        context: RunContext,
     ) -> EntityDetectionResult:
         """Run the core detection pipeline: GLiNER NER, LLM validation, LLM augmentation, and finalization.
 
@@ -150,28 +124,13 @@ class EntityDetectionWorkflow:
         have missed, and produces final standoff entity spans with overlap
         resolution.
         """
-        workflow_model_configs, columns = self._build_detection_spec(
-            model_configs=model_configs,
-            selected_models=selected_models,
-            gliner_detection_threshold=gliner_detection_threshold,
-            validation_max_entities_per_call=validation_max_entities_per_call,
-            validation_excerpt_window_chars=validation_excerpt_window_chars,
-            validation_single_chunk_full_text=validation_single_chunk_full_text,
-            entity_labels=entity_labels,
-            excluded_entity_labels=excluded_entity_labels,
-            entity_label_examples=entity_label_examples,
-            builtin_regexes=builtin_regexes,
-            regex_rules=regex_rules,
-            data_summary=data_summary,
-            regex_limits=regex_limits,
-            _resolved_label_config=_resolved_label_config,
-        )
+        workflow_model_configs, columns = self._build_detection_spec(options=options, context=context)
         detection_result = self._adapter.run_workflow(
             dataframe,
             model_configs=workflow_model_configs,
             columns=columns,
             workflow_name="entity-detection",
-            preview_num_records=preview_num_records,
+            preview_num_records=context.preview_num_records,
         )
         detected_df = detection_result.dataframe.copy()
         return EntityDetectionResult(
@@ -183,20 +142,8 @@ class EntityDetectionWorkflow:
     def _build_detection_spec(
         self,
         *,
-        model_configs: list[ModelConfig],
-        selected_models: DetectionModelSelection,
-        gliner_detection_threshold: float,
-        validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
-        validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
-        validation_single_chunk_full_text: bool = True,
-        entity_labels: list[str] | None = None,
-        excluded_entity_labels: list[str] | None = None,
-        entity_label_examples: dict[str, list[str]] | None = None,
-        builtin_regexes: bool = True,
-        regex_rules: list[BuiltinRegex | RegexRule] | None = None,
-        regex_limits: RegexLimits | None = None,
-        data_summary: str | None = None,
-        _resolved_label_config: ResolvedEntityLabelConfig | None = None,
+        options: DetectionOptions,
+        context: RunContext,
     ) -> tuple[list[ModelConfig], list[ColumnConfigT]]:
         """Build the (model_configs, columns) for the core detection workflow.
 
@@ -204,39 +151,33 @@ class EntityDetectionWorkflow:
         and :meth:`build_detection_config` (which exports it for an external runtime),
         so both paths run exactly the same workflow.
         """
-        custom_rules = regex_rules or []
-        limits = regex_limits or RegexLimits()
-        labels = _resolve_detection_labels(
-            entity_labels,
-            regex_rules=custom_rules,
-            excluded_entity_labels=set(excluded_entity_labels or []),
-        )
-        label_config = _resolved_label_config or resolve_entity_label_config(
-            entity_labels=labels,
-            excluded_entity_labels=excluded_entity_labels,
-            entity_label_examples=entity_label_examples,
-        )
-        label_config.strict_labels = entity_labels is not None
-        label_config.labels = labels
-        for label in labels:
-            label_config.validator_examples.setdefault(label, [])
+        labels = list(options.ordered_labels)
+        strict_labels = options.strict_labels
+        allowed = labels if strict_labels else None
+        excluded = list(options.excluded_labels)
+        validator_examples = options.validator_examples
+        augmenter_examples = options.augmenter_examples
+        data_summary = context.data_summary
+        selected_models = context.models.detection
+        custom_rules = list(options.regex_rules)
+        limits = options.regex_limits
         regex_constrained_labels = resolve_regex_constrained_labels(
             labels=labels,
-            builtin_regexes=builtin_regexes,
+            builtin_regexes=options.builtin_regexes,
             rules=custom_rules,
         )
         normalized_regex_constrained_labels = normalize_labels(regex_constrained_labels)
         model_labels = [label for label in labels if normalize_label(label) not in normalized_regex_constrained_labels]
         resolved_regex_rules = resolve_regex_rules(
             labels=labels,
-            builtin_regexes=builtin_regexes,
+            builtin_regexes=options.builtin_regexes,
             rules=custom_rules,
         )
         workflow_model_configs = self._inject_detector_params(
-            model_configs=model_configs,
+            model_configs=context.model_configs,
             selected_models=selected_models,
             labels=model_labels,
-            gliner_detection_threshold=gliner_detection_threshold,
+            gliner_detection_threshold=options.gliner_threshold,
         )
 
         detection_alias = resolve_model_alias("entity_detector", selected_models)
@@ -298,25 +239,24 @@ class EntityDetectionWorkflow:
                 ChunkedValidationConfig(
                     name=COL_VALIDATION_DECISIONS,
                     pool=list(validator_aliases),
-                    max_entities_per_call=validation_max_entities_per_call,
-                    excerpt_window_chars=validation_excerpt_window_chars,
-                    single_chunk_full_text=validation_single_chunk_full_text,
-                    allowed_entity_labels=labels if label_config.strict_labels else None,
-                    excluded_entity_labels=list(excluded_entity_labels or []),
+                    max_entities_per_call=options.validation_max_entities_per_call,
+                    excerpt_window_chars=options.validation_excerpt_window_chars,
+                    allowed_entity_labels=allowed,
+                    excluded_entity_labels=excluded,
                     prompt_template=_get_validation_prompt(
                         data_summary=data_summary,
                         labels=labels,
-                        examples_by_label=label_config.validator_examples,
-                        configured_examples=label_config.augmenter_examples,
-                        excluded_entity_labels=list(excluded_entity_labels or []),
+                        examples_by_label=validator_examples,
+                        configured_examples=augmenter_examples,
+                        excluded_entity_labels=excluded,
                     ),
                     drop=True,
                 ),
                 DetectionTransformConfig(
                     name=COL_ADMISSION_RESULTS,
                     operation=DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS,
-                    allowed_entity_labels=labels if label_config.strict_labels else None,
-                    excluded_entity_labels=list(excluded_entity_labels or []),
+                    allowed_entity_labels=allowed,
+                    excluded_entity_labels=excluded,
                     regex_constrained_entity_labels=sorted(regex_constrained_labels),
                 ),
                 DetectionTransformConfig(
@@ -328,13 +268,13 @@ class EntityDetectionWorkflow:
                     prompt_template=_get_augment_prompt(
                         data_summary=data_summary,
                         labels=model_labels,
-                        strict_labels=label_config.strict_labels,
-                        configured_examples=label_config.augmenter_examples,
-                        excluded_entity_labels=list(excluded_entity_labels or []),
+                        strict_labels=strict_labels,
+                        configured_examples=augmenter_examples,
+                        excluded_entity_labels=excluded,
                     ),
                     model_alias=augmenter_alias,
-                    allowed_entity_labels=labels if label_config.strict_labels else None,
-                    excluded_entity_labels=list(excluded_entity_labels or []),
+                    allowed_entity_labels=allowed,
+                    excluded_entity_labels=excluded,
                     enabled=bool(model_labels),
                     regex_constrained_entity_labels=sorted(regex_constrained_labels),
                 ),
@@ -355,46 +295,16 @@ class EntityDetectionWorkflow:
         dataframe: pd.DataFrame,
         *,
         seed_path: str | Path,
-        model_configs: list[ModelConfig],
-        selected_models: DetectionModelSelection,
-        gliner_detection_threshold: float,
-        validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
-        validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
-        validation_single_chunk_full_text: bool = True,
-        entity_labels: list[str] | None = None,
-        excluded_entity_labels: list[str] | None = None,
-        entity_label_examples: dict[str, list[str]] | None = None,
-        builtin_regexes: bool = True,
-        regex_rules: list[BuiltinRegex | RegexRule] | None = None,
-        regex_limits: RegexLimits | None = None,
-        data_summary: str | None = None,
+        options: DetectionOptions,
+        context: RunContext,
     ) -> DataDesignerConfigBuilder:
         """Build (without executing) the core detection workflow as a DataDesigner
         config, for an external at-scale executor to run. Produces the same columns
         as :meth:`detect_and_validate_entities` (culminating in final entities); the
         external runtime supplies the model providers and the seed dataset.
         """
-        validate_exportable_regex_rules(
-            regex_rules,
-            active_labels=resolve_effective_detection_labels(
-                entity_labels, regex_rules=regex_rules, excluded_entity_labels=excluded_entity_labels
-            ),
-        )
-        workflow_model_configs, columns = self._build_detection_spec(
-            model_configs=model_configs,
-            selected_models=selected_models,
-            gliner_detection_threshold=gliner_detection_threshold,
-            validation_max_entities_per_call=validation_max_entities_per_call,
-            validation_excerpt_window_chars=validation_excerpt_window_chars,
-            validation_single_chunk_full_text=validation_single_chunk_full_text,
-            entity_labels=entity_labels,
-            excluded_entity_labels=excluded_entity_labels,
-            entity_label_examples=entity_label_examples,
-            builtin_regexes=builtin_regexes,
-            regex_rules=regex_rules,
-            data_summary=data_summary,
-            regex_limits=regex_limits,
-        )
+        validate_exportable_regex_rules(list(options.regex_rules), active_labels=list(options.ordered_labels))
+        workflow_model_configs, columns = self._build_detection_spec(options=options, context=context)
         return self._adapter.build_config(
             dataframe,
             model_configs=workflow_model_configs,
@@ -406,19 +316,8 @@ class EntityDetectionWorkflow:
         self,
         *,
         seed_path: str | Path,
-        model_configs: list[ModelConfig],
-        selected_models: DetectionModelSelection,
-        gliner_detection_threshold: float,
-        validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
-        validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
-        validation_single_chunk_full_text: bool = True,
-        entity_labels: list[str] | None = None,
-        excluded_entity_labels: list[str] | None = None,
-        entity_label_examples: dict[str, list[str]] | None = None,
-        builtin_regexes: bool = True,
-        regex_rules: list[BuiltinRegex | RegexRule] | None = None,
-        regex_limits: RegexLimits | None = None,
-        data_summary: str | None = None,
+        options: DetectionOptions,
+        context: RunContext,
         job_index: int = 0,
         num_jobs: int = 1,
     ) -> DataDesignerConfigBuilder:
@@ -430,27 +329,8 @@ class EntityDetectionWorkflow:
         orchestrator), the plugin column configs remain serializable and the model aliases
         are resolved by the runtime's providers.
         """
-        validate_exportable_regex_rules(
-            regex_rules,
-            active_labels=resolve_effective_detection_labels(
-                entity_labels, regex_rules=regex_rules, excluded_entity_labels=excluded_entity_labels
-            ),
-        )
-        workflow_model_configs, columns = self._build_detection_spec(
-            model_configs=model_configs,
-            selected_models=selected_models,
-            gliner_detection_threshold=gliner_detection_threshold,
-            validation_max_entities_per_call=validation_max_entities_per_call,
-            validation_excerpt_window_chars=validation_excerpt_window_chars,
-            validation_single_chunk_full_text=validation_single_chunk_full_text,
-            entity_labels=entity_labels,
-            excluded_entity_labels=excluded_entity_labels,
-            entity_label_examples=entity_label_examples,
-            builtin_regexes=builtin_regexes,
-            regex_rules=regex_rules,
-            data_summary=data_summary,
-            regex_limits=regex_limits,
-        )
+        validate_exportable_regex_rules(list(options.regex_rules), active_labels=list(options.ordered_labels))
+        workflow_model_configs, columns = self._build_detection_spec(options=options, context=context)
         return self._adapter.build_config_for_seed(
             model_configs=workflow_model_configs,
             columns=columns,
@@ -463,33 +343,22 @@ class EntityDetectionWorkflow:
         self,
         dataframe: pd.DataFrame,
         *,
-        model_configs: list[ModelConfig],
-        selected_models: DetectionModelSelection,
-        gliner_detection_threshold: float,
-        entity_labels: list[str] | None = None,
-        excluded_entity_labels: list[str] | None = None,
-        entity_label_examples: dict[str, list[str]] | None = None,
-        privacy_goal: PrivacyGoal | None,
-        data_summary: str | None = None,
-        preview_num_records: int | None = None,
-        _resolved_label_config: ResolvedEntityLabelConfig | None = None,
+        options: DetectionOptions,
+        context: RunContext,
+        latent_goal: PrivacyGoal,
     ) -> EntityDetectionResult:
         """Detect latent/inferred entities that could enable re-identification.
 
         Runs after ``detect_and_validate_entities`` when rewrite mode is
         enabled. Uses an LLM to identify entities inferable from context.
         """
-        label_config = _resolved_label_config or resolve_entity_label_config(
-            entity_labels=entity_labels,
-            excluded_entity_labels=excluded_entity_labels,
-            entity_label_examples=entity_label_examples,
-        )
-        labels = label_config.labels
+        excluded = list(options.excluded_labels)
+        selected_models = context.models.detection
         workflow_model_configs = self._inject_detector_params(
-            model_configs=model_configs,
+            model_configs=context.model_configs,
             selected_models=selected_models,
-            labels=labels,
-            gliner_detection_threshold=gliner_detection_threshold,
+            labels=list(options.ordered_labels),
+            gliner_detection_threshold=options.gliner_threshold,
         )
         latent_alias = resolve_model_alias("latent_detector", selected_models)
         latent_result = self._adapter.run_workflow(
@@ -499,21 +368,21 @@ class EntityDetectionWorkflow:
                 LLMStructuredColumnConfig(
                     name=COL_LATENT_ENTITIES,
                     prompt=_get_latent_prompt(
-                        data_summary=data_summary,
-                        privacy_goal=privacy_goal,
-                        excluded_entity_labels=excluded_entity_labels,
+                        data_summary=context.data_summary,
+                        privacy_goal=latent_goal,
+                        excluded_entity_labels=excluded,
                     ),
                     model_alias=latent_alias,
                     output_format=LatentEntitiesSchema,
                 )
             ],
             workflow_name="latent-entity-detection",
-            preview_num_records=preview_num_records,
+            preview_num_records=context.preview_num_records,
         )
         latent_df = latent_result.dataframe.copy()
         if COL_LATENT_ENTITIES in latent_df.columns:
             latent_df[COL_LATENT_ENTITIES] = latent_df[COL_LATENT_ENTITIES].apply(
-                lambda raw: _filter_excluded_latent_entities(raw, excluded_entity_labels)
+                lambda raw: _filter_excluded_latent_entities(raw, excluded)
             )
         return EntityDetectionResult(
             dataframe=latent_df,
@@ -525,71 +394,26 @@ class EntityDetectionWorkflow:
         self,
         dataframe: pd.DataFrame,
         *,
-        model_configs: list[ModelConfig],
-        selected_models: DetectionModelSelection,
-        gliner_detection_threshold: float,
-        validation_max_entities_per_call: int = _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
-        validation_excerpt_window_chars: int = _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS,
-        validation_single_chunk_full_text: bool = True,
-        entity_labels: list[str] | None = None,
-        excluded_entity_labels: list[str] | None = None,
-        entity_label_examples: dict[str, list[str]] | None = None,
-        builtin_regexes: bool = True,
-        regex_rules: list[BuiltinRegex | RegexRule] | None = None,
-        regex_limits: RegexLimits | None = None,
-        privacy_goal: PrivacyGoal | None = None,
-        data_summary: str | None = None,
-        tag_latent_entities: bool = True,
-        compute_grouped_entities: bool | None = None,
-        preview_num_records: int | None = None,
+        options: DetectionOptions,
+        context: RunContext,
+        latent_goal: PrivacyGoal | None = None,
     ) -> EntityDetectionResult:
         """Run the full detection pipeline, optionally including latent entity detection.
 
-        Calls ``detect_and_validate_entities`` first, then optionally
-        ``identify_latent_entities`` if ``tag_latent_entities`` is True
-        (rewrite mode). Merges failures from both stages.
+        Calls ``detect_and_validate_entities`` first, then ``identify_latent_entities`` when
+        ``latent_goal`` is set (rewrite mode). Merges failures from both stages.
         """
         with stage_timer(
             "EntityDetectionWorkflow.run",
             input_row_count=len(dataframe),
-            tag_latent_entities=tag_latent_entities,
+            tag_latent_entities=latent_goal is not None,
         ) as measurement:
-            if tag_latent_entities and privacy_goal is None:
-                raise ValueError("privacy_goal is required when tag_latent_entities=True (rewrite mode)")
-
-            compute_grouped = True if compute_grouped_entities is None else compute_grouped_entities
-            effective_labels = _resolve_detection_labels(
-                entity_labels,
-                regex_rules=regex_rules,
-                excluded_entity_labels=excluded_entity_labels,
-            )
-            label_config = resolve_entity_label_config(
-                entity_labels=effective_labels,
-                excluded_entity_labels=excluded_entity_labels,
-                entity_label_examples=entity_label_examples,
-            )
-            label_config.strict_labels = entity_labels is not None
+            allowed = set(options.ordered_labels) if options.strict_labels else None
+            excluded = set(options.excluded_labels) or None
             rows = _DetectionRows(dataframe)
 
             def detect() -> None:
-                detected_result = self.detect_and_validate_entities(
-                    dataframe,
-                    model_configs=model_configs,
-                    selected_models=selected_models,
-                    gliner_detection_threshold=gliner_detection_threshold,
-                    validation_max_entities_per_call=validation_max_entities_per_call,
-                    validation_excerpt_window_chars=validation_excerpt_window_chars,
-                    validation_single_chunk_full_text=validation_single_chunk_full_text,
-                    entity_labels=entity_labels,
-                    excluded_entity_labels=excluded_entity_labels,
-                    entity_label_examples=entity_label_examples,
-                    builtin_regexes=builtin_regexes,
-                    regex_rules=regex_rules,
-                    data_summary=data_summary,
-                    regex_limits=regex_limits,
-                    preview_num_records=preview_num_records,
-                    _resolved_label_config=label_config,
-                )
+                detected_result = self.detect_and_validate_entities(dataframe, options=options, context=context)
                 rows.frame = detected_result.dataframe
                 # The older two-argument result reports no positions; unique record IDs can still resolve them.
                 rows.positions = detected_result.source_positions or (
@@ -598,18 +422,10 @@ class EntityDetectionWorkflow:
                 rows.failed = detected_result.failed_records
 
             def tag_latent() -> None:
+                if latent_goal is None:  # the stage is only added when it is set; this narrows the type
+                    return
                 latent_result = self.identify_latent_entities(
-                    rows.frame,
-                    model_configs=model_configs,
-                    selected_models=selected_models,
-                    gliner_detection_threshold=gliner_detection_threshold,
-                    entity_labels=entity_labels,
-                    excluded_entity_labels=excluded_entity_labels,
-                    entity_label_examples=entity_label_examples,
-                    privacy_goal=privacy_goal,
-                    data_summary=data_summary,
-                    preview_num_records=preview_num_records,
-                    _resolved_label_config=label_config,
+                    rows.frame, options=options, context=context, latent_goal=latent_goal
                 )
                 rows.frame = latent_result.dataframe
                 # Positions the first stage could not resolve stay unreported; the caller falls back to record IDs.
@@ -624,17 +440,14 @@ class EntityDetectionWorkflow:
                 # the augmenter is strict and out-of-scope labels are filtered.
                 # entity_labels=None is the only way to get permissive augmentation.
                 if COL_DETECTED_ENTITIES in final_df.columns:
-                    allowed = set(label_config.labels) if label_config.strict_labels else None
-                    excluded_entity_labels_set = set(excluded_entity_labels) if excluded_entity_labels else None
                     final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
                         lambda raw: _materialize_final_entities(
                             raw,
                             allowed_labels=allowed,
-                            excluded_entity_labels=excluded_entity_labels_set,
+                            excluded_entity_labels=excluded,
                         )
                     )
-                    if compute_grouped:
-                        final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
+                    final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
                 rows.frame = final_df
 
             raise_if_cancelled(
@@ -642,7 +455,7 @@ class EntityDetectionWorkflow:
                     "detection",
                     [
                         ("detect", detect),
-                        *([("tag-latent", tag_latent)] if tag_latent_entities else []),
+                        *([("tag-latent", tag_latent)] if latent_goal is not None else []),
                         ("finalize", finalize),
                     ],
                 )
@@ -661,12 +474,12 @@ class EntityDetectionWorkflow:
     def _inject_detector_params(
         self,
         *,
-        model_configs: list[ModelConfig],
+        model_configs: Sequence[ModelConfig],
         selected_models: DetectionModelSelection,
         labels: list[str],
         gliner_detection_threshold: float,
     ) -> list[ModelConfig]:
-        resolved = deepcopy(model_configs)
+        resolved = deepcopy(list(model_configs))
         for config in resolved:
             if config.alias != selected_models.entity_detector:
                 continue
@@ -677,24 +490,6 @@ class EntityDetectionWorkflow:
             config.inference_parameters.extra_body["flat_ner"] = False
             break
         return resolved
-
-
-def _resolve_detection_labels(
-    entity_labels: list[str] | None,
-    *,
-    regex_rules: list[BuiltinRegex | RegexRule] | None = None,
-    excluded_entity_labels: list[str] | set[str] | None = None,
-) -> list[str]:
-    labels = resolve_effective_detection_labels(
-        entity_labels,
-        regex_rules=regex_rules,
-        excluded_entity_labels=excluded_entity_labels,
-    )
-    if not labels:
-        logger.warning(
-            "excluded_entity_labels removed all labels from the effective detection set. No entities will be detected."
-        )
-    return labels
 
 
 def _materialize_final_entities(
@@ -788,8 +583,8 @@ def _prompt_safe_configured_value(value: str) -> str:
 
 def _format_label_examples(
     labels: list[str],
-    examples_by_label: dict[str, list[str]] | None = None,
-    configured_examples: dict[str, list[str]] | None = None,
+    examples_by_label: Mapping[str, Sequence[str]] | None = None,
+    configured_examples: Mapping[str, Sequence[str]] | None = None,
 ) -> str:
     """Build a formatted list of entity classes with examples.
 
@@ -818,8 +613,8 @@ def _get_validation_prompt(
     *,
     data_summary: str | None,
     labels: list[str],
-    examples_by_label: dict[str, list[str]] | None = None,
-    configured_examples: dict[str, list[str]] | None = None,
+    examples_by_label: Mapping[str, Sequence[str]] | None = None,
+    configured_examples: Mapping[str, Sequence[str]] | None = None,
     excluded_entity_labels: list[str] | None = None,
 ) -> str:
     prompt = """Validate entity tags for privacy-sensitive information. For each entity in the template below, fill in the "decision" and "reason" fields. Fill in "proposed_label" only when decision is "reclass".
@@ -1077,7 +872,7 @@ def _get_augment_prompt(
     data_summary: str | None,
     labels: list[str],
     strict_labels: bool = False,
-    configured_examples: dict[str, list[str]] | None = None,
+    configured_examples: Mapping[str, Sequence[str]] | None = None,
     excluded_entity_labels: list[str] | None = None,
 ) -> str:
     if strict_labels:

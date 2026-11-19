@@ -9,8 +9,9 @@ import pytest
 from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.models import ModelConfig
 
+from anonymizer.config.anonymizer_config import Rewrite
 from anonymizer.config.models import RewriteModelSelection
-from anonymizer.config.rewrite import SENSITIVITY_WEIGHTS, EvaluationCriteria
+from anonymizer.config.rewrite import SENSITIVITY_WEIGHTS
 from anonymizer.engine.constants import COL_UTILITY_SCORE
 from anonymizer.engine.rewrite.evaluate import (
     EvaluateWorkflow,
@@ -199,7 +200,7 @@ def test_evaluate_columns_pipeline(
     wf = EvaluateWorkflow(adapter=Mock())
     cols = wf.columns(
         selected_models=stub_rewrite_model_selection,
-        evaluation=EvaluationCriteria(),
+        evaluation=Rewrite().evaluation,
     )
 
     assert len(cols) == 5

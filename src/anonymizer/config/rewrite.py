@@ -9,6 +9,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from anonymizer.config.base import FrozenConfig
+
 
 class RiskTolerance(str, Enum):
     """Risk tolerance presets for leakage mass thresholds.
@@ -116,7 +118,7 @@ _RISK_TOLERANCE_BUNDLES: dict[RiskTolerance, _RiskToleranceBundle] = {
 }
 
 
-class PrivacyGoal(BaseModel):
+class PrivacyGoal(FrozenConfig):
     """Structured privacy and utility goal for rewrite mode."""
 
     protect: str = Field(
@@ -140,7 +142,7 @@ class PrivacyGoal(BaseModel):
 
 
 class EvaluationCriteria(BaseModel):
-    """Criteria for privacy leakage evaluation and repair.
+    """Criteria for privacy leakage evaluation and repair, built from a `Rewrite` by `Rewrite.evaluation`.
 
     `risk_tolerance` controls the leakage threshold that triggers repair,
     whether individual high-sensitivity leaks trigger repair, and the
@@ -152,15 +154,8 @@ class EvaluationCriteria(BaseModel):
     while still producing evaluation metrics.
     """
 
-    risk_tolerance: RiskTolerance = Field(
-        default=RiskTolerance.low,
-        description="Preset controlling repair and review thresholds.",
-    )
-    max_repair_iterations: int = Field(
-        default=3,
-        ge=0,
-        description="Maximum repair rounds. Set to 0 to disable repair.",
-    )
+    risk_tolerance: RiskTolerance = Field(description="Preset controlling repair and review thresholds.")
+    max_repair_iterations: int = Field(ge=0, description="Maximum repair rounds. Set to 0 to disable repair.")
 
     @property
     def _bundle(self) -> _RiskToleranceBundle:
@@ -200,3 +195,8 @@ class EvaluationCriteria(BaseModel):
     def sensitivity_weights(self) -> dict[str, float]:
         """Weights for high/medium/low sensitivity levels in leakage mass computation."""
         return dict(SENSITIVITY_WEIGHTS)
+
+
+def default_privacy_goal() -> PrivacyGoal:
+    """The privacy goal a Rewrite uses when none is given."""
+    return PrivacyGoal(protect=DEFAULT_PROTECT_TEXT, preserve=DEFAULT_PRESERVE_TEXT)

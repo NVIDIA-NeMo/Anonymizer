@@ -92,7 +92,7 @@ Records with no detected entities skip all LLM sub-workflows and pass through wi
 
 ## Config Pattern
 
-`AnonymizerConfig.rewrite` is the user-facing `Rewrite` model. The engine never receives `Rewrite` directly — it receives `EvaluationCriteria` via the `Rewrite.evaluation` property. See that property's docstring for the sync contract (how `risk_tolerance` and `max_repair_iterations` flow into the engine, why production code should not duplicate the mapping).
+`AnonymizerConfig.rewrite` is the user-facing `Rewrite` model. The rewrite engine receives it as `options`, with the call's models and data summary in a `RunContext` as `context`, the same way detection receives `Detect.resolve()`. The engine reads `options.evaluation` for the `EvaluationCriteria`; see the `Rewrite.evaluation` docstring for how `risk_tolerance` and `max_repair_iterations` become the evaluation criteria.
 
 ## NDD Adapter
 
@@ -110,7 +110,7 @@ One pipeline-specific fact worth knowing: `COL_TEXT` is the internal name for th
 
 ## What NOT To Do
 
-- **Don't duplicate the `Rewrite` → `EvaluationCriteria` mapping** when production code starts from a `Rewrite`; route it through `Rewrite.evaluation`.
+- **Don't build `EvaluationCriteria` by hand** in production code; read `options.evaluation` (`Rewrite.evaluation`).
 - **Don't execute DataDesigner workflows directly** — call `DataDesigner.create()` / `.preview()` only via `NddAdapter.run_workflow()`. Declaring column configs (`LLMStructuredColumnConfig`, etc.) is fine.
 - **Don't use string literals for column names** — use `COL_*` constants from `engine/constants.py`
 - **Don't add a domain to only one supplement map** — see `engine/rewrite/domain_classification.py` for the sync invariant

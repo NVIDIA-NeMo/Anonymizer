@@ -45,6 +45,7 @@ from measurement_tools.wandb_setup import (
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from anonymizer.config.anonymizer_config import (
+    INSTRUCTIONS_REMOVED,
     AnonymizerConfig,
     AnonymizerInput,
     Detect,
@@ -968,10 +969,11 @@ def build_replace(raw: str | ReplaceSpec) -> Redact | Hash | Annotate | Substitu
 def build_rewrite(spec: RewriteSpec | None) -> Rewrite:
     if spec is None:
         raise ValueError("rewrite config is missing")
+    if spec.instructions is not None:
+        raise ValueError(INSTRUCTIONS_REMOVED)
     privacy_goal = _privacy_goal(spec)
     return Rewrite(
         privacy_goal=privacy_goal,
-        instructions=spec.instructions,
         risk_tolerance=spec.risk_tolerance,
         max_repair_iterations=spec.max_repair_iterations,
         strict_entity_protection=spec.strict_entity_protection,

@@ -17,8 +17,9 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTe
 from data_designer.engine.processing.ginja.environment import UserTemplateSandboxEnvironment
 from jinja2 import Environment, meta
 
+from anonymizer.config.anonymizer_config import Rewrite
 from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelection
-from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
+from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 
 _PRIVACY_GOAL = PrivacyGoal(
@@ -37,7 +38,7 @@ def test_all_rewrite_pipeline_prompts_pass_ndd_template_validation(
         selected_models=stub_rewrite_model_selection,
         replace_model_selection=stub_replace_model_selection,
         privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=1),
+        evaluation=Rewrite(max_repair_iterations=1).evaluation,
         data_summary="Biography profiles",
         strict_entity_protection=strict,
     )

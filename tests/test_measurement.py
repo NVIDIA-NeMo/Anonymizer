@@ -38,6 +38,7 @@ from anonymizer.config.anonymizer_config import (
 )
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.replace_strategies import Redact
+from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_AUGMENTED_ENTITIES,
@@ -80,7 +81,7 @@ from anonymizer.measurement import (
     stage_timer,
 )
 from anonymizer.measurement.metrics.rewrite import _output_contains_original_value
-from tests.conftest import stub_run_with_detection
+from tests.conftest import detection_context, stub_run_with_detection
 
 
 class _FailingSink:
@@ -2138,33 +2139,39 @@ def test_record_hash_uses_run_scoped_secret_by_default() -> None:
 
 
 def test_stage_timer_records_errors() -> None:
-    workflow = EntityDetectionWorkflow(adapter=Mock(spec=NddAdapter))
+    adapter = Mock(spec=NddAdapter)
+    adapter.run_workflow.side_effect = ValueError("boom")
+    workflow = EntityDetectionWorkflow(adapter=adapter)
     collector = MeasurementCollector(record_hash_key="test-key")
+    goal = PrivacyGoal(protect="Protect names from disclosure.", preserve="Keep the meaning of the text.")
 
-    with measurement_session(collector), pytest.raises(ValueError, match="privacy_goal is required"):
+    with measurement_session(collector), pytest.raises(ValueError, match="boom"):
         workflow.run(
             pd.DataFrame({COL_TEXT: ["Alice"]}),
-            model_configs=[],
-            selected_models=DetectionModelSelection(
-                entity_detector="detector",
-                entity_validator=["validator"],
-                entity_augmenter="augmenter",
-                latent_detector="latent",
+            options=Detect(gliner_threshold=0.3).resolve(),
+            context=detection_context(
+                [],
+                DetectionModelSelection(
+                    entity_detector="detector",
+                    entity_validator=["validator"],
+                    entity_augmenter="augmenter",
+                    latent_detector="latent",
+                ),
             ),
-            gliner_detection_threshold=0.3,
-            tag_latent_entities=True,
-            privacy_goal=None,
+            latent_goal=goal,
         )
 
-    stage_records = [record for record in collector.records if record["record_type"] == "stage"]
+    stage_records = [
+        record
+        for record in collector.records
+        if record["record_type"] == "stage" and record["stage"] == "EntityDetectionWorkflow.run"
+    ]
     assert len(stage_records) == 1
     record = stage_records[0]
     assert record["schema_version"] == MEASUREMENT_SCHEMA_VERSION
-    assert record["record_type"] == "stage"
     assert record["run_id"] == collector.run_id
     assert record["run_tags"] == {}
     assert isinstance(record["timestamp_unix_sec"], float)
-    assert record["stage"] == "EntityDetectionWorkflow.run"
     assert record["status"] == "error"
     assert record["elapsed_sec"] >= 0
     assert record["input_row_count"] == 1

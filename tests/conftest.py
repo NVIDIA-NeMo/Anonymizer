@@ -6,7 +6,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import sys
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
@@ -24,6 +24,7 @@ from anonymizer.config.models import (
     ReplaceModelSelection,
     RewriteModelSelection,
 )
+from anonymizer.config.options import RunContext
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
@@ -162,6 +163,39 @@ def stub_slim_model_selection() -> ModelSelection:
             replace_attribute_fidelity_judge="known",
             rewrite_judge="known",
         ),
+    )
+
+
+def run_context(
+    model_configs: Sequence[ModelConfig],
+    *,
+    detection: DetectionModelSelection | None = None,
+    rewrite: RewriteModelSelection | None = None,
+    replace: ReplaceModelSelection | None = None,
+    data_summary: str | None = None,
+    preview_num_records: int | None = None,
+) -> RunContext:
+    """A RunContext for calling a workflow directly: the default model selection with the given sections replaced."""
+    sections = {"detection": detection, "rewrite": rewrite, "replace": replace}
+    models = load_default_model_selection().model_copy(update={k: v for k, v in sections.items() if v is not None})
+    return RunContext(
+        model_configs=tuple(model_configs),
+        models=models,
+        data_summary=data_summary,
+        preview_num_records=preview_num_records,
+    )
+
+
+def detection_context(
+    model_configs: Sequence[ModelConfig],
+    detection: DetectionModelSelection,
+    *,
+    data_summary: str | None = None,
+    preview_num_records: int | None = None,
+) -> RunContext:
+    """A RunContext for calling a detection workflow directly, with `detection` as the detection models."""
+    return run_context(
+        model_configs, detection=detection, data_summary=data_summary, preview_num_records=preview_num_records
     )
 
 

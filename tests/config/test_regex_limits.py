@@ -7,8 +7,6 @@ import pytest
 from pydantic import ValidationError
 
 from anonymizer import Detect, RegexLimits
-from anonymizer.interface.anonymizer import _detection_regex_kwargs
-from anonymizer.interface.errors import InvalidConfigError
 
 
 def test_regex_limits_defaults_and_config_round_trip() -> None:
@@ -21,15 +19,6 @@ def test_regex_limits_defaults_and_config_round_trip() -> None:
         }
     )
     assert Detect.model_validate_json(config.model_dump_json()).regex_limits == config.regex_limits
-
-
-def test_injected_workflow_cannot_silently_ignore_nondefault_limits() -> None:
-    def legacy(*, builtin_regexes: bool, regex_rules: list[object]) -> None:
-        pass
-
-    assert "regex_limits" not in _detection_regex_kwargs(legacy, Detect())
-    with pytest.raises(InvalidConfigError, match="does not accept regex_limits"):
-        _detection_regex_kwargs(legacy, Detect(regex_limits={"max_matches_per_rule": 123}))
 
 
 @pytest.mark.parametrize(

@@ -65,12 +65,12 @@ def test_privacy_goal_to_prompt_string() -> None:
     ],
 )
 def test_repair_threshold_per_tolerance(tolerance: RiskTolerance, expected_threshold: float) -> None:
-    criteria = EvaluationCriteria(risk_tolerance=tolerance)
+    criteria = Rewrite(risk_tolerance=tolerance).evaluation
     assert criteria.repair_threshold == expected_threshold
 
 
 def test_default_is_low() -> None:
-    criteria = EvaluationCriteria()
+    criteria = Rewrite().evaluation
     assert criteria.risk_tolerance == RiskTolerance.low
     assert criteria.repair_threshold == 1.0
     assert criteria.max_repair_iterations == 3
@@ -81,22 +81,22 @@ def test_combined_graph_is_opt_in() -> None:
 
 
 def test_minimal_bundles_aggressive_review_flags() -> None:
-    criteria = EvaluationCriteria(risk_tolerance=RiskTolerance.minimal)
+    criteria = Rewrite(risk_tolerance=RiskTolerance.minimal).evaluation
     assert criteria.flag_utility_below == 0.6
     assert criteria.flag_leakage_above == 1.0
     assert criteria.repair_any_high_leak is True
 
 
 def test_high_does_not_repair_individual_high_leaks() -> None:
-    criteria = EvaluationCriteria(risk_tolerance=RiskTolerance.high)
+    criteria = Rewrite(risk_tolerance=RiskTolerance.high).evaluation
     assert criteria.repair_any_high_leak is False
 
 
 def test_sensitivity_weights_have_required_keys() -> None:
-    criteria = EvaluationCriteria()
+    criteria = Rewrite().evaluation
     assert set(criteria.sensitivity_weights.keys()) == {"high", "medium", "low"}
 
 
 def test_max_repair_iterations_rejects_negative() -> None:
     with pytest.raises(ValueError):
-        EvaluationCriteria(max_repair_iterations=-1)
+        EvaluationCriteria(risk_tolerance=RiskTolerance.low, max_repair_iterations=-1)

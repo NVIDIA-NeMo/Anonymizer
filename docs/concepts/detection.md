@@ -414,11 +414,15 @@ The validator receives the full resolved examples: built-in plus configured exam
 
 `entity_label_examples` is currently configured through the Python `Detect` API; the CLI does not provide a mapping syntax for this field.
 
-When injecting a custom `detection_workflow` into `Anonymizer`, older methods without
-an `entity_label_examples` keyword continue to work when no examples are configured.
-If examples are configured, `run()`, `preview()`, and the detection export methods raise
-`InvalidConfigError` when the corresponding detector method cannot accept them. Update
-the custom method to accept the keyword or remove `Detect.entity_label_examples`.
+A custom `detection_workflow` injected into `Anonymizer` is called as
+`run(dataframe, *, options, context, latent_goal=None)`. `options` is the call's `DetectionOptions` (from
+`Detect.resolve()`), `context` carries the model configs and selections, the data summary and the preview record
+count, and `latent_goal` is the Rewrite privacy goal or `None`. The types are in `anonymizer.interface.workflows`. A workflow written for the older keyword
+list fails with `TypeError` at its first call.
+
+A workflow must apply `options.builtin_regexes`, `options.regex_rules` and `options.regex_limits`, or raise when it
+cannot. `Anonymizer` no longer inspects an injected workflow's signature, so it no longer refuses a workflow that
+cannot accept explicitly configured regex options; that check went with the keyword list in v1.
 
 ### Excluding entity labels
 

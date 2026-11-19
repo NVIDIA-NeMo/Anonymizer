@@ -22,6 +22,7 @@ from data_designer.engine.models.clients import factory as client_factory
 from data_designer.engine.models.clients.types import AssistantMessage, ChatCompletionRequest, ChatCompletionResponse
 from data_designer.interface.data_designer import DataDesigner
 
+from anonymizer.config.anonymizer_config import Detect
 from anonymizer.config.models import DetectionModelSelection, RewriteModelSelection
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
@@ -34,6 +35,7 @@ from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkfl
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import load_default_model_selection
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
+from tests.conftest import detection_context
 
 _PROVIDER = ModelProvider(name="scripted", endpoint="http://scripted.invalid/v1", api_key="unused")
 _DETECTOR = "scripted-detector"
@@ -141,9 +143,8 @@ def _detect(tmp_path: Path, run_config: RunConfig | None = None):
     )
     return EntityDetectionWorkflow(adapter=_adapter(tmp_path, run_config)).detect_and_validate_entities(
         pd.DataFrame({COL_TEXT: [_TEXT, _OTHER_TEXT]}),
-        model_configs=[_model(_DETECTOR), _model(_VALIDATOR), _model(_AUGMENTER)],
-        selected_models=selection,
-        gliner_detection_threshold=0.3,
+        options=Detect(gliner_threshold=0.3).resolve(),
+        context=detection_context([_model(_DETECTOR), _model(_VALIDATOR), _model(_AUGMENTER)], selection),
     )
 
 

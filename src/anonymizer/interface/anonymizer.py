@@ -5,17 +5,15 @@ from __future__ import annotations
 
 import contextvars
 import functools
-import inspect
 import logging
 import os
 import re
-import sys
 import time
 import uuid
 from collections import Counter
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, ParamSpec, Protocol, TypedDict, TypeGuard, TypeVar, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, ParamSpec, Protocol, TypeGuard, TypeVar, cast, runtime_checkable
 
 import pandas as pd
 from data_designer.config.models import ModelProvider
@@ -25,14 +23,13 @@ from data_designer.interface.data_designer import DataDesigner
 from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
-    Detect,
     DetectionScope,
     EvaluateConfig,
     Rewrite,
     TextRecordsInput,
     resolve_effective_detection_labels,
 )
-from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
+from anonymizer.config.options import DetectionOptions, RunContext
 from anonymizer.config.replace_strategies import ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
@@ -61,7 +58,6 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
-from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
@@ -98,6 +94,7 @@ from anonymizer.engine.row_partitioning import try_resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
+from anonymizer.interface.workflows import DetectionWorkflow
 from anonymizer.logging import LOG_INDENT, configure_logging, reapply_log_levels
 from anonymizer.measurement import (
     record_record_metrics,
@@ -119,9 +116,6 @@ from anonymizer.telemetry import (
 
 if TYPE_CHECKING:
     from data_designer.config.config_builder import DataDesignerConfigBuilder
-
-if sys.version_info >= (3, 14):
-    import annotationlib
 
 logger = logging.getLogger("anonymizer")
 
@@ -277,69 +271,15 @@ def _initialize_logging() -> None:
     configure_logging()
 
 
-class _DetectionExampleKwargs(TypedDict, total=False):
-    entity_label_examples: dict[str, list[str]]
+@runtime_checkable
+class _DetectionExport(Protocol):
+    def build_detection_config(
+        self, dataframe: pd.DataFrame, *, seed_path: str | Path, options: DetectionOptions, context: RunContext
+    ) -> DataDesignerConfigBuilder: ...
 
-
-def _accepts_keyword(method: Callable[..., object], name: str) -> bool:
-    """Check keyword support; preserve forwarding when a callable cannot be inspected."""
-    try:
-        if sys.version_info >= (3, 14):
-            # Leave unresolvable lazy annotations (e.g. TYPE_CHECKING-only types) as forward references.
-            signature = inspect.signature(method, annotation_format=annotationlib.Format.FORWARDREF)
-        else:
-            signature = inspect.signature(method)
-        parameters = signature.parameters
-    except (TypeError, ValueError):
-        return True
-    parameter = parameters.get(name)
-    return any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()) or (
-        parameter is not None
-        and parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
-    )
-
-
-def _accepts_entity_label_examples(method: Callable[..., object]) -> bool:
-    return _accepts_keyword(method, "entity_label_examples")
-
-
-class _DetectionRegexKwargs(TypedDict, total=False):
-    builtin_regexes: bool
-    regex_rules: list[BuiltinRegex | RegexRule]
-    regex_limits: RegexLimits
-
-
-def _detection_regex_kwargs(method: Callable[..., object], detect: Detect) -> _DetectionRegexKwargs:
-    """Forward supported regex options without dropping explicitly requested behavior."""
-    kwargs: _DetectionRegexKwargs = {}
-    if _accepts_keyword(method, "regex_limits"):
-        kwargs["regex_limits"] = detect.regex_limits
-    elif detect.regex_limits != RegexLimits():
-        raise InvalidConfigError(
-            "The configured detection_workflow does not accept regex_limits. Update the workflow "
-            "to accept this keyword or remove the non-default detect.regex_limits."
-        )
-    if _accepts_keyword(method, "builtin_regexes") and _accepts_keyword(method, "regex_rules"):
-        kwargs.update(builtin_regexes=detect.builtin_regexes, regex_rules=detect.regex_rules)
-        return kwargs
-    if detect.regex_rules or ("builtin_regexes" in detect.model_fields_set and detect.builtin_regexes):
-        raise InvalidConfigError(
-            "The configured detection_workflow does not accept builtin_regexes and regex_rules. "
-            "Update the workflow to accept these keywords or remove the regex options from detect."
-        )
-    return kwargs
-
-
-def _detection_example_kwargs(method: Callable[..., object], examples: dict[str, list[str]]) -> _DetectionExampleKwargs:
-    """Adapt pre-#275 detectors without dropping explicitly configured examples."""
-    if _accepts_entity_label_examples(method):
-        return {"entity_label_examples": examples}
-    if examples:
-        raise InvalidConfigError(
-            "The configured detection_workflow does not accept entity_label_examples. "
-            "Update the workflow to accept this keyword or remove detect.entity_label_examples."
-        )
-    return {}
+    def build_detection_builder_for_seed(
+        self, *, seed_path: str | Path, options: DetectionOptions, context: RunContext, job_index: int, num_jobs: int
+    ) -> DataDesignerConfigBuilder: ...
 
 
 _P = ParamSpec("_P")
@@ -368,7 +308,7 @@ class Anonymizer:
         artifact_path: str | Path | None = None,
         data_designer: DataDesigner | None = None,
         data_designer_run_config: RunConfig | None = None,
-        detection_workflow: EntityDetectionWorkflow | None = None,
+        detection_workflow: DetectionWorkflow | None = None,
         replace_runner: ReplacementWorkflow | None = None,
         rewrite_runner: RewriteWorkflow | None = None,
         combined_rewrite_runner: CombinedRewriteWorkflow | None = None,
@@ -389,16 +329,9 @@ class Anonymizer:
                 applied to the Anonymizer-managed or caller-supplied DataDesigner
                 instance. Use this for DataDesigner execution knobs such as
                 ``buffer_size`` and ``max_in_flight_tasks``.
-            detection_workflow: Custom detection workflow (advanced/testing). Methods
-                without the regex keywords remain supported when regex options are
-                implicit or built-ins are explicitly disabled; they retain their own
-                detection behavior, without gaining built-in regex recognition.
-                Explicitly enabling built-ins or supplying regex rules requires keyword
-                support, otherwise ``InvalidConfigError`` is raised. Methods without
-                ``regex_limits`` may omit defaults, but non-default limits require
-                support and otherwise raise ``InvalidConfigError``. Methods without
-                ``entity_label_examples`` remain supported when no examples are configured;
-                configuring unsupported examples raises ``InvalidConfigError`` too.
+            detection_workflow: Custom detection workflow (advanced/testing), called as
+                ``run(dataframe, *, options, context, latent_goal)``; see
+                ``anonymizer.interface.workflows``.
             replace_runner: Custom replacement workflow (advanced/testing).
             rewrite_runner: Custom rewrite workflow (advanced/testing).
             combined_rewrite_runner: Custom combined rewrite workflow (advanced/testing).
@@ -441,7 +374,9 @@ class Anonymizer:
         if data_designer_run_config is not None:
             self._data_designer.set_run_config(data_designer_run_config)
         self._adapter = NddAdapter(data_designer=self._data_designer)
-        self._detection_workflow = detection_workflow or EntityDetectionWorkflow(adapter=self._adapter)
+        self._detection_workflow: DetectionWorkflow = detection_workflow or EntityDetectionWorkflow(
+            adapter=self._adapter
+        )
         self._replace_runner = replace_runner or ReplacementWorkflow(
             llm_workflow=LlmReplaceWorkflow(adapter=self._adapter),
             detection_judge=DetectionJudgeWorkflow(adapter=self._adapter),
@@ -470,13 +405,13 @@ class Anonymizer:
             data: File-backed or in-memory records and optional dataset context.
         """
         self._validate_preflight_config(config)
-        context = read_input(data)
-        input_df = context.dataframe
+        resolved = read_input(data)
+        input_df = resolved.dataframe
         t_start = time.perf_counter()
         status = TaskStatusEnum.COMPLETED
         result: AnonymizerResult | None = None
         try:
-            result = self._run_internal(config=config, data=data, context=context, preview_num_records=None)
+            result = self._run_internal(config=config, data=data, resolved=resolved, preview_num_records=None)
             return result
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
@@ -518,22 +453,13 @@ class Anonymizer:
             seed_path: Destination parquet path for the seed dataset.
         """
         self._validate_preflight_config(config)
-        context = read_input(data)
-        return self._detection_workflow.build_detection_config(
-            context.dataframe,
+        exporter = self._detection_exporter()
+        resolved = read_input(data)
+        return exporter.build_detection_config(
+            resolved.dataframe,
             seed_path=seed_path,
-            model_configs=self._model_configs,
-            selected_models=self._selected_models.detection,
-            gliner_detection_threshold=config.detect.gliner_threshold,
-            validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
-            validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
-            entity_labels=config.detect.entity_labels,
-            excluded_entity_labels=config.detect.excluded_entity_labels,
-            **_detection_example_kwargs(
-                self._detection_workflow.build_detection_config, config.detect.entity_label_examples
-            ),
-            **_detection_regex_kwargs(self._detection_workflow.build_detection_config, config.detect),
-            data_summary=data.data_summary,
+            options=config.detect.resolve(),
+            context=self._run_context(data_summary=data.data_summary, preview_num_records=None),
         )
 
     def export_detection_builder_for_seed(
@@ -557,22 +483,27 @@ class Anonymizer:
         the config. Runtime model providers remain external to the serialized config.
         """
         self._validate_preflight_config(config)
-        return self._detection_workflow.build_detection_builder_for_seed(
+        return self._detection_exporter().build_detection_builder_for_seed(
             seed_path=seed_path,
-            model_configs=self._model_configs,
-            selected_models=self._selected_models.detection,
-            gliner_detection_threshold=config.detect.gliner_threshold,
-            validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
-            validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
-            entity_labels=config.detect.entity_labels,
-            excluded_entity_labels=config.detect.excluded_entity_labels,
-            **_detection_example_kwargs(
-                self._detection_workflow.build_detection_builder_for_seed, config.detect.entity_label_examples
-            ),
-            **_detection_regex_kwargs(self._detection_workflow.build_detection_builder_for_seed, config.detect),
-            data_summary=data_summary,
+            options=config.detect.resolve(),
+            context=self._run_context(data_summary=data_summary, preview_num_records=None),
             job_index=job_index,
             num_jobs=num_jobs,
+        )
+
+    def _detection_exporter(self) -> _DetectionExport:
+        workflow = self._detection_workflow
+        if not isinstance(workflow, _DetectionExport):
+            raise InvalidConfigError("this detection_workflow does not support export")
+        return workflow
+
+    def _run_context(self, *, data_summary: str | None, preview_num_records: int | None) -> RunContext:
+        """One context per call."""
+        return RunContext(
+            model_configs=tuple(self._model_configs),
+            models=self._selected_models,
+            data_summary=data_summary,
+            preview_num_records=preview_num_records,
         )
 
     @_in_copied_context
@@ -594,13 +525,13 @@ class Anonymizer:
             num_records: Maximum records to process (default 10).
         """
         self._validate_preflight_config(config)
-        context = read_input(data, nrows=num_records)
-        input_df = context.dataframe
+        resolved = read_input(data, nrows=num_records)
+        input_df = resolved.dataframe
         t_start = time.perf_counter()
         status = TaskStatusEnum.COMPLETED
         result: AnonymizerResult | None = None
         try:
-            result = self._run_internal(config=config, data=data, context=context, preview_num_records=num_records)
+            result = self._run_internal(config=config, data=data, resolved=resolved, preview_num_records=num_records)
             return PreviewResult(
                 dataframe=result.dataframe,
                 trace_dataframe=result.trace_dataframe,
@@ -611,8 +542,8 @@ class Anonymizer:
                 id_column=result.id_column,
                 replace_method=config.replace,
                 rewrite_config=result.rewrite_config,
-                entity_labels=config.detect.entity_labels,
-                excluded_entity_labels=config.detect.excluded_entity_labels,
+                entity_labels=result.entity_labels,
+                excluded_entity_labels=result.excluded_entity_labels,
                 detection_scope=result.detection_scope,
                 data_summary=result.data_summary,
                 _outcomes=result._outcomes,
@@ -893,10 +824,10 @@ class Anonymizer:
         *,
         config: AnonymizerConfig,
         data: AnonymizerInput | TextRecordsInput,
-        context: ResolvedInput,
+        resolved: ResolvedInput,
         preview_num_records: int | None,
     ) -> AnonymizerResult:
-        input_df = context.dataframe
+        input_df = resolved.dataframe
         mode = "replace" if config.replace is not None else "rewrite"
         strategy = type(config.replace).__name__ if config.replace is not None else "Rewrite"
         with stage_timer(
@@ -918,7 +849,7 @@ class Anonymizer:
             result = self._run_internal_impl(
                 config=config,
                 data=data,
-                context=context,
+                resolved=resolved,
                 preview_num_records=preview_num_records,
             )
             measurement.update(
@@ -932,10 +863,10 @@ class Anonymizer:
         *,
         config: AnonymizerConfig,
         data: AnonymizerInput | TextRecordsInput,
-        context: ResolvedInput,
+        resolved: ResolvedInput,
         preview_num_records: int | None,
     ) -> AnonymizerResult:
-        input_df = context.dataframe
+        input_df = resolved.dataframe
         num_records = len(input_df)
         if preview_num_records is not None and preview_num_records != num_records:
             effective_records = min(preview_num_records, num_records)
@@ -953,23 +884,11 @@ class Anonymizer:
             preview_num_records = effective_records
         else:
             logger.info("🔍 Running entity detection on %d records", num_records)
-        configured_labels = resolve_effective_detection_labels(
-            config.detect.entity_labels,
-            regex_rules=config.detect.regex_rules,
+        detection = config.detect.resolve()
+        configured_label_count = len(
+            resolve_effective_detection_labels(config.detect.entity_labels, regex_rules=config.detect.regex_rules)
         )
-        effective_labels = resolve_effective_detection_labels(
-            config.detect.entity_labels,
-            regex_rules=config.detect.regex_rules,
-            excluded_entity_labels=config.detect.excluded_entity_labels,
-        )
-        label_config = resolve_entity_label_config(
-            entity_labels=effective_labels,
-            excluded_entity_labels=config.detect.excluded_entity_labels,
-            entity_label_examples=config.detect.entity_label_examples,
-        )
-        label_config.strict_labels = config.detect.entity_labels is not None
-        configured_label_count = len(configured_labels)
-        effective_label_count = len(label_config.labels)
+        effective_label_count = len(detection.ordered_labels)
         removed_label_count = configured_label_count - effective_label_count
         if logger.isEnabledFor(logging.DEBUG):
             text_lengths = input_df[COL_TEXT].astype(str).str.len()
@@ -983,7 +902,7 @@ class Anonymizer:
             logger.debug(
                 "detection config: threshold=%.2f, configured_label_count=%d, "
                 "effective_label_count=%d, removed_by_exclusions=%d",
-                config.detect.gliner_threshold,
+                detection.gliner_threshold,
                 configured_label_count,
                 effective_label_count,
                 removed_label_count,
@@ -997,36 +916,11 @@ class Anonymizer:
                 removed_label_count,
             )
 
-        # The privacy goal admitted for this run: Rewrite, the result's rewrite_config and evaluate() all use this
-        # copy. Caller detectors still receive the caller's own object, as in the release.
-        admitted_goal = (
-            config.rewrite.privacy_goal.model_copy(deep=True)
-            if config.rewrite is not None and config.rewrite.privacy_goal is not None
-            else None
-        )
-        detection_options: dict[str, Any] = dict(
-            gliner_detection_threshold=config.detect.gliner_threshold,
-            validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
-            validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
-            entity_labels=config.detect.entity_labels,
-            excluded_entity_labels=config.detect.excluded_entity_labels,
-            **_detection_example_kwargs(self._detection_workflow.run, config.detect.entity_label_examples),
-            **_detection_regex_kwargs(self._detection_workflow.run, config.detect),
-            privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
-            data_summary=data.data_summary,
-            tag_latent_entities=config.rewrite is not None,
-            compute_grouped_entities=config.replace is not None or config.rewrite is not None,
-            preview_num_records=preview_num_records,
-        )
+        run_context = self._run_context(data_summary=data.data_summary, preview_num_records=preview_num_records)
+        latent_goal = config.rewrite.privacy_goal if config.rewrite is not None else None
 
         def detect(frame: pd.DataFrame) -> EntityDetectionResult:
-            result = self._detection_workflow.run(
-                frame,
-                model_configs=self._model_configs,
-                selected_models=self._selected_models.detection,
-                **detection_options,
-            )
-            return result
+            return self._detection_workflow.run(frame, options=detection, context=run_context, latent_goal=latent_goal)
 
         def detect_then_announce(frame: pd.DataFrame) -> EntityDetectionResult:
             result = detect(frame)
@@ -1072,21 +966,8 @@ class Anonymizer:
             outcomes = replace_result.outcomes
         else:
             assert config.rewrite is not None
-            privacy_goal = admitted_goal
-            if privacy_goal is None:
-                raise InvalidConfigError("rewrite.privacy_goal must not be None")
             rewrite_runner = (
                 self._combined_rewrite_runner if config.rewrite.use_combined_graph else self._rewrite_runner
-            )
-            rewrite_options: dict[str, Any] = dict(
-                model_configs=self._model_configs,
-                selected_models=self._selected_models.rewrite,
-                replace_model_selection=self._selected_models.replace,
-                privacy_goal=privacy_goal,
-                evaluation=config.rewrite.evaluation,
-                data_summary=data.data_summary,
-                preview_num_records=preview_num_records,
-                strict_entity_protection=config.rewrite.strict_entity_protection,
             )
             if rewrite_runner.__class__.run not in (RewriteWorkflow.run, CombinedRewriteWorkflow.run):
                 # A caller's runner overrides run(): detect, then call that override with the detection frame.
@@ -1095,13 +976,13 @@ class Anonymizer:
                 detected_df, detection_failures = detection_result.dataframe, list(detection_result.failed_records)
                 t0 = time.perf_counter()
                 logger.info("✏️ Running rewrite pipeline")
-                rewrite_result = rewrite_runner.run(detected_df, **rewrite_options)
+                rewrite_result = rewrite_runner.run(detected_df, options=config.rewrite, context=run_context)
                 post_detection_failures = list(rewrite_result.failed_records)
                 replacement_elapsed = time.perf_counter() - t0
                 outcomes = None
             else:
                 rewrite_result = rewrite_runner.run_with_detection(
-                    input_df, detect=detect_then_announce, **rewrite_options
+                    input_df, detect=detect_then_announce, options=config.rewrite, context=run_context
                 )
                 assert rewrite_result.detection is not None
                 detected_df, detection_failures = (
@@ -1136,7 +1017,7 @@ class Anonymizer:
         all_failures = [*detection_failures, *post_detection_failures]
         if all_failures:
             logger.warning("%d record(s) failed during pipeline processing.", len(all_failures))
-        text_col = context.resolved_text_column
+        text_col = resolved.resolved_text_column
         renamed_trace = _rename_output_columns(final_df, resolved_text_column=text_col)
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
         record_record_metrics(
@@ -1144,37 +1025,30 @@ class Anonymizer:
             mode="replace" if config.replace is not None else "rewrite",
             strategy=type(config.replace).__name__ if config.replace is not None else "Rewrite",
             text_column=COL_TEXT,
-            validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
+            validation_max_entities_per_call=detection.validation_max_entities_per_call,
         )
         return AnonymizerResult(
             dataframe=_build_user_dataframe(
                 renamed_trace,
                 resolved_text_column=text_col,
-                id_column=context.resolved_id_column,
+                id_column=resolved.resolved_id_column,
             ),
             trace_dataframe=renamed_trace,
             resolved_text_column=text_col,
             failed_records=all_failures,
-            id_column=context.resolved_id_column,
+            id_column=resolved.resolved_id_column,
             replace_method=config.replace,
-            rewrite_config=admitted_goal,
-            entity_labels=config.detect.entity_labels,
-            excluded_entity_labels=config.detect.excluded_entity_labels,
-            detection_scope=DetectionScope(
-                effective_labels=sorted(label_config.labels),
-                allowed_labels=sorted(label_config.labels) if label_config.strict_labels else None,
-                excluded_labels=config.detect.excluded_entity_labels or [],
-                gliner_threshold=config.detect.gliner_threshold,
-            ),
+            rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
+            entity_labels=None if detection.entity_labels is None else list(detection.entity_labels),
+            excluded_entity_labels=list(detection.excluded_labels) or None,
+            detection_scope=DetectionScope.of(detection),
             data_summary=data.data_summary,
             _outcomes=outcomes,
-            effective_entity_labels=effective_labels,
+            effective_entity_labels=list(detection.ordered_labels),
         )
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
         """Run semantic preflight checks shared by validate, run, and preview."""
-        if config.rewrite is not None and config.rewrite.privacy_goal is None:
-            raise InvalidConfigError("rewrite.privacy_goal must not be None")
         try:
             validate_model_alias_references(
                 self._model_configs,
@@ -1496,10 +1370,9 @@ def _transformation_type_string(config: AnonymizerConfig) -> str:
 def _custom_privacy_goal_provided(rewrite: Rewrite | None) -> bool:
     """Detect whether the user supplied a non-default privacy_goal.
 
-    ``Rewrite.populate_default_privacy_goal`` always populates a default if the
-    user passed None, so we treat the default protect/preserve text as "not custom".
+    A goal equal to the default protect/preserve text counts as "not custom".
     """
-    if rewrite is None or rewrite.privacy_goal is None:
+    if rewrite is None:
         return False
     from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT, DEFAULT_PROTECT_TEXT
 

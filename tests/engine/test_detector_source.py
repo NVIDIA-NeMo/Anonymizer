@@ -17,6 +17,7 @@ from data_designer.config.run_config import RunConfig
 from data_designer.engine.column_generators.generators.llm_completion import LLMTextCellGenerator
 from data_designer.engine.processing.ginja.exceptions import EmptyTemplateRenderError
 
+from anonymizer.config.anonymizer_config import Detect
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.engine.constants import (
     COL_DETECTOR_SOURCE,
@@ -30,6 +31,7 @@ from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkfl
 from anonymizer.engine.schemas import DetectionResult
 from anonymizer.engine.workflow_columns.detection.config import DetectionTransformConfig
 from anonymizer.engine.workflow_columns.detection.impl import DetectionTransformGenerator
+from tests.conftest import detection_context
 
 
 @pytest.fixture
@@ -39,9 +41,8 @@ def detector_generators(
 ) -> tuple[DetectionTransformGenerator, LLMTextCellGenerator, Mock]:
     workflow = EntityDetectionWorkflow(adapter=Mock())
     models, columns = workflow._build_detection_spec(
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        gliner_detection_threshold=0.3,
+        options=Detect(gliner_threshold=0.3).resolve(),
+        context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
     source_config = cast(DetectionTransformConfig, next(c for c in columns if c.name == COL_DETECTOR_SOURCE))
     detector_config = cast(LLMTextColumnConfig, next(c for c in columns if c.name == COL_RAW_DETECTED))

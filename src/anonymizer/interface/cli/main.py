@@ -21,7 +21,7 @@ logger = logging.getLogger("anonymizer.cli")
 import cyclopts
 from pydantic import ValidationError
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite
+from anonymizer.config.anonymizer_config import INSTRUCTIONS_REMOVED, AnonymizerConfig, AnonymizerInput, Detect, Rewrite
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.config.rewrite import (
     DEFAULT_PRESERVE_TEXT,
@@ -40,6 +40,11 @@ app = cyclopts.App(help="NeMo Anonymizer CLI")
 
 ReplaceChoice = Literal["redact", "hash", "annotate", "substitute"]
 RiskToleranceChoice = Literal["minimal", "low", "moderate", "high"]
+
+
+# The CLI flags take their defaults from these default models, so a flag cannot drift from its model.
+_REWRITE, _REDACT, _HASH = Rewrite(), Redact(), Hash()
+
 
 _STRATEGY_CLS = {
     "substitute": Substitute,
@@ -104,18 +109,22 @@ class CliOpts:
             )
         ),
     ] = None
-    normalize_label: bool = True
-    algorithm: Annotated[Literal["sha256", "sha1", "md5"], cyclopts.Parameter(help="Hash algorithm.")] = "sha256"
-    digest_length: Annotated[int, cyclopts.Parameter(help="Hash digest length (6-64).")] = 12
+    normalize_label: bool = _REDACT.normalize_label
+    algorithm: Annotated[Literal["sha256", "sha1", "md5"], cyclopts.Parameter(help="Hash algorithm.")] = _HASH.algorithm
+    digest_length: Annotated[int, cyclopts.Parameter(help="Hash digest length (6-64).")] = _HASH.digest_length
 
     # -- rewrite-specific --
     protect: Annotated[str | None, cyclopts.Parameter(help="What to protect (privacy goal).")] = None
     preserve: Annotated[str | None, cyclopts.Parameter(help="What to preserve (utility goal).")] = None
-    risk_tolerance: Annotated[RiskToleranceChoice, cyclopts.Parameter(help="Risk tolerance preset.")] = "low"
-    max_repair_iterations: Annotated[int, cyclopts.Parameter(help="Max evaluate-repair iterations.")] = 3
+    risk_tolerance: Annotated[RiskToleranceChoice, cyclopts.Parameter(help="Risk tolerance preset.")] = (
+        _REWRITE.risk_tolerance.value
+    )
+    max_repair_iterations: Annotated[int, cyclopts.Parameter(help="Max evaluate-repair iterations.")] = (
+        _REWRITE.max_repair_iterations
+    )
 
-    # -- shared between substitute (replace) and rewrite --
-    instructions: Annotated[str | None, cyclopts.Parameter(help="Extra instructions for the LLM.")] = None
+    # -- substitute-specific --
+    instructions: Annotated[str | None, cyclopts.Parameter(help="Extra instructions for the Substitute LLM.")] = None
 
     # -- telemetry --
     emit_telemetry: Annotated[
@@ -191,6 +200,8 @@ def _build_replace_strategy(opts: CliOpts) -> Substitute | Redact | Hash | Annot
 
 def _build_rewrite_config(opts: CliOpts) -> Rewrite:
     """Build a Rewrite config from CLI args."""
+    if opts.instructions is not None:
+        raise InvalidConfigError(INSTRUCTIONS_REMOVED)
     privacy_goal = None
     if opts.protect or opts.preserve:
         privacy_goal = PrivacyGoal(
@@ -199,7 +210,6 @@ def _build_rewrite_config(opts: CliOpts) -> Rewrite:
         )
     return Rewrite(
         privacy_goal=privacy_goal,
-        instructions=opts.instructions,
         risk_tolerance=RiskTolerance(opts.risk_tolerance),
         max_repair_iterations=opts.max_repair_iterations,
     )

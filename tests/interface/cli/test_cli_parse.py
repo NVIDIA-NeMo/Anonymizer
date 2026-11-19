@@ -170,10 +170,10 @@ def test_build_rewrite_max_repair_iterations() -> None:
 
 
 def test_build_rewrite_instructions() -> None:
-    """--instructions is forwarded to Rewrite config."""
+    """--instructions under --rewrite is rejected: Rewrite.instructions was removed."""
     opts = CliOpts(rewrite=True, instructions="Keep dates approximate")
-    rewrite = _build_rewrite_config(opts)
-    assert rewrite.instructions == "Keep dates approximate"
+    with pytest.raises(InvalidConfigError, match=r"Rewrite\.instructions was removed in v1"):
+        _build_rewrite_config(opts)
 
 
 # ---------------------------------------------------------------------------
@@ -225,3 +225,12 @@ def test_rewrite_mode_warns_on_replace_flags(caplog: pytest.LogCaptureFixture) -
     with caplog.at_level("WARNING", logger="anonymizer.cli"):
         CliOpts(rewrite=True, format_template="[{label}]")
     assert "--format-template" in caplog.text
+
+
+def test_cli_defaults_are_the_model_defaults() -> None:
+    opts = CliOpts()
+    rewrite, redact, hash_ = Rewrite(), Redact(), Hash()
+    assert RiskTolerance(opts.risk_tolerance) == rewrite.risk_tolerance
+    assert opts.max_repair_iterations == rewrite.max_repair_iterations
+    assert opts.normalize_label == redact.normalize_label
+    assert (opts.algorithm, opts.digest_length) == (hash_.algorithm, hash_.digest_length)

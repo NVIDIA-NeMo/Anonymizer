@@ -7,6 +7,8 @@ This guide walks through the decisions you make when configuring an `AnonymizerC
 
 It is also the primary reference for AI agents that drive the Anonymizer skill: every decision below is something the agent has to make on the user's behalf.
 
+`AnonymizerConfig`, everything inside it, `AnonymizerInput` and `TextRecordsInput` reject unknown keys: a misspelled or removed field raises a `ValidationError` that names the key and the model. A `TextRecord` ignores extra keys, so records can carry fields of their own.
+
 ---
 
 ## Decision flow

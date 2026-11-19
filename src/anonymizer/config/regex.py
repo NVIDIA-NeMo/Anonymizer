@@ -9,9 +9,10 @@ from dataclasses import dataclass
 from typing import Any, TypeAlias
 
 import regex
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic import ConfigDict, Field, field_serializer, field_validator
 
-from anonymizer.config.entity_labels import normalize_entity_label
+from anonymizer.config.base import FrozenConfig
+from anonymizer.config.entity_labels import normalize_entity_label, reject_reserved_entity_label
 
 MAX_REGEX_PATTERN_LENGTH = 4096
 # The per-rule CPU-time floor. Garbage collection is not charged against it (see regex_detection._rule_cpu_time);
@@ -61,7 +62,7 @@ RegexValidatorReturn: TypeAlias = bool | RegexValidationResult
 RegexValidatorCallable: TypeAlias = Callable[[RegexCandidate], RegexValidatorReturn]
 
 
-class RegexLimits(BaseModel):
+class RegexLimits(FrozenConfig):
     """Per-record, per-rule bounds shared by built-in and custom regex rules.
 
     The timeout is a budget of CPU seconds used by the scanning thread; waiting for other threads and garbage
@@ -69,8 +70,6 @@ class RegexLimits(BaseModel):
     A wall-clock ceiling of ``REGEX_WALL_CEILING_FACTOR`` times that budget also fails a record whose scan the
     process was too busy to run.
     """
-
-    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     max_matches_per_rule: int = Field(default=DEFAULT_MAX_MATCHES_PER_RULE, gt=0, strict=True)
     min_timeout_seconds: float = Field(
@@ -87,10 +86,8 @@ class RegexLimits(BaseModel):
     )
 
 
-class BuiltinRegex(BaseModel):
+class BuiltinRegex(FrozenConfig):
     """Configuration for one recognizer from the built-in regex registry."""
-
-    model_config = ConfigDict(extra="forbid")
 
     label: str
     enabled: bool = True
@@ -114,10 +111,10 @@ class BuiltinRegex(BaseModel):
         return cleaned
 
 
-class RegexRule(BaseModel):
+class RegexRule(FrozenConfig):
     """A user-defined regex rule for producing entity candidates."""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     label: str
     pattern: str
@@ -138,7 +135,7 @@ class RegexRule(BaseModel):
         cleaned = normalize_entity_label(value)
         if not cleaned:
             raise ValueError("Regex rule label must not be empty.")
-        return cleaned
+        return reject_reserved_entity_label(cleaned)
 
     @field_validator("pattern")
     @classmethod

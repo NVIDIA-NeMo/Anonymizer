@@ -13,7 +13,9 @@ import pandas as pd
 import pyarrow as pa
 from data_designer.config.models import ModelConfig
 
+from anonymizer.config.anonymizer_config import Rewrite
 from anonymizer.config.models import EvaluateModelSelection, ReplaceModelSelection, RewriteModelSelection
+from anonymizer.config.options import RunContext
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
@@ -460,19 +462,9 @@ class RewriteWorkflow:
         self._judge_wf = FinalJudgeWorkflow()
         self._detection_judge_wf = DetectionJudgeWorkflow(adapter)
 
-    def run(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: RewriteModelSelection,
-        replace_model_selection: ReplaceModelSelection,
-        privacy_goal: PrivacyGoal,
-        evaluation: EvaluationCriteria,
-        data_summary: str | None = None,
-        preview_num_records: int | None = None,
-        strict_entity_protection: bool = False,
-    ) -> RewriteResult:
+    def run(self, dataframe: pd.DataFrame, *, options: Rewrite, context: RunContext) -> RewriteResult:
+        """Rewrite the rows of ``dataframe`` that have entities. ``options`` is the caller's `Rewrite` config and
+        ``context`` the call's `RunContext`; ``options.evaluation`` is read once per call and passed down."""
         with stage_timer("RewriteWorkflow.run", input_row_count=len(dataframe)) as measurement:
             entity_rows, passthrough_rows = split_rows(dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
             measurement.update(
@@ -492,17 +484,8 @@ class RewriteWorkflow:
                 return result
 
             rows = _Rows(entity_rows)
-            produce = self._produce(
-                rows,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                replace_model_selection=replace_model_selection,
-                privacy_goal=privacy_goal,
-                evaluation=evaluation,
-                data_summary=data_summary,
-                preview_num_records=preview_num_records,
-                strict_entity_protection=strict_entity_protection,
-            )
+            evaluation = options.evaluation
+            produce = self._produce(rows, options=options, context=context, evaluation=evaluation)
             result = _rewrite_lowered(entity_rows, passthrough_rows, rows, produce, evaluation)
             measurement.update(
                 output_row_count=len(result.dataframe),
@@ -511,17 +494,24 @@ class RewriteWorkflow:
             return result
 
     def run_with_detection(
-        self, dataframe: pd.DataFrame, *, detect: Callable[[pd.DataFrame], EntityDetectionResult], **options: Any
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        detect: Callable[[pd.DataFrame], EntityDetectionResult],
+        options: Rewrite,
+        context: RunContext,
     ) -> RewriteResult:
-        """Detect entities with ``detect`` and rewrite as one graph invocation; ``options`` are ``run``'s keywords."""
-        return self._run_detected(dataframe, detect, "RewriteWorkflow.run", options)
+        """Detect entities with ``detect`` and rewrite as one graph invocation."""
+        return self._run_detected(dataframe, detect, "RewriteWorkflow.run", options=options, context=context)
 
     def _run_detected(
         self,
         dataframe: pd.DataFrame,
         detect: Callable[[pd.DataFrame], EntityDetectionResult],
         stage: str,
-        options: dict[str, Any],
+        *,
+        options: Rewrite,
+        context: RunContext,
     ) -> RewriteResult:
         """Run ``detect``, then ``rewrite`` and the final checks over every input row as one invocation.
 
@@ -532,7 +522,7 @@ class RewriteWorkflow:
         detection frame as returned. ``stage`` names the measurement.
         """
         started = time.perf_counter()
-        evaluation = options["evaluation"]
+        evaluation = options.evaluation
         scope = GraphScope()
         graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in dataframe[COL_TEXT]))
         state = DetectState()
@@ -552,7 +542,7 @@ class RewriteWorkflow:
         def rewrite(target: tuple[Datum, ...]) -> list[dict[str, object] | RewriteUnavailable | None]:
             entity_rows, passthrough_rows = split(set(target))
             if not entity_rows.empty:
-                self._produce(rows, **options)()
+                self._produce(rows, options=options, context=context, evaluation=evaluation)()
                 rows.frame = rows.frame.sort_values(ROW_ORDER_COL).reset_index(drop=True)
             entries = {state.owners[r[ROW_ORDER_COL]]: _rewrite_entry(r) for r in rows.frame.to_dict("records")}
             for order in passthrough_rows[ROW_ORDER_COL]:
@@ -570,7 +560,7 @@ class RewriteWorkflow:
         call_on_empty_input(graph, detect_op)
         detection, detection_elapsed = state.detected[0], state.elapsed[0]
         if state.unresolved:
-            rerouted = self.run(detection.dataframe, **options)
+            rerouted = self.run(detection.dataframe, options=options, context=context)
             failed = [*state.failures, *rerouted.failed_records]
             return RewriteResult(rerouted.dataframe, failed, rerouted.source_positions, detection, detection_elapsed)
         entity_rows, passthrough_rows = split(set())  # empty only if ``rewrite`` never ran
@@ -604,20 +594,12 @@ class RewriteWorkflow:
         return RewriteResult(output, failed, positions, detection, detection_elapsed, outcomes)
 
     def _produce(
-        self,
-        rows: _Rows,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: RewriteModelSelection,
-        replace_model_selection: ReplaceModelSelection,
-        privacy_goal: PrivacyGoal,
-        evaluation: EvaluationCriteria,
-        data_summary: str | None = None,
-        preview_num_records: int | None = None,
-        strict_entity_protection: bool = False,
+        self, rows: _Rows, *, options: Rewrite, context: RunContext, evaluation: EvaluationCriteria
     ) -> Callable[[], None]:
         """The frame stages over ``rows``: label classification, replacement map, pipeline, then the evaluate-repair
         loop."""
+        model_configs = list(context.model_configs)
+        selected_models = context.models.rewrite
 
         def classify() -> None:
             self._entity_classification_wf.classify_rows(
@@ -626,26 +608,15 @@ class RewriteWorkflow:
 
         stages = [
             ("label-classification", classify),
-            ("replacement-map", lambda: self._replacement_map(rows, model_configs, replace_model_selection)),
-            (
-                "pipeline",
-                lambda: self._pipeline(
-                    rows,
-                    model_configs=model_configs,
-                    selected_models=selected_models,
-                    privacy_goal=privacy_goal,
-                    data_summary=data_summary,
-                    preview_num_records=preview_num_records,
-                    strict_entity_protection=strict_entity_protection,
-                ),
-            ),
+            ("replacement-map", lambda: self._replacement_map(rows, model_configs, context.models.replace)),
+            ("pipeline", lambda: self._pipeline(rows, options=options, context=context)),
             *self._evaluate_repair_stages(
                 rows,
                 model_configs=model_configs,
                 selected_models=selected_models,
-                privacy_goal=privacy_goal,
+                privacy_goal=options.privacy_goal,
                 evaluation=evaluation,
-                preview_num_records=preview_num_records,
+                preview_num_records=context.preview_num_records,
             ),
         ]
 
@@ -670,39 +641,30 @@ class RewriteWorkflow:
         rows.failed.extend(replace_result.failed_records)
 
     # --- Step 2: domain, disposition, QA, rewrite (single adapter call) ---
-    def _pipeline(
-        self,
-        rows: _Rows,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: RewriteModelSelection,
-        privacy_goal: PrivacyGoal,
-        data_summary: str | None,
-        preview_num_records: int | None,
-        strict_entity_protection: bool,
-    ) -> None:
+    def _pipeline(self, rows: _Rows, *, options: Rewrite, context: RunContext) -> None:
+        selected_models = context.models.rewrite
         pipeline_columns = [
-            *self._domain_wf.columns(selected_models=selected_models, data_summary=data_summary),
+            *self._domain_wf.columns(selected_models=selected_models, data_summary=context.data_summary),
             *self._disposition_wf.columns(
                 selected_models=selected_models,
-                privacy_goal=privacy_goal,
-                data_summary=data_summary,
-                strict_entity_protection=strict_entity_protection,
+                privacy_goal=options.privacy_goal,
+                data_summary=context.data_summary,
+                strict_entity_protection=options.strict_entity_protection,
             ),
             *self._qa_wf.columns(selected_models=selected_models),
             *self._rewrite_gen_wf.columns(
                 selected_models=selected_models,
-                privacy_goal=privacy_goal,
-                data_summary=data_summary,
+                privacy_goal=options.privacy_goal,
+                data_summary=context.data_summary,
             ),
         ]
         pipeline_seed = select_seed_cols(rows.frame, derive_seed_columns(pipeline_columns, rows.frame))
         pipeline_result = self._adapter.run_workflow(
             pipeline_seed,
-            model_configs=model_configs,
+            model_configs=list(context.model_configs),
             columns=pipeline_columns,
             workflow_name="rewrite-pipeline",
-            preview_num_records=preview_num_records,
+            preview_num_records=context.preview_num_records,
         )
         restore_empty_skipped_span_label_counts(pipeline_result.dataframe)
         rows.frame = _join_new_columns(

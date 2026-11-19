@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import pickle
 from pathlib import Path
 from typing import Any
 
@@ -14,19 +15,22 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
     Detect,
+    DetectionScope,
+    EvaluateConfig,
     Rewrite,
     TextRecord,
     TextRecordsInput,
     infer_input_source_suffix,
     resolve_effective_detection_labels,
 )
-from anonymizer.config.regex import BuiltinRegex, RegexCandidate, RegexRule, RegexValidationResult
+from anonymizer.config.regex import BuiltinRegex, RegexCandidate, RegexLimits, RegexRule, RegexValidationResult
 from anonymizer.config.replace_strategies import (
     Annotate,
     Hash,
     Redact,
     Substitute,
 )
+from anonymizer.config.rewrite import PrivacyGoal, RiskTolerance, default_privacy_goal
 from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
 
 
@@ -919,3 +923,202 @@ def test_replace_json_schema_declares_kind_discriminator() -> None:
     replace_schema = AnonymizerConfig.model_json_schema()["properties"]["replace"]["anyOf"][0]
     assert replace_schema["discriminator"]["propertyName"] == "kind"
     assert set(replace_schema["discriminator"]["mapping"]) == {"annotate", "redact", "hash", "substitute"}
+
+
+# ── frozen models and derived values ──────────────────────────────────────────
+
+
+_FROZEN_FIELDS: list[tuple[Any, str, Any]] = [
+    (AnonymizerConfig(replace=Redact()), "emit_telemetry", False),
+    (AnonymizerConfig(replace=Redact()), "detect", Detect()),
+    (Detect(), "gliner_threshold", 0.5),
+    (Detect(), "entity_labels", ["first_name"]),
+    (Rewrite(), "privacy_goal", None),
+    (Rewrite(), "max_repair_iterations", 1),
+    (default_privacy_goal(), "protect", "Something else entirely"),
+    (Substitute(), "instructions", "x"),
+    (Redact(), "format_template", "[{label}]"),
+    (Annotate(), "format_template", "<{text}|{label}>"),
+    (Hash(), "digest_length", 8),
+    (RegexLimits(), "max_matches_per_rule", 7),
+    (BuiltinRegex(label="email"), "enabled", False),
+    (RegexRule(label="case_id", pattern=r"CASE-\d+"), "label", "other"),
+    (
+        DetectionScope(effective_labels=(), allowed_labels=None, excluded_labels=(), gliner_threshold=0.3),
+        "gliner_threshold",
+        0.5,
+    ),
+]
+
+
+@pytest.mark.parametrize(("model", "field", "value"), _FROZEN_FIELDS)
+def test_config_models_reject_field_assignment(model: Any, field: str, value: Any) -> None:
+    with pytest.raises(ValidationError, match="frozen"):
+        setattr(model, field, value)
+
+
+@pytest.mark.parametrize(("model", "field", "_value"), _FROZEN_FIELDS)
+def test_frozen_assignment_error_does_not_echo_the_value(model: Any, field: str, _value: Any) -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        setattr(model, field, "SECRET-VALUE John Smith 555-1234")
+    assert "SECRET-VALUE" not in str(excinfo.value)
+
+
+def test_frozen_assignment_is_a_type_error() -> None:
+    config = AnonymizerConfig(replace=Redact())
+    with pytest.raises(ValidationError):
+        config.detect.gliner_threshold = 0.5  # ty: ignore[invalid-assignment]
+
+
+_PICKLED: list[Any] = [
+    AnonymizerConfig(
+        detect=Detect(
+            entity_labels=["first_name", "email", "vendor_key"],
+            entity_label_examples={"vendor_key": ["acme_live_1"]},
+            excluded_entity_labels=["email"],
+            gliner_threshold=0.4,
+        ),
+        replace=Redact(),
+    ),
+    AnonymizerConfig(
+        rewrite=Rewrite(
+            privacy_goal=PrivacyGoal(protect="Names and street addresses", preserve="Clinical meaning of the note"),
+            risk_tolerance=RiskTolerance.minimal,
+        )
+    ),
+    Substitute(instructions="Keep it short"),
+    Redact(),
+    Annotate(),
+    Hash(digest_length=8),
+    default_privacy_goal(),
+]
+
+
+@pytest.mark.parametrize("original", _PICKLED, ids=lambda m: type(m).__name__)
+def test_frozen_config_models_pickle_round_trip(original: Any) -> None:
+    restored = pickle.loads(pickle.dumps(original))
+    assert type(restored) is type(original)
+    assert restored == original
+    field = next(iter(type(original).model_fields))
+    with pytest.raises(ValidationError, match="frozen"):
+        setattr(restored, field, getattr(restored, field))
+    if isinstance(original, AnonymizerConfig):
+        assert restored.detect.resolve() == original.detect.resolve()
+
+
+def test_rewrite_instructions_is_removed_with_a_message() -> None:
+    with pytest.raises(ValidationError, match=r"Rewrite\.instructions was removed in v1.*privacy_goal\.protect"):
+        Rewrite(instructions="x")  # ty: ignore[unknown-argument]
+
+
+def test_rewrite_loads_dumps_that_carry_instructions_none() -> None:
+    config = AnonymizerConfig.model_validate({"rewrite": {"instructions": None}})
+    assert config.rewrite == Rewrite()
+    assert "instructions" not in Rewrite().model_dump()
+
+
+def test_rewrite_none_goal_yields_the_default() -> None:
+    assert Rewrite(privacy_goal=None).privacy_goal == default_privacy_goal()
+    assert Rewrite.model_validate({"privacy_goal": None}).privacy_goal == default_privacy_goal()
+
+    def _protect(rewrite: Rewrite) -> str:
+        return rewrite.privacy_goal.protect
+
+    assert _protect(Rewrite()) == default_privacy_goal().protect
+
+
+# ── unknown keys ──────────────────────────────────────────────────────────────
+
+_REMOTE_SOURCE = "https://example.invalid/data.csv"
+_GOAL = {"protect": "Names and street addresses", "preserve": "Clinical meaning of the note"}
+
+_UNKNOWN_KEY_CASES: list[tuple[Any, dict[str, Any], str]] = [
+    (AnonymizerConfig, {"replace": {"kind": "redact"}}, "AnonymizerConfig"),
+    (Detect, {}, "Detect"),
+    (Rewrite, {}, "Rewrite"),
+    (PrivacyGoal, dict(_GOAL), "PrivacyGoal"),
+    (Substitute, {}, "Substitute"),
+    (Redact, {}, "Redact"),
+    (Annotate, {}, "Annotate"),
+    (Hash, {}, "Hash"),
+    (EvaluateConfig, {}, "EvaluateConfig"),
+    (AnonymizerInput, {"source": _REMOTE_SOURCE}, "AnonymizerInput"),
+    (TextRecordsInput, {"records": [{"id": "r1", "text": "Alice"}]}, "TextRecordsInput"),
+]
+
+
+@pytest.mark.parametrize(("model", "data", "title"), _UNKNOWN_KEY_CASES, ids=lambda v: v if isinstance(v, str) else "")
+def test_config_models_reject_unknown_keys_naming_key_and_model(model: Any, data: dict[str, Any], title: str) -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        model.model_validate({**data, "unknown_knob": "SECRET-VALUE"})
+    message = str(excinfo.value)
+    assert f"validation error for {title}" in message
+    assert "unknown_knob" in message
+    assert "extra_forbidden" in message
+    assert "SECRET-VALUE" not in message
+
+
+def test_text_record_drops_extra_keys() -> None:
+    record = TextRecord.model_validate({"id": "r1", "text": "Alice", "source": "crm"})
+    assert record.model_dump() == {"id": "r1", "text": "Alice"}
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"rewrite": {"unknown_knob": "SECRET-VALUE"}},
+        {"replace": {"kind": "hash", "unknown_knob": "SECRET-VALUE"}},
+        {"replace": {"kind": "redact"}, "detect": {"unknown_knob": "SECRET-VALUE"}},
+        {"rewrite": {"privacy_goal": {**_GOAL, "unknown_knob": "SECRET-VALUE"}}},
+    ],
+)
+def test_nested_unknown_keys_are_rejected_with_their_path(data: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError, match=r"unknown_knob") as excinfo:
+        AnonymizerConfig.model_validate(data)
+    assert "SECRET-VALUE" not in str(excinfo.value)
+
+
+def test_rewrite_instructions_tombstone_takes_precedence_over_unknown_keys() -> None:
+    with pytest.raises(ValidationError, match=r"Rewrite\.instructions was removed in v1") as excinfo:
+        AnonymizerConfig.model_validate({"rewrite": {"instructions": "keep dates"}})
+    assert "extra_forbidden" not in str(excinfo.value)
+
+
+@pytest.mark.parametrize("name", ["detector", "detector_offset_unit", "detector_labels", "detector_labels_fixed"])
+def test_detector_declaration_keys_are_unknown_keys(name: str) -> None:
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        AnonymizerConfig.model_validate({"replace": {"kind": "redact"}, "detect": {name: None}})
+
+
+_CASE_ID_RULE = RegexRule(label="case_id", pattern=r"CASE-\d+")
+
+
+@pytest.mark.parametrize(
+    "detect",
+    [
+        Detect(),
+        Detect(entity_labels=["last_name", "first_name", "email"]),
+        Detect(excluded_entity_labels=["ssn", "email"]),
+        Detect(regex_rules=[_CASE_ID_RULE]),
+        Detect(regex_rules=[_CASE_ID_RULE], excluded_entity_labels=["ssn"]),
+        Detect(entity_labels=["case_id", "first_name"], regex_rules=[_CASE_ID_RULE]),
+    ],
+)
+def test_ordered_labels_are_the_effective_detection_labels(detect: Detect) -> None:
+    effective = resolve_effective_detection_labels(
+        detect.entity_labels,
+        regex_rules=detect.regex_rules,
+        excluded_entity_labels=detect.excluded_entity_labels,
+    )
+    options = detect.resolve()
+    assert options.ordered_labels == tuple(effective)
+    assert DetectionScope.of(options).effective_labels == tuple(sorted(effective))
+    assert set(options.validator_examples) == set(effective)
+
+
+def test_custom_rule_label_reaches_the_detection_scope() -> None:
+    options = Detect(regex_rules=[_CASE_ID_RULE]).resolve()
+    assert options.ordered_labels[-1] == "case_id"
+    assert "case_id" in DetectionScope.of(options).effective_labels
+    assert DetectionScope.of(options).allowed_labels is None
+    assert not options.strict_labels

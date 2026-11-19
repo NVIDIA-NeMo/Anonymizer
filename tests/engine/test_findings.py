@@ -11,6 +11,7 @@ from typing import Any, get_args
 import pandas as pd
 import pytest
 
+from anonymizer.config.anonymizer_config import Rewrite
 from anonymizer.config.rewrite import (
     _RISK_TOLERANCE_BUNDLES,
     EvaluationCriteria,
@@ -43,7 +44,7 @@ def _row(**overrides: Any) -> dict[str, Any]:
     return {key: value for key, value in row.items() if value is not _MISSING}
 
 
-_LOW = EvaluationCriteria(risk_tolerance=RiskTolerance.low)
+_LOW = Rewrite(risk_tolerance=RiskTolerance.low).evaluation
 _REPAIR, _FLAG_LEAKAGE, _FLAG_UTILITY = _LOW.repair_threshold, _LOW.flag_leakage_above, _LOW.flag_utility_below
 _CASES = [
     (Finding.rewrite_missing, {}, False),
@@ -88,7 +89,7 @@ def test_nan_any_high_leaked_is_high_leak_and_repairs_except_high(
     risk_tolerance: RiskTolerance, expect_repair: bool
 ) -> None:
     """Compatibility exception: ``bool(nan)`` is truthy, so NaN reads as a high leak, not only unavailable evidence."""
-    ev = EvaluationCriteria(risk_tolerance=risk_tolerance)
+    ev = Rewrite(risk_tolerance=risk_tolerance).evaluation
     row = _row(**{COL_ANY_HIGH_LEAKED: _NAN})
     findings = present_findings(row, ev)
     assert Finding.high_leak in findings
@@ -126,7 +127,7 @@ def _outcome(decide: Callable[..., bool], *args: Any) -> bool | type[Exception]:
 
 
 def _unavailable(row: dict[str, Any]) -> bool:
-    return Finding.unavailable_evidence in present_findings(row, EvaluationCriteria())
+    return Finding.unavailable_evidence in present_findings(row, Rewrite().evaluation)
 
 
 def _old_repair(row: dict[str, Any], ev: EvaluationCriteria) -> bool:
@@ -162,7 +163,7 @@ _NUMBERS = (0.0, 0.45, 0.65, 1.2, 1.7, 2.2, 3.5, _NAN, None)
 
 @pytest.mark.parametrize("risk_tolerance", list(RiskTolerance))
 def test_findings_reproduce_previous_formulas(risk_tolerance: RiskTolerance) -> None:
-    ev = EvaluationCriteria(risk_tolerance=risk_tolerance)
+    ev = Rewrite(risk_tolerance=risk_tolerance).evaluation
     for high, leakage in itertools.product(_FLAGS, (*_NUMBERS, _MISSING)):
         row = _row(**{COL_ANY_HIGH_LEAKED: high, COL_LEAKAGE_MASS: leakage})
         old = _outcome(_old_repair, row, ev)
