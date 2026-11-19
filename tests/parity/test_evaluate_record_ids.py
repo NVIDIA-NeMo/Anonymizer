@@ -21,8 +21,8 @@ import pytest
 
 import anonymizer.interface.anonymizer as facade
 from anonymizer import Anonymizer
-from anonymizer.config.anonymizer_config import TextRecord, TextRecordsInput
-from anonymizer.engine.constants import RECORD_ID_COLUMN
+from anonymizer.config.anonymizer_config import AnonymizerConfig, EvaluateConfig, Rewrite, TextRecord, TextRecordsInput
+from anonymizer.engine.constants import COL_TEXT, RECORD_ID_COLUMN
 from tests.parity.harness import CASES, PREVIEW_ROWS, RECORDS, Case, scripted
 
 
@@ -67,12 +67,16 @@ def _ids(frame: pd.DataFrame) -> list[str]:
 
 
 def _assert_placed_by_id(seen: _Seen) -> None:
+    """Every stage's rows and the final rows carry unique ids of the source, each row its OWN: the original text
+    under each id is the source's text under that id."""
     assert seen.source is not None and seen.output is not None
-    source = set(_ids(seen.source))
+    source = dict(zip(_ids(seen.source), seen.source[COL_TEXT], strict=True))
     assert seen.stages, "no judge stage ran"
-    for name, frame in seen.stages:
-        assert set(_ids(frame)) <= source, f"{name} returned ids that are not in its source"
-    assert set(_ids(seen.output)) <= source
+    for name, frame in [*seen.stages, ("output", seen.output)]:
+        assert COL_TEXT in frame.columns, f"{name} returned no original text"
+        for record_id, text in zip(_ids(frame), frame[COL_TEXT], strict=True):
+            assert record_id in source, f"{name} returned id {record_id!r}, which is not in its source"
+            assert source[record_id] == text, f"{name} returned id {record_id!r} on another record's row"
 
 
 def _without_judges(outcome: Any, judges: set[str]) -> Any:
@@ -88,8 +92,21 @@ def _run(case: Case, *, preview: bool = False) -> tuple[Anonymizer, Any]:
         return anonymizer, anonymizer.run(config=case.config(), data=data)
 
 
+# The parity cases run detection validity only on the staged Rewrite; add the combined Rewrite with it.
+_ROUTES = [
+    *CASES,
+    Case(
+        "rewrite_combined_detection_validity",
+        lambda: AnonymizerConfig(rewrite=Rewrite(use_combined_graph=True)),
+        EvaluateConfig(compute_detection_validity=True),
+        drops={"rewrite-combined": "Bob", "entity-coverage-judge": "Dora"},
+        missed="Alice",
+    ),
+]
+
+
 @pytest.mark.parametrize("preview", [False, True], ids=["run", "preview"])
-@pytest.mark.parametrize("case", CASES, ids=lambda case: case.name)
+@pytest.mark.parametrize("case", _ROUTES, ids=lambda case: case.name)
 def test_evaluate_receives_unique_record_ids_on_every_built_in_route(case: Case, preview: bool) -> None:
     anonymizer, ran = _run(case, preview=preview)
     with scripted(case), _watched() as seen:
@@ -112,9 +129,15 @@ def test_detection_validity_and_coverage_stages_are_routes_here() -> None:
     assert any(c.evaluate.compute_detection_validity and c.config().rewrite is not None for c in CASES)
     assert any(c.evaluate.compute_detection_validity and c.config().replace is not None for c in CASES)
     assert any((rewrite := c.config().rewrite) is not None and rewrite.use_combined_graph for c in CASES)
+    assert any(
+        c.evaluate.compute_detection_validity
+        and (rewrite := c.config().rewrite) is not None
+        and rewrite.use_combined_graph
+        for c in _ROUTES
+    )
 
 
-@pytest.mark.parametrize("case", CASES, ids=lambda case: case.name)
+@pytest.mark.parametrize("case", _ROUTES, ids=lambda case: case.name)
 def test_a_result_pickled_before_outcomes_were_kept_reports_judges_but_no_run_outcome(case: Case) -> None:
     """Such a result has no saved outcomes: its rows are still placed by id, so each row reports its own judges, but
     no run outcome is borrowed, so every row reads ``not_assessed`` and unprotected."""
