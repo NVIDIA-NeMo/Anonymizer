@@ -125,7 +125,7 @@ def test_openai_compatible_requests_carry_the_schema_on_both_grounding_attempts(
 
     assert len(facade.calls) == 2
     assert [call["response_format"] for call in facade.calls] == [_RESPONSE_FORMAT, _RESPONSE_FORMAT]
-    assert row[COL_AUGMENTATION_RESPONSE_FORMAT] == "constrained"
+    assert row[COL_AUGMENTATION_RESPONSE_FORMAT] == "sent"
     assert row[COL_AUGMENTED_ENTITIES]["entities"][0]["value"] == "Alice"
 
 
@@ -337,11 +337,11 @@ def _reject_schema(body: dict[str, Any]) -> Reply | None:
 @pytest.mark.parametrize(
     ("body_script", "expected_mode", "expected_requests"),
     [
-        (lambda _body: None, "constrained", 1),
+        (lambda _body: None, "sent", 1),
         (lambda _body: _complete(_FENCED), "ignored", 1),
         (_reject_schema, "fallback", 2),
     ],
-    ids=["constrained", "ignored", "fallback"],
+    ids=["sent", "ignored", "fallback"],
 )
 def test_side_column_records_the_mode_through_a_real_run(
     tmp_path: Path, body_script: Any, expected_mode: str, expected_requests: int
@@ -393,7 +393,7 @@ def test_restarts_and_corrections_keep_the_schema(tmp_path: Path) -> None:
     assert len(bodies) == 3
     assert [len(body["messages"]) for body in bodies] == [1, 3, 1]
     assert all(body["response_format"] == _RESPONSE_FORMAT for body in bodies)
-    assert result.dataframe[COL_AUGMENTATION_RESPONSE_FORMAT].tolist() == ["constrained"]
+    assert result.dataframe[COL_AUGMENTATION_RESPONSE_FORMAT].tolist() == ["sent"]
 
 
 def test_backend_that_always_rejects_the_schema_completes_without_early_shutdown(tmp_path: Path) -> None:
