@@ -1376,13 +1376,6 @@ def _count_entities(df: pd.DataFrame) -> int:
     return int(df[COL_DETECTED_ENTITIES].apply(lambda raw: len(_unwrap_entities(raw))).sum())
 
 
-def _resolve_model_providers(
-    model_providers: list[ModelProvider] | str | Path | None,
-) -> list[ModelProvider]:
-    """Backward-compatible private wrapper around the shared provider parser."""
-    return parse_model_providers(model_providers)
-
-
 def _rename_output_columns(df: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:
     """Rename internal column names to user-facing names."""
     rename_map: dict[str, str] = {}

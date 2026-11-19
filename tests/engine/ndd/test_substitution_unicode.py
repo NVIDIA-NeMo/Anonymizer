@@ -111,7 +111,7 @@ def test_real_adapter_recovers_unicode_original_without_retry_or_source_changes(
         "targeted_span_count": 1,
         "applied_span_count": 1,
         "skipped_span_count": 0,
-        "skipped_span_label_counts": {},
+        "skipped_span_label_counts": "{}",
     }
     assert dataframe[COL_TEXT].iloc[0] == _NARROW
     assert result.dataframe[COL_TEXT].iloc[0] == _NARROW
