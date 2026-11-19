@@ -87,7 +87,7 @@ from anonymizer.engine.graph_core.execution import (
     prepare,
     protect,
 )
-from anonymizer.engine.graph_core.kernel import register_kind
+from anonymizer.engine.graph_core.kernel import Status, register_kind
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
@@ -234,11 +234,15 @@ def _evaluate_on_graph(
 
 
 def _reported_outcomes(
-    result: ProtectionResult, source: pd.DataFrame, output: pd.DataFrame
+    result: ProtectionResult, source: pd.DataFrame, output: pd.DataFrame, ran: Sequence[TargetOutcome] | None
 ) -> tuple[TargetOutcome, ...] | None:
-    """Each ``output`` row's outcome, ``None`` when a judge dropped rows that cannot be placed in ``source``, with
-    every verifier's assessment appended as an advisory naming the verifier, in verifier order. The ungraded rewrite
-    judge reports ``scored`` when it returned scores. Reasons, qualification and release stay as derived."""
+    """Each ``output`` row's outcome, ``None`` when a judge dropped rows that cannot be placed in ``source``.
+
+    A row's outcome is its outcome in ``ran``, the evaluated result's outcomes by ``source`` row, or an unassessed
+    outcome when there are none, with each verifier appended as an advisory naming it, in verifier order. A verifier
+    that gave no assessment is ``could_not_assess`` with its execution code (``raised``, or ``blocked`` when an
+    earlier verifier of the row failed) as the cause. The ungraded rewrite judge reports ``scored`` when it returned
+    scores."""
     codes: dict[bool | None, AdvisoryStatus] = {True: "passed", False: "failed", None: "could_not_assess"}
     ungraded = _ASSESSMENTS[COL_JUDGE_EVALUATION][0]
     names = result.prepared.names
@@ -246,24 +250,23 @@ def _reported_outcomes(
     positions = range(len(source)) if same else try_resolve_source_positions(source, output, None)
     if positions is None:
         return None
+    verifiers = [i for i, (_, op) in enumerate(result.prepared.workflow.flatten()) if op.is_verifier]
+    errors = {(e.unit, e.node): e.reason for e in result.state.entries if e.status == Status.FAILED}
+    ledger = result.ledger()  # target-major; a verifier that never ran is ``blocked``
+    if ran is None or len(ran) != len(source):
+        ran = [TargetOutcome("success", "not_assessed", False, False)] * len(source)
 
-    def advisory(i: int, a: Assessment) -> Advisory:
+    def advisory(p: int, i: int) -> Advisory:
+        row = result.state.rows[p]
+        a = row.outputs.get(i, {}).get("assessment")
+        if not isinstance(a, Assessment):
+            cause = errors.get((p, i), ledger[p * len(names) + i][2])
+            return Advisory(names[i], names[i], "could_not_assess", cause)
         status = "scored" if a.satisfied and names[i] == ungraded else codes[a.satisfied]
         return Advisory(names[i], names[i], status, a.reason)
 
     return tuple(
-        replace(
-            outcome,
-            advisories=(
-                *outcome.advisories,
-                *(
-                    advisory(i, a)
-                    for i, out in sorted(row.outputs.items())
-                    if isinstance(a := out.get("assessment"), Assessment)
-                ),
-            ),
-        )
-        for row, outcome in ((result.state.rows[p], result.outcomes[p]) for p in positions)
+        replace(ran[p], advisories=(*ran[p].advisories, *(advisory(p, i) for i in verifiers))) for p in positions
     )
 
 
@@ -916,7 +919,7 @@ class Anonymizer:
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
-            _outcomes=_reported_outcomes(evaluation, internal_df, judged_df),
+            _outcomes=_reported_outcomes(evaluation, internal_df, judged_df, getattr(output, "_outcomes", None)),
         )
         if result.failed_records:
             logger.debug("%d evaluation failed record(s).", len(result.failed_records))

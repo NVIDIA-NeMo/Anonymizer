@@ -59,6 +59,7 @@ from anonymizer.engine.detection.detection_workflow import (
 )
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
+from anonymizer.engine.graph_core.execution import Advisory, Reason, TargetOutcome
 from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import (
@@ -1468,7 +1469,34 @@ def test_evaluate_replace_reports_each_judge_through_outcome(stub_input: Anonymi
     pd.testing.assert_frame_equal(run_result.trace_dataframe, before[2])
 
 
-def test_evaluate_reports_a_raising_verifier_as_the_reason(stub_input: AnonymizerInput) -> None:
+def test_evaluate_keeps_the_run_outcome_of_a_row(stub_input: AnonymizerInput) -> None:
+    anonymizer, _, replace_runner, _ = _make_anonymizer()
+    run_result = anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+    ran = TargetOutcome(
+        "success",
+        "not_met",
+        True,
+        False,
+        (Reason("failed", "replacements_applied", "verify-replaced"),),
+        advisories=(Advisory("no_replaced_value_remains", "verify-no-original", "failed"),),
+    )
+    run_result = dataclasses.replace(run_result, _outcomes=(ran,))
+    eval_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_REPLACED_TEXT: ["Beth works at Globex"],
+            COL_ENTITY_COVERAGE: [1.0],
+        }
+    )
+    replace_runner.evaluate.return_value = ReplacementResult(dataframe=eval_df, failed_records=[])
+
+    outcome = anonymizer.evaluate(run_result).outcome(0)
+
+    assert outcome == dataclasses.replace(ran, advisories=(*ran.advisories, Advisory("coverage", "coverage", "passed")))
+    assert outcome.reason == "failed"
+
+
+def test_evaluate_reports_a_raising_verifier_as_its_advisory(stub_input: AnonymizerInput) -> None:
     class Unreadable:
         def __eq__(self, other: object) -> bool:
             raise RuntimeError("unreadable verdict")
@@ -1487,8 +1515,13 @@ def test_evaluate_reports_a_raising_verifier_as_the_reason(stub_input: Anonymize
 
     outcome = anonymizer.evaluate(run_result).outcome(0)
 
-    assert (outcome.terminal, outcome.qualification, outcome.reason) == ("failed", "not_met", "raised")
-    assert ("passed", "coverage") in [(a.status, a.check) for a in outcome.advisories]
+    assert (outcome.terminal, outcome.qualification, outcome.reasons) == ("success", "not_assessed", ())
+    assert [(a.check, a.status, a.cause) for a in outcome.advisories] == [
+        ("coverage", "passed", ""),
+        ("type-fidelity", "could_not_assess", "raised"),
+        ("relational-consistency", "could_not_assess", "blocked"),
+        ("attribute-fidelity", "could_not_assess", "blocked"),
+    ]
 
 
 def test_evaluate_rewrite_reports_each_judge_through_outcome(stub_input: AnonymizerInput) -> None:
@@ -1986,7 +2019,16 @@ def test_evaluate_outcome_describes_the_surviving_row(tmp_path: Path, mode: str)
 
     assert len(evaluated.dataframe) == 1
     assert "Bob" in str(evaluated.dataframe["text"].iloc[0])
-    assert {a.check: a.status for a in evaluated.outcome(0).advisories}["coverage"] == "passed"
+    ran, outcome = run_result.outcome(1), evaluated.outcome(0)
+    assert (outcome.terminal, outcome.qualification, outcome.available, outcome.protected, outcome.reasons) == (
+        ran.terminal,
+        ran.qualification,
+        ran.available,
+        ran.protected,
+        ran.reasons,
+    )
+    assert outcome.advisories[: len(ran.advisories)] == ran.advisories
+    assert {a.check: a.status for a in outcome.advisories[len(ran.advisories) :]}["coverage"] == "passed"
     with pytest.raises(IndexError):
         evaluated.outcome(1)
 
