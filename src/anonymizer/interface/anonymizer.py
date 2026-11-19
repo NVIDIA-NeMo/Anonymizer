@@ -72,19 +72,16 @@ from anonymizer.engine.graph_core.authoring import (
     DATUM,
     TEXT,
     Assessment,
-    GraphScope,
     Limits,
     Operation,
-    ProtectionGraph,
     Requests,
     Workflow,
 )
-from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
-from anonymizer.engine.graph_core.kernel import register_kind
+from anonymizer.engine.graph_core.execution import ProtectionResult
 from anonymizer.engine.graph_core.session import Session, SessionChanges
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
+from anonymizer.engine.ndd.backend import per_target, register_plain_kind, rows_as_graph, run_invocation
 from anonymizer.engine.ndd.model_loader import (
     parse_model_configs,
     parse_model_providers,
@@ -95,7 +92,7 @@ from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
-from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+from anonymizer.engine.rewrite.rewrite_workflow import REWRITE_METRICS, RewriteWorkflow
 from anonymizer.engine.row_partitioning import try_resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.interface.errors import InvalidConfigError
@@ -128,9 +125,8 @@ if sys.version_info >= (3, 14):
 logger = logging.getLogger("anonymizer")
 
 
-REPLACE_METRICS = register_kind("replace-metrics", lambda v: isinstance(v, dict), copy=dict)
-REWRITE_METRICS = register_kind("rewrite-metrics", lambda v: isinstance(v, dict), copy=dict)
-COVERAGE_METRICS = register_kind("coverage-metrics", lambda v: isinstance(v, dict), copy=dict)
+REPLACE_METRICS = register_plain_kind("replace-metrics")
+COVERAGE_METRICS = register_plain_kind("coverage-metrics")
 
 # Verifiers by verdict column: (verifier name, reason when the verdict is not 1.0).
 _ASSESSMENTS = {
@@ -179,8 +175,7 @@ def _evaluate_on_graph(
     raised as 0.4.0 raised it.
     """
     texts = frame[candidate_column] if candidate_column in frame.columns else [None] * len(frame)
-    scope = GraphScope()
-    graph = ProtectionGraph(scope, tuple(scope.datum("" if text is None else str(text)) for text in texts))
+    graph = rows_as_graph(texts, none_as_empty=True)
     failures: list[FailedRecord] = []
     current = frame
 
@@ -218,12 +213,7 @@ def _evaluate_on_graph(
     operations = (*bodies, *verifiers)
     workflow = Workflow("evaluate", operations)
     limits = Limits(max_operations=len(operations), max_targets=len(graph.targets), max_mentions=0, max_context_items=0)
-    result = protect(prepare(graph, workflow, limits=limits))
-    call_on_empty_input(graph, *bodies)
-    for entry in result.state.entries:
-        if entry.error is not None and not operations[entry.node].is_verifier:
-            raise entry.error
-    raise_if_cancelled(result)
+    result = run_invocation(graph, workflow, limits, on_empty=bodies)
     return current, failures, result
 
 
