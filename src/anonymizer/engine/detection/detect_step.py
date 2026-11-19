@@ -155,13 +155,15 @@ def _with_entities(frame: pd.DataFrame, covered: dict[int, set[int]]) -> pd.Data
     given = list(frame[COL_FINAL_ENTITIES])
     final = [_without(raw, covered[row]) if covered.get(row) else raw for row, raw in enumerate(given)]
     frame[COL_FINAL_ENTITIES] = final
-    by_value = frame[COL_ENTITIES_BY_VALUE] if COL_ENTITIES_BY_VALUE in frame.columns else repeat(None)
+    by_value = list(frame[COL_ENTITIES_BY_VALUE]) if COL_ENTITIES_BY_VALUE in frame.columns else [None] * len(given)
+    # A rebuilt cell takes the encoding of the column's first present cell, the one a seed samples for the whole
+    # column; with none present, that of the row's own entities cell.
+    sample = next((cell for cell in by_value if not _absent(cell)), None)
     frame[COL_ENTITIES_BY_VALUE] = [
-        # A missing by-value cell is rebuilt in the encoding of the row's own entities cell.
-        _encoded_like(given[row] if _absent(raw) else raw, _build_entities_by_value(final[row]))
+        _encoded_like(given[row] if sample is None else sample, _build_entities_by_value(final[row]))
         if row in covered
         else raw
-        for row, raw in zip(range(len(given)), by_value)
+        for row, raw in enumerate(by_value)
     ]
     return frame
 

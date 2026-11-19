@@ -525,3 +525,43 @@ def test_a_malformed_span_payload_fails_its_record_at_detect_in_rewrite(bad: str
 
     assert result.failed_records == [FailedRecord("0", "detect", "invalid_output")]
     assert list(result.dataframe["text_rewritten"]) == ["rewritten"]
+
+
+class _MixedByValueDetector(_Detector):
+    """Dict entity cells, JSON-string by-value cells, and one row's by-value cell left out."""
+
+    def __init__(self, missing: int) -> None:
+        super().__init__([NAME, CITY])
+        self.missing = missing
+
+    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+        result = super().run(dataframe)
+        cells: list[object] = [json.dumps(cell) for cell in result.dataframe[COL_ENTITIES_BY_VALUE]]
+        cells[self.missing] = None
+        result.dataframe[COL_ENTITIES_BY_VALUE] = pd.Series(cells, index=result.dataframe.index, dtype=object)
+        return result
+
+
+@pytest.mark.parametrize("mode", ["rewrite", "combined"])
+@pytest.mark.parametrize("missing", [0, 1], ids=["missing_first", "missing_second"])
+def test_a_rebuilt_by_value_cell_keeps_the_columns_encoding(missing: int, mode: str, tmp_path: Path) -> None:
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": [TEXT, CONTROL]}).to_csv(source, index=False)
+    frames: list[pd.DataFrame] = []
+    anonymizer = Anonymizer(
+        detection_workflow=cast(EntityDetectionWorkflow, _MixedByValueDetector(missing)),
+        rewrite_runner=_capturing(RewriteWorkflow(Mock()), frames),
+        combined_rewrite_runner=cast(CombinedRewriteWorkflow, _capturing(CombinedRewriteWorkflow(Mock()), frames)),
+    )
+    result = anonymizer.run(
+        config=AnonymizerConfig(rewrite=Rewrite(use_combined_graph=mode == "combined")),
+        data=AnonymizerInput(source=str(source)),
+    )
+
+    assert result.failed_records == []
+    # The rewrite stages' seed keeps every row's by-value view: no cell is encoded twice.
+    seed = select_seed_cols(frames[0], [COL_ENTITIES_BY_VALUE])
+    assert [_requested_pairs(cell) for cell in seed[COL_ENTITIES_BY_VALUE]] == [
+        KEPT_PAIRS,
+        {("Bob Jones", "full_name"), ("Rome", "city")},
+    ]
