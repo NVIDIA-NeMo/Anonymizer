@@ -135,11 +135,11 @@ def _substitute_map_step(
     failures: list[FailedRecord],
     frame: Callable[[tuple[Datum, ...]], tuple[pd.DataFrame, Sequence[Datum]]],
 ) -> Operation:
-    """One ``generate_map_only`` call over ``frame(target)``'s frame and the target each of its rows belongs to."""
+    """One ``generate_validated_maps`` call over ``frame(target)``'s frame and the target each of its rows belongs to."""
 
     def generate_maps(target: tuple[Datum, ...]) -> list[dict[str, Any] | None]:
         source, owners = frame(target)
-        result = llm_workflow.generate_map_only(
+        result = llm_workflow.generate_validated_maps(
             source, instructions=replace_method.instructions, consistency=replace_method.consistency, **map_arguments
         )
         failures.extend(result.failed_records)

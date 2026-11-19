@@ -1881,7 +1881,7 @@ def test_replace_route_in_cancelled_frame_raises(method: Redact | Substitute) ->
             token=_cancelled_token(),
         )
 
-    llm_workflow.generate_map_only.assert_not_called()
+    llm_workflow.generate_validated_maps.assert_not_called()
 
 
 _BINDING: contextvars.ContextVar[str] = contextvars.ContextVar("test_facade_binding", default="caller")

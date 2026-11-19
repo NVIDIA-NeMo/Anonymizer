@@ -139,7 +139,7 @@ def test_substitute_runner_applies_generated_map(
     stub_entities: list[dict],
 ) -> None:
     llm_workflow = Mock()
-    llm_workflow.generate_map_only.return_value = LlmReplaceResult(
+    llm_workflow.generate_validated_maps.return_value = LlmReplaceResult(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works at Acme"],
@@ -164,7 +164,7 @@ def test_substitute_runner_applies_generated_map(
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
     )
-    assert llm_workflow.generate_map_only.call_count == 1
+    assert llm_workflow.generate_validated_maps.call_count == 1
     assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == "Maya works at NovaCorp"
     assert len(result.failed_records) == 1
     assert result.dataframe[COL_REPLACEMENT_APPLICATION].iloc[0] == {
@@ -188,7 +188,7 @@ def test_malformed_entities_row_fails_while_others_are_replaced(
     stub_replace_model_selection: ReplaceModelSelection,
     stub_entities: list[dict],
 ) -> None:
-    def _generate_map_only(dataframe: pd.DataFrame, **_: object) -> LlmReplaceResult:
+    def _generate_validated_maps(dataframe: pd.DataFrame, **_: object) -> LlmReplaceResult:
         replacements = [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]
         return LlmReplaceResult(
             dataframe=dataframe.assign(**{COL_REPLACEMENT_MAP: [{"replacements": replacements}] * len(dataframe)}),
@@ -196,7 +196,7 @@ def test_malformed_entities_row_fails_while_others_are_replaced(
         )
 
     llm_workflow = Mock()
-    llm_workflow.generate_map_only.side_effect = _generate_map_only
+    llm_workflow.generate_validated_maps.side_effect = _generate_validated_maps
     dataframe = pd.DataFrame({COL_TEXT: ["Alice works at Acme", "Bob works at Acme"], RECORD_ID_COLUMN: ["r0", "r1"]})
     detected = dataframe.assign(**{COL_FINAL_ENTITIES: [{"entities": stub_entities[:1]}, malformed]})
     result = ReplacementWorkflow(llm_workflow=llm_workflow).run_with_detection(
@@ -487,7 +487,7 @@ def test_runner_does_not_invoke_judges(
     The judges live behind a separate ``evaluate()`` call.
     """
     llm_workflow = Mock()
-    llm_workflow.generate_map_only.return_value = LlmReplaceResult(
+    llm_workflow.generate_validated_maps.return_value = LlmReplaceResult(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works at Acme"],
@@ -709,13 +709,13 @@ def test_run_reports_each_rows_protection_outcome(omit_bob: bool, tmp_path: Path
         *([] if omit_bob else [{"original": "Bob", "label": "first_name", "synthetic": "Ravi"}]),
     ]
 
-    def _generate_map_only(dataframe: pd.DataFrame, **_: object) -> LlmReplaceResult:
+    def _generate_validated_maps(dataframe: pd.DataFrame, **_: object) -> LlmReplaceResult:
         maps = [{"replacements": replacements}] * len(dataframe)
         frame = dataframe.assign(**{COL_REPLACEMENT_MAP: maps})
         return LlmReplaceResult(dataframe=frame, failed_records=[], source_positions=tuple(range(len(frame))))
 
     llm_workflow = Mock()
-    llm_workflow.generate_map_only.side_effect = _generate_map_only
+    llm_workflow.generate_validated_maps.side_effect = _generate_validated_maps
     texts = ["Alice works at Acme", "Bob works at Acme"]
     bob = [{"value": "Bob", "label": "first_name", "start_position": 0, "end_position": 3}, dict(stub_entities[1])]
     bob[1].update(start_position=13, end_position=17)
