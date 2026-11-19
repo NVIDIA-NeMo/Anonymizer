@@ -407,12 +407,14 @@ class Anonymizer:
                 detector-supplied ``tagged_text`` is not regenerated from them.
                 Any other overlap or contract break fails the record at ``detect``
                 with ``overlapping_output_ownership``, ``mention_out_of_range``,
-                ``mention_slice_mismatch`` or ``mention_unlabelled``, and a payload
-                that does not parse with ``invalid_output``, when the detector
-                returns source positions or unique record ids (otherwise the run
-                stops). A row whose ``_entities_by_value`` cell is missing, empty
-                or lacks a kept span's value and label gets one built from its
-                ``final_entities``.
+                ``mention_slice_mismatch`` or ``mention_unlabelled``; in Rewrite a
+                payload that does not parse fails with ``invalid_output`` (Replace
+                rejects it at ``replace``). A row whose ``_entities_by_value`` cell
+                is missing, empty or lacks a kept span's value and label gets one
+                built from its ``final_entities``. These checks and the rebuild
+                apply only when the detector returns source positions or unique
+                record ids; without them a contract break may stop the run and a
+                record may be released with its spans unprotected.
             replace_runner: Custom replacement workflow (advanced/testing).
             rewrite_runner: Custom rewrite workflow (advanced/testing).
             combined_rewrite_runner: Custom combined rewrite workflow (advanced/testing).

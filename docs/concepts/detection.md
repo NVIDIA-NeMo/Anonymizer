@@ -59,10 +59,11 @@ span. Replacement, the Substitute map, rewriting and the result's `final_entitie
 `tagged_text` the detector supplies is passed on as it is, not regenerated from them. Any other overlap, and any span
 that breaks the contract, fails its record at the `detect` step with the reason `overlapping_output_ownership`,
 `mention_out_of_range` (a zero-width span counts as out of range), `mention_slice_mismatch` or `mention_unlabelled`;
-a `final_entities` payload that does not parse (for example a `null` label or a non-integer offset) fails it with
-`invalid_output`. The record is listed in `result.failed_records` and left out of the output, and the rest of the run
-continues. This per-record failure needs the detector to return its rows' source positions or unique record ids;
-without them the run stops.
+in Rewrite, a `final_entities` payload that does not parse (for example a `null` label or a non-integer offset)
+fails it with `invalid_output`, and Replace rejects such a record at its `replace` step. The record is listed in
+`result.failed_records` and left out of the output, and the rest of the run continues. These checks, and the rebuild of
+a missing or stale `_entities_by_value` view, apply only when the detector returns its rows' source positions or unique
+record ids. Without them, a contract break may stop the run, and a record may be released with its spans unprotected.
 
 ### Example: standard vs. latent entities
 
