@@ -5,7 +5,7 @@
 This section lists what changes for users between v0.5.0 and v1.0.0. It will be updated until the release, and
 becomes the v1.0.0 release notes after #319 lands on `main`.
 
-- **Describes:** commit `7ec5c693`, the head of the #319 branch.
+- **Describes:** commit `36ae00f6`, the head of the #319 branch.
 - **Compared against:** v0.5.0 (`81bcea43`).
 - **Last reconciled with main at `628be95a`.** The next update reads `git log 628be95a..main` and the new commits on
   the #319 branch.
@@ -213,9 +213,9 @@ longer see each other's overrides and can run at the same time.
 
 **Log lines carry fewer values.** Library log lines omit entity values, label lists, model aliases and record IDs.
 The `effective detection scope` line no longer lists label names; read `result.detection_scope` instead. Per-record
-failure debug lines are gone; read `result.failed_records`. Two failure warnings no longer include the exception
-text: the workflow-failure warning in the model adapter, and the entity coverage judge's "scores may be unavailable"
-warning. The judge swallows that exception, so its reason is no longer logged at any level.
+failure debug lines are gone; read `result.failed_records`. Two failure warnings, the workflow-failure warning in
+the model adapter and the entity coverage judge's "scores may be unavailable" warning, name the exception class but
+not its message, because the message can carry record content; backend class names are shortened to a neutral form.
 - What to do: update log parsers.
 - Changed in: #319 (`372bbd0b`).
 
@@ -260,7 +260,7 @@ These are additions and break nothing.
 
 These are not on the #319 branch yet. Each lands with its change.
 
-### Leftover-value counting (not yet opened as a PR)
+### #426: leftover-value counting
 
 **Leftover checks count values instead of testing presence.** Each detected value is counted in the source, inside
 the detected spans, and in the output. A row fails only when the output holds a value more often than the source
@@ -325,6 +325,22 @@ trailing field each. Operation outputs named `session`, `identities` or `record`
 
 **`evaluate()` results report outcomes.** `result.outcome(row)` on an `evaluate()` result lists one reason per judge
 check, and no longer raises `IndexError`. `protected` is always `False`. The evaluate frame does not change.
+
+### #427, #429, #430
+
+**#427: Rewrite keeps a record whose evaluation reply cannot be parsed.** A record whose evaluation reply still
+cannot be parsed after its retries is now kept instead of dropped. When the privacy evaluation has no answer, its
+rewritten text is withheld; any unavailable metrics are null; and the record is flagged for human review with a
+`not_met` outcome. Each evaluation call now retries in a second conversation (at most 8 requests). A privacy answer's
+`reason` that is too long is now shortened and an empty one gets a default, instead of the whole answer being
+rejected.
+
+**#429: `skipped_span_label_counts` is JSON text.** In `trace_dataframe`, in `_replacement_application`,
+`skipped_span_label_counts` is now JSON text (for example `"{}"`) instead of a dict, so trace frames can be written to
+Parquet.
+- What to do: parse it with `json.loads`.
+
+**#430: Span-based bounds.** Internal. No behaviour change for any reachable input.
 
 ### #411, #412, #413, #416, #419
 
