@@ -1073,7 +1073,6 @@ _UNKNOWN_KEY_CASES: list[tuple[Any, dict[str, Any], str]] = [
     (Hash, {}, "Hash"),
     (EvaluateConfig, {}, "EvaluateConfig"),
     (AnonymizerInput, {"source": _REMOTE_SOURCE}, "AnonymizerInput"),
-    (TextRecord, {"id": "r1", "text": "Alice"}, "TextRecord"),
     (TextRecordsInput, {"records": [{"id": "r1", "text": "Alice"}]}, "TextRecordsInput"),
 ]
 
@@ -1087,6 +1086,11 @@ def test_config_models_reject_unknown_keys_naming_key_and_model(model: Any, data
     assert "unknown_knob" in message
     assert "extra_forbidden" in message
     assert "SECRET-VALUE" not in message
+
+
+def test_text_record_drops_extra_keys() -> None:
+    record = TextRecord.model_validate({"id": "r1", "text": "Alice", "source": "crm"})
+    assert record.model_dump() == {"id": "r1", "text": "Alice"}
 
 
 @pytest.mark.parametrize(

@@ -115,9 +115,9 @@ class AnonymizerInput(BaseModel):
 
 
 class TextRecord(BaseModel):
-    """One in-memory text record to anonymize."""
+    """One in-memory text record to anonymize. Keys other than `id` and `text` are ignored."""
 
-    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
 
     id: str = Field(min_length=1, description="Caller-defined record identifier.")
     text: str = Field(description="Text to anonymize.")
