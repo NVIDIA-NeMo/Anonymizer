@@ -32,7 +32,6 @@ from anonymizer.config.replace_strategies import (
 )
 from anonymizer.config.rewrite import PrivacyGoal, RiskTolerance, default_privacy_goal
 from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
-from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 
 
 def test_hash_is_deterministic() -> None:
@@ -1004,36 +1003,7 @@ def test_frozen_config_models_pickle_round_trip(original: Any) -> None:
     with pytest.raises(ValidationError, match="frozen"):
         setattr(restored, field, getattr(restored, field))
     if isinstance(original, AnonymizerConfig):
-        assert restored.detect.scope == original.detect.scope
-
-
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"entity_labels": None},
-        {"entity_labels": ["non_default_label"]},
-        {"entity_labels": ["FIRST_NAME", " email "]},
-        {"entity_labels": None, "entity_label_examples": {"api_key": ["sk-ant-api03-abc123"]}},
-        {"entity_labels": ["vendor_api_key"], "entity_label_examples": {"vendor_api_key": ["acme_live_abc123"]}},
-        {"entity_labels": ["first_name", "email", "city"], "excluded_entity_labels": ["email"]},
-        {"entity_labels": ["first_name", " Email "], "excluded_entity_labels": [" EMAIL "]},
-        {"entity_labels": None, "excluded_entity_labels": ["ssn", "first_name"]},
-    ],
-)
-def test_detect_derivation_matches_resolve_entity_label_config(kwargs: dict[str, Any]) -> None:
-    detect = Detect(**kwargs)
-    resolved = resolve_entity_label_config(
-        entity_labels=detect.entity_labels,
-        excluded_entity_labels=detect.excluded_entity_labels,
-        entity_label_examples=detect.entity_label_examples,
-    )
-    scope = detect.scope
-    assert scope.effective_labels == tuple(sorted(resolved.labels))
-    assert scope.allowed_labels == (tuple(sorted(resolved.labels)) if resolved.strict_labels else None)
-    assert scope.excluded_labels == tuple(detect.excluded_entity_labels or [])
-    assert detect.strict_labels is resolved.strict_labels
-    assert [(k, list(v)) for k, v in detect.validator_examples.items()] == list(resolved.validator_examples.items())
-    assert [(k, list(v)) for k, v in detect.augmenter_examples.items()] == list(resolved.augmenter_examples.items())
+        assert restored.detect.resolve() == original.detect.resolve()
 
 
 def test_rewrite_instructions_is_removed_with_a_message() -> None:
@@ -1140,14 +1110,15 @@ def test_ordered_labels_are_the_effective_detection_labels(detect: Detect) -> No
         regex_rules=detect.regex_rules,
         excluded_entity_labels=detect.excluded_entity_labels,
     )
-    assert detect.ordered_labels == tuple(effective)
-    assert detect.scope.effective_labels == tuple(sorted(effective))
-    assert set(detect.validator_examples) <= set(effective)
+    options = detect.resolve()
+    assert options.ordered_labels == tuple(effective)
+    assert DetectionScope.of(options).effective_labels == tuple(sorted(effective))
+    assert set(options.validator_examples) == set(effective)
 
 
 def test_custom_rule_label_reaches_the_detection_scope() -> None:
-    detect = Detect(regex_rules=[_CASE_ID_RULE])
-    assert detect.ordered_labels[-1] == "case_id"
-    assert "case_id" in detect.scope.effective_labels
-    assert detect.scope.allowed_labels is None
-    assert not detect.strict_labels
+    options = Detect(regex_rules=[_CASE_ID_RULE]).resolve()
+    assert options.ordered_labels[-1] == "case_id"
+    assert "case_id" in DetectionScope.of(options).effective_labels
+    assert DetectionScope.of(options).allowed_labels is None
+    assert not options.strict_labels

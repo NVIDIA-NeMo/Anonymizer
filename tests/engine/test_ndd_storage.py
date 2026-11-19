@@ -323,7 +323,7 @@ def test_actual_workflow_handoff_from_batch_loaded_detection(
     else:
         result = EntityDetectionWorkflow(adapter).identify_latent_entities(
             detected.dataframe,
-            options=Detect(gliner_threshold=0.3),
+            options=Detect(gliner_threshold=0.3).resolve(),
             context=detection_context(
                 configs,
                 DetectionModelSelection(

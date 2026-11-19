@@ -8,8 +8,8 @@ from collections import Counter
 from collections.abc import Callable, Collection, Sequence
 from typing import TypeVar
 
+from anonymizer.config.entity_labels import is_reserved_entity_label
 from anonymizer.engine.constants import SOURCE_KIND_AUGMENTER
-from anonymizer.engine.detection.postprocess import is_reserved_entity_label
 from anonymizer.engine.schemas import (
     AdmissionReason,
     AdmissionResult,

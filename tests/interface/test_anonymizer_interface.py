@@ -4,16 +4,17 @@
 from __future__ import annotations
 
 import contextvars
-import threading
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import Mock, PropertyMock, patch
+from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
 import yaml
 from data_designer.config.models import ModelConfig
+from pydantic import ValidationError
 
 from anonymizer import RunConfig
 from anonymizer.config.anonymizer_config import (
@@ -28,7 +29,7 @@ from anonymizer.config.anonymizer_config import (
 )
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection
 from anonymizer.config.options import DetectionOptions, RunContext
-from anonymizer.config.regex import RegexCandidate, RegexLimits, RegexRule
+from anonymizer.config.regex import RegexLimits, RegexRule
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
@@ -243,7 +244,7 @@ def test_run_passes_detect_entity_labels_to_detection_workflow(stub_input: Anony
 
     anonymizer.run(config=config, data=stub_input)
 
-    assert detection_wf.run.call_args.kwargs["options"].entity_labels == ["server_name"]
+    assert detection_wf.run.call_args.kwargs["options"].entity_labels == ("server_name",)
 
 
 def test_run_passes_entity_label_examples_only_to_detection_workflow(stub_input: AnonymizerInput) -> None:
@@ -256,7 +257,7 @@ def test_run_passes_entity_label_examples_only_to_detection_workflow(stub_input:
 
     result = anonymizer.run(config=config, data=stub_input)
 
-    assert detection_wf.run.call_args.kwargs["options"].entity_label_examples == examples
+    assert detection_wf.run.call_args.kwargs["options"].augmenter_examples == {"vendor_api_key": ("acme_live_abc123",)}
     assert result.entity_labels == ["vendor_api_key"]
     assert not hasattr(result, "entity_label_examples")
     assert "entity_label_examples" not in replace_runner.run_with_detection.call_args.kwargs
@@ -273,7 +274,7 @@ def test_rewrite_run_passes_entity_label_examples_to_detection_workflow(stub_inp
 
     result = anonymizer.run(config=config, data=stub_input)
 
-    assert detection_wf.run.call_args.kwargs["options"].entity_label_examples == examples
+    assert detection_wf.run.call_args.kwargs["options"].augmenter_examples == {"vendor_api_key": ("acme_live_abc123",)}
     assert detection_wf.run.call_args.kwargs["latent_goal"] is not None
     assert result.entity_labels == ["vendor_api_key"]
     assert "entity_label_examples" not in rewrite_runner.run_with_detection.call_args.kwargs
@@ -287,7 +288,7 @@ def test_preview_passes_entity_label_examples_to_detection_workflow(stub_input: 
 
     anonymizer.preview(config=config, data=stub_input, num_records=1)
 
-    assert detection_wf.run.call_args.kwargs["options"].entity_label_examples == examples
+    assert detection_wf.run.call_args.kwargs["options"].augmenter_examples == {"api_key": ("sk-ant-api03-abc123",)}
 
 
 class _Replay040DetectionWorkflow:
@@ -405,8 +406,7 @@ def test_detection_workflow_receives_options_and_context(tmp_path: Path, mode: s
 
     kwargs = detection_wf.run.call_args.kwargs
     assert set(kwargs) == {"options", "context", "latent_goal"}
-    assert kwargs["options"] == config.detect
-    assert kwargs["options"] is not config.detect
+    assert kwargs["options"] == config.detect.resolve()
     context = kwargs["context"]
     assert isinstance(context, RunContext)
     assert context.data_summary == "Support tickets"
@@ -429,12 +429,12 @@ def test_export_paths_pass_options_and_context(stub_input: AnonymizerInput, tmp_
     config_kwargs = detection_wf.build_detection_config.call_args.kwargs
     assert set(config_kwargs) == {"seed_path", "options", "context"}
     assert config_kwargs["seed_path"] == seed_path
-    assert config_kwargs["options"] == config.detect
+    assert config_kwargs["options"] == config.detect.resolve()
     assert config_kwargs["context"].preview_num_records is None
     seed_kwargs = detection_wf.build_detection_builder_for_seed.call_args.kwargs
     assert set(seed_kwargs) == {"seed_path", "options", "context", "job_index", "num_jobs"}
     assert (seed_kwargs["job_index"], seed_kwargs["num_jobs"]) == (2, 4)
-    assert seed_kwargs["options"] == config.detect
+    assert seed_kwargs["options"] == config.detect.resolve()
     assert seed_kwargs["context"].data_summary == "Notes"
     assert seed_kwargs["context"].preview_num_records is None
 
@@ -471,7 +471,7 @@ def test_detection_entrypoints_pass_regex_options(
 
     options = call.kwargs["options"]
     assert options.builtin_regexes is detect.builtin_regexes
-    assert options.regex_rules == detect.regex_rules
+    assert options.regex_rules == tuple(detect.regex_rules)
     assert options.regex_limits == detect.regex_limits
 
 
@@ -510,8 +510,9 @@ def test_export_detection_paths_pass_entity_label_examples(
     anonymizer.export_detection_config(config=config, data=stub_input, seed_path=seed_path)
     anonymizer.export_detection_builder_for_seed(config=config, seed_path=seed_path)
 
-    assert detection_wf.build_detection_config.call_args.kwargs["options"].entity_label_examples == examples
-    assert detection_wf.build_detection_builder_for_seed.call_args.kwargs["options"].entity_label_examples == examples
+    expected = {"vendor_api_key": ("acme_live_abc123",)}
+    assert detection_wf.build_detection_config.call_args.kwargs["options"].augmenter_examples == expected
+    assert detection_wf.build_detection_builder_for_seed.call_args.kwargs["options"].augmenter_examples == expected
 
 
 def test_run_propagates_excluded_entity_labels(stub_input: AnonymizerInput) -> None:
@@ -520,7 +521,7 @@ def test_run_propagates_excluded_entity_labels(stub_input: AnonymizerInput) -> N
 
     result = anonymizer.run(config=config, data=stub_input)
 
-    assert detection_wf.run.call_args.kwargs["options"].excluded_entity_labels == ["email"]
+    assert detection_wf.run.call_args.kwargs["options"].excluded_labels == ("email",)
     assert result.excluded_entity_labels == ["email"]
 
 
@@ -530,7 +531,7 @@ def test_preview_propagates_excluded_entity_labels(stub_input: AnonymizerInput) 
 
     result = anonymizer.preview(config=config, data=stub_input, num_records=1)
 
-    assert detection_wf.run.call_args.kwargs["options"].excluded_entity_labels == ["email"]
+    assert detection_wf.run.call_args.kwargs["options"].excluded_labels == ("email",)
     assert result.excluded_entity_labels == ["email"]
 
 
@@ -1600,16 +1601,15 @@ def test_preview_reports_scope_with_exclusions(stub_input: AnonymizerInput) -> N
     assert not hasattr(result.detection_scope, "augmentation_may_add_labels")
 
 
-def test_result_scope_is_the_config_scope(stub_input: AnonymizerInput) -> None:
-    sentinel = DetectionScope(
-        effective_labels=("zz_extra",), allowed_labels=None, excluded_labels=(), gliner_threshold=0.3
-    )
+def test_result_scope_is_the_resolved_scope(stub_input: AnonymizerInput) -> None:
+    detect = Detect(regex_rules=[RegexRule(label="case_id", pattern=r"CASE-\d+")], excluded_entity_labels=["ssn"])
     anonymizer, _, _, _ = _make_anonymizer()
 
-    with patch.object(Detect, "scope", new_callable=PropertyMock, return_value=sentinel):
-        scope = anonymizer.preview(config=AnonymizerConfig(replace=Redact()), data=stub_input).detection_scope
+    scope = anonymizer.preview(
+        config=AnonymizerConfig(detect=detect, replace=Redact()), data=stub_input
+    ).detection_scope
 
-    assert scope == sentinel
+    assert scope == DetectionScope.of(detect.resolve())
 
 
 @pytest.mark.parametrize("method", ["run", "preview"])
@@ -1618,7 +1618,7 @@ def test_in_place_edit_after_call_start_does_not_change_the_call(stub_input: Ano
         detect=Detect(entity_labels=["first_name", "email"], entity_label_examples={"email": ["a@b.example"]}),
         replace=Redact(),
     )
-    scope_before = config.detect.scope
+    scope_before = DetectionScope.of(config.detect.resolve())
     anonymizer, detection_workflow, _, _ = _make_anonymizer()
     original_side_effect = detection_workflow.run.side_effect
     original_return = detection_workflow.run.return_value
@@ -1642,29 +1642,15 @@ def test_in_place_edit_after_call_start_does_not_change_the_call(stub_input: Ano
     assert result.detection_scope == scope_before
 
 
-class _LockingValidator:
-    """A regex validator holding state that cannot be copied, as a validator guarding a shared client would."""
-
-    def __init__(self) -> None:
-        self.lock = threading.Lock()
-
-    def __call__(self, candidate: RegexCandidate) -> bool:
-        with self.lock:
-            return bool(candidate.value)
-
-
 @pytest.mark.parametrize("method", ["run", "preview"])
-def test_per_call_copy_shares_regex_validators(stub_input: AnonymizerInput, method: str) -> None:
-    validator = _LockingValidator()
-    rule = RegexRule(label="ticket", pattern=r"TKT-\d+", validator=validator)
+def test_regex_rules_reach_the_workflow_as_given(stub_input: AnonymizerInput, method: str) -> None:
+    rule = RegexRule(label="ticket", pattern=r"TKT-\d+", validator=lambda candidate: bool(candidate.value))
     config = AnonymizerConfig(detect=Detect(regex_rules=[rule]), replace=Redact())
     anonymizer, detection_wf, _, _ = _make_anonymizer()
 
     getattr(anonymizer, method)(config=config, data=stub_input)
 
-    received = detection_wf.run.call_args.kwargs["options"].regex_rules[0]
-    assert received is not rule
-    assert received.validator is validator
+    assert detection_wf.run.call_args.kwargs["options"].regex_rules[0] is rule
 
 
 @pytest.mark.parametrize("method", ["run", "preview", "export_detection_config", "export_detection_builder_for_seed"])
@@ -1685,9 +1671,13 @@ def test_workflow_cannot_change_the_caller_config(stub_input: AnonymizerInput, m
     original_return = target.return_value
 
     def mutate(*args: Any, **kwargs: Any) -> Any:
-        kwargs["options"].entity_labels.append("zz_workflow")
-        for examples in kwargs["options"].entity_label_examples.values():
-            examples.append("zz_workflow")
+        options = kwargs["options"]
+        with pytest.raises(FrozenInstanceError):
+            options.entity_labels = ("zz_workflow",)
+        with pytest.raises(TypeError):
+            options.validator_examples["email"] = ("zz_workflow",)
+        with pytest.raises(ValidationError, match="frozen"):
+            options.regex_limits.max_matches_per_rule = 1
         if original_side_effect is not None:
             return original_side_effect(*args, **kwargs)
         return original_return

@@ -16,7 +16,7 @@ from data_designer.plugins.plugin import PluginType
 from data_designer.plugins.registry import PluginRegistry
 from jinja2 import Environment, StrictUndefined
 
-from anonymizer.config.anonymizer_config import Detect
+from anonymizer.config.anonymizer_config import Detect, DetectionScope
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.options import DetectionOptions
 from anonymizer.config.rewrite import PrivacyGoal
@@ -56,9 +56,6 @@ from anonymizer.engine.detection.detection_workflow import (
     _get_latent_prompt,
     _get_validation_prompt,
     _materialize_final_entities,
-)
-from anonymizer.engine.detection.entity_label_examples import (
-    resolve_entity_label_config,
 )
 from anonymizer.engine.detection.postprocess import TagNotation, _format_entity_tag
 from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
@@ -154,7 +151,7 @@ def test_run_with_latent_detection_calls_second_workflow(
 
     result = workflow.run(
         input_df,
-        options=Detect(gliner_threshold=0.5),
+        options=Detect(gliner_threshold=0.5).resolve(),
         context=detection_context(
             stub_detector_model_configs, stub_detection_model_selection, data_summary="Employee records"
         ),
@@ -248,7 +245,7 @@ def test_identify_latent_entities_filters_excluded_labels(
 
     result = workflow.identify_latent_entities(
         pd.DataFrame({COL_TEXT: ["The patient works at Acme."]}),
-        options=Detect(gliner_threshold=0.5, excluded_entity_labels=["health_condition"]),
+        options=Detect(gliner_threshold=0.5, excluded_entity_labels=["health_condition"]).resolve(),
         context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
         latent_goal=PrivacyGoal(
             protect="Protect inferred sensitive attributes.",
@@ -279,7 +276,7 @@ def test_run_without_latent_detection_materializes_final_entities(
 
     result = workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]}),
-        options=Detect(gliner_threshold=0.5),
+        options=Detect(gliner_threshold=0.5).resolve(),
         context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
 
@@ -321,7 +318,7 @@ def test_run_with_latent_detection_merges_failures_in_order(
     workflow = EntityDetectionWorkflow(adapter=adapter)
     result = workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]}),
-        options=Detect(gliner_threshold=0.5),
+        options=Detect(gliner_threshold=0.5).resolve(),
         context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
         latent_goal=PrivacyGoal(
             protect="Protect direct and latent identifiers from disclosure.",
@@ -360,7 +357,7 @@ def test_run_in_cancelled_frame_raises_and_skips_later_stages(
         run_in_frame(
             EntityDetectionWorkflow(adapter=adapter).run,
             pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]}),
-            options=Detect(gliner_threshold=0.5),
+            options=Detect(gliner_threshold=0.5).resolve(),
             context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
             latent_goal=PrivacyGoal(
                 protect="Protect direct and latent identifiers from disclosure.",
@@ -466,65 +463,6 @@ def test_resolve_model_aliases_wraps_scalar_roles() -> None:
     assert resolve_model_aliases("entity_detector", selection) == [selection.entity_detector]
 
 
-def test_resolve_entity_label_config_none_uses_defaults() -> None:
-    label_config = resolve_entity_label_config(entity_labels=None)
-    assert label_config.labels == list(DEFAULT_ENTITY_LABELS)
-
-
-def test_resolve_entity_label_config_does_not_append_defaults_for_explicit_label_set() -> None:
-    label_config = resolve_entity_label_config(entity_labels=["non_default_label"])
-    assert label_config.labels == ["non_default_label"]
-
-
-def test_resolve_entity_label_config_normalizes_provided_labels() -> None:
-    label_config = resolve_entity_label_config(entity_labels=["FIRST_NAME", " email "])
-    assert label_config.labels == ["first_name", "email"]
-
-
-def test_resolve_entity_label_config_merges_built_in_examples_without_global_mutation() -> None:
-    original = list(ENTITY_LABEL_EXAMPLES["api_key"])
-
-    label_config = resolve_entity_label_config(
-        entity_labels=None,
-        entity_label_examples={"api_key": ["sk-ant-api03-abc123", original[0]]},
-    )
-
-    assert label_config.validator_examples["api_key"] == [*original, "sk-ant-api03-abc123"]
-    assert label_config.augmenter_examples == {"api_key": ["sk-ant-api03-abc123", original[0]]}
-    assert ENTITY_LABEL_EXAMPLES["api_key"] == original
-
-
-def test_resolve_entity_label_config_rejects_undeclared_non_default_example_label() -> None:
-    with pytest.raises(ValueError, match="outside the active label set"):
-        resolve_entity_label_config(
-            entity_labels=None,
-            entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
-        )
-
-
-def test_resolve_entity_label_config_explicit_non_default_only_is_strict() -> None:
-    label_config = resolve_entity_label_config(
-        entity_labels=["vendor_api_key"],
-        entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
-    )
-
-    assert label_config.labels == ["vendor_api_key"]
-    assert label_config.strict_labels is True
-
-
-def test_resolve_entity_label_config_keeps_sequential_runs_isolated() -> None:
-    first = resolve_entity_label_config(
-        entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
-        entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
-    )
-    second = resolve_entity_label_config(entity_labels=None)
-
-    assert "vendor_api_key" in first.labels
-    assert "vendor_api_key" not in second.labels
-    assert "vendor_api_key" not in second.validator_examples
-    assert second.augmenter_examples == {}
-
-
 def test_latent_prompt_uses_not_provided_defaults() -> None:
     prompt = _get_latent_prompt(data_summary=None, privacy_goal=None)
     assert "Data type summary:\nNot provided" in prompt
@@ -580,10 +518,10 @@ def test_name_guidance_prompts_render_without_lone_initial_drop_rule(
 
 
 def test_contextual_personal_name_guidance_preserves_default_label_scope() -> None:
-    label_config = resolve_entity_label_config(entity_labels=None)
+    labels = Detect().resolve().ordered_labels
 
-    assert {"first_name", "last_name"} <= set(label_config.labels)
-    assert {"middle_name", "full_name", "name_initial"}.isdisjoint(label_config.labels)
+    assert {"first_name", "last_name"} <= set(labels)
+    assert {"middle_name", "full_name", "name_initial"}.isdisjoint(labels)
 
 
 @pytest.mark.parametrize("data_summary", [None, "", "Medical records. Public hospital names are not sensitive."])
@@ -677,19 +615,19 @@ def test_augment_prompt_uses_same_partial_date_policy(strict_labels: bool) -> No
 
 
 def test_validation_prompt_adds_configured_examples_to_full_label_config() -> None:
-    label_config = resolve_entity_label_config(
+    options = Detect(
         entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
         entity_label_examples={
             "api_key": ["sk-ant-api03-abc123"],
             "vendor_api_key": ["acme_live_abc123"],
         },
-    )
+    ).resolve()
 
     prompt = _get_validation_prompt(
         data_summary=None,
-        labels=label_config.labels,
-        examples_by_label=label_config.validator_examples,
-        configured_examples=label_config.augmenter_examples,
+        labels=list(options.ordered_labels),
+        examples_by_label=options.validator_examples,
+        configured_examples=options.augmenter_examples,
     )
 
     assert "sk-abc123def456" in prompt
@@ -905,7 +843,7 @@ def test_explicit_entity_labels_filter_out_of_scope_augmented_entities(
     workflow, input_df, model_configs, selected_models = _detection_with_novel_augmented_label
     result = workflow.run(
         input_df,
-        options=Detect(gliner_threshold=0.5, entity_labels=["hostname", "ipv4"]),
+        options=Detect(gliner_threshold=0.5, entity_labels=["hostname", "ipv4"]).resolve(),
         context=detection_context(model_configs, selected_models),
     )
 
@@ -931,7 +869,7 @@ def test_default_entity_labels_preserves_novel_augmented_entities(
     workflow, input_df, model_configs, selected_models = _detection_with_novel_augmented_label
     result = workflow.run(
         input_df,
-        options=Detect(gliner_threshold=0.5),
+        options=Detect(gliner_threshold=0.5).resolve(),
         context=detection_context(model_configs, selected_models),
     )
 
@@ -954,7 +892,7 @@ def test_defaults_plus_non_default_examples_use_strict_augmentation(
             gliner_threshold=0.5,
             entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
             entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
-        ),
+        ).resolve(),
         context=detection_context(model_configs, selected_models),
     )
 
@@ -990,7 +928,7 @@ def test_run_marks_labels_strict_only_when_entity_labels_are_given(
     with patch.object(workflow, "detect_and_validate_entities", side_effect=detect):
         workflow.run(
             frame,
-            options=Detect(gliner_threshold=0.5, entity_labels=entity_labels),
+            options=Detect(gliner_threshold=0.5, entity_labels=entity_labels).resolve(),
             context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
         )
 
@@ -998,45 +936,6 @@ def test_run_marks_labels_strict_only_when_entity_labels_are_given(
 
 
 # ── excluded_entity_labels ────────────────────────────────────────────────────
-
-
-def test_resolve_entity_label_config_exclusions_remove_labels() -> None:
-    label_config = resolve_entity_label_config(
-        entity_labels=["first_name", "email", "city"], excluded_entity_labels={"email"}
-    )
-    assert "email" not in label_config.labels
-    assert "first_name" in label_config.labels
-    assert "city" in label_config.labels
-
-
-def test_resolve_entity_label_config_exclusions_normalize_configured_labels() -> None:
-    label_config = resolve_entity_label_config(
-        entity_labels=["first_name", " Email "], excluded_entity_labels={" EMAIL "}
-    )
-    assert label_config.labels == ["first_name"]
-
-
-def test_resolve_entity_label_config_exclusions_apply_to_defaults() -> None:
-    label_config = resolve_entity_label_config(entity_labels=None, excluded_entity_labels={"ssn", "first_name"})
-    assert "ssn" not in label_config.labels
-    assert "first_name" not in label_config.labels
-    assert "email" in label_config.labels
-
-
-def test_resolve_entity_label_config_none_exclusions_is_noop() -> None:
-    label_config = resolve_entity_label_config(entity_labels=["email", "city"], excluded_entity_labels=None)
-    assert label_config.labels == ["email", "city"]
-
-
-def test_resolve_entity_label_config_empty_result_raises() -> None:
-    with pytest.raises(ValueError, match="effective detection label set is empty"):
-        resolve_entity_label_config(entity_labels=["email"], excluded_entity_labels={"email"})
-
-
-@pytest.mark.parametrize("label", ["NAGROUP_g1", " nagroup_G42 "])
-def test_resolve_entity_label_config_rejects_reserved_prompt_labels(label: str) -> None:
-    with pytest.raises(ValueError, match="reserved for internal prompt markup"):
-        resolve_entity_label_config(entity_labels=["email", label])
 
 
 def test_materialize_final_entities_normalizes_configured_labels() -> None:
@@ -1083,7 +982,7 @@ def test_excluded_labels_are_removed_from_final_entities(
 
     result = workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice works at Acme, her email is alice@example.com"]}),
-        options=Detect(gliner_threshold=0.5, excluded_entity_labels=["email"]),
+        options=Detect(gliner_threshold=0.5, excluded_entity_labels=["email"]).resolve(),
         context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
 
@@ -1119,7 +1018,7 @@ def test_excluded_labels_do_not_affect_col_detected_entities(
 
     result = workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice, alice@example.com"]}),
-        options=Detect(gliner_threshold=0.5, excluded_entity_labels=["email"]),
+        options=Detect(gliner_threshold=0.5, excluded_entity_labels=["email"]).resolve(),
         context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
 
@@ -1156,7 +1055,7 @@ def test_exclusions_combined_with_allowlist_preserve_other_allowed_labels(
         pd.DataFrame({COL_TEXT: ["Alice in Houston, alice@example.com"]}),
         options=Detect(
             gliner_threshold=0.5, entity_labels=["first_name", "city", "email"], excluded_entity_labels=["email"]
-        ),
+        ).resolve(),
         context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
 
@@ -1178,7 +1077,7 @@ def test_excluded_labels_are_removed_from_gliner_labels(
         pd.DataFrame({COL_TEXT: ["Alice"]}),
         options=Detect(
             gliner_threshold=0.5, entity_labels=["first_name", "email", "city"], excluded_entity_labels=["email"]
-        ),
+        ).resolve(),
         context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
 
@@ -1231,7 +1130,7 @@ def test_detection_workflow_uses_plugin_transform_columns(
     workflow = EntityDetectionWorkflow(adapter=adapter)
     workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice"]}),
-        options=Detect(gliner_threshold=0.5, excluded_entity_labels=["email"]),
+        options=Detect(gliner_threshold=0.5, excluded_entity_labels=["email"]).resolve(),
         context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
     columns = adapter.run_workflow.call_args.kwargs["columns"]
@@ -1284,7 +1183,7 @@ def test_detection_workflow_columns_are_json_serializable(
     workflow = EntityDetectionWorkflow(adapter=adapter)
     workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice"]}),
-        options=Detect(gliner_threshold=0.5),
+        options=Detect(gliner_threshold=0.5).resolve(),
         context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
     payload = json.dumps(
@@ -1311,7 +1210,7 @@ def test_validation_column_is_chunked_validation_plugin(
     workflow = EntityDetectionWorkflow(adapter=adapter)
     workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice"]}),
-        options=Detect(gliner_threshold=0.5),
+        options=Detect(gliner_threshold=0.5).resolve(),
         context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
     columns = adapter.run_workflow.call_args.kwargs["columns"]
@@ -1350,7 +1249,9 @@ def test_validator_pool_kwargs_thread_through_to_plugin_config(
     workflow = EntityDetectionWorkflow(adapter=adapter)
     workflow.run(
         pd.DataFrame({COL_TEXT: ["Alice"]}),
-        options=Detect(gliner_threshold=0.5, validation_max_entities_per_call=17, validation_excerpt_window_chars=42),
+        options=Detect(
+            gliner_threshold=0.5, validation_max_entities_per_call=17, validation_excerpt_window_chars=42
+        ).resolve(),
         context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
     columns = adapter.run_workflow.call_args.kwargs["columns"]
@@ -1369,7 +1270,7 @@ def test_build_detection_config_uses_default_validation_single_chunk_full_text(
     workflow.build_detection_config(
         pd.DataFrame({COL_TEXT: ["Alice"]}),
         seed_path=tmp_path / "seed.parquet",
-        options=Detect(gliner_threshold=0.5),
+        options=Detect(gliner_threshold=0.5).resolve(),
         context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
     columns = adapter.build_config.call_args.kwargs["columns"]
@@ -1401,7 +1302,7 @@ def test_pool_size_greater_than_one_emits_warning(
     with caplog.at_level("WARNING"):
         workflow.run(
             pd.DataFrame({COL_TEXT: ["Alice"]}),
-            options=Detect(gliner_threshold=0.5),
+            options=Detect(gliner_threshold=0.5).resolve(),
             context=detection_context(stub_detector_model_configs, selection),
         )
     # caplog can attach handlers at both the target logger and root, so the
@@ -1439,7 +1340,7 @@ def test_pool_size_one_does_not_emit_warning(
     with caplog.at_level("WARNING"):
         workflow.run(
             pd.DataFrame({COL_TEXT: ["Alice"]}),
-            options=Detect(gliner_threshold=0.5),
+            options=Detect(gliner_threshold=0.5).resolve(),
             context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
         )
     pool_warnings = [
@@ -1467,7 +1368,10 @@ def test_run_without_latent_goal_runs_no_latent_workflow(
 
         with measurement_session(collector):
             EntityDetectionWorkflow(adapter=adapter).run(
-                pd.DataFrame({COL_TEXT: ["Alice"]}), options=Detect(), context=context, latent_goal=latent_goal
+                pd.DataFrame({COL_TEXT: ["Alice"]}),
+                options=Detect().resolve(),
+                context=context,
+                latent_goal=latent_goal,
             )
 
         assert [c.kwargs["workflow_name"] for c in adapter.run_workflow.call_args_list] == expected
@@ -1482,14 +1386,15 @@ def test_detection_keeps_resolution_label_order(
     detect: Detect,
 ) -> None:
     expected = [label for label in DEFAULT_ENTITY_LABELS if label not in (detect.excluded_entity_labels or [])]
-    assert list(detect.ordered_labels) == expected
-    assert list(detect.scope.effective_labels) != expected
+    options = detect.resolve()
+    assert list(options.ordered_labels) == expected
+    assert list(DetectionScope.of(options).effective_labels) != expected
     adapter = Mock()
     adapter.run_workflow.return_value = _positional(dataframe=pd.DataFrame({COL_TEXT: ["Alice"]}), failed_records=[])
 
     EntityDetectionWorkflow(adapter=adapter).detect_and_validate_entities(
         pd.DataFrame({COL_TEXT: ["Alice"]}),
-        options=detect,
+        options=options,
         context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
 

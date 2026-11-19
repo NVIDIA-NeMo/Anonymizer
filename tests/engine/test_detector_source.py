@@ -41,7 +41,7 @@ def detector_generators(
 ) -> tuple[DetectionTransformGenerator, LLMTextCellGenerator, Mock]:
     workflow = EntityDetectionWorkflow(adapter=Mock())
     models, columns = workflow._build_detection_spec(
-        options=Detect(gliner_threshold=0.3),
+        options=Detect(gliner_threshold=0.3).resolve(),
         context=detection_context(stub_detector_model_configs, stub_detection_model_selection),
     )
     source_config = cast(DetectionTransformConfig, next(c for c in columns if c.name == COL_DETECTOR_SOURCE))

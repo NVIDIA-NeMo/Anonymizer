@@ -143,7 +143,7 @@ def _detect(tmp_path: Path, run_config: RunConfig | None = None):
     )
     return EntityDetectionWorkflow(adapter=_adapter(tmp_path, run_config)).detect_and_validate_entities(
         pd.DataFrame({COL_TEXT: [_TEXT, _OTHER_TEXT]}),
-        options=Detect(gliner_threshold=0.3),
+        options=Detect(gliner_threshold=0.3).resolve(),
         context=detection_context([_model(_DETECTOR), _model(_VALIDATOR), _model(_AUGMENTER)], selection),
     )
 

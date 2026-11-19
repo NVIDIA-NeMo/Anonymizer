@@ -537,7 +537,7 @@ def test_detector_offset_mismatch_reason_is_reported(tmp_path: Path) -> None:
         )
         result = EntityDetectionWorkflow(NddAdapter(data_designer)).detect_and_validate_entities(
             pd.DataFrame({COL_TEXT: [text, healthy]}),
-            options=Detect(gliner_threshold=0.3),
+            options=Detect(gliner_threshold=0.3).resolve(),
             context=detection_context(
                 [
                     ModelConfig(alias="gliner", model="gliner", provider="stub"),
@@ -575,7 +575,7 @@ def test_detector_span_past_text_reason_is_reported(tmp_path: Path) -> None:
         )
         result = EntityDetectionWorkflow(NddAdapter(data_designer)).detect_and_validate_entities(
             pd.DataFrame({COL_TEXT: [text, healthy]}),
-            options=Detect(gliner_threshold=0.3),
+            options=Detect(gliner_threshold=0.3).resolve(),
             context=detection_context(
                 [
                     ModelConfig(alias="gliner", model="gliner", provider="stub"),

@@ -422,9 +422,9 @@ The validator receives the full resolved examples: built-in plus configured exam
 `entity_label_examples` is currently configured through the Python `Detect` API; the CLI does not provide a mapping syntax for this field.
 
 A custom `detection_workflow` injected into `Anonymizer` is called as
-`run(dataframe, *, options, context, latent_goal=None)`. `options` is the run's copy of `Detect`, `context` carries
-the model configs and selections, the data summary and the preview record count, and `latent_goal` is the Rewrite
-privacy goal or `None`. The types are in `anonymizer.interface.workflows`. A workflow written for the older keyword
+`run(dataframe, *, options, context, latent_goal=None)`. `options` is the call's `DetectionOptions` (from
+`Detect.resolve()`), `context` carries the model configs and selections, the data summary and the preview record
+count, and `latent_goal` is the Rewrite privacy goal or `None`. The types are in `anonymizer.interface.workflows`. A workflow written for the older keyword
 list fails with `TypeError` at its first call.
 
 A workflow must apply `options.builtin_regexes`, `options.regex_rules` and `options.regex_limits`, or raise when it

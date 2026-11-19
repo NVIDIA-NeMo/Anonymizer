@@ -40,6 +40,6 @@ class DetectionWorkflow(Protocol):
         context: RunContext,
         latent_goal: PrivacyGoal | None = None,
     ) -> EntityDetectionResult:
-        """Detect entities in `dataframe`. `options` is the run's copy of `Detect`; `latent_goal` is the Rewrite
+        """Detect entities in `dataframe`. `options` is the call's `Detect.resolve()`; `latent_goal` is the Rewrite
         privacy goal, or None when there is no latent-entity stage."""
         ...

@@ -12,7 +12,7 @@ import regex
 from pydantic import ConfigDict, Field, field_serializer, field_validator
 
 from anonymizer.config.base import FrozenConfig
-from anonymizer.config.entity_labels import normalize_entity_label
+from anonymizer.config.entity_labels import normalize_entity_label, reject_reserved_entity_label
 
 MAX_REGEX_PATTERN_LENGTH = 4096
 # The per-rule CPU-time floor. Garbage collection is not charged against it (see regex_detection._rule_cpu_time);
@@ -129,20 +129,13 @@ class RegexRule(FrozenConfig):
         description="Whether GLiNER and LLM augmentation may find additional matches for this label.",
     )
 
-    def __deepcopy__(self, memo: dict[int, Any] | None = None) -> RegexRule:
-        """Copy the rule but share a callable validator: it is caller code, and may hold state that cannot be copied."""
-        memo = {} if memo is None else memo
-        if callable(self.validator):
-            memo[id(self.validator)] = self.validator
-        return super().__deepcopy__(memo)
-
     @field_validator("label")
     @classmethod
     def validate_label(cls, value: str) -> str:
         cleaned = normalize_entity_label(value)
         if not cleaned:
             raise ValueError("Regex rule label must not be empty.")
-        return cleaned
+        return reject_reserved_entity_label(cleaned)
 
     @field_validator("pattern")
     @classmethod

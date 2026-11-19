@@ -5,13 +5,20 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from anonymizer.config.base import FrozenConfig
-from anonymizer.config.entity_labels import normalize_entity_label
+from anonymizer.config.entity_labels import (
+    merge_entity_label_examples,
+    normalize_entity_label,
+    normalize_entity_label_examples,
+    reject_reserved_entity_label,
+)
+from anonymizer.config.options import DetectionOptions
 from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
 from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import (
@@ -21,11 +28,6 @@ from anonymizer.config.rewrite import (
     default_privacy_goal,
 )
 from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
-from anonymizer.engine.detection.entity_label_examples import (
-    ResolvedEntityLabelConfig,
-    normalize_entity_label_examples,
-    resolve_entity_label_config,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +156,17 @@ class DetectionScope(FrozenConfig):
     excluded_labels: tuple[str, ...] = Field(description="Configured exclusions (normalized).")
     gliner_threshold: float = Field(description="GLiNER detection confidence threshold.")
 
+    @classmethod
+    def of(cls, options: DetectionOptions) -> DetectionScope:
+        """The scope of a call that detected with `options`."""
+        labels = tuple(sorted(options.ordered_labels))
+        return cls(
+            effective_labels=labels,
+            allowed_labels=labels if options.strict_labels else None,
+            excluded_labels=options.excluded_labels,
+            gliner_threshold=options.gliner_threshold,
+        )
+
 
 class Detect(FrozenConfig):
     """Configuration for the entity detection stage."""
@@ -222,53 +235,35 @@ class Detect(FrozenConfig):
         ),
     )
 
-    @property
-    def scope(self) -> DetectionScope:
-        """The detection scope this configuration resolves to, computed on every read."""
-        labels = sorted(self.ordered_labels)
-        return DetectionScope(
-            effective_labels=tuple(labels),
-            allowed_labels=tuple(labels) if self.strict_labels else None,
-            excluded_labels=tuple(self.excluded_entity_labels or []),
-            gliner_threshold=self.gliner_threshold,
-        )
+    def resolve(self) -> DetectionOptions:
+        """Resolve this configuration into the values detection reads for one call.
 
-    @property
-    def ordered_labels(self) -> tuple[str, ...]:
-        """The effective labels in resolution order, computed on every read.
-
-        This is the order sent to the detector and the detection prompts, minus exclusions: the default label order
-        followed by the labels of enabled custom regex rules, or `entity_labels`, which validation already sorted.
-        `scope.effective_labels` holds the same labels sorted.
+        The fields are validated again first: they are lists, and a caller may have edited them in place since
+        construction (for example, excluded every label).
         """
-        return tuple(
+        detect = type(self).model_validate({name: getattr(self, name) for name in type(self).model_fields})
+        ordered_labels = tuple(
             resolve_effective_detection_labels(
-                self.entity_labels,
-                regex_rules=self.regex_rules,
-                excluded_entity_labels=self.excluded_entity_labels,
+                detect.entity_labels,
+                regex_rules=detect.regex_rules,
+                excluded_entity_labels=detect.excluded_entity_labels,
             )
         )
-
-    @property
-    def strict_labels(self) -> bool:
-        """True when final entities are restricted to the effective labels (entity_labels is set)."""
-        return self.entity_labels is not None
-
-    @property
-    def validator_examples(self) -> dict[str, tuple[str, ...]]:
-        """Built-in plus configured examples per effective label, in resolution order."""
-        return {label: tuple(examples) for label, examples in self._resolved().validator_examples.items()}
-
-    @property
-    def augmenter_examples(self) -> dict[str, tuple[str, ...]]:
-        """Configured examples per effective label, in resolution order."""
-        return {label: tuple(examples) for label, examples in self._resolved().augmenter_examples.items()}
-
-    def _resolved(self) -> ResolvedEntityLabelConfig:
-        return resolve_entity_label_config(
-            entity_labels=list(self.ordered_labels),
-            excluded_entity_labels=self.excluded_entity_labels,
-            entity_label_examples=self.entity_label_examples,
+        validator_examples, augmenter_examples = merge_entity_label_examples(
+            ordered_labels, detect.entity_label_examples
+        )
+        return DetectionOptions(
+            entity_labels=None if detect.entity_labels is None else tuple(detect.entity_labels),
+            ordered_labels=ordered_labels,
+            excluded_labels=tuple(detect.excluded_entity_labels or ()),
+            validator_examples=MappingProxyType(validator_examples),
+            augmenter_examples=MappingProxyType(augmenter_examples),
+            gliner_threshold=detect.gliner_threshold,
+            validation_max_entities_per_call=detect.validation_max_entities_per_call,
+            validation_excerpt_window_chars=detect.validation_excerpt_window_chars,
+            builtin_regexes=detect.builtin_regexes,
+            regex_rules=tuple(detect.regex_rules),
+            regex_limits=detect.regex_limits,
         )
 
     @field_validator("entity_labels")
@@ -279,6 +274,8 @@ class Detect(FrozenConfig):
         cleaned = [normalize_entity_label(label) for label in value if normalize_entity_label(label)]
         if not cleaned:
             raise ValueError("entity_labels must not be empty. Use None to detect all default labels.")
+        for label in cleaned:
+            reject_reserved_entity_label(label)
         deduped = sorted(set(cleaned))
         if len(deduped) != len(cleaned):
             logger.warning("entity_labels contained duplicates, removed automatically.")

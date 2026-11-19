@@ -23,6 +23,7 @@ from data_designer.interface.data_designer import DataDesigner
 from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
+    DetectionScope,
     EvaluateConfig,
     Rewrite,
     TextRecordsInput,
@@ -403,7 +404,6 @@ class Anonymizer:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
             data: File-backed or in-memory records and optional dataset context.
         """
-        config = config.model_copy(deep=True)
         self._validate_preflight_config(config)
         resolved = read_input(data)
         input_df = resolved.dataframe
@@ -452,14 +452,13 @@ class Anonymizer:
             data: Input source (the records to detect over).
             seed_path: Destination parquet path for the seed dataset.
         """
-        config = config.model_copy(deep=True)
         self._validate_preflight_config(config)
         exporter = self._detection_exporter()
         resolved = read_input(data)
         return exporter.build_detection_config(
             resolved.dataframe,
             seed_path=seed_path,
-            options=config.detect,
+            options=config.detect.resolve(),
             context=self._run_context(data_summary=data.data_summary, preview_num_records=None),
         )
 
@@ -483,11 +482,10 @@ class Anonymizer:
         and ``seed_path`` must resolve to an existing file when the worker reconstructs
         the config. Runtime model providers remain external to the serialized config.
         """
-        config = config.model_copy(deep=True)
         self._validate_preflight_config(config)
         return self._detection_exporter().build_detection_builder_for_seed(
             seed_path=seed_path,
-            options=config.detect,
+            options=config.detect.resolve(),
             context=self._run_context(data_summary=data_summary, preview_num_records=None),
             job_index=job_index,
             num_jobs=num_jobs,
@@ -526,7 +524,6 @@ class Anonymizer:
             data: File-backed or in-memory records and optional dataset context.
             num_records: Maximum records to process (default 10).
         """
-        config = config.model_copy(deep=True)
         self._validate_preflight_config(config)
         resolved = read_input(data, nrows=num_records)
         input_df = resolved.dataframe
@@ -545,8 +542,8 @@ class Anonymizer:
                 id_column=result.id_column,
                 replace_method=config.replace,
                 rewrite_config=result.rewrite_config,
-                entity_labels=config.detect.entity_labels,
-                excluded_entity_labels=config.detect.excluded_entity_labels,
+                entity_labels=result.entity_labels,
+                excluded_entity_labels=result.excluded_entity_labels,
                 detection_scope=result.detection_scope,
                 data_summary=result.data_summary,
                 _outcomes=result._outcomes,
@@ -887,11 +884,11 @@ class Anonymizer:
             preview_num_records = effective_records
         else:
             logger.info("🔍 Running entity detection on %d records", num_records)
-        scope = config.detect.scope
+        detection = config.detect.resolve()
         configured_label_count = len(
             resolve_effective_detection_labels(config.detect.entity_labels, regex_rules=config.detect.regex_rules)
         )
-        effective_label_count = len(scope.effective_labels)
+        effective_label_count = len(detection.ordered_labels)
         removed_label_count = configured_label_count - effective_label_count
         if logger.isEnabledFor(logging.DEBUG):
             text_lengths = input_df[COL_TEXT].astype(str).str.len()
@@ -905,7 +902,7 @@ class Anonymizer:
             logger.debug(
                 "detection config: threshold=%.2f, configured_label_count=%d, "
                 "effective_label_count=%d, removed_by_exclusions=%d",
-                config.detect.gliner_threshold,
+                detection.gliner_threshold,
                 configured_label_count,
                 effective_label_count,
                 removed_label_count,
@@ -919,15 +916,11 @@ class Anonymizer:
                 removed_label_count,
             )
 
-        # config is the per-call copy taken at entry: the detector receives the copy's Detect as options and the
-        # copy's goal as latent_goal, equal in value to the caller's, not the same objects.
         run_context = self._run_context(data_summary=data.data_summary, preview_num_records=preview_num_records)
         latent_goal = config.rewrite.privacy_goal if config.rewrite is not None else None
 
         def detect(frame: pd.DataFrame) -> EntityDetectionResult:
-            return self._detection_workflow.run(
-                frame, options=config.detect, context=run_context, latent_goal=latent_goal
-            )
+            return self._detection_workflow.run(frame, options=detection, context=run_context, latent_goal=latent_goal)
 
         def detect_then_announce(frame: pd.DataFrame) -> EntityDetectionResult:
             result = detect(frame)
@@ -1042,7 +1035,7 @@ class Anonymizer:
             mode="replace" if config.replace is not None else "rewrite",
             strategy=type(config.replace).__name__ if config.replace is not None else "Rewrite",
             text_column=COL_TEXT,
-            validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
+            validation_max_entities_per_call=detection.validation_max_entities_per_call,
         )
         return AnonymizerResult(
             dataframe=_build_user_dataframe(
@@ -1056,12 +1049,12 @@ class Anonymizer:
             id_column=resolved.resolved_id_column,
             replace_method=config.replace,
             rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
-            entity_labels=config.detect.entity_labels,
-            excluded_entity_labels=config.detect.excluded_entity_labels,
-            detection_scope=scope,
+            entity_labels=None if detection.entity_labels is None else list(detection.entity_labels),
+            excluded_entity_labels=list(detection.excluded_labels) or None,
+            detection_scope=DetectionScope.of(detection),
             data_summary=data.data_summary,
             _outcomes=outcomes,
-            effective_entity_labels=list(config.detect.ordered_labels),
+            effective_entity_labels=list(detection.ordered_labels),
         )
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:

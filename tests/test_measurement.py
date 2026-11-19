@@ -2145,7 +2145,7 @@ def test_stage_timer_records_errors() -> None:
     with measurement_session(collector), pytest.raises(ValueError, match="boom"):
         workflow.run(
             pd.DataFrame({COL_TEXT: ["Alice"]}),
-            options=Detect(gliner_threshold=0.3),
+            options=Detect(gliner_threshold=0.3).resolve(),
             context=detection_context(
                 [],
                 DetectionModelSelection(

@@ -154,10 +154,8 @@ class EntityDetectionWorkflow:
         labels = list(options.ordered_labels)
         strict_labels = options.strict_labels
         allowed = labels if strict_labels else None
-        excluded = list(options.scope.excluded_labels)
-        validator_examples = dict(options.validator_examples)
-        for label in labels:
-            validator_examples.setdefault(label, ())
+        excluded = list(options.excluded_labels)
+        validator_examples = options.validator_examples
         augmenter_examples = options.augmenter_examples
         data_summary = context.data_summary
         selected_models = context.models.detection
@@ -179,7 +177,7 @@ class EntityDetectionWorkflow:
             model_configs=context.model_configs,
             selected_models=selected_models,
             labels=model_labels,
-            gliner_detection_threshold=options.scope.gliner_threshold,
+            gliner_detection_threshold=options.gliner_threshold,
         )
 
         detection_alias = resolve_model_alias("entity_detector", selected_models)
@@ -354,13 +352,13 @@ class EntityDetectionWorkflow:
         Runs after ``detect_and_validate_entities`` when rewrite mode is
         enabled. Uses an LLM to identify entities inferable from context.
         """
-        excluded = list(options.scope.excluded_labels)
+        excluded = list(options.excluded_labels)
         selected_models = context.models.detection
         workflow_model_configs = self._inject_detector_params(
             model_configs=context.model_configs,
             selected_models=selected_models,
             labels=list(options.ordered_labels),
-            gliner_detection_threshold=options.scope.gliner_threshold,
+            gliner_detection_threshold=options.gliner_threshold,
         )
         latent_alias = resolve_model_alias("latent_detector", selected_models)
         latent_result = self._adapter.run_workflow(
@@ -411,7 +409,7 @@ class EntityDetectionWorkflow:
             tag_latent_entities=latent_goal is not None,
         ) as measurement:
             allowed = set(options.ordered_labels) if options.strict_labels else None
-            excluded = set(options.scope.excluded_labels) or None
+            excluded = set(options.excluded_labels) or None
             rows = _DetectionRows(dataframe)
 
             def detect() -> None:

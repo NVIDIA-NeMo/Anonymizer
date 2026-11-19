@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import subprocess
 import sys
@@ -117,7 +118,7 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
             },
             validation_max_entities_per_call=7,
             validation_excerpt_window_chars=321,
-        ),
+        ).resolve(),
         context=detection_context(
             parsed_models.model_configs,
             parsed_models.selected_models.detection,
@@ -226,7 +227,7 @@ def test_build_detection_builder_for_seed_respects_excluded_entity_labels(tmp_pa
         seed_path=seed_path,
         options=Detect(
             gliner_threshold=0.3, entity_labels=["first_name", "email", "city"], excluded_entity_labels=["email"]
-        ),
+        ).resolve(),
         context=detection_context(parsed_models.model_configs, parsed_models.selected_models.detection),
     )
 
@@ -248,7 +249,7 @@ def test_build_detection_config_respects_excluded_entity_labels(tmp_path: Path) 
         seed_path=seed_path,
         options=Detect(
             gliner_threshold=0.3, entity_labels=["first_name", "email", "city"], excluded_entity_labels=["email"]
-        ),
+        ).resolve(),
         context=detection_context(parsed_models.model_configs, parsed_models.selected_models.detection),
     )
 
@@ -272,7 +273,7 @@ def test_exported_builder_includes_explicit_non_default_example_label(tmp_path: 
             gliner_threshold=0.3,
             entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
             entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
-        ),
+        ).resolve(),
         context=detection_context(parsed_models.model_configs, parsed_models.selected_models.detection),
     )
 
@@ -304,7 +305,7 @@ def test_fresh_process_discovers_plugins_when_loading_native_config(tmp_path: Pa
     workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
     builder = workflow.build_detection_builder_for_seed(
         seed_path=seed_path,
-        options=Detect(gliner_threshold=0.3),
+        options=Detect(gliner_threshold=0.3).resolve(),
         context=detection_context(parsed_models.model_configs, parsed_models.selected_models.detection),
     )
     config_path = tmp_path / "detection.json"
@@ -357,7 +358,7 @@ def test_regex_limits_survive_exports_and_are_enforced(tmp_path: Path, seed_only
     builder = method(
         **dataframe_kwargs,
         seed_path=seed_path,
-        options=Detect(gliner_threshold=0.3, entity_labels=["ipv4"], regex_limits=limits),
+        options=Detect(gliner_threshold=0.3, entity_labels=["ipv4"], regex_limits=limits).resolve(),
         context=detection_context(models.model_configs, models.selected_models.detection),
     )
     payload = builder.get_builder_config().to_json()
@@ -400,7 +401,7 @@ def test_regex_rule_controls_round_trip_independently(
                     detect_additional_matches=additional_matches,
                 )
             ],
-        ),
+        ).resolve(),
         context=detection_context(parsed_models.model_configs, parsed_models.selected_models.detection),
     )
     payload = builder.get_builder_config().to_json()
@@ -445,7 +446,7 @@ def test_regex_constrained_detection_config_round_trips_with_model_columns_skipp
                     detect_additional_matches=False,
                 )
             ],
-        ),
+        ).resolve(),
         context=detection_context(parsed_models.model_configs, parsed_models.selected_models.detection),
     )
 
@@ -580,7 +581,7 @@ def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designe
         seed_path=tmp_path / "seed.parquet",
         options=Detect(
             gliner_threshold=0.3, entity_labels=labels, builtin_regexes=workload != "custom-ticket", regex_rules=rules
-        ),
+        ).resolve(),
         context=detection_context(model_configs, selected_models),
     )
     payload = builder.get_builder_config().to_json()
@@ -675,7 +676,7 @@ def test_builtin_controls_and_validators_survive_config_export(
                     else []
                 ),
             ],
-        ),
+        ).resolve(),
         context=detection_context(models.model_configs, models.selected_models.detection),
     )
     payload = builder.get_builder_config().to_json()
@@ -710,18 +711,18 @@ def test_export_checks_callable_validators_only_for_active_rules(
     dataframe.to_parquet(seed_path, index=False)
     models = parse_model_configs(None)
     workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
-    detect_fields: dict[str, Any] = dict(
+    rule = RegexRule(label="ticket", pattern=r"TKT-\d+", validator=validator, enabled=rule_scope != "disabled")
+    options = Detect(
         gliner_threshold=0.3,
         entity_labels=["first_name"] if rule_scope == "out_of_scope" else ["first_name", "ticket"],
         excluded_entity_labels=["ticket"] if rule_scope == "excluded" else None,
         builtin_regexes=False,
-        regex_rules=[
-            RegexRule(label="ticket", pattern=r"TKT-\d+", validator=validator, enabled=rule_scope != "disabled")
-        ],
-    )
-    # Detect rejects an enabled custom rule outside explicit entity_labels; build that case unvalidated so the
-    # export path's own scope filter is what is tested.
-    options = Detect.model_construct(**detect_fields) if rule_scope == "out_of_scope" else Detect(**detect_fields)
+        regex_rules=[] if rule_scope == "out_of_scope" else [rule],
+    ).resolve()
+    if rule_scope == "out_of_scope":
+        # Detect rejects an enabled custom rule outside explicit entity_labels; add it to the resolved options so
+        # the export path's own scope filter is what is tested.
+        options = dataclasses.replace(options, regex_rules=(rule,))
     kwargs: dict[str, Any] = dict(
         seed_path=seed_path,
         options=options,
@@ -755,7 +756,7 @@ def test_custom_rule_label_reaches_gliner_by_default(tmp_path: Path) -> None:
     workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
     builder = workflow.build_detection_builder_for_seed(
         seed_path=seed_path,
-        options=Detect(regex_rules=[RegexRule(label="case_id", pattern=r"CASE-\d+")]),
+        options=Detect(regex_rules=[RegexRule(label="case_id", pattern=r"CASE-\d+")]).resolve(),
         context=detection_context(models.model_configs, models.selected_models.detection),
     )
     assert "case_id" in _get_gliner_labels_from_builder(builder)

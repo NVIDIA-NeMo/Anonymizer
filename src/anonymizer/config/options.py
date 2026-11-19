@@ -1,15 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Read-only views of the resolved options a workflow reads from a config."""
+"""The values a workflow receives for one call: the resolved detection options and the run context."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
-from anonymizer.config.anonymizer_config import DetectionScope
 from anonymizer.config.models import ModelSelection
 from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
 
@@ -17,40 +16,30 @@ if TYPE_CHECKING:
     from data_designer.config.models import ModelConfig
 
 
-class DetectionOptions(Protocol):
-    """What detection reads from `Detect`: resolved values, not the raw label fields."""
+@dataclass(frozen=True, kw_only=True)
+class DetectionOptions:
+    """What detection reads for one call: `Detect` resolved by `Detect.resolve()`."""
+
+    entity_labels: tuple[str, ...] | None
+    """The configured labels; None when `Detect.entity_labels` is unset."""
+    ordered_labels: tuple[str, ...]
+    """The effective labels, in the order sent to the detector and the detection prompts."""
+    excluded_labels: tuple[str, ...]
+    validator_examples: Mapping[str, tuple[str, ...]]
+    """Built-in plus configured examples for every effective label."""
+    augmenter_examples: Mapping[str, tuple[str, ...]]
+    """Configured examples, for the effective labels that have them."""
+    gliner_threshold: float
+    validation_max_entities_per_call: int
+    validation_excerpt_window_chars: int
+    builtin_regexes: bool
+    regex_rules: tuple[BuiltinRegex | RegexRule, ...]
+    regex_limits: RegexLimits
 
     @property
-    def scope(self) -> DetectionScope: ...
-
-    @property
-    def ordered_labels(self) -> tuple[str, ...]:
-        """The effective labels in the order sent to the detector and the detection prompts."""
-        ...
-
-    @property
-    def strict_labels(self) -> bool: ...
-
-    @property
-    def validator_examples(self) -> Mapping[str, tuple[str, ...]]: ...
-
-    @property
-    def augmenter_examples(self) -> Mapping[str, tuple[str, ...]]: ...
-
-    @property
-    def validation_max_entities_per_call(self) -> int: ...
-
-    @property
-    def validation_excerpt_window_chars(self) -> int: ...
-
-    @property
-    def builtin_regexes(self) -> bool: ...
-
-    @property
-    def regex_rules(self) -> Sequence[BuiltinRegex | RegexRule]: ...
-
-    @property
-    def regex_limits(self) -> RegexLimits: ...
+    def strict_labels(self) -> bool:
+        """True when final entities are restricted to the effective labels (entity_labels is set)."""
+        return self.entity_labels is not None
 
 
 @dataclass(frozen=True, kw_only=True)
