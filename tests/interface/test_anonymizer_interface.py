@@ -2117,6 +2117,19 @@ def test_evaluate_matches_run_outcomes_by_record_id(
     assert observed == {name: outcome or unassessed for name, outcome in expected.items()}
 
 
+def test_reevaluating_replaces_the_judge_advisories(tmp_path: Path) -> None:
+    anonymizer, _, data = _two_row_anonymizer(tmp_path, record_ids=True)
+    anonymizer._replace_runner = _AllRowsReplaceRunner()
+    run_result = anonymizer.run(config=_MODES["replace"], data=data)
+
+    with patch.object(EntityCoverageWorkflow, "run_non_critical", _stub_coverage):
+        once = anonymizer.evaluate(run_result)
+        twice = anonymizer.evaluate(once)
+
+    assert [a.check for a in once.outcome(0).advisories].count("coverage") == 1
+    assert twice.outcome(0) == once.outcome(0)
+
+
 @pytest.mark.parametrize("mode", list(_MODES))
 def test_run_calls_the_detector_on_empty_input(tmp_path: Path, mode: str) -> None:
     anonymizer, detector, data = _two_row_anonymizer(tmp_path)

@@ -263,10 +263,11 @@ def _reported_outcomes(
 
     A row's outcome is the evaluated result's outcome (``ran``) of the row with the same record id (``ran_ids``),
     or an unassessed outcome when no single such row exists (the row has no id, the ids changed, or the result
-    carries no outcomes), with each verifier appended as an advisory naming it, in verifier order. Matching by id,
-    not position, keeps a reordered or replaced trace from taking another row's outcome. A verifier that gave no
-    assessment is ``could_not_assess`` with its execution code (``raised``, or ``blocked`` when an earlier verifier
-    of the row failed) as the cause. The ungraded rewrite judge reports ``scored`` when it returned scores and
+    carries no outcomes), with each verifier appended as an advisory naming it, in verifier order, in place of any
+    advisory an earlier evaluation of the result gave the same verifier. Matching by id, not position, keeps a
+    reordered or replaced trace from taking another row's outcome. A verifier that gave no assessment is
+    ``could_not_assess`` with its execution code (``raised``, or ``blocked`` when an earlier verifier of the row
+    failed) as the cause. The ungraded rewrite judge reports ``scored`` when it returned scores and
     ``not_applicable`` on a row it skips by design."""
     codes: dict[bool | None, AdvisoryStatus] = {True: "passed", False: "failed", None: "could_not_assess"}
     ungraded = _ASSESSMENTS[COL_JUDGE_EVALUATION][0]
@@ -297,9 +298,13 @@ def _reported_outcomes(
         status = "scored" if a.satisfied and names[i] == ungraded else codes[a.satisfied]
         return Advisory(names[i], names[i], status, a.reason)
 
-    return tuple(
-        replace(base[p], advisories=(*base[p].advisories, *(advisory(p, i) for i in verifiers))) for p in positions
-    )
+    judges = {names[i] for i in verifiers}
+
+    def reported(p: int) -> TargetOutcome:
+        kept = (a for a in base[p].advisories if a.verifier not in judges)  # an earlier evaluation's judges
+        return replace(base[p], advisories=(*kept, *(advisory(p, i) for i in verifiers)))
+
+    return tuple(reported(p) for p in positions)
 
 
 def _has_entities_for_evaluation(raw: object) -> bool:
