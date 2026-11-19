@@ -111,8 +111,7 @@ def _violations(evaluated: Any, judges: _Judges, evaluated_from: pd.DataFrame) -
     ``evaluated_from`` is the trace of the result that was evaluated: a row is placed exactly when it carries the id its
     record had there, and that id occurs once there and once among the evaluated rows. An earlier evaluation may have
     retyped it."""
-    if evaluated._outcomes is None:
-        return []
+    assert evaluated._outcomes is not None and len(evaluated._outcomes) == len(evaluated.trace_dataframe)
     found = []
     ids, before = _ids(evaluated.trace_dataframe), _ids(evaluated_from)
     for k, truth in enumerate(int(t) for t in evaluated.trace_dataframe[_TRUTH]):
@@ -152,7 +151,33 @@ def test_rows_with_the_same_original_text_and_no_ids_take_no_outcome(tmp_path: P
 
     evaluated = _evaluate(anonymizer, run, judges)
 
-    assert evaluated._outcomes is None  # nothing could be placed: no outcomes, never a borrowed one
+    # Nothing could be placed: each row is unassessed and unprotected, never a borrowed outcome.
+    assert [dataclasses.replace(evaluated.outcome(k), advisories=()) for k in range(2)] == [_UNASSESSED] * 2
+    assert _violations(evaluated, judges, run.trace_dataframe) == []
+
+
+@pytest.mark.parametrize("mode", list(_MODES))
+def test_a_judge_frame_with_no_placeable_row_reports_every_row_unassessed(tmp_path: Path, mode: str) -> None:
+    verdicts: dict[int, dict[str, Any]] = {
+        0: {COL_JUDGE_EVALUATION: "scored", COL_DETECTION_VALID: True, COL_ENTITY_COVERAGE: 1.0},
+        1: {COL_JUDGE_EVALUATION: None, COL_DETECTION_VALID: False, COL_ENTITY_COVERAGE: 0.0},
+    }
+    without_ids: dict[str, Change] = {
+        "coverage" if mode == "rewrite" else "judge": lambda f: f.drop(columns=[RECORD_ID_COLUMN])
+    }
+    judges = _Judges(verdicts, without_ids)
+    anonymizer, run = _anonymizer(tmp_path, mode, ["Alice A is here", "Bob B is here"], judges)
+
+    evaluated = _evaluate(anonymizer, run, judges)
+
+    for k in range(2):
+        outcome = evaluated.outcome(k)
+        assert dataclasses.replace(outcome, advisories=()) == _UNASSESSED
+        assert outcome.advisories and {(a.status, a.cause) for a in outcome.advisories} == {
+            ("could_not_assess", "unplaced")
+        }
+    with pytest.raises(IndexError):
+        evaluated.outcome(2)
 
 
 def test_rows_with_the_same_original_text_take_only_their_own_outcome(tmp_path: Path) -> None:

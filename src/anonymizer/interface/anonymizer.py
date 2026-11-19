@@ -273,8 +273,8 @@ def _reported_outcomes(
     output: pd.DataFrame,
     ran: Sequence[TargetOutcome] | None,
     ran_ids: Sequence[str] | None,
-) -> tuple[TargetOutcome, ...] | None:
-    """Each ``output`` row's outcome, ``None`` when no row of a non-empty ``output`` can be placed in ``source``.
+) -> tuple[TargetOutcome, ...]:
+    """Each ``output`` row's outcome, one per row, even when no row can be placed in ``source``.
 
     Each row is placed in ``source`` only by its unique record id (``_source_positions``), as ``_evaluate_on_graph``
     placed every judge's rows. A placed row's outcome is the evaluated result's outcome (``ran``) of the record with
@@ -290,8 +290,6 @@ def _reported_outcomes(
     ungraded = _ASSESSMENTS[COL_JUDGE_EVALUATION][0]
     names = result.prepared.names
     positions = _source_positions(source, output)
-    if positions and all(p is None for p in positions):
-        return None
     verifiers = [i for i, (_, op) in enumerate(result.prepared.workflow.flatten()) if op.is_verifier]
     errors = {(e.unit, e.node): e.reason for e in result.state.entries if e.status == Status.FAILED}
     ledger = result.ledger()  # target-major; a verifier that never ran is ``blocked``
@@ -999,7 +997,7 @@ class Anonymizer:
             excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
             _outcomes=outcomes,
-            _outcome_ids=None if outcomes is None else _record_ids(judged_df),
+            _outcome_ids=_record_ids(judged_df),
         )
         if result.failed_records:
             logger.debug("%d evaluation failed record(s).", len(result.failed_records))

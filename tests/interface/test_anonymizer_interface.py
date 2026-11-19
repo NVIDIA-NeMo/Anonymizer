@@ -2165,8 +2165,11 @@ def test_evaluate_does_not_guess_outcomes_for_reordered_rows_without_ids(tmp_pat
     with patch.object(EntityCoverageWorkflow, "run_non_critical", _stub_coverage):
         evaluated = anonymizer.evaluate(run_result)
 
-    with pytest.raises(IndexError):  # no row can be placed without its record id, so no outcome is guessed
-        evaluated.outcome(0)
+    # No row can be placed without its record id, so no outcome is guessed: each row is unassessed and unplaced.
+    unassessed = TargetOutcome("success", "not_assessed", False, False)
+    for i in range(2):
+        assert dataclasses.replace(evaluated.outcome(i), advisories=()) == unassessed
+        assert {(a.status, a.cause) for a in evaluated.outcome(i).advisories} == {("could_not_assess", "unplaced")}
 
 
 def test_reevaluating_replaces_the_judge_advisories(tmp_path: Path) -> None:

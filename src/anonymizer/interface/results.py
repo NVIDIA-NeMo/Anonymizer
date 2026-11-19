@@ -46,7 +46,8 @@ class _DisplayMixin:
 
         Raises:
             IndexError: ``row`` is not an output row, or this result carries no outcomes (a custom runner's or
-                hand-built result, or an ``evaluate()`` result none of whose rows could be placed).
+                hand-built result). An ``evaluate()`` result always carries one outcome per row, even when none of
+                its rows could be placed.
         """
         outcomes = getattr(self, "_outcomes", None)  # absent on results pickled before outcomes were kept
         if outcomes is None:
