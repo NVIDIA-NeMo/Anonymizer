@@ -46,6 +46,28 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("anonymizer.ndd")
 
+_BACKEND_PACKAGE = "data_designer"
+_BACKEND_CLASS_PREFIX = "DataDesigner"
+
+
+def exception_class_label(exc: BaseException) -> str:
+    """Return the exception class name for a log line, never the message.
+
+    Classes from the workflow backend package lose the backend prefix so log lines do not name the backend:
+    ``DataDesignerGenerationError`` becomes ``GenerationError`` and the bare base class becomes ``BackendError``.
+    Classes from other modules keep their name.
+    """
+    cls = type(exc)
+    name = cls.__name__
+    module = cls.__module__ or ""
+    if module != _BACKEND_PACKAGE and not module.startswith(_BACKEND_PACKAGE + "."):
+        return name
+    if not name.startswith(_BACKEND_CLASS_PREFIX):
+        return name
+    stripped = name.removeprefix(_BACKEND_CLASS_PREFIX)
+    return "BackendError" if stripped in ("", "Error") else stripped
+
+
 # DataDesigner records the cause of a failed task only while task tracing is on.
 # Tracing keeps one small record per task attempt for the whole run, so this
 # switch turns it off for every run when memory at very large row counts matters.
@@ -125,9 +147,7 @@ _MODEL_TRACE_PURPOSE: ContextVar[str | None] = ContextVar("anonymizer_dd_model_t
 
 
 def _normalize_column_for_data_designer(column: ColumnConfigT) -> ColumnConfigT:
-    """Convert marked private config subclasses to DataDesigner's registered types."""
-    if getattr(type(column), "_normalize_for_data_designer", False):
-        column = LLMStructuredColumnConfig.model_validate(column.model_dump())
+    """Prepare a column config for DataDesigner's JSON storage."""
     return prepare_json_storage_column(column)
 
 
@@ -461,10 +481,6 @@ class NddAdapter:
                 config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
                 config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
                 for column in columns:
-                    # DataDesigner resolves built-in generators by exact config
-                    # type. A private subclass can keep sensitive prompt fields
-                    # out of reprs in our workflow specs, then become the
-                    # registered built-in config at the execution boundary.
                     config_builder.add_column(_normalize_column_for_data_designer(column))
 
                 with (
@@ -494,8 +510,9 @@ class NddAdapter:
                     output_df, source_positions = source_frame.project(output_df, requested=record_count)
             except Exception as exc:
                 logger.warning(
-                    "Workflow failed for %d input record(s).",
+                    "Workflow failed for %d input record(s): %s.",
                     record_count,
+                    exception_class_label(exc),
                 )
                 logger.debug(
                     "Workflow failure context: input_records=%d column_count=%d",

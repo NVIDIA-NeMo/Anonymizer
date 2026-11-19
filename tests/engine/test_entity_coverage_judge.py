@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import Mock
 
 import pandas as pd
 import pytest
+from data_designer.errors import DataDesignerError
+from data_designer.interface.errors import DataDesignerGenerationError
 
 from anonymizer.config.anonymizer_config import Detect, resolve_effective_detection_labels
 from anonymizer.config.models import EvaluateModelSelection
@@ -587,3 +590,55 @@ def test_entity_coverage_workflow_excludes_configured_labels_from_postprocess() 
     missed_labels = {e["label"] for e in missed}
     assert "clinic_name" in missed_labels
     assert "email" not in missed_labels
+
+
+def test_run_non_critical_total_failure_warning_names_exception_class_but_not_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class JudgeOutageError(Exception):
+        pass
+
+    adapter = Mock()
+    adapter._attach_record_ids.side_effect = JudgeOutageError("SENTINEL-RECORD-TEXT")
+    workflow = EntityCoverageWorkflow(adapter=adapter)
+
+    with caplog.at_level(logging.DEBUG, logger="anonymizer"):
+        result, failed_records = workflow.run_non_critical(
+            pd.DataFrame({"input_value": ["a"]}),
+            model_configs=[],
+            selected_models=_stub_evaluate_selection(),
+        )
+
+    assert failed_records == []
+    assert result[COL_ENTITY_COVERAGE].isna().all()
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("scores may be unavailable" in m and "JudgeOutageError" in m for m in warnings)
+    assert "SENTINEL-RECORD-TEXT" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("exc", "label"),
+    [
+        (DataDesignerError("SENTINEL-RECORD-TEXT"), "BackendError"),
+        (DataDesignerGenerationError("SENTINEL-RECORD-TEXT"), "GenerationError"),
+    ],
+)
+def test_run_non_critical_warning_shortens_backend_exception_class(
+    caplog: pytest.LogCaptureFixture, exc: Exception, label: str
+) -> None:
+    adapter = Mock()
+    adapter._attach_record_ids.side_effect = exc
+    workflow = EntityCoverageWorkflow(adapter=adapter)
+
+    with caplog.at_level(logging.DEBUG, logger="anonymizer"):
+        workflow.run_non_critical(
+            pd.DataFrame({"input_value": ["a"]}),
+            model_configs=[],
+            selected_models=_stub_evaluate_selection(),
+        )
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert f"Entity coverage workflow failed ({label}); scores may be unavailable." in warnings
+    for forbidden in ("Data Designer", "DataDesigner", "data_designer", "DD"):
+        assert forbidden not in caplog.text
+    assert "SENTINEL-RECORD-TEXT" not in caplog.text

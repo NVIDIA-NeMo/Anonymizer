@@ -329,7 +329,7 @@ class Script:
 
 def _application(text: str, lexicon: dict[str, str]) -> dict[str, Any]:
     spans = len(_spans(text, lexicon))
-    # The generator stores the empty label mapping as a JSON string, which the workflow restores.
+    # ReplacementApplication.to_metrics() stores the label counts as JSON text.
     return {
         "targeted_span_count": spans,
         "applied_span_count": spans,

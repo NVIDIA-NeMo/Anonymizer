@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from typing import Protocol, TypeGuard, TypeVar, cast
+from typing import Any, Protocol, TypeGuard, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -101,3 +101,25 @@ def to_python(raw: object) -> object:
         except (TypeError, ValueError):
             pass
     return raw
+
+
+def normalize_payload(raw: Any) -> Any:
+    """Normalize values that may have been JSON-stringified by parquet round-trip."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return raw
+    return to_python(raw)
+
+
+def read_cell(model: type[T], raw: object, *, error: type[Exception] = TypeError) -> T:
+    """Read one nested cell (model, dict, JSON string or parquet-reloaded value) as *model*.
+
+    A model instance is dumped and revalidated, not passed through. Raises *error*
+    when the cell does not normalize to a dict.
+    """
+    payload = normalize_payload(raw)
+    if not isinstance(payload, dict):
+        raise error(f"Expected {model.__name__} or dict, got {type(payload).__name__}")
+    return model.model_validate(payload)
