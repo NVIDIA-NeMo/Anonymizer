@@ -62,8 +62,11 @@ from anonymizer.engine.rewrite.rewrite_workflow import (
     _join_new_columns,
     _leftover_metrics,
 )
+from anonymizer.engine.spans import Span
+from anonymizer.engine.value_matching import format_cause
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import AnonymizerWorkflowError
+from anonymizer.interface.results import AnonymizerResult
 
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
 
@@ -2007,15 +2010,20 @@ def test_an_undetected_occurrence_the_rewrite_drops_is_met_and_not_flagged(tmp_p
 
     assert (outcome.qualification, outcome.reasons, outcome.advisories) == ("met", (), ())
     assert result.dataframe["needs_human_review"].tolist() == [False]
+    assert [(x.in_source, x.detected, x.in_output, x.undetected_kept) for x in result.leftovers(0)] == [
+        (2, 1, 0, False)
+    ]
 
 
 def test_a_value_copied_beyond_its_source_count_is_not_met(tmp_path: Path) -> None:
     text = "Alice met Bob."
     policy = _disposition(("Alice", "replace", "tagged"), ("Bob", "replace", "tagged"))
     adapter = _ScriptedAdapter({"rec": 0}, initial="Sara met Tom; Bob agreed.", policy=policy)
-    outcome = _run_result(adapter, tmp_path, text, [_span(text, "Alice"), _span(text, "Bob")]).outcome(0)
+    result = _run_result(adapter, tmp_path, text, [_span(text, "Alice"), _span(text, "Bob")])
+    outcome = result.outcome(0)
 
     assert outcome.qualification == "not_met"
+    assert format_cause(x for x in result.leftovers(0) if x.over_bound) == outcome.reasons[0].cause
     assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [("failed", "replacements_applied", "e1:N1,D1,O1")]
 
 
@@ -2130,3 +2138,56 @@ def test_leftover_metrics_name_a_value_by_its_own_span() -> None:
     metrics = _leftover("[A] called. [B] said hi.", policy, source, spans)
     assert (metrics["replacements_applied"], metrics["undetected_value_kept"]) == (True, False)
     assert _leftover("[A] called. John said hi.", policy, source, spans)["replacements_applied"] is False
+
+
+@pytest.mark.parametrize(
+    ("text", "values", "rewritten", "cause"),
+    [
+        pytest.param(
+            "May loves the month of May.", ["May"], "Jane loves the month of May.", "e0:N2,D1,O1", id="homograph"
+        ),
+        pytest.param(
+            "Emma Kovacs wrote; user emma_kovacs_9839 logged in.",
+            ["Emma", "Kovacs"],
+            "Anna Novak wrote; user emma_kovacs_9839 logged in.",
+            "e0:N2,D1,O1;e1:N2,D1,O1",
+            id="handle",
+        ),
+        pytest.param(
+            "Call Alice. Alice will answer.", ["Alice"], "Call Sara. Alice will answer.", "e0:N2,D1,O1", id="repeat"
+        ),
+    ],
+)
+def test_leftovers_explain_a_flagged_row(
+    text: str, values: list[str], rewritten: str, cause: str, tmp_path: Path
+) -> None:
+    """A met row flagged for review: its leftovers name each kept undetected value, with the spans that explain it."""
+    policy = _disposition(*((value, "replace", "tagged") for value in values))
+    adapter = _ScriptedAdapter({"rec": 0}, initial=rewritten, policy=policy)
+    result = _run_result(adapter, tmp_path, text, [_span(text, value) for value in values])
+
+    assert (result.outcome(0).qualification, result.dataframe["needs_human_review"].tolist()) == ("met", [True])
+    leftovers = result.leftovers(0)
+    assert format_cause(leftovers) == cause
+    assert all(x.undetected_kept and not x.over_bound for x in leftovers)
+    first = leftovers[0]
+    assert (first.value, first.label, first.span) == (
+        values[0],
+        "first_name",
+        Span(text.index(values[0]), text.index(values[0]) + len(values[0])),
+    )
+    assert [rewritten[s.slice].casefold() for s in first.output_spans] == [values[0].casefold()] * first.in_output
+    assert [text[s.slice].casefold() for s in first.undetected_spans] == [values[0].casefold()] * (
+        first.in_source - first.detected
+    )
+
+
+def test_leftovers_reject_a_result_without_the_trace() -> None:
+    result = AnonymizerResult(
+        dataframe=pd.DataFrame(),
+        trace_dataframe=pd.DataFrame({"text": ["x"]}),
+        resolved_text_column="text",
+        failed_records=[],
+    )
+    with pytest.raises(ValueError, match="no leftover trace"):
+        result.leftovers(0)

@@ -47,6 +47,7 @@ from anonymizer.engine.replace import route
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult, LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.spans import Span, Spans
 from anonymizer.interface.anonymizer import Anonymizer
 
 
@@ -895,3 +896,94 @@ def test_annotate_has_no_advisory() -> None:
 
     assert "verify-no-original" not in result.prepared.names
     assert result.outcome(graph.targets[0]).advisories == ()
+
+
+def _agrees(result: Any, row: int, cause: str) -> None:
+    """Every ``e<i>:N..,D..,O..`` entry of ``cause`` is the helper's entry ``i`` with the same counts."""
+    entries = {
+        f"e{'-' if x.position is None else x.position}": f"N{x.in_source},D{x.detected},O{x.in_output}"
+        for x in result.leftovers(row)
+    }
+    assert cause
+    for part in cause.split(";"):
+        key, counts = part.split(":")
+        assert entries[key] == counts
+
+
+def test_leftovers_explain_a_substitute_that_brings_a_value_back(tmp_path: Path) -> None:
+    text = "Alice met José."
+    entities = [_ent("Alice", 0), _ent("José", 10)]
+    replacements = [
+        {"original": "Alice", "label": "first_name", "synthetic": "Jose Ruiz"},
+        {"original": "José", "label": "first_name", "synthetic": "Tom"},
+    ]
+    llm_workflow = Mock()
+    llm_workflow.generate_validated_maps.side_effect = lambda frame, **_: LlmReplaceResult(
+        dataframe=frame.assign(**{COL_REPLACEMENT_MAP: [{"replacements": replacements}]}),
+        failed_records=[],
+        source_positions=(0,),
+    )
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": entities}]}),
+        failed_records=[],
+        source_positions=(0,),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": [text]}).to_csv(csv_path, index=False)
+    anonymizer = Anonymizer(detection_workflow=detector, replace_runner=ReplacementWorkflow(llm_workflow=llm_workflow))
+    result = anonymizer.run(
+        config=AnonymizerConfig(replace=Substitute(), emit_telemetry=False),
+        data=AnonymizerInput(source=str(csv_path), text_column="text"),
+    )
+
+    (advisory,) = result.outcome(0).advisories
+    assert (advisory.check, advisory.status, advisory.cause) == ("no_detected_value_added", "failed", "e1:N1,D1,O1")
+    _agrees(result, 0, advisory.cause)
+    jose = result.leftovers(0)[1]
+    assert (jose.value, jose.label, jose.span, jose.undetected_spans, jose.output_spans) == (
+        "José",
+        "first_name",
+        Span(10, 14),
+        Spans(),
+        Spans([Span(0, 4)]),
+    )
+    with pytest.raises(IndexError):
+        result.leftovers(1)
+
+
+def test_leftovers_name_a_value_by_its_own_span(tmp_path: Path) -> None:
+    """John matches inside "John Smith" first, yet its entry is John's own span."""
+    text = "John Smith called. John said hi."
+    entities = [_ent("John Smith", 0, "full_name"), _ent("John", 19)]
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": entities}]}),
+        failed_records=[],
+        source_positions=(0,),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": [text]}).to_csv(csv_path, index=False)
+    result = Anonymizer(detection_workflow=detector).run(
+        config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
+        data=AnonymizerInput(source=str(csv_path), text_column="text"),
+    )
+
+    smith, john = result.leftovers(0)
+    assert (smith.position, smith.value, smith.label, smith.span, smith.in_source, smith.detected) == (
+        0,
+        "John Smith",
+        "full_name",
+        Span(0, 10),
+        1,
+        1,
+    )
+    assert (john.position, john.value, john.label, john.span, john.in_source, john.detected, john.in_output) == (
+        1,
+        "John",
+        "first_name",
+        Span(19, 23),
+        2,
+        2,
+        0,
+    )
