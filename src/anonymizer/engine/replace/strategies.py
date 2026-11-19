@@ -17,6 +17,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.postprocess import EntitySpan
 from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.spans import Span
 
 logger = logging.getLogger("anonymizer")
 
@@ -148,7 +149,8 @@ def _apply_indexed_replacements(
     applied = 0
     skipped: Counter[str] = Counter()
     for start, end, value, label in spans:
-        if start < cursor or end <= start or end > len(text) or text[start:end] != value:
+        span = Span.in_text(start, end, text)
+        if span is None or span.start < cursor or text[span.slice] != value:
             skipped[label or "unknown"] += 1
             continue
         synthetic = _resolve_synthetic(
@@ -161,9 +163,9 @@ def _apply_indexed_replacements(
         if synthetic is None:
             skipped[label or "unknown"] += 1
             continue
-        parts.append(text[cursor:start])
+        parts.append(text[cursor : span.start])
         parts.append(synthetic)
-        cursor = end
+        cursor = span.end
         applied += 1
     parts.append(text[cursor:])
     return "".join(parts), applied, skipped
