@@ -2099,6 +2099,37 @@ def test_evaluate_matches_run_outcomes_by_record_id(
     assert observed == {name: outcome or unassessed for name, outcome in expected.items()}
 
 
+class _ReversingReplaceRunner(ReplacementWorkflow):
+    """``evaluate`` scores every row and returns them in reverse order."""
+
+    def evaluate(self, dataframe: pd.DataFrame, **_: object) -> ReplacementResult:
+        return ReplacementResult(_reversed(dataframe.assign(**{COL_ENTITY_COVERAGE: 1.0})), failed_records=[])
+
+
+class _ReversingRewriteRunner(_StubRewriteRunner):
+    """``evaluate`` scores every row and returns them in reverse order."""
+
+    def evaluate(self, dataframe: pd.DataFrame, **_: object) -> RewriteResult:
+        return RewriteResult(_reversed(dataframe.assign(**{COL_JUDGE_EVALUATION: [{"privacy": 1}] * 2})), [])
+
+
+@pytest.mark.parametrize("mode", list(_MODES))
+def test_evaluate_keeps_each_run_outcome_when_the_judge_reorders_rows(tmp_path: Path, mode: str) -> None:
+    anonymizer, _, data = _two_row_anonymizer(tmp_path, record_ids=True)
+    anonymizer._replace_runner = _ReversingReplaceRunner()
+    anonymizer._rewrite_runner = _ReversingRewriteRunner(Mock())
+    run_result = _with_outcomes(anonymizer.run(config=_MODES[mode], data=data))
+
+    with patch.object(EntityCoverageWorkflow, "run_non_critical", _stub_coverage):
+        evaluated = anonymizer.evaluate(run_result)
+
+    observed = {
+        str(text).split()[0]: dataclasses.replace(evaluated.outcome(i), advisories=())
+        for i, text in enumerate(evaluated.trace_dataframe["text"])
+    }
+    assert observed == {"Bob": _BOB, "Alice": _ALICE}
+
+
 def test_reevaluating_replaces_the_judge_advisories(tmp_path: Path) -> None:
     anonymizer, _, data = _two_row_anonymizer(tmp_path, record_ids=True)
     anonymizer._replace_runner = _AllRowsReplaceRunner()

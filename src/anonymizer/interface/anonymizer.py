@@ -285,8 +285,10 @@ def _reported_outcomes(
     if ran is not None and ran_ids is not None and len(ran) == len(ran_ids):
         counts = Counter(ran_ids)
         by_id = {i: outcome for i, outcome in zip(ran_ids, ran) if counts[i] == 1}
-    ids = _record_ids(source)
-    base = [unassessed] * len(source) if ids is None else [by_id.get(i, unassessed) for i in ids]
+    # Each output row's own id; ``positions`` places only judge assessments, so a reordered output keeps its outcomes.
+    source_ids = _record_ids(source)
+    ids = _record_ids(output) or (None if source_ids is None else [source_ids[p] for p in positions])
+    base = [unassessed] * len(positions) if ids is None else [by_id.get(i, unassessed) for i in ids]
 
     def advisory(p: int, i: int) -> Advisory:
         row = result.state.rows[p]
@@ -301,11 +303,11 @@ def _reported_outcomes(
 
     judges = {names[i] for i in verifiers}
 
-    def reported(p: int) -> TargetOutcome:
-        kept = (a for a in base[p].advisories if a.verifier not in judges)  # an earlier evaluation's judges
-        return replace(base[p], advisories=(*kept, *(advisory(p, i) for i in verifiers)))
+    def reported(k: int, p: int) -> TargetOutcome:
+        kept = (a for a in base[k].advisories if a.verifier not in judges)  # an earlier evaluation's judges
+        return replace(base[k], advisories=(*kept, *(advisory(p, i) for i in verifiers)))
 
-    return tuple(reported(p) for p in positions)
+    return tuple(reported(k, p) for k, p in enumerate(positions))
 
 
 def _has_entities_for_evaluation(raw: object) -> bool:
