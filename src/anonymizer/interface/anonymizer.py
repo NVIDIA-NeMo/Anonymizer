@@ -286,9 +286,13 @@ def _reported_outcomes(
         counts = Counter(ran_ids)
         by_id = {i: outcome for i, outcome in zip(ran_ids, ran) if counts[i] == 1}
     # Each output row's own id; ``positions`` places only judge assessments, so a reordered output keeps its outcomes.
+    ids: Sequence[str | None] | None = _record_ids(output)
     source_ids = _record_ids(source)
-    ids = _record_ids(output) or (None if source_ids is None else [source_ids[p] for p in positions])
-    base = [unassessed] * len(positions) if ids is None else [by_id.get(i, unassessed) for i in ids]
+    if not ids and source_ids is not None and COL_TEXT in source.columns and COL_TEXT in output.columns:
+        # No ids on the judge's rows: borrow a source row's id only where the row still holds that row's text.
+        texts, source_texts = list(output[COL_TEXT]), list(source[COL_TEXT])
+        ids = [source_ids[p] if texts[k] == source_texts[p] else None for k, p in enumerate(positions)]
+    base = [unassessed] * len(positions) if not ids else [by_id.get(i, unassessed) if i else unassessed for i in ids]
 
     def advisory(p: int, i: int) -> Advisory:
         row = result.state.rows[p]

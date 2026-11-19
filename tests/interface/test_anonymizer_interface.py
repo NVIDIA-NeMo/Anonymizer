@@ -2130,6 +2130,30 @@ def test_evaluate_keeps_each_run_outcome_when_the_judge_reorders_rows(tmp_path: 
     assert observed == {"Bob": _BOB, "Alice": _ALICE}
 
 
+class _ReversingRunnerWithoutIds(ReplacementWorkflow):
+    """``evaluate`` scores every row, returns them in reverse order and drops the record ids."""
+
+    def evaluate(self, dataframe: pd.DataFrame, **_: object) -> ReplacementResult:
+        scored = _reversed(dataframe.assign(**{COL_ENTITY_COVERAGE: 1.0})).drop(columns=[RECORD_ID_COLUMN])
+        return ReplacementResult(scored, failed_records=[])
+
+
+def test_evaluate_does_not_guess_outcomes_for_reordered_rows_without_ids(tmp_path: Path) -> None:
+    anonymizer, _, data = _two_row_anonymizer(tmp_path, record_ids=True)
+    anonymizer._replace_runner = _ReversingRunnerWithoutIds()
+    run_result = _with_outcomes(anonymizer.run(config=_MODES["replace"], data=data))
+
+    with patch.object(EntityCoverageWorkflow, "run_non_critical", _stub_coverage):
+        evaluated = anonymizer.evaluate(run_result)
+
+    unassessed = TargetOutcome("success", "not_assessed", False, False)
+    observed = {
+        str(text).split()[0]: dataclasses.replace(evaluated.outcome(i), advisories=())
+        for i, text in enumerate(evaluated.trace_dataframe["text"])
+    }
+    assert observed == {"Bob": unassessed, "Alice": unassessed}
+
+
 def test_reevaluating_replaces_the_judge_advisories(tmp_path: Path) -> None:
     anonymizer, _, data = _two_row_anonymizer(tmp_path, record_ids=True)
     anonymizer._replace_runner = _AllRowsReplaceRunner()
