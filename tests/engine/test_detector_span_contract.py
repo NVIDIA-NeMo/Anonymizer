@@ -42,10 +42,10 @@ from anonymizer.engine.detection.detection_workflow import (
 )
 from anonymizer.engine.graph_core.authoring import GraphScope
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.ndd.workflow_utils import select_seed_cols
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_generation import _prepare_rewrite_tagged_text
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
-from anonymizer.engine.rewrite.workflow_utils import select_seed_cols
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.interface.anonymizer import Anonymizer
 
