@@ -1874,9 +1874,7 @@ def test_combined_runner_overriding_build_graph_with_release_signature_runs(
         state.any_high_leaked: False,
         state.needs_repair: False,
     }
-    assert builtin_finalizer.generator_function(dict(row), builtin_finalizer.generator_params) == (
-        override_finalizer.generator_function(dict(row), override_finalizer.generator_params)
-    )
+    assert builtin_finalizer.generator_function(dict(row)) == override_finalizer.generator_function(dict(row))
 
 
 def test_run_reports_each_rows_protection_outcome(tmp_path: Path) -> None:

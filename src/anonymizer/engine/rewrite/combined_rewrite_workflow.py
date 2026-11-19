@@ -56,7 +56,6 @@ from anonymizer.engine.replace.llm_replace_workflow import (
 )
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
-from anonymizer.engine.rewrite.findings import needs_human_review
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
@@ -319,10 +318,7 @@ def _repair_columns(
     ]
 
 
-def _finalization_column(
-    states: list[EvaluationState],
-    evaluation: EvaluationCriteria,
-) -> CustomColumnConfig:
+def _finalization_column(states: list[EvaluationState]) -> CustomColumnConfig:
     required_columns = list(
         dict.fromkeys(
             column
@@ -358,7 +354,7 @@ def _finalization_column(
         required_columns=required_columns,
         side_effect_columns=side_effect_columns,
     )
-    def finalize(row: dict[str, Any], generator_params: EvaluationCriteria) -> dict[str, Any]:
+    def finalize(row: dict[str, Any]) -> dict[str, Any]:
         state = next(
             (candidate for candidate in reversed(states) if row.get(candidate.needs_repair) is not None),
             states[0],
@@ -373,13 +369,13 @@ def _finalization_column(
         row[COL_ANY_HIGH_LEAKED] = row.get(state.any_high_leaked)
         row[COL_NEEDS_REPAIR] = row.get(state.needs_repair)
         row[COL_REPAIR_ITERATIONS] = state.iteration
-        row[COL_NEEDS_HUMAN_REVIEW] = needs_human_review(row, generator_params)
+        # A placeholder that keeps the column's place and type: ``_flag_review`` assigns the flag after the final checks.
+        row[COL_NEEDS_HUMAN_REVIEW] = False
         return row
 
     return CustomColumnConfig(
         name=COL_REWRITTEN_TEXT,
         generator_function=finalize,
-        generator_params=evaluation,
         propagate_skip=False,
     )
 
@@ -461,7 +457,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 )
             )
 
-        columns.append(_finalization_column(evaluation_states, evaluation))
+        columns.append(_finalization_column(evaluation_states))
         internal_columns = [
             COL_ENTITY_EXAMPLES,
             COL_ENTITIES_FOR_REPLACE,

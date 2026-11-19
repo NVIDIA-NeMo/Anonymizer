@@ -166,9 +166,7 @@ def test_graph_unrolls_conditional_repairs(
         assert previous.needs_repair in condition.columns
 
 
-@pytest.mark.parametrize("replacement_ready", [True, False])
 def test_finalizer_selects_last_executed_iteration(
-    replacement_ready: bool,
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
@@ -180,7 +178,7 @@ def test_finalizer_selects_last_executed_iteration(
     )
     initial, repaired, skipped = graph.evaluation_states
     row = {
-        COL_REWRITE_REPLACEMENT_READY: replacement_ready,
+        COL_REWRITE_REPLACEMENT_READY: True,
         initial.rewritten_text: "Initial rewrite",
         initial.quality_reanswer: {"answers": []},
         initial.privacy_reanswer: {"answers": []},
@@ -206,7 +204,7 @@ def test_finalizer_selects_last_executed_iteration(
     finalizer = graph.columns[-1]
     assert isinstance(finalizer, CustomColumnConfig)
 
-    result = finalizer.generator_function(row, finalizer.generator_params)
+    result = finalizer.generator_function(row)
 
     assert result[COL_REWRITTEN_TEXT] == "Repaired rewrite"
     assert result[COL_UTILITY_SCORE] == 0.9
@@ -215,16 +213,19 @@ def test_finalizer_selects_last_executed_iteration(
     assert result[COL_ANY_HIGH_LEAKED] is False
     assert result[COL_NEEDS_REPAIR] is False
     assert result[COL_REPAIR_ITERATIONS] == 1
-    assert result[COL_NEEDS_HUMAN_REVIEW] is (not replacement_ready)
 
 
-@pytest.mark.parametrize(("leakage_mass", "expected"), [(0.1, False), (np.nan, True), (None, True)])
-def test_finalizer_flags_unavailable_leakage(
+@pytest.mark.parametrize(
+    "overrides",
+    [{}, {COL_REWRITE_REPLACEMENT_READY: False}, {"leakage_mass": np.nan}, {"leakage_mass": None}, {"high": True}],
+)
+def test_finalizer_leaves_the_review_flag_to_the_final_checks(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
-    leakage_mass: float | None,
-    expected: bool,
+    overrides: dict[str, Any],
 ) -> None:
+    """``needs_human_review`` is decided after the workflow, from the final checks and utility; the finalizer only
+    holds the column with a placeholder, whatever the row's metrics."""
     graph = CombinedRewriteWorkflow(adapter=Mock()).build_graph(
         selected_models=stub_rewrite_model_selection,
         replace_model_selection=stub_replace_model_selection,
@@ -233,19 +234,19 @@ def test_finalizer_flags_unavailable_leakage(
     )
     (state,) = graph.evaluation_states
     row = {
-        COL_REWRITE_REPLACEMENT_READY: True,
+        COL_REWRITE_REPLACEMENT_READY: overrides.get(COL_REWRITE_REPLACEMENT_READY, True),
         state.rewritten_text: "Rewrite",
         state.utility_score: 0.9,
-        state.leakage_mass: leakage_mass,
-        state.any_high_leaked: False,
+        state.leakage_mass: overrides.get("leakage_mass", 0.1),
+        state.any_high_leaked: overrides.get("high", False),
         state.needs_repair: False,
     }
     finalizer = graph.columns[-1]
     assert isinstance(finalizer, CustomColumnConfig)
 
-    result = finalizer.generator_function(row, finalizer.generator_params)
+    result = finalizer.generator_function(row)
 
-    assert result[COL_NEEDS_HUMAN_REVIEW] is expected
+    assert result[COL_NEEDS_HUMAN_REVIEW] is False
 
 
 def test_combined_graph_preserves_malformed_rewrite_handling(
@@ -266,12 +267,10 @@ def test_combined_graph_preserves_malformed_rewrite_handling(
     assert result[COL_REWRITTEN_TEXT_INITIAL] is None
 
 
-@pytest.mark.parametrize("replacement_ready", [True, False])
 def test_conditional_repairs_execute_independently_per_row(
     tmp_path: Path,
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
-    replacement_ready: bool,
 ) -> None:
     data_designer = DataDesigner(artifact_path=tmp_path / "artifacts", auto_configure_logging=False)
     adapter = NddAdapter(data_designer)
@@ -289,7 +288,7 @@ def test_conditional_repairs_execute_independently_per_row(
             pd.DataFrame(
                 {
                     _REPAIRS_NEEDED: [0, 1, 2, 3],
-                    COL_REWRITE_REPLACEMENT_READY: replacement_ready,
+                    COL_REWRITE_REPLACEMENT_READY: True,
                 }
             ),
             model_configs=[],
@@ -307,7 +306,8 @@ def test_conditional_repairs_execute_independently_per_row(
     ]
     assert result.dataframe[COL_REPAIR_ITERATIONS].tolist() == [0, 1, 2, 2]
     assert result.dataframe[COL_NEEDS_REPAIR].tolist() == [False, False, False, True]
-    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [not replacement_ready] * 3 + [True]
+    # The final checks after the workflow decide the review flag.
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False] * 4
     workflow_records = [record for record in collector.records if record["record_type"] == "ndd_workflow"]
     assert len(workflow_records) == 1
     assert workflow_records[0]["workflow_name"] == "rewrite-combined"
