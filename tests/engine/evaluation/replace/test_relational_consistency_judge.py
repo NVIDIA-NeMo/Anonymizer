@@ -337,6 +337,8 @@ def test_evaluate_invokes_adapter_with_correct_alias_and_schema(
             class _Result:
                 dataframe = out
                 failed_records: list = []
+                source_positions = tuple(range(len(dataframe)))
+                observed_requests = None
 
             return _Result()
 
@@ -379,6 +381,8 @@ def test_evaluate_marks_unavailable_for_malformed_payload(
             class _Result:
                 dataframe = out
                 failed_records: list = []
+                source_positions = tuple(range(len(dataframe)))
+                observed_requests = None
 
             return _Result()
 
@@ -429,6 +433,8 @@ def test_evaluate_propagates_failing_relations(
             class _Result:
                 dataframe = out
                 failed_records: list = []
+                source_positions = tuple(range(len(dataframe)))
+                observed_requests = None
 
             return _Result()
 

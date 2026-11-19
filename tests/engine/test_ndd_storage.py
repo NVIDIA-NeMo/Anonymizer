@@ -30,6 +30,7 @@ from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelect
 from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_LATENT_ENTITIES,
+    COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
     COL_SEED_ENTITIES,
     COL_TAG_NOTATION,
@@ -128,6 +129,32 @@ def test_json_handoff_roundtrip_preserves_logical_shapes(tmp_path: Path, values:
     assert read_storage_plan(pq.read_schema(second_source.path)).columns == {COL_VALIDATION_DECISIONS: [[]]}
     assert original.attrs == {}
     assert original[COL_VALIDATION_DECISIONS].tolist() == values
+
+
+def _application(counts: dict[str, int]) -> dict[str, Any]:
+    skipped = sum(counts.values())
+    return {
+        "targeted_span_count": 2,
+        "applied_span_count": 2 - skipped,
+        "skipped_span_count": skipped,
+        "skipped_span_label_counts": counts,
+    }
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        [_application({}), _application({})],
+        [_application({}), _application({"city": 1})],
+    ],
+    ids=["all-empty", "mixed"],
+)
+def test_replacement_application_seed_roundtrip_is_exact(tmp_path: Path, values: list[Any]) -> None:
+    original = pd.DataFrame({COL_REPLACEMENT_APPLICATION: values})
+    source = LocalFileSeedSource.from_dataframe(prepare_json_storage_seed(original), str(tmp_path / "seed.parquet"))
+    restored = read_parquet_dataset(Path(source.path))
+
+    assert restored[COL_REPLACEMENT_APPLICATION].tolist() == values
 
 
 def test_arrow_backed_batch_column_is_materialized_without_dtype_reuse(tmp_path: Path) -> None:
