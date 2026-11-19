@@ -205,6 +205,8 @@ session = Session.restore(SessionSnapshot.from_bytes(saved))
   it out). It is `None` without a stable Session.
 - Two different values never share a substitute across those calls, and a new substitute never equals a value an
   earlier call replaced.
+- A value the Session already holds needs no new mapping from the model: it is not retried and cannot fail its
+  record. A record can still fail for a value the Session does not hold.
 - Redact, Annotate and Hash run unchanged and leave the Session unchanged. Hash is stable across calls only when
   every call uses the same hash configuration.
 - Rewrite, and a custom replace or rewrite runner that overrides `run()`, reject a stable Session with
