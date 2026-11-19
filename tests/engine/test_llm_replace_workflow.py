@@ -701,14 +701,15 @@ _FILLED = [
     ("replacements", "expected"),
     [
         ([{"original": "Jordan", "label": "first_name, last_name", "synthetic": "Alex"}], _FILLED),
-        ([{"original": "jordan", "label": "person", "synthetic": "Alex"}], _FILLED),
+        # The Rewrite fill matches the exact original only, so a case variant fills nothing.
+        ([{"original": "jordan", "label": "person", "synthetic": "Alex"}], []),
         ([{"original": "Jordan", "label": "first_name", "synthetic": "Alex"}], _FILLED),
         (
             [
                 {"original": "JORDAN", "label": "person", "synthetic": "Alex"},
                 {"original": "jordan", "label": "person", "synthetic": "Sam"},
             ],
-            _FILLED,
+            [],
         ),
         (
             [

@@ -542,7 +542,9 @@ def _filter_replacement_map_to_input_entities(
     the same exact label against the full requested inventory, then restores
     the trusted original. Ambiguous or otherwise changed originals are dropped.
     Collisions between a substitute and a value are left to
-    ``_fold_replacement_maps``.
+    ``_fold_replacement_maps``. Without reconciliation (the Rewrite path), an
+    unfilled pair takes the same value's substitute under another label, else
+    an entry with the exact same original; Substitute retries it instead.
     """
     if isinstance(raw_map, BaseModel):
         raw_map = raw_map.model_dump(mode="python")
@@ -586,21 +588,25 @@ def _filter_replacement_map_to_input_entities(
             reconciled_labels[replacement.label] += 1
         filled[key] = replacement.synthetic
         filtered.append(replacement.model_dump())
-    by_folded: dict[str, str] = {}
-    for replacement in parsed_map.replacements:
-        by_folded.setdefault(_fold(replacement.original), replacement.synthetic)
-    # An unfilled pair (the model echoed joined labels, or returned one entry for a value detected under several
-    # labels) takes an exact entry of the same value under another label, else the first entry whose folded original
-    # matches. It keeps the requested original and label, since Replace resolves by the exact pair first.
-    for entity in parsed_entities.entities_by_value:
-        same_value = next((filled[(entity.value, lb)] for lb in entity.labels if (entity.value, lb) in filled), None)
-        for label in entity.labels:
-            if not (entity.value and label) or (entity.value, label) in filled:
-                continue
-            synthetic = same_value or by_folded.get(_fold(entity.value))
-            if synthetic is not None:
-                filled[(entity.value, label)] = synthetic
-                filtered.append({"original": entity.value, "label": label, "synthetic": synthetic})
+    if not reconcile_unicode_whitespace:
+        # Rewrite path only; Substitute retries an unfilled pair instead. An unfilled pair (the model echoed joined
+        # labels, or returned one entry for a value detected under several labels) takes the substitute of the same
+        # value under another label, else the first entry with the exact same original under any label. It keeps the
+        # requested original and label, since Replace resolves by the exact pair first.
+        by_original: dict[str, str] = {}
+        for replacement in parsed_map.replacements:
+            by_original.setdefault(replacement.original, replacement.synthetic)
+        for entity in parsed_entities.entities_by_value:
+            same_value = next(
+                (filled[(entity.value, lb)] for lb in entity.labels if (entity.value, lb) in filled), None
+            )
+            for label in entity.labels:
+                if not (entity.value and label) or (entity.value, label) in filled:
+                    continue
+                synthetic = same_value or by_original.get(entity.value)
+                if synthetic is not None:
+                    filled[(entity.value, label)] = synthetic
+                    filtered.append({"original": entity.value, "label": label, "synthetic": synthetic})
 
     if reconciled_labels:
         logger.debug(
