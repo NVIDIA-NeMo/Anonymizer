@@ -38,12 +38,13 @@ def test_rewrite_reports_rows_that_fail_detection(tmp_path: Path, rejected: list
     pd.DataFrame({"text": texts}).to_csv(csv_path, index=False)
 
     def entities(row: int) -> dict:
-        name, first = texts[row].split()[:2]
-        full = f"{name} {first}"
-        spans = [{"id": "a", "value": name, "label": "first_name", "start_position": 0, "end_position": len(name)}]
-        if row in rejected:  # two overlapping spans: the graph rejects the row's mentions at detect
+        name, last, verb = texts[row].split()[:3]
+        full, tail = f"{name} {last}", f"{last} {verb}"
+        spans = [{"id": "a", "value": full, "label": "full_name", "start_position": 0, "end_position": len(full)}]
+        if row in rejected:  # two partially overlapping spans: the graph rejects the row's mentions at detect
+            start = len(name) + 1
             spans.append(
-                {"id": "b", "value": full, "label": "full_name", "start_position": 0, "end_position": len(full)}
+                {"id": "b", "value": tail, "label": "other", "start_position": start, "end_position": start + len(tail)}
             )
         return {"entities": spans}
 
