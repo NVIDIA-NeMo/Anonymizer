@@ -7,7 +7,7 @@ import json
 from typing import Any
 
 from data_designer.config import custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 
 from anonymizer.config.models import RewriteModelSelection
@@ -24,6 +24,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.ndd.model_reply import no_reply
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import parse_sensitivity_disposition
 from anonymizer.engine.schemas import (
@@ -37,6 +38,7 @@ from anonymizer.engine.schemas import (
     SensitivityDispositionSchema,
     SensitivityLevel,
 )
+from anonymizer.engine.workflow_columns.reply.config import ReplyColumnConfig
 
 # Derived from the schema so the Jinja key stays in sync with the field name.
 _DOMAIN_KEY = next(
@@ -231,7 +233,13 @@ Sensitivity disposition:
 
 @custom_column_generator(required_columns=[COL_MEANING_UNITS])
 def _serialize_meaning_units(row: dict[str, Any]) -> dict[str, Any]:
-    """Serialize MeaningUnitsSchema to a JSON string for injection into the QA generation prompt."""
+    """Serialize MeaningUnitsSchema to a JSON string for injection into the QA generation prompt.
+
+    Unavailable meaning units stay unavailable, and the quality QA is then not asked.
+    """
+    if no_reply(row.get(COL_MEANING_UNITS)):
+        row[COL_MEANING_UNITS_SERIALIZED] = None
+        return row
     meaning_units = MeaningUnitsSchema.model_validate(row.get(COL_MEANING_UNITS, {}))
     row[COL_MEANING_UNITS_SERIALIZED] = json.dumps([u.model_dump() for u in meaning_units.units], ensure_ascii=False)
     return row
@@ -348,7 +356,8 @@ class QAGenerationWorkflow:
                 name=COL_SENSITIVITY_DISPOSITION_BLOCK,
                 generator_function=_format_disposition_block,
             ),
-            LLMStructuredColumnConfig(
+            # A meaning-units or quality-QA reply that never parses keeps the row; its utility is then unavailable.
+            ReplyColumnConfig(
                 name=COL_MEANING_UNITS,
                 prompt=_get_meaning_unit_extraction_prompt(),
                 model_alias=meaning_extractor_alias,
@@ -358,11 +367,12 @@ class QAGenerationWorkflow:
                 name=COL_MEANING_UNITS_SERIALIZED,
                 generator_function=_serialize_meaning_units,
             ),
-            LLMStructuredColumnConfig(
+            ReplyColumnConfig(
                 name=COL_QUALITY_QA,
                 prompt=_get_quality_qa_prompt(),
                 model_alias=qa_generator_alias,
                 output_format=QualityQAPairsSchema,
+                ask_only_if=[COL_MEANING_UNITS_SERIALIZED],
             ),
             CustomColumnConfig(
                 name=COL_PRIVACY_QA,

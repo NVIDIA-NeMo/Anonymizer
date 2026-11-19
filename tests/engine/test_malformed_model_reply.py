@@ -33,14 +33,20 @@ from anonymizer.engine.constants import (
     COL_DOMAIN,
     COL_DOMAIN_SUPPLEMENT,
     COL_LEAKAGE_MASS,
+    COL_MEANING_UNITS,
     COL_MEANING_UNITS_SERIALIZED,
+    COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
     COL_PRIVACY_QA,
     COL_PRIVACY_QA_REANSWER,
     COL_QUALITY_QA,
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
+    COL_REWRITE_BASELINE_TEXT,
+    COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
+    COL_REWRITTEN_TEXT_INITIAL,
+    COL_SENSITIVITY_DISPOSITION,
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
@@ -48,6 +54,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import load_default_model_selection
+from anonymizer.engine.rewrite import combined_rewrite_workflow as combined
 from anonymizer.engine.rewrite.domain_classification import _DOMAIN_BY_ENUM, DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
@@ -64,6 +71,7 @@ _OTHER_REPLIES = {
     "scripted-detector": '{"entities": []}',
     "scripted-augmenter": '```json\n{"entities": []}\n```',
     "scripted-domain": '{"domain": "META_TEXT", "domain_confidence": 0.5}',
+    "scripted-meaning": '{"units": [{"id": 1, "aspect": "Topic", "unit": "Nothing to see.", "importance": "important"}]}',
 }
 
 # The 11-14 reply shape: malformed JSON at context_after, which the parser's repair turns into an item without label.
@@ -247,7 +255,7 @@ def test_quality_qa_already_retries_a_malformed_reply(
     assert calls[alias] == 2
 
 
-def test_quality_qa_reply_malformed_on_every_attempt_still_fails_the_record(
+def test_quality_qa_reply_malformed_on_every_attempt_keeps_the_row_without_quality_questions(
     tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
 ) -> None:
     script, calls = scripted
@@ -255,8 +263,9 @@ def test_quality_qa_reply_malformed_on_every_attempt_still_fails_the_record(
 
     result, alias = _quality_qa(tmp_path)
 
-    assert len(result.dataframe) == 1
-    assert [record.step for record in result.failed_records] == ["rewrite-pipeline"]
+    assert result.failed_records == []
+    assert len(result.dataframe) == 2
+    assert pd.isna(result.dataframe.iloc[0][COL_QUALITY_QA])
     assert calls[alias] == 6
 
 
@@ -468,3 +477,146 @@ def test_domain_reply_that_parses_is_kept_as_returned(
     assert result.failed_records == []
     assert result.dataframe.iloc[0][COL_DOMAIN] == {"domain": "FINANCIAL", "domain_confidence": 0.9}
     assert calls[_DOMAIN] == 2
+
+
+_MEANING = "scripted-meaning"
+_DISPOSITION = {
+    "sensitivity_disposition": [
+        {
+            "id": 1,
+            "source": "tagged",
+            "category": "direct_identifier",
+            "sensitivity": "high",
+            "entity_label": "card_last_four",
+            "entity_value": "7312",
+            "protection_method_suggestion": "replace",
+        }
+    ]
+}
+
+
+def _qa_pipeline(tmp_path: Path):
+    selection = RewriteModelSelection.model_validate(
+        {
+            **load_default_model_selection().rewrite.model_dump(),
+            "meaning_extractor": _MEANING,
+            "qa_generator": "scripted-qa",
+        }
+    )
+    domain = {"domain": "OTHER", "domain_confidence": 0.5}
+    return _adapter(tmp_path).run_workflow(
+        pd.DataFrame(
+            {
+                COL_TEXT: [_TEXT, _OTHER_TEXT],
+                COL_DOMAIN: [domain, domain],
+                COL_DOMAIN_SUPPLEMENT: ["Keep the charge.", "Keep it."],
+                COL_SENSITIVITY_DISPOSITION: [_DISPOSITION, _DISPOSITION],
+            }
+        ),
+        model_configs=[_model(_MEANING), _model("scripted-qa")],
+        columns=QAGenerationWorkflow().columns(selected_models=selection),
+        workflow_name="rewrite-pipeline",
+    )
+
+
+def test_meaning_units_reply_unparsed_keeps_the_row_and_skips_the_quality_questions(
+    tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
+) -> None:
+    script, calls = scripted
+    script[_MEANING] = ["I cannot answer that."]
+    script["scripted-qa"] = [_GOOD_QA]
+
+    result = _qa_pipeline(tmp_path)
+
+    assert result.failed_records == []
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row[COL_MEANING_UNITS])
+    assert pd.isna(row[COL_QUALITY_QA])
+    assert calls[_MEANING] == 6
+    assert calls["scripted-qa"] == 0  # not asked about missing meaning units
+    assert row[COL_PRIVACY_QA]["items"][0]["entity_value"] == "7312"  # privacy questions do not depend on them
+    assert result.dataframe.iloc[1][COL_QUALITY_QA]["items"]
+
+
+def _evaluate_rows(tmp_path: Path, quality_qa: Any, rewritten_text: Any = _EVAL_TEXT) -> Any:
+    selection = RewriteModelSelection.model_validate(
+        {**load_default_model_selection().rewrite.model_dump(), "evaluator": _EVALUATOR}
+    )
+    evaluation = Rewrite(privacy_goal=_PRIVACY_GOAL).evaluation
+    other_quality = {"items": [{**_EVAL_QUALITY_QA["items"][0], "reference_answer": _OTHER_TEXT}]}
+    return _adapter(tmp_path).run_workflow(
+        pd.DataFrame(
+            {
+                COL_REWRITTEN_TEXT: [rewritten_text, _OTHER_TEXT],
+                COL_QUALITY_QA: [quality_qa, other_quality],
+                COL_PRIVACY_QA: [_EVAL_PRIVACY_QA, _EVAL_PRIVACY_QA],
+            }
+        ),
+        model_configs=[_model(_EVALUATOR)],
+        columns=EvaluateWorkflow(adapter=Mock()).columns(selected_models=selection, evaluation=evaluation),
+        workflow_name="rewrite-evaluate-0",
+    )
+
+
+def test_evaluation_without_quality_questions_leaves_utility_unavailable_and_still_scores_privacy(
+    tmp_path: Path, evaluator: tuple[dict[str, list[str]], dict[str, int]]
+) -> None:
+    script, calls = evaluator
+
+    result = _evaluate_rows(tmp_path, quality_qa=None)
+
+    assert result.failed_records == []
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row[COL_QUALITY_QA_REANSWER])
+    assert pd.isna(row[COL_UTILITY_SCORE])
+    assert row[COL_LEAKAGE_MASS] == 0.0
+    assert calls["quality"] == 0
+    assert calls["compare"] == 0
+    assert calls["privacy"] == 1
+    assert result.dataframe.iloc[1][COL_UTILITY_SCORE] == pytest.approx(0.8)
+
+
+def _combined(tmp_path: Path, quality_qa: Any, rewritten_text: Any = _EVAL_TEXT) -> pd.DataFrame:
+    """Combined mode's evaluation and finalize columns in one real DataDesigner graph, as CombinedRewriteWorkflow runs them."""
+    selection = RewriteModelSelection.model_validate(
+        {**load_default_model_selection().rewrite.model_dump(), "evaluator": _EVALUATOR, "repairer": _EVALUATOR}
+    )
+    evaluation = Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=0).evaluation
+    state = combined._evaluation_state(0, COL_REWRITTEN_TEXT_INITIAL)
+    columns = [
+        *combined._evaluation_columns(Mock(), selected_models=selection, evaluation=evaluation, state=state),
+        combined._finalization_column([state], evaluation),
+    ]
+    other_quality = {"items": [{**_EVAL_QUALITY_QA["items"][0], "reference_answer": _OTHER_TEXT}]}
+    result = _adapter(tmp_path).run_workflow(
+        pd.DataFrame(
+            {
+                COL_TEXT: [_TEXT, _OTHER_TEXT],
+                COL_REWRITTEN_TEXT_INITIAL: [rewritten_text, _OTHER_TEXT],
+                COL_REWRITE_BASELINE_TEXT: [_EVAL_TEXT, _OTHER_TEXT],
+                COL_QUALITY_QA: [quality_qa, other_quality],
+                COL_PRIVACY_QA: [_EVAL_PRIVACY_QA, _EVAL_PRIVACY_QA],
+                COL_REWRITE_REPLACEMENT_READY: [True, True],
+            }
+        ),
+        model_configs=[_model(_EVALUATOR)],
+        columns=columns,
+        workflow_name="rewrite-combined",
+    )
+    assert result.failed_records == []
+    return result.dataframe
+
+
+def test_combined_evaluation_without_quality_questions_keeps_the_privacy_metrics(
+    tmp_path: Path, evaluator: tuple[dict[str, list[str]], dict[str, int]]
+) -> None:
+    script, calls = evaluator
+
+    frame = _combined(tmp_path, quality_qa=None)
+
+    row = frame.iloc[0]
+    assert row[COL_REWRITTEN_TEXT] == _EVAL_TEXT
+    assert pd.isna(row[COL_UTILITY_SCORE])
+    assert row[COL_LEAKAGE_MASS] == 0.0
+    assert row[COL_NEEDS_HUMAN_REVIEW]  # unavailable utility is flagged
+    assert calls["quality"] == 0

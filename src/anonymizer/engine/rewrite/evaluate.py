@@ -433,6 +433,9 @@ def _make_quality_reanswer_column(evaluator_alias: str) -> Any:
         model_aliases=[evaluator_alias],
     )
     async def _quality_reanswer(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
+        if no_reply(row.get(COL_QUALITY_QA)):
+            row[COL_QUALITY_QA_REANSWER] = None  # no quality questions to answer
+            return row
         qa = parse_quality_qa(row.get(COL_QUALITY_QA, {}))
         expected_ids = [item.id for item in qa.items]
 
