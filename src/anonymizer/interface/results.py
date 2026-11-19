@@ -30,19 +30,20 @@ class _DisplayMixin:
         row did not finish or a required check failed, could not decide (a ``could_not_assess`` reason) or gave
         no assessment, and ``"not_assessed"`` only when no check is required.
 
-        On an ``evaluate()`` result the outcome is the evaluated result's outcome for the row with the same record
-        id (``not_assessed`` and unprotected when that result carries no outcomes or no single row has that id), with
-        one advisory per judge appended, named by the judge, with status ``passed``, ``failed``, ``could_not_assess``,
+        On an ``evaluate()`` result each row is matched to its record only by a record id that occurs once in the
+        evaluated result. The outcome is the evaluated result's outcome for that record (``not_assessed`` and
+        unprotected when that result carries no outcomes), with one advisory per judge appended, named by the judge, with status ``passed``, ``failed``, ``could_not_assess``,
         ``scored`` or ``not_applicable``; ``cause`` says why: ``"judge_unavailable"`` when the judge gave no score,
         ``"raised"`` when its check raised, ``"blocked"`` when an earlier judge check of the row raised so it never ran.
         ``scored`` means the rewrite judge, which has no pass threshold, returned scores; read them in the judge
         evaluation column. ``not_applicable`` means the rewrite judge skipped a row with no detected entities, by
-        design. Judges never change qualification or release: those still say whether the run released the row. The
-        evaluated result is not changed.
+        design. A row without such an id (a custom runner dropped or changed it) is ``not_assessed`` and unprotected,
+        and each judge reads ``could_not_assess`` with cause ``"unplaced"``. Judges never change qualification or
+        release: those still say whether the run released the row. The evaluated result is not changed.
 
         Raises:
             IndexError: ``row`` is not an output row, or this result carries no outcomes (a custom runner's or
-                hand-built result, or an ``evaluate()`` result whose judge dropped rows that could not be placed).
+                hand-built result, or an ``evaluate()`` result none of whose rows could be placed).
         """
         outcomes = getattr(self, "_outcomes", None)  # absent on results pickled before outcomes were kept
         if outcomes is None:

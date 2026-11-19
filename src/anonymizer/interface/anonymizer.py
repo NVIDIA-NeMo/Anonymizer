@@ -91,7 +91,7 @@ from anonymizer.engine.graph_core.execution import (
 from anonymizer.engine.graph_core.kernel import Status, register_kind
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
+from anonymizer.engine.ndd.backend import call_on_empty_input, raise_if_cancelled
 from anonymizer.engine.ndd.model_loader import (
     parse_model_configs,
     parse_model_providers,
@@ -103,7 +103,6 @@ from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
-from anonymizer.engine.row_partitioning import try_resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
@@ -187,8 +186,9 @@ def _evaluate_on_graph(
 ) -> tuple[pd.DataFrame, list[FailedRecord], ProtectionResult]:
     """Run each judge body over the whole frame as one invocation, then the model-free verifiers per row.
 
-    A row is a target whose datum is its candidate text; nothing reads it. Each body fans its returned frame out by
-    position, so a row a judge dropped or could not score carries ``None`` verdicts, never a failed target. The
+    A row is a target whose datum is its candidate text; nothing reads it. Each body places its returned rows on
+    their targets by record id (``_source_positions``), so a row a judge dropped, could not score or returned
+    without a unique id carries ``None`` verdicts, never a failed target. The
     workflow requires no checks, so the verifiers report and qualify nothing. The output frame is the last body's, unfiltered; a body's own error is
     raised as 0.4.0 raised it.
     """
@@ -205,13 +205,12 @@ def _evaluate_on_graph(
             failures.extend(failed)
             present = [c for c in (*judge.columns, *judge.context) if c in current.columns]
             rows = current[present].to_dict("records") if present else [{} for _ in range(len(current))]
-            if len(rows) == len(target):
-                return rows
-            # A judge dropped rows: map the survivors back to their targets; an unmatched target reads as unavailable.
-            positions = try_resolve_source_positions(frame, current, None)
-            if positions is None:
-                return [{} for _ in target]
-            return [row or {} for row in per_target(rows, positions, len(target))]
+            # Place each returned row on its own target by record id; a target no row was placed on is unavailable.
+            placed: list[dict[str, Any]] = [{} for _ in target]
+            for row, p in zip(rows, _source_positions(frame, current)):
+                if p is not None:
+                    placed[p] = row or {}
+            return placed
 
         return judge_rows
 
@@ -252,6 +251,20 @@ def _record_ids(frame: pd.DataFrame) -> tuple[str, ...] | None:
     return tuple(str(i) for i in frame[RECORD_ID_COLUMN])
 
 
+def _source_positions(source: pd.DataFrame, returned: pd.DataFrame) -> tuple[int | None, ...]:
+    """The ``source`` position of each ``returned`` row, ``None`` for a row that cannot be placed.
+
+    A row is placed only by its record id, and only when that id occurs exactly once in ``source`` and once in
+    ``returned``. Row order and text are never read: records may share their text, and a judge may reorder rows.
+    A row without an id, with an unknown id or with a repeated id cannot be placed."""
+    source_ids, ids = _record_ids(source), _record_ids(returned)
+    if source_ids is None or ids is None:
+        return (None,) * len(returned)
+    in_source, in_returned = Counter(source_ids), Counter(ids)
+    where = {i: p for p, i in enumerate(source_ids) if in_source[i] == 1}
+    return tuple(where.get(i) if in_returned[i] == 1 else None for i in ids)
+
+
 def _reported_outcomes(
     result: ProtectionResult,
     source: pd.DataFrame,
@@ -259,23 +272,23 @@ def _reported_outcomes(
     ran: Sequence[TargetOutcome] | None,
     ran_ids: Sequence[str] | None,
 ) -> tuple[TargetOutcome, ...] | None:
-    """Each ``output`` row's outcome, ``None`` when a judge dropped rows that cannot be placed in ``source``.
+    """Each ``output`` row's outcome, ``None`` when no row of a non-empty ``output`` can be placed in ``source``.
 
-    A row's outcome is the evaluated result's outcome (``ran``) of the row with the same record id (``ran_ids``),
-    or an unassessed outcome when no single such row exists (the row has no id, the ids changed, or the result
-    carries no outcomes), with each verifier appended as an advisory naming it, in verifier order, in place of any
-    advisory an earlier evaluation of the result gave the same verifier. Matching by id, not position, keeps a
-    reordered or filtered trace from taking another row's outcome; a row whose text was edited under a kept id
-    keeps the run's verdict on the run's own text. A verifier that gave no assessment is
-    ``could_not_assess`` with its execution code (``raised``, or ``blocked`` when an earlier verifier of the row
-    failed) as the cause. The ungraded rewrite judge reports ``scored`` when it returned scores and
+    Each row is placed in ``source`` only by its unique record id (``_source_positions``), as ``_evaluate_on_graph``
+    placed every judge's rows. A placed row's outcome is the evaluated result's outcome (``ran``) of the record with
+    that id (``ran_ids``), or an unassessed outcome when the result carries no outcomes or no single row with that
+    id, with each verifier appended as an advisory naming it, in verifier order, in place of any advisory an earlier
+    evaluation of the result gave the same verifier; a row whose text was edited under a kept id keeps the run's
+    verdict on the run's own text. A row that cannot be placed (no id, an unknown or a repeated one) is unassessed
+    and unprotected, and each verifier reads ``could_not_assess`` with cause ``unplaced``. A verifier that gave no
+    assessment is ``could_not_assess`` with its execution code (``raised``, or ``blocked`` when an earlier verifier
+    of the row failed) as the cause. The ungraded rewrite judge reports ``scored`` when it returned scores and
     ``not_applicable`` on a row it skips by design."""
     codes: dict[bool | None, AdvisoryStatus] = {True: "passed", False: "failed", None: "could_not_assess"}
     ungraded = _ASSESSMENTS[COL_JUDGE_EVALUATION][0]
     names = result.prepared.names
-    same = len(output) == len(source)  # as ``_evaluate_on_graph`` reads a judge's frame
-    positions = range(len(source)) if same else try_resolve_source_positions(source, output, None)
-    if positions is None:
+    positions = _source_positions(source, output)
+    if positions and all(p is None for p in positions):
         return None
     verifiers = [i for i, (_, op) in enumerate(result.prepared.workflow.flatten()) if op.is_verifier]
     errors = {(e.unit, e.node): e.reason for e in result.state.entries if e.status == Status.FAILED}
@@ -285,14 +298,7 @@ def _reported_outcomes(
     if ran is not None and ran_ids is not None and len(ran) == len(ran_ids):
         counts = Counter(ran_ids)
         by_id = {i: outcome for i, outcome in zip(ran_ids, ran) if counts[i] == 1}
-    # Each output row's own id; ``positions`` places only judge assessments, so a reordered output keeps its outcomes.
-    ids: Sequence[str | None] | None = _record_ids(output)
-    source_ids = _record_ids(source)
-    if not ids and source_ids is not None and COL_TEXT in source.columns and COL_TEXT in output.columns:
-        # No ids on the judge's rows: borrow a source row's id only where the row still holds that row's text.
-        texts, source_texts = list(output[COL_TEXT]), list(source[COL_TEXT])
-        ids = [source_ids[p] if texts[k] == source_texts[p] else None for k, p in enumerate(positions)]
-    base = [unassessed] * len(positions) if not ids else [by_id.get(i, unassessed) if i else unassessed for i in ids]
+    source_ids = _record_ids(source) or ()
 
     def advisory(p: int, i: int) -> Advisory:
         row = result.state.rows[p]
@@ -307,11 +313,15 @@ def _reported_outcomes(
 
     judges = {names[i] for i in verifiers}
 
-    def reported(k: int, p: int) -> TargetOutcome:
-        kept = (a for a in base[k].advisories if a.verifier not in judges)  # an earlier evaluation's judges
-        return replace(base[k], advisories=(*kept, *(advisory(p, i) for i in verifiers)))
+    def reported(p: int | None) -> TargetOutcome:
+        if p is None:
+            unplaced = (Advisory(names[i], names[i], "could_not_assess", "unplaced") for i in verifiers)
+            return replace(unassessed, advisories=tuple(unplaced))
+        base = by_id.get(source_ids[p], unassessed)
+        kept = (a for a in base.advisories if a.verifier not in judges)  # an earlier evaluation's judges
+        return replace(base, advisories=(*kept, *(advisory(p, i) for i in verifiers)))
 
-    return tuple(reported(k, p) for k, p in enumerate(positions))
+    return tuple(reported(p) for p in positions)
 
 
 def _has_entities_for_evaluation(raw: object) -> bool:

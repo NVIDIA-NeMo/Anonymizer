@@ -1442,13 +1442,22 @@ def _assessments(result: object, row: int) -> dict[str, tuple[str, str]]:
     return {advisory.check: (advisory.status, advisory.cause) for advisory in outcome.advisories}
 
 
+def _with_record_id(run_result: AnonymizerResult) -> AnonymizerResult:
+    """``run_result`` with record id ``r1`` on its one trace row, as every built-in route carries one."""
+    return dataclasses.replace(
+        run_result, trace_dataframe=run_result.trace_dataframe.assign(**{RECORD_ID_COLUMN: ["r1"]})
+    )
+
+
 def test_evaluate_replace_reports_each_judge_through_outcome(stub_input: AnonymizerInput) -> None:
     anonymizer, _, replace_runner, _ = _make_anonymizer()
     run_result = anonymizer.run(config=AnonymizerConfig(replace=Substitute()), data=stub_input)
+    run_result = _with_record_id(run_result)
     before = (run_result._outcomes, run_result.dataframe.copy(), run_result.trace_dataframe.copy())
     eval_df = pd.DataFrame(
         {
             COL_TEXT: ["Alice works at Acme"],
+            RECORD_ID_COLUMN: ["r1"],
             COL_REPLACED_TEXT: ["Beth works at Globex"],
             COL_ENTITY_COVERAGE: [1.0],
             COL_TYPE_FIDELITY_VALID: [True],
@@ -1491,6 +1500,7 @@ def test_evaluate_keeps_the_run_outcome_of_a_row(stub_input: AnonymizerInput) ->
     eval_df = pd.DataFrame(
         {
             COL_TEXT: ["Alice works at Acme"],
+            RECORD_ID_COLUMN: ["r1"],
             COL_REPLACED_TEXT: ["Beth works at Globex"],
             COL_ENTITY_COVERAGE: [1.0],
         }
@@ -1510,9 +1520,11 @@ def test_evaluate_reports_a_raising_verifier_as_its_advisory(stub_input: Anonymi
 
     anonymizer, _, replace_runner, _ = _make_anonymizer()
     run_result = anonymizer.run(config=AnonymizerConfig(replace=Substitute()), data=stub_input)
+    run_result = _with_record_id(run_result)
     eval_df = pd.DataFrame(
         {
             COL_TEXT: ["Alice works at Acme"],
+            RECORD_ID_COLUMN: ["r1"],
             COL_REPLACED_TEXT: ["Beth works at Globex"],
             COL_ENTITY_COVERAGE: [1.0],
             COL_TYPE_FIDELITY_VALID: [Unreadable()],
@@ -1534,9 +1546,11 @@ def test_evaluate_reports_a_raising_verifier_as_its_advisory(stub_input: Anonymi
 def test_evaluate_rewrite_reports_each_judge_through_outcome(stub_input: AnonymizerInput) -> None:
     anonymizer, _, _, rewrite_runner = _make_anonymizer()
     run_result = anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input)
+    run_result = _with_record_id(run_result)
     eval_df = pd.DataFrame(
         {
             COL_TEXT: ["Alice works at Acme"],
+            RECORD_ID_COLUMN: ["r1"],
             COL_REWRITTEN_TEXT: ["Alice works at Globex"],
             COL_NEEDS_HUMAN_REVIEW: pd.array([False], dtype="boolean"),
             COL_JUDGE_EVALUATION: [None],
@@ -1565,9 +1579,11 @@ def test_evaluate_rewrite_reports_each_judge_through_outcome(stub_input: Anonymi
 def test_evaluate_reports_a_scoring_rewrite_judge_as_scored(stub_input: AnonymizerInput) -> None:
     anonymizer, _, _, rewrite_runner = _make_anonymizer()
     run_result = anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input)
+    run_result = _with_record_id(run_result)
     eval_df = pd.DataFrame(
         {
             COL_TEXT: ["Alice works at Acme"],
+            RECORD_ID_COLUMN: ["r1"],
             COL_REWRITTEN_TEXT: ["Beth works at Globex"],
             COL_JUDGE_EVALUATION: [{"privacy": {"score": "low"}}],
             COL_DETECTION_VALID: [1.0],
@@ -1595,11 +1611,13 @@ def test_evaluate_reports_a_scoring_rewrite_judge_as_scored(stub_input: Anonymiz
 def test_evaluate_reports_a_skipped_rewrite_judge_as_not_applicable(stub_input: AnonymizerInput) -> None:
     anonymizer, _, _, rewrite_runner = _make_anonymizer()
     run_result = anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input)
+    run_result = _with_record_id(run_result)
     judged = {}
     for name, entities in (("none", []), ("alice", [{"value": "Alice", "labels": ["first_name"]}])):
         eval_df = pd.DataFrame(
             {
                 COL_TEXT: ["Alice works at Acme"],
+                RECORD_ID_COLUMN: ["r1"],
                 COL_REWRITTEN_TEXT: ["Beth works at Globex"],
                 COL_ENTITIES_BY_VALUE: [{"entities_by_value": entities}],
                 COL_JUDGE_EVALUATION: [None],
@@ -2147,12 +2165,8 @@ def test_evaluate_does_not_guess_outcomes_for_reordered_rows_without_ids(tmp_pat
     with patch.object(EntityCoverageWorkflow, "run_non_critical", _stub_coverage):
         evaluated = anonymizer.evaluate(run_result)
 
-    unassessed = TargetOutcome("success", "not_assessed", False, False)
-    observed = {
-        str(text).split()[0]: dataclasses.replace(evaluated.outcome(i), advisories=())
-        for i, text in enumerate(evaluated.trace_dataframe["text"])
-    }
-    assert observed == {"Bob": unassessed, "Alice": unassessed}
+    with pytest.raises(IndexError):  # no row can be placed without its record id, so no outcome is guessed
+        evaluated.outcome(0)
 
 
 def test_reevaluating_replaces_the_judge_advisories(tmp_path: Path) -> None:
