@@ -220,7 +220,7 @@ class ReplacementWorkflow:
             data_summary=data_summary,
         )
         failed_records: list[FailedRecord] = []
-        judged_df = self._run_merged_judges(
+        judged_df = self._run_judges(
             dataframe,
             is_substitute=is_substitute,
             entity_coverage_judge=entity_coverage_judge,
@@ -233,10 +233,10 @@ class ReplacementWorkflow:
         return ReplacementResult(dataframe=judged_df, failed_records=failed_records)
 
     # ---------------------------------------------------------------------------
-    # Merged-judge dispatch (DataDesigner parallelizes the columns internally)
+    # Judge dispatch (one DataDesigner workflow per judge)
     # ---------------------------------------------------------------------------
 
-    def _run_merged_judges(
+    def _run_judges(
         self,
         dataframe: pd.DataFrame,
         *,
@@ -248,12 +248,12 @@ class ReplacementWorkflow:
         preview_num_records: int | None,
         failed_records: list[FailedRecord],
     ) -> pd.DataFrame:
-        """Run all active replace judges as columns of a single DD workflow.
+        """Run each active replace judge as its own DD workflow.
 
         Each judge owns its own ``prepare()`` (adds intermediate columns),
         ``column_config()`` (the DD column spec), and ``postprocess()`` (flatten
-        + apply passthrough defaults). The adapter sees one workflow with N
-        columns and lets DD schedule them in parallel.
+        + apply passthrough defaults). A row one judge cannot answer keeps the
+        other judges' scores, and each failing judge adds its own failed record.
         """
         active: list[_BaseJudgeWorkflow] = [entity_coverage_judge]
         if compute_detection_validity and self._detection_judge is not None:
@@ -279,31 +279,35 @@ class ReplacementWorkflow:
         adapter = cast(NddAdapter, self._adapter)
         prepared = adapter._attach_record_ids(prepared)
 
-        try:
-            # Replacement application telemetry can contain an all-empty nested
-            # ``skipped_span_label_counts`` mapping. PyArrow cannot represent that
-            # as a Parquet struct with no child fields, and the judges do not read
-            # this diagnostic column. Keep it on ``prepared`` for the returned
-            # trace, but omit it from DataDesigner's temporary seed dataframe.
-            workflow_input = prepared.drop(columns=[COL_REPLACEMENT_APPLICATION], errors="ignore")
-            run_result = adapter.run_workflow(
-                workflow_input,
-                model_configs=model_configs,
-                columns=[judge.column_config(selected_models) for judge in active],
-                workflow_name="replace-judges",
-                preview_num_records=preview_num_records,
-            )
-            failed_records.extend(run_result.failed_records)
-            new_cols = [c for c in run_result.dataframe.columns if c not in prepared.columns]
-            judged_df = restore_diagnostic_columns(
-                prepared,
-                run_result.dataframe,
-                dict.fromkeys(new_cols),
-                source_positions=run_result.source_positions,
-            ).reset_index(drop=True)
-        except Exception:
-            logger.debug("Replace judges workflow failed; evaluation scores may be unavailable.")
-            judged_df = prepared
+        # Replacement application telemetry can contain an all-empty nested
+        # ``skipped_span_label_counts`` mapping. PyArrow cannot represent that
+        # as a Parquet struct with no child fields, and the judges do not read
+        # this diagnostic column. Keep it on ``prepared`` for the returned
+        # trace, but omit it from DataDesigner's temporary seed dataframe.
+        workflow_input = prepared.drop(columns=[COL_REPLACEMENT_APPLICATION], errors="ignore")
+        judged_df = prepared
+        # One workflow per judge: DataDesigner drops a row when any of its
+        # columns fails, so a shared workflow would discard the other judges'
+        # answers for that row along with the failing one.
+        for judge in active:
+            try:
+                run_result = adapter.run_workflow(
+                    workflow_input,
+                    model_configs=model_configs,
+                    columns=[judge.column_config(selected_models)],
+                    workflow_name="replace-judges",
+                    preview_num_records=preview_num_records,
+                )
+                failed_records.extend(run_result.failed_records)
+                new_cols = [c for c in run_result.dataframe.columns if c not in judged_df.columns]
+                judged_df = restore_diagnostic_columns(
+                    judged_df,
+                    run_result.dataframe,
+                    dict.fromkeys(new_cols),
+                    source_positions=run_result.source_positions,
+                ).reset_index(drop=True)
+            except Exception:
+                logger.debug("Replace judges workflow failed; evaluation scores may be unavailable.")
 
         for judge in active:
             judged_df = judge.postprocess(judged_df)
