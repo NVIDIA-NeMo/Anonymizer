@@ -32,7 +32,8 @@ def utf8_size(text: str) -> int:
 
 def mention_problem(mentions: Iterable[object], target: Datum | None = None) -> str:
     """The first rule ``mentions`` break, or "": each is a ``Mention`` (on ``target`` when given) whose offsets are a
-    valid half-open interval of its datum, whose claimed text matches that slice, and that overlaps no other."""
+    valid half-open interval of its datum, whose claimed text matches that slice, that has a label, and that overlaps
+    no other."""
     by_datum: dict[Datum, list[Mention]] = {}
     for m in mentions:
         if not isinstance(m, Mention):
@@ -43,6 +44,8 @@ def mention_problem(mentions: Iterable[object], target: Datum | None = None) -> 
             return "mention_out_of_range"
         if m.text is not None and m.datum.text[m.start : m.end] != m.text:
             return "mention_slice_mismatch"
+        if not m.label:  # nothing replaces a span without a label
+            return "mention_unlabelled"
         by_datum.setdefault(m.datum, []).append(m)
     for ms in by_datum.values():
         ms.sort(key=lambda m: m.start)

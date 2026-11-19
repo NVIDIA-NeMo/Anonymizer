@@ -89,12 +89,14 @@ SHAPES: dict[str, tuple[list[dict[str, Any]], str]] = {
     "nested_unlabelled_inner": ([NAME, _e("Alice", "", 0, 5), CITY], FULL),
     "identical_both_unlabelled": (
         [_e("Alice Smith", "", 0, 11), _e("Alice Smith", "", 0, 11), CITY],
-        "overlapping_output_ownership",
+        "mention_unlabelled",
     ),
     "nested_unlabelled_outer": (
         [_e("Alice Smith", "", 0, 11), _e("Alice", "first_name", 0, 5), CITY],
-        "overlapping_output_ownership",
+        "mention_unlabelled",
     ),
+    # A span without a label would get no replacement: left on its own, it fails its record.
+    "unlabelled": ([NAME, _e("Paris", "", 21, 26)], "mention_unlabelled"),
     # Containment does not excuse a partial overlap elsewhere in the record.
     "nested_and_partial": (
         [NAME, _e("Alice", "first_name", 0, 5), _e("Smith lives", "other", 6, 17), CITY],
@@ -341,3 +343,83 @@ def test_a_wrapped_entities_model_is_collapsed_not_emptied() -> None:
 
     assert _spans(out[COL_FINAL_ENTITIES].iloc[0]) == KEPT["nested_inner_first"]
     assert _requested_pairs(out[COL_ENTITIES_BY_VALUE].iloc[0]) == {("Alice Smith", "full_name"), ("Paris", "city")}
+
+
+def test_an_unlabelled_span_fails_its_record_under_substitute(tmp_path: Path) -> None:
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": [TEXT, CONTROL]}).to_csv(source, index=False)
+
+    def run_workflow(self: NddAdapter, df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
+        out = df.copy().reset_index(drop=True)
+        out[COL_REPLACEMENT_MAP] = _substitute_map(out)
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
+
+    anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, _Detector(SHAPES["unlabelled"][0])))
+    with patch.object(NddAdapter, "run_workflow", run_workflow):
+        result = anonymizer.run(config=AnonymizerConfig(replace=Substitute()), data=AnonymizerInput(source=str(source)))
+
+    assert result.failed_records == [FailedRecord("0", "detect", "mention_unlabelled")]
+    assert not [v for v in PROTECTED for text in result.dataframe["text_replaced"] if v in text]
+
+
+class _NoByValueDetector(_Detector):
+    """A detector that returns ``final_entities`` only: no by-value cell for the first row, or no column at all."""
+
+    def __init__(self, entities: list[dict[str, Any]], *, drop_column: bool) -> None:
+        super().__init__(entities)
+        self.drop_column = drop_column
+
+    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+        result = super().run(dataframe)
+        if self.drop_column:
+            result.dataframe.drop(columns=[COL_ENTITIES_BY_VALUE], inplace=True)
+        else:
+            result.dataframe[COL_ENTITIES_BY_VALUE] = [None, *result.dataframe[COL_ENTITIES_BY_VALUE].iloc[1:]]
+        return result
+
+
+@pytest.mark.parametrize("drop_column", [False, True], ids=["cell", "column"])
+def test_rows_without_a_by_value_view_are_rewritten_not_passed_through(drop_column: bool, tmp_path: Path) -> None:
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": [TEXT, CONTROL]}).to_csv(source, index=False)
+    seen: list[dict[str, Any]] = []
+
+    class StubRewrite(RewriteWorkflow):
+        def _produce(self, rows: Any, **options: Any) -> Any:
+            def produce() -> None:
+                seen.extend(rows.frame.to_dict("records"))
+                rows.frame[COL_REWRITTEN_TEXT] = ["rewritten"] * len(rows.frame)
+                for col in (COL_UTILITY_SCORE, COL_LEAKAGE_MASS, COL_WEIGHTED_LEAKAGE_RATE):
+                    rows.frame[col] = 1.0 if col == COL_UTILITY_SCORE else 0.0
+                rows.frame[COL_ANY_HIGH_LEAKED] = False
+
+            return produce
+
+    detector = _NoByValueDetector([NAME, CITY], drop_column=drop_column)
+    anonymizer = Anonymizer(
+        detection_workflow=cast(EntityDetectionWorkflow, detector), rewrite_runner=StubRewrite(Mock())
+    )
+    result = anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=AnonymizerInput(source=str(source)))
+
+    assert result.failed_records == []
+    assert list(result.dataframe["text_rewritten"]) == ["rewritten", "rewritten"]
+    row = next(r for r in seen if r[COL_TEXT] == TEXT)
+    assert _requested_pairs(row[COL_ENTITIES_BY_VALUE]) == {("Alice Smith", "full_name"), ("Paris", "city")}
+
+
+def test_a_detector_without_a_by_value_column_gets_its_substitute_map(tmp_path: Path) -> None:
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": [TEXT, CONTROL]}).to_csv(source, index=False)
+
+    def run_workflow(self: NddAdapter, df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
+        out = df.copy().reset_index(drop=True)
+        out[COL_REPLACEMENT_MAP] = _substitute_map(out)
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
+
+    detector = _NoByValueDetector([NAME, CITY], drop_column=True)
+    anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, detector))
+    with patch.object(NddAdapter, "run_workflow", run_workflow):
+        result = anonymizer.run(config=AnonymizerConfig(replace=Substitute()), data=AnonymizerInput(source=str(source)))
+
+    assert result.failed_records == []
+    assert not [v for v in PROTECTED for text in result.dataframe["text_replaced"] if v in text]

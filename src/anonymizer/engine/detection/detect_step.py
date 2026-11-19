@@ -72,15 +72,20 @@ def detect_step(
         surviving = [target[position] for position in positions]
         state.owners.extend(surviving)
         raw_entities = result.dataframe.get(COL_FINAL_ENTITIES, repeat({}, len(positions)))
-        collapsed: dict[int, set[int]] = {}
+        rebuilt: dict[int, set[int]] = {}  # row -> the entities it loses
         for row, (datum, raw) in enumerate(zip(surviving, raw_entities)):
             entities = EntitiesSchema.from_raw(raw)
             if covered := covered_spans(datum, entities):
-                collapsed[row] = covered
+                rebuilt[row] = covered
                 entities = EntitiesSchema(entities=[e for i, e in enumerate(entities.entities) if i not in covered])
             state.rows[datum] = entities
-        if collapsed:
-            state.detected[-1] = dataclasses.replace(result, dataframe=_with_entities(result.dataframe, collapsed))
+        by_value = result.dataframe.get(COL_ENTITIES_BY_VALUE, repeat(None, len(positions)))
+        # A row with entities but no by-value view gets one built from its entities, as a collapsed row does.
+        for row, (datum, raw) in enumerate(zip(surviving, by_value)):
+            if _absent(raw) and state.rows[datum].entities:
+                rebuilt.setdefault(row, set())
+        if rebuilt:
+            state.detected[-1] = dataclasses.replace(result, dataframe=_with_entities(result.dataframe, rebuilt))
         return per_target([tuple(accepted_mentions(d, state.rows[d])) for d in surviving], positions, len(target))
 
     return Operation.phase_scoped("detect", run_detection, {"target": DATUM}, {"mentions": MENTIONS}, Requests.opaque())
@@ -118,7 +123,7 @@ def covered_spans(datum: Datum, entities: EntitiesSchema) -> set[int]:
     span that would cover another, or any unsound span, is left for acceptance to reject with its reason.
     """
     mentions = [Mention(datum, e.start_position, e.end_position, e.label or "", e.value) for e in entities.entities]
-    sound = [i for i, m in enumerate(mentions) if not mention_problem((m,))]
+    sound = [i for i, m in enumerate(mentions) if mention_problem((m,)) in ("", "mention_unlabelled")]
     covered: set[int] = set()
     reach = -1  # the furthest end of a labelled sound span starting at or before the current one
     # Outer before inner at the same start; within identical spans, labelled first, then detector order.
@@ -132,20 +137,21 @@ def covered_spans(datum: Datum, entities: EntitiesSchema) -> set[int]:
 
 def _with_entities(frame: pd.DataFrame, covered: dict[int, set[int]]) -> pd.DataFrame:
     """A copy of ``frame`` whose rows at the positions in ``covered`` lose those entities, with their by-value view
-    rebuilt. Each rewritten cell keeps the detector's encoding (a JSON string stays a string) and its own keys:
-    later stages sample one cell to decide how to store the whole column."""
+    rebuilt (the column is added when the detector returned none). Each rewritten cell keeps the detector's encoding
+    (a JSON string stays a string) and its own keys: later stages sample one cell to decide how to store the whole
+    column."""
     frame = frame.copy()
     given = list(frame[COL_FINAL_ENTITIES])
-    final = [_without(raw, covered[row]) if row in covered else raw for row, raw in enumerate(given)]
+    final = [_without(raw, covered[row]) if covered.get(row) else raw for row, raw in enumerate(given)]
     frame[COL_FINAL_ENTITIES] = final
-    if COL_ENTITIES_BY_VALUE in frame.columns:
-        frame[COL_ENTITIES_BY_VALUE] = [
-            # A missing by-value cell is rebuilt in the encoding of the row's own entities cell.
-            _encoded_like(given[row] if _absent(raw) else raw, _build_entities_by_value(final[row]))
-            if row in covered
-            else raw
-            for row, raw in enumerate(frame[COL_ENTITIES_BY_VALUE])
-        ]
+    by_value = frame[COL_ENTITIES_BY_VALUE] if COL_ENTITIES_BY_VALUE in frame.columns else repeat(None)
+    frame[COL_ENTITIES_BY_VALUE] = [
+        # A missing by-value cell is rebuilt in the encoding of the row's own entities cell.
+        _encoded_like(given[row] if _absent(raw) else raw, _build_entities_by_value(final[row]))
+        if row in covered
+        else raw
+        for row, raw in zip(range(len(given)), by_value)
+    ]
     return frame
 
 

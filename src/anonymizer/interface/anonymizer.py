@@ -406,8 +406,10 @@ class Anonymizer:
                 steps and the result's ``final_entities`` see the collapsed spans; a
                 detector-supplied ``tagged_text`` is not regenerated from them.
                 Any other overlap or contract break fails the record at ``detect``
-                with ``overlapping_output_ownership``, ``mention_out_of_range`` or
-                ``mention_slice_mismatch``.
+                with ``overlapping_output_ownership``, ``mention_out_of_range``,
+                ``mention_slice_mismatch`` or ``mention_unlabelled``. When the
+                detector returns no ``entities_by_value`` for a row, it is built
+                from that row's ``final_entities``.
             replace_runner: Custom replacement workflow (advanced/testing).
             rewrite_runner: Custom rewrite workflow (advanced/testing).
             combined_rewrite_runner: Custom combined rewrite workflow (advanced/testing).
@@ -1577,6 +1579,7 @@ _KNOWN_FAILURE_REASONS = frozenset(
         "mention_not_on_target",
         "mention_out_of_range",
         "mention_slice_mismatch",
+        "mention_unlabelled",
         "missing_output",
         "over_limit",
         "overlapping_output_ownership",
