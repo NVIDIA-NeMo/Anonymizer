@@ -56,6 +56,9 @@ if _DOMAIN_KEY is None:
 @custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION])
 def _format_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
     """Serialize sensitivity disposition into a JSON block for the meaning unit extraction prompt."""
+    if no_response(row.get(COL_SENSITIVITY_DISPOSITION)):
+        row[COL_SENSITIVITY_DISPOSITION_BLOCK] = None  # no disposition: nothing is rewritten or evaluated
+        return row
     disposition = parse_sensitivity_disposition(row.get(COL_SENSITIVITY_DISPOSITION, {}))
     block = [
         {
@@ -333,6 +336,9 @@ def generate_privacy_qa_from_disposition(
 @custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION])
 def _generate_privacy_qa_column(row: dict[str, Any]) -> dict[str, Any]:
     """Generate privacy QA questions from sensitivity disposition without an LLM call."""
+    if no_response(row.get(COL_SENSITIVITY_DISPOSITION)):
+        row[COL_PRIVACY_QA] = None
+        return row
     disposition = parse_sensitivity_disposition(row.get(COL_SENSITIVITY_DISPOSITION, {}))
     row[COL_PRIVACY_QA] = generate_privacy_qa_from_disposition(disposition).model_dump()
     return row
@@ -362,6 +368,7 @@ class QAGenerationWorkflow:
                 prompt=_get_meaning_unit_extraction_prompt(),
                 model_alias=meaning_extractor_alias,
                 output_format=MeaningUnitsSchema,
+                ask_only_if=[COL_SENSITIVITY_DISPOSITION_BLOCK],
             ),
             CustomColumnConfig(
                 name=COL_MEANING_UNITS_SERIALIZED,

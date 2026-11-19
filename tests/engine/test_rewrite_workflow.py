@@ -2085,3 +2085,35 @@ def test_row_without_a_rewrite_response_is_kept_without_text_and_flagged(
         "Rows kept without a usable model response after their retries, by step: rewrite=1. "
         "If most rows are listed, check that step's model."
     ]
+
+
+class _NoDispositionResponseAdapter(_NoRewriteResponseAdapter):
+    """No disposition response had the right entry count: no disposition, so neither the rewrite nor evaluation asks."""
+
+    def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **kwargs: object) -> WorkflowRunResult:
+        result = super().run_workflow(seed, workflow_name=workflow_name, **kwargs)
+        if workflow_name == "rewrite-pipeline":
+            result.dataframe[COL_SENSITIVITY_DISPOSITION] = None
+        return result
+
+
+def test_row_without_a_disposition_response_is_kept_without_text_and_flagged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.responses"):
+        result = _run_one(_NoDispositionResponseAdapter({"rec": 0}), tmp_path)
+
+    assert result.failed_records == []
+    assert len(result.dataframe) == 1
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row["text_rewritten"])
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert not outcome.available
+    assert not outcome.protected
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [("raised", "", "")]
+    assert [record.getMessage() for record in caplog.records if record.name == "anonymizer.rewrite.responses"] == [
+        "Rows kept without a usable model response after their retries, by step: sensitivity disposition=1. "
+        "If most rows are listed, check that step's model."
+    ]

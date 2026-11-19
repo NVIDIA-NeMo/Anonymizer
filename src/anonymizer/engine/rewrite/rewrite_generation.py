@@ -145,6 +145,9 @@ Rules:
 @custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION])
 def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
     """Pre-filter and serialize protected entities (protection_method_suggestion != "leave_as_is") for the rewrite prompt."""
+    if no_response(row.get(COL_SENSITIVITY_DISPOSITION)):
+        row[COL_REWRITE_DISPOSITION_BLOCK] = None  # no disposition: the rewrite is not asked for
+        return row
     disposition = parse_sensitivity_disposition(row[COL_SENSITIVITY_DISPOSITION])
     block = []
     for e in disposition.sensitivity_disposition:
@@ -166,7 +169,7 @@ def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
 @custom_column_generator(required_columns=[COL_REPLACEMENT_MAP, COL_REWRITE_DISPOSITION_BLOCK])
 def _filter_replacement_map_for_prompt(row: dict[str, Any]) -> dict[str, Any]:
     """Keep only replacement entries for entities with protection_method_suggestion='replace'."""
-    disposition_block: list[dict] = row.get(COL_REWRITE_DISPOSITION_BLOCK, [])
+    disposition_block: list[dict] = row.get(COL_REWRITE_DISPOSITION_BLOCK) or []
     replace_pairs = {
         (str(e.get("entity_value", "")), str(e.get("entity_label", "")))
         for e in disposition_block
@@ -384,6 +387,7 @@ class RewriteGenerationWorkflow:
                 prompt=_get_rewrite_prompt(privacy_goal, data_summary),
                 model_alias=rewriter_alias,
                 output_format=RewriteOutputSchema,
+                ask_only_if=[COL_REWRITE_DISPOSITION_BLOCK],
             ),
             CustomColumnConfig(
                 name=COL_REWRITTEN_TEXT,

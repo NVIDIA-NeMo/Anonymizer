@@ -11,6 +11,7 @@ from data_designer.config.utils.constants import REASONING_CONTENT_COLUMN_POSTFI
 from data_designer.config.utils.storage_schema import compile_json_storage_schema
 from data_designer.config.utils.trace_type import TraceType
 from data_designer.engine.column_generators.generators.llm_completion import ColumnGeneratorWithModelChatCompletion
+from data_designer.engine.models.parsers.errors import ParserException
 from data_designer.engine.models.recipes.response_recipes import StructuredResponseRecipe
 from data_designer.engine.processing.utils import deserialize_json_values
 
@@ -40,7 +41,18 @@ class ResponseColumnGenerator(ColumnGeneratorWithModelChatCompletion[ResponseCol
             return self._unavailable(data)
         kwargs = self._prepare_generation_kwargs(data)
         parse = kwargs.pop("parser")
-        response, trace = await ask_with_trace(self.model, lambda response: (parse(response), False), **kwargs)
+        check = self.config.response_check
+
+        def checked(response: str) -> tuple[Any, bool]:
+            value = parse(response)
+            if check is not None:
+                try:
+                    check(value, data)
+                except ValueError as exc:
+                    raise ParserException(str(exc), source=response) from None
+            return value, False
+
+        response, trace = await ask_with_trace(self.model, checked, **kwargs)
         if response.state == "unavailable":
             logger.warning(
                 "%s unavailable after %d responses (%s); keeping the row.",

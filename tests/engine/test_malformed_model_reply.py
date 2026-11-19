@@ -35,7 +35,9 @@ from anonymizer.engine.constants import (
     COL_DOMAIN_SUPPLEMENT,
     COL_DOMAIN_UNAVAILABLE,
     COL_ENTITIES_BY_VALUE,
+    COL_ENTITY_CLASSIFICATION,
     COL_FULL_REWRITE,
+    COL_LATENT_ENTITIES,
     COL_LEAKAGE_MASS,
     COL_MEANING_UNITS,
     COL_MEANING_UNITS_SERIALIZED,
@@ -46,6 +48,7 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA,
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
+    COL_RAW_SENSITIVITY_DISPOSITION,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITE_BASELINE_TEXT,
     COL_REWRITE_DISPOSITION_BLOCK,
@@ -55,6 +58,7 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT_INITIAL,
     COL_SENSITIVITY_DISPOSITION,
     COL_TAG_NOTATION,
+    COL_TAGGED_TEXT,
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
@@ -69,6 +73,7 @@ from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.rewrite_generation import RewriteGenerationWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
 from anonymizer.engine.schemas import Domain
 
 _PROVIDER = ModelProvider(name="scripted", endpoint="http://scripted.invalid/v1", api_key="unused")
@@ -652,7 +657,7 @@ def test_combined_evaluation_without_quality_questions_keeps_the_privacy_metrics
 _REWRITER = "scripted-rewriter"
 
 
-def _rewrite(tmp_path: Path):
+def _rewrite(tmp_path: Path, disposition_block: Any = "[]"):
     selection = RewriteModelSelection.model_validate(
         {**load_default_model_selection().rewrite.model_dump(), "rewriter": _REWRITER}
     )
@@ -667,7 +672,7 @@ def _rewrite(tmp_path: Path):
                 COL_TAG_NOTATION: ["xml", "xml"],
                 COL_REWRITE_TAGGED_TEXT: [_TEXT, _OTHER_TEXT],
                 COL_REPLACEMENT_MAP_FOR_PROMPT: ['{"replacements": []}', '{"replacements": []}'],
-                COL_REWRITE_DISPOSITION_BLOCK: ["[]", "[]"],
+                COL_REWRITE_DISPOSITION_BLOCK: [disposition_block, "[]"],
                 COL_REWRITE_REPLACEMENT_READY: [True, True],
             }
         ),
@@ -885,3 +890,82 @@ def test_repair_response_unparsed_keeps_the_row_withheld_and_flagged(
         "Rows kept without a usable model response after their retries, by step: repair=1. "
         "If most rows are listed, check that step's model."
     ]
+
+
+def test_rewrite_of_a_row_without_a_disposition_asks_nothing_and_keeps_the_row(
+    tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
+) -> None:
+    script, calls = scripted
+    script[_REWRITER] = ['{"rewritten_text": "A card is charged."}']
+
+    result = _rewrite(tmp_path, disposition_block=None)
+
+    assert result.failed_records == []
+    assert pd.isna(result.dataframe.iloc[0][COL_REWRITTEN_TEXT])
+    assert calls[_REWRITER] == 0
+
+
+_DISPOSER = "scripted-disposition"
+
+
+def _disposition_response(count: int) -> str:
+    entry = {"sensitivity": "high", "protection_method_suggestion": "replace", "low_sensitivity_reason": None}
+    return json.dumps({"sensitivity_disposition": [{"id": i, **entry} for i in range(1, count + 1)]})
+
+
+def _disposition(tmp_path: Path):
+    """Two supplied entities for the record under test; the clean record has none and the latent list only."""
+    selection = RewriteModelSelection.model_validate(
+        {**load_default_model_selection().rewrite.model_dump(), "disposition_analyzer": _DISPOSER}
+    )
+    _OTHER_REPLIES[_DISPOSER] = _disposition_response(1)
+    rows = [
+        (_TEXT, [{"value": "7312", "labels": ["card_last_four"]}, {"value": "charged", "labels": ["event"]}]),
+        (_OTHER_TEXT, [{"value": "Nothing", "labels": ["event"]}]),
+    ]
+    return _adapter(tmp_path).run_workflow(
+        pd.DataFrame(
+            {
+                COL_TAGGED_TEXT: [text for text, _ in rows],
+                COL_ENTITIES_BY_VALUE: [{"entities_by_value": entities} for _, entities in rows],
+                COL_LATENT_ENTITIES: [{"latent_entities": []}] * 2,
+                COL_ENTITY_CLASSIFICATION: [{"card_last_four": "direct_identifier", "event": "quasi_identifier"}] * 2,
+            }
+        ),
+        model_configs=[_model(_DISPOSER)],
+        columns=SensitivityDispositionWorkflow().columns(selected_models=selection, privacy_goal=_PRIVACY_GOAL),
+        workflow_name="rewrite-pipeline",
+    )
+
+
+def test_disposition_response_with_surplus_entries_is_asked_again(
+    tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
+) -> None:
+    script, calls = scripted
+    script[_DISPOSER] = [
+        _disposition_response(4),
+        _disposition_response(2),
+    ]  # one entry per occurrence, then per entity
+
+    result = _disposition(tmp_path)
+
+    assert result.failed_records == []
+    entries = result.dataframe.iloc[0][COL_SENSITIVITY_DISPOSITION]["sensitivity_disposition"]
+    assert [(e["id"], e["entity_value"]) for e in entries] == [(1, "7312"), (2, "charged")]
+    assert calls[_DISPOSER] == 2
+
+
+def test_disposition_response_with_surplus_entries_on_every_attempt_keeps_the_row_without_a_disposition(
+    tmp_path: Path, scripted: tuple[dict[str, list[str]], dict[str, int]]
+) -> None:
+    script, calls = scripted
+    script[_DISPOSER] = [_disposition_response(4)]
+
+    result = _disposition(tmp_path)
+
+    assert result.failed_records == []
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row[COL_RAW_SENSITIVITY_DISPOSITION])
+    assert pd.isna(row[COL_SENSITIVITY_DISPOSITION])
+    assert calls[_DISPOSER] == 6
+    assert len(result.dataframe.iloc[1][COL_SENSITIVITY_DISPOSITION]["sensitivity_disposition"]) == 1

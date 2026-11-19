@@ -19,6 +19,7 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
     COL_REWRITTEN_TEXT,
+    COL_SENSITIVITY_DISPOSITION,
 )
 from anonymizer.engine.ndd.model_response import no_response
 
@@ -53,11 +54,14 @@ def warn_kept_without_response(frame: pd.DataFrame) -> None:
         if COL_REPAIR_ITERATIONS in frame.columns
         else pd.Series(False, index=frame.index)
     )
+    # A row without a disposition asks neither the meaning units nor the rewrite, so only the disposition counts it.
+    disposition = null(COL_SENSITIVITY_DISPOSITION)
     steps = {
         "domain classification": domain,
-        "meaning units": null(COL_MEANING_UNITS),
+        "sensitivity disposition": disposition,
+        "meaning units": null(COL_MEANING_UNITS) & ~disposition,
         "quality questions": null(COL_QUALITY_QA) & present(COL_MEANING_UNITS),
-        "rewrite": null(COL_FULL_REWRITE),
+        "rewrite": null(COL_FULL_REWRITE) & ~disposition,
         "privacy evaluation": null(COL_PRIVACY_QA_REANSWER) & present(COL_REWRITTEN_TEXT),
         "quality evaluation": (null(COL_QUALITY_QA_REANSWER) & present(COL_QUALITY_QA) & present(COL_REWRITTEN_TEXT))
         | (null(COL_QUALITY_QA_COMPARE) & present(COL_QUALITY_QA_REANSWER)),
