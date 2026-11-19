@@ -61,12 +61,13 @@ from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import (
     load_default_model_providers,
     load_models_config,
+    parse_model_providers,
     validate_model_alias_references,
 )
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
-from anonymizer.interface.anonymizer import Anonymizer, _accepts_entity_label_examples, _resolve_model_providers
+from anonymizer.interface.anonymizer import Anonymizer, _accepts_entity_label_examples
 from anonymizer.interface.errors import AnonymizerWorkflowError, InvalidConfigError, InvalidInputError
 from tests.conftest import stub_run_with_detection
 
@@ -633,12 +634,12 @@ def test_preview_propagates_excluded_entity_labels(stub_input: AnonymizerInput) 
     assert result.excluded_entity_labels == ["email"]
 
 
-def test_resolve_model_providers_raises_on_invalid_yaml(tmp_path: Path) -> None:
+def test_parse_model_providers_raises_on_invalid_yaml(tmp_path: Path) -> None:
     yaml_path = tmp_path / "bad.yaml"
     yaml_path.write_text("not_providers: []")
 
     with pytest.raises(ValueError, match="providers"):
-        _resolve_model_providers(yaml_path)
+        parse_model_providers(yaml_path)
 
 
 def test_anonymizer_default_passes_bundled_providers_to_data_designer() -> None:

@@ -147,9 +147,7 @@ _MODEL_TRACE_PURPOSE: ContextVar[str | None] = ContextVar("anonymizer_dd_model_t
 
 
 def _normalize_column_for_data_designer(column: ColumnConfigT) -> ColumnConfigT:
-    """Convert marked private config subclasses to DataDesigner's registered types."""
-    if getattr(type(column), "_normalize_for_data_designer", False):
-        column = LLMStructuredColumnConfig.model_validate(column.model_dump())
+    """Prepare a column config for DataDesigner's JSON storage."""
     return prepare_json_storage_column(column)
 
 
@@ -483,10 +481,6 @@ class NddAdapter:
                 config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
                 config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
                 for column in columns:
-                    # DataDesigner resolves built-in generators by exact config
-                    # type. A private subclass can keep sensitive prompt fields
-                    # out of reprs in our workflow specs, then become the
-                    # registered built-in config at the execution boundary.
                     config_builder.add_column(_normalize_column_for_data_designer(column))
 
                 with (
