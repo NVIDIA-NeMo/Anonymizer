@@ -5,7 +5,7 @@
 This section lists what changes for users between v0.5.0 and v1.0.0. It will be updated until the release, and
 becomes the v1.0.0 release notes after #319 lands on `main`.
 
-- **Describes:** commit `a3cdb21b`, the head of the #319 branch.
+- **Describes:** commit `7ec5c693`, the head of the #319 branch.
 - **Compared against:** v0.5.0 (`81bcea43`).
 - **Last reconciled with main at `628be95a`.** The next update reads `git log 628be95a..main` and the new commits on
   the #319 branch.
@@ -44,7 +44,7 @@ default, an LLM validates each match. Detection output can differ from v0.5.0 fo
 - Changed in: #265.
 
 **An empty Redact template is rejected.** `Redact(format_template="")`, or a template that renders empty, raises a
-validation error when the strategy is built. v0.5.0 accepted it and wrote an empty replacement.
+validation error when the strategy is built. v0.5.0 accepted it and left the original detected value in the output.
 - What to do: give a template that renders to at least one character.
 - Changed in: #319 (`0b51cfef`).
 
@@ -213,7 +213,9 @@ longer see each other's overrides and can run at the same time.
 
 **Log lines carry fewer values.** Library log lines omit entity values, label lists, model aliases and record IDs.
 The `effective detection scope` line no longer lists label names; read `result.detection_scope` instead. Per-record
-failure debug lines are gone; read `result.failed_records`.
+failure debug lines are gone; read `result.failed_records`. Two failure warnings no longer include the exception
+text: the workflow-failure warning in the model adapter, and the entity coverage judge's "scores may be unavailable"
+warning. The judge swallows that exception, so its reason is no longer logged at any level.
 - What to do: update log parsers.
 - Changed in: #319 (`372bbd0b`).
 
