@@ -42,6 +42,7 @@ from anonymizer.engine.detection.detection_workflow import (
 )
 from anonymizer.engine.graph_core.authoring import GraphScope
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_generation import _prepare_rewrite_tagged_text
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.rewrite.workflow_utils import select_seed_cols
@@ -423,3 +424,104 @@ def test_a_detector_without_a_by_value_column_gets_its_substitute_map(tmp_path: 
 
     assert result.failed_records == []
     assert not [v for v in PROTECTED for text in result.dataframe["text_replaced"] if v in text]
+
+
+# A first-row by-value cell that does not list every kept pair: rebuilt from the row's entities.
+STALE_CELLS = {
+    "empty_string": "",
+    "empty_dict": {},
+    "empty_list": {"entities_by_value": []},
+    "empty_list_str": json.dumps({"entities_by_value": []}),
+    "stale": {"entities_by_value": [{"value": "Paris", "labels": ["city"]}]},
+    "stale_str": json.dumps({"entities_by_value": [{"value": "Paris", "labels": ["city"]}]}),
+}
+KEPT_PAIRS = {("Alice Smith", "full_name"), ("Paris", "city")}
+
+
+class _StaleByValueDetector(_Detector):
+    def __init__(self, cell: object) -> None:
+        super().__init__([NAME, CITY])
+        self.cell = cell
+
+    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+        result = super().run(dataframe)
+        result.dataframe[COL_ENTITIES_BY_VALUE] = [self.cell, *result.dataframe[COL_ENTITIES_BY_VALUE].iloc[1:]]
+        return result
+
+
+def _capturing(runner: RewriteWorkflow, frames: list[pd.DataFrame]) -> RewriteWorkflow:
+    """``runner`` with its producing step replaced by one that records the rows it is given and fakes a rewrite."""
+
+    def _produce(rows: Any, **options: Any) -> Any:
+        def produce() -> None:
+            frames.append(rows.frame.copy())
+            rows.frame[COL_REWRITTEN_TEXT] = ["rewritten"] * len(rows.frame)
+            for col in (COL_UTILITY_SCORE, COL_LEAKAGE_MASS, COL_WEIGHTED_LEAKAGE_RATE):
+                rows.frame[col] = 1.0 if col == COL_UTILITY_SCORE else 0.0
+            rows.frame[COL_ANY_HIGH_LEAKED] = False
+
+        return produce
+
+    setattr(runner, "_produce", _produce)
+    return runner
+
+
+@pytest.mark.parametrize("mode", ["rewrite", "combined", "substitute"])
+@pytest.mark.parametrize("cell", list(STALE_CELLS))
+def test_an_empty_or_stale_by_value_cell_is_rebuilt(cell: str, mode: str, tmp_path: Path) -> None:
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": [TEXT, CONTROL]}).to_csv(source, index=False)
+    frames: list[pd.DataFrame] = []
+
+    def run_workflow(self: NddAdapter, df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
+        out = df.copy().reset_index(drop=True)
+        frames.append(out.copy())
+        out[COL_REPLACEMENT_MAP] = _substitute_map(out)
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
+
+    anonymizer = Anonymizer(
+        detection_workflow=cast(EntityDetectionWorkflow, _StaleByValueDetector(STALE_CELLS[cell])),
+        rewrite_runner=_capturing(RewriteWorkflow(Mock()), frames),
+        combined_rewrite_runner=cast(CombinedRewriteWorkflow, _capturing(CombinedRewriteWorkflow(Mock()), frames)),
+    )
+    config = {
+        "rewrite": AnonymizerConfig(rewrite=Rewrite()),
+        "combined": AnonymizerConfig(rewrite=Rewrite(use_combined_graph=True)),
+        "substitute": AnonymizerConfig(replace=Substitute()),
+    }[mode]
+    with patch.object(NddAdapter, "run_workflow", run_workflow):
+        result = anonymizer.run(config=config, data=AnonymizerInput(source=str(source)))
+
+    assert result.failed_records == []
+    assert KEPT_PAIRS in [_requested_pairs(c) for c in frames[0][COL_ENTITIES_BY_VALUE]]
+    if mode == "substitute":
+        assert not [v for v in PROTECTED for text in result.dataframe["text_replaced"] if v in text]
+    else:
+        assert list(result.dataframe["text_rewritten"]) == ["rewritten", "rewritten"]
+
+
+@pytest.mark.parametrize("bad", ["label_null", "offset_text"])
+def test_a_malformed_span_payload_fails_its_record_at_detect_in_rewrite(bad: str, tmp_path: Path) -> None:
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": [TEXT, CONTROL]}).to_csv(source, index=False)
+    broken = {**CITY, "label": None} if bad == "label_null" else {**CITY, "start_position": "x"}
+    seen: list[dict[str, Any]] = []
+
+    class StubRewrite(RewriteWorkflow):
+        def _produce(self, rows: Any, **options: Any) -> Any:
+            def produce() -> None:
+                seen.extend(rows.frame.to_dict("records"))
+                rows.frame[COL_REWRITTEN_TEXT] = ["rewritten"] * len(rows.frame)
+                for col in (COL_UTILITY_SCORE, COL_LEAKAGE_MASS, COL_WEIGHTED_LEAKAGE_RATE):
+                    rows.frame[col] = 1.0 if col == COL_UTILITY_SCORE else 0.0
+                rows.frame[COL_ANY_HIGH_LEAKED] = False
+
+            return produce
+
+    anonymizer = Anonymizer(
+        detection_workflow=cast(EntityDetectionWorkflow, _Detector([NAME, broken])), rewrite_runner=StubRewrite(Mock())
+    )
+    result = anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=AnonymizerInput(source=str(source)))
+
+    assert result.failed_records == [FailedRecord("0", "detect", "invalid_output")]
+    assert list(result.dataframe["text_rewritten"]) == ["rewritten"]

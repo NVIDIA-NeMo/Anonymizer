@@ -44,7 +44,7 @@ def mention_problem(mentions: Iterable[object], target: Datum | None = None) -> 
             return "mention_out_of_range"
         if m.text is not None and m.datum.text[m.start : m.end] != m.text:
             return "mention_slice_mismatch"
-        if not m.label:  # nothing replaces a span without a label
+        if not m.label:  # a mention claims its region for a label: an unlabelled one owns nothing it can name
             return "mention_unlabelled"
         by_datum.setdefault(m.datum, []).append(m)
     for ms in by_datum.values():

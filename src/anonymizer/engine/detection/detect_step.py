@@ -25,7 +25,7 @@ from anonymizer.engine.graph_core.authoring import DATUM, MENTIONS, Datum, Menti
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.backend import per_target
 from anonymizer.engine.row_partitioning import try_resolve_source_positions
-from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.schemas.shared import to_python
 
 
@@ -50,7 +50,7 @@ def detect_step(
     whose text differs from its input row's, fails every target; the caller then works over the returned frame.
     """
 
-    def run_detection(target: tuple[Datum, ...]) -> list[tuple[Mention, ...] | None]:
+    def run_detection(target: tuple[Datum, ...]) -> list[tuple[object, ...] | None]:
         started = time.perf_counter()
         state.detected.append(result := detect(dataframe))
         state.elapsed.append(time.perf_counter() - started)
@@ -73,20 +73,31 @@ def detect_step(
         state.owners.extend(surviving)
         raw_entities = result.dataframe.get(COL_FINAL_ENTITIES, repeat({}, len(positions)))
         rebuilt: dict[int, set[int]] = {}  # row -> the entities it loses
-        for row, (datum, raw) in enumerate(zip(surviving, raw_entities)):
-            entities = EntitiesSchema.from_raw(raw)
+        malformed: set[Datum] = set()
+        by_value = result.dataframe.get(COL_ENTITIES_BY_VALUE, repeat(None, len(positions)))
+        for row, (datum, raw, listed) in enumerate(zip(surviving, raw_entities, by_value)):
+            try:  # the parse Replace applies, so a malformed payload fails its record in every mode
+                entities = EntitiesSchema.from_raw(raw, strict=True)
+            except ValueError:
+                malformed.add(datum)
+                state.rows[datum] = EntitiesSchema()
+                continue
             if covered := covered_spans(datum, entities):
                 rebuilt[row] = covered
                 entities = EntitiesSchema(entities=[e for i, e in enumerate(entities.entities) if i not in covered])
             state.rows[datum] = entities
-        by_value = result.dataframe.get(COL_ENTITIES_BY_VALUE, repeat(None, len(positions)))
-        # A row with entities but no by-value view gets one built from its entities, as a collapsed row does.
-        for row, (datum, raw) in enumerate(zip(surviving, by_value)):
-            if _absent(raw) and state.rows[datum].entities:
+            # A by-value view that is missing, empty or lacks a kept pair is rebuilt from the kept entities.
+            if not _absent(listed) and {(e.value, e.label) for e in entities.entities} <= _pairs(listed):
+                continue
+            if entities.entities:
                 rebuilt.setdefault(row, set())
         if rebuilt:
             state.detected[-1] = dataclasses.replace(result, dataframe=_with_entities(result.dataframe, rebuilt))
-        return per_target([tuple(accepted_mentions(d, state.rows[d])) for d in surviving], positions, len(target))
+        # A non-mention entry fails the record with ``invalid_output``.
+        mentions: list[tuple[object, ...]] = [
+            ("malformed",) if d in malformed else tuple(accepted_mentions(d, state.rows[d])) for d in surviving
+        ]
+        return per_target(mentions, positions, len(target))
 
     return Operation.phase_scoped("detect", run_detection, {"target": DATUM}, {"mentions": MENTIONS}, Requests.opaque())
 
@@ -162,6 +173,12 @@ def _without(raw: object, covered: set[int]) -> object:
     if not isinstance(entities, list):  # a wrapped model or another shape ``from_raw`` reads: use what it read
         entities = [e.model_dump(mode="json") for e in EntitiesSchema.from_raw(raw).entities]
     return _encoded_like(raw, {**payload, "entities": [e for i, e in enumerate(entities) if i not in covered]})
+
+
+def _pairs(cell: object) -> set[tuple[str, str]]:
+    return {
+        (item.value, label) for item in EntitiesByValueSchema.from_raw(cell).entities_by_value for label in item.labels
+    }
 
 
 def _encoded_like(raw: object, payload: dict[str, Any]) -> object:

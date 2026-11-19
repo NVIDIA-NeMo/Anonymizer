@@ -53,18 +53,21 @@ The final selection is deterministic and greedy: longer spans are considered fir
 
 The spans a custom `detection_workflow` returns in `final_entities` follow one contract. Each span is half-open
 (`start_position` inclusive, `end_position` exclusive), lies within the record's text, is non-empty, and the text
-slice it covers equals its `value` exactly. Each span needs a non-empty `label`: a span without one is never resolved
-against a labelled span, and one that is not absorbed into a labelled span fails its record. The
-`_entities_by_value` column is optional: for a row without it, it is built from that row's `final_entities`.
+slice it covers equals its `value` exactly. Each span needs a non-empty `label`: an unlabelled span never covers
+another, and one that is not identical to or inside a labelled span fails its record. The `_entities_by_value` column
+is optional: a row whose cell is missing, empty, or lacks a value and label of its kept spans gets one built from its
+`final_entities`.
 
 Two overlap shapes are resolved at the `detect` step. Spans with identical bounds collapse into one, keeping the first
 labelled span in the detector's order with its label, and a span contained in a labelled span gives way to the outer
 span. Replacement, the Substitute map, rewriting and the result's `final_entities` all see the collapsed spans; a
-`tagged_text` the detector supplies is passed on as it is, not regenerated from them. Any
-other overlap, and any span that breaks the contract, fails its record at the `detect` step with the reason
-`overlapping_output_ownership`, `mention_out_of_range` (a zero-width span counts as out of range),
-`mention_slice_mismatch` or `mention_unlabelled`. The record is listed in `result.failed_records` and left out of the output; the rest of the
-run continues.
+`tagged_text` the detector supplies is passed on as it is, not regenerated from them. Any other overlap, and any span
+that breaks the contract, fails its record at the `detect` step with the reason `overlapping_output_ownership`,
+`mention_out_of_range` (a zero-width span counts as out of range), `mention_slice_mismatch` or `mention_unlabelled`;
+a `final_entities` payload that does not parse (for example a `null` label or a non-integer offset) fails it with
+`invalid_output`. The record is listed in `result.failed_records` and left out of the output, and the rest of the run
+continues. This per-record failure needs the detector to return its rows' source positions or unique record ids;
+without them the run stops.
 
 ### Example: standard vs. latent entities
 
