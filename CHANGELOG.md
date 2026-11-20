@@ -445,10 +445,10 @@ JSON dumps of a config mask the key; a pickled config keeps it. Validation error
 **`session=` on `run` and `preview`.** A `Session` from `anonymizer.graph` keeps substitutes stable across calls.
 Under a stable session, `run` and `preview` reject Rewrite and a custom replace runner that overrides `run()`. The
 session and its snapshots are provisional.
-- Without a session, one value detected under two labels now gets one substitute across its labels. v0.5.0 gave the
-  second label a placeholder.
-- What to do: if you relied on a placeholder for the second label, read `result.replacement_map(row)`, whose entries
-  carry each label and its substitute.
+- In run mode (`consistency="run"`), a value detected under two labels can keep one substitute, where run mode used
+  to give the second label a placeholder; for such a value, record-mode (default) output is unchanged from v0.5.0.
+- What to do: in run mode, if you relied on a placeholder for the second label, read `result.replacement_map(row)`,
+  whose entries carry each label and its substitute.
 - Without a stable session, including `Session()`, a custom replace runner's `run_with_detection()` and its map
   workflow's `generate_validated_maps()` are called as before `session` existed, so overrides with the older
   signatures keep working.
