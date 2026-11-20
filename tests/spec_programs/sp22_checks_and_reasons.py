@@ -56,7 +56,7 @@ def program() -> list[dict[str, str]]:
     # E22.4 a Rewrite row whose leakage is NaN could not be assessed and is flagged for review.
     def rewrite(target: tuple) -> list[Any]:
         metrics = {"any_high_leaked": False, "replacements_applied": True, "leakage_mass": float("nan")}
-        metrics["placeholders_absent"] = True
+        metrics["placeholder_in_text"] = False
         return [{"text": "r", "metrics": metrics} for _ in target]
 
     evaluation: Any = type("E", (), {"flag_leakage_above": 0.5})()

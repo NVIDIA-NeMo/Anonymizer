@@ -11,7 +11,16 @@ import pytest
 from pydantic import ValidationError
 
 from anonymizer.config.anonymizer_config import AnonymizerInput, TextRecord, TextRecordsInput
-from anonymizer.engine.constants import COL_TEXT, RECORD_ID_COLUMN
+from anonymizer.engine import constants
+from anonymizer.engine.constants import (
+    COL_FINAL_ENTITIES,
+    COL_REWRITTEN_TEXT,
+    COL_TEXT,
+    COL_UTILITY_SCORE,
+    RECORD_ID_COLUMN,
+    RESERVED_INPUT_COLUMNS,
+    RESULT_COLUMNS,
+)
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.io.writer import write_output
 from anonymizer.interface.errors import AnonymizerIOError, InvalidInputError
@@ -165,6 +174,51 @@ def test_read_input_internal_text_collision_raises(tmp_path: Path) -> None:
     inp = _write_input(pd.DataFrame({COL_TEXT: ["hello"], "bio": ["other"]}), tmp_path, text_column="bio")
     with pytest.raises(InvalidInputError, match="reserved internal column"):
         read_input(inp)
+
+
+def test_read_input_names_every_reserved_column(tmp_path: Path) -> None:
+    inp = _write_input(
+        pd.DataFrame({"bio": ["text"], COL_REWRITTEN_TEXT: ["note"], RECORD_ID_COLUMN: ["r1"]}),
+        tmp_path,
+        text_column="bio",
+    )
+    with pytest.raises(InvalidInputError, match="reserved internal column") as excinfo:
+        read_input(inp)
+    assert COL_REWRITTEN_TEXT in str(excinfo.value)
+    assert RECORD_ID_COLUMN in str(excinfo.value)
+
+
+def test_read_input_keeps_user_columns_and_documented_output_names(tmp_path: Path) -> None:
+    inp = _write_input(
+        pd.DataFrame({"doc_id": ["a"], "bio": ["text"], COL_FINAL_ENTITIES: ["x"], COL_UTILITY_SCORE: [1.0]}),
+        tmp_path,
+        text_column="bio",
+        id_column="doc_id",
+    )
+    columns = set(read_input(inp).dataframe.columns)
+    assert {"doc_id", f"{COL_FINAL_ENTITIES}__input", f"{COL_UTILITY_SCORE}__input"} <= columns
+    assert RESERVED_INPUT_COLUMNS.isdisjoint({"doc_id", "bio", COL_FINAL_ENTITIES, COL_UTILITY_SCORE})
+
+
+@pytest.mark.parametrize("text_column", [COL_TEXT, COL_REWRITTEN_TEXT])
+def test_read_input_allows_a_reserved_name_as_the_text_column(tmp_path: Path, text_column: str) -> None:
+    inp = _write_input(pd.DataFrame({text_column: ["hello"]}), tmp_path, text_column=text_column)
+    assert read_input(inp).dataframe[COL_TEXT].tolist() == ["hello"]
+
+
+@pytest.mark.parametrize("column", sorted(RESULT_COLUMNS))
+def test_read_input_renames_every_result_column(tmp_path: Path, column: str) -> None:
+    inp = _write_input(pd.DataFrame({"bio": ["text"], column: ["input"]}), tmp_path, text_column="bio")
+    columns = set(read_input(inp).dataframe.columns)
+    assert f"{column}__input" in columns
+    assert column not in columns
+
+
+def test_every_internal_column_constant_is_reserved() -> None:
+    """A ``COL_*`` defined below the set in ``constants.py`` would silently escape it."""
+    internal = {v for k, v in vars(constants).items() if k.startswith("COL_") and isinstance(v, str) and v[0] == "_"}
+    assert internal <= RESERVED_INPUT_COLUMNS
+    assert RESULT_COLUMNS.isdisjoint(RESERVED_INPUT_COLUMNS)
 
 
 @pytest.mark.parametrize("suffix", ["_replaced", "_with_spans", "_rewritten"])
