@@ -70,7 +70,7 @@ def _drop_malformed_entities(dataframe: pd.DataFrame) -> tuple[pd.DataFrame, lis
             keep.append(True)
         except ValueError as exc:
             keep.append(False)
-            record_id = dataframe[RECORD_ID_COLUMN].iloc[position] if RECORD_ID_COLUMN in dataframe.columns else index
+            record_id = dataframe[RECORD_ID_COLUMN].iloc[position]
             failed.append(FailedRecord(record_id=str(record_id), step="replace", reason=f"malformed entities: {exc}"))
     return (dataframe[keep] if failed else dataframe), failed
 

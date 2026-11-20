@@ -109,7 +109,7 @@ class LlmReplaceWorkflow:
         source = dataframe.copy()
         source[ROW_ORDER_COL] = range(len(source))
         if RECORD_ID_COLUMN not in source and not source.empty:
-            source[RECORD_ID_COLUMN] = source.apply(NddAdapter._compute_record_id, axis=1)
+            raise AnonymizerWorkflowError(f"The Substitute map step's input has no {RECORD_ID_COLUMN} column")
         expected = [EntitiesByValueSchema.from_raw(raw) for raw in source[entities_column]]
         missing = [_entity_pairs(entities) for entities in expected]
         accepted: list[dict[str, list[dict[str, str]]]] = [{"replacements": []} for _ in expected]

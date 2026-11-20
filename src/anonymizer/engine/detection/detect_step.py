@@ -15,11 +15,11 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from itertools import repeat
-from typing import Any, cast
+from typing import Any, NewType, cast
 
 import pandas as pd
 
-from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_FINAL_ENTITIES, COL_TEXT
+from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_FINAL_ENTITIES, COL_TEXT, RECORD_ID_COLUMN
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, _build_entities_by_value
 from anonymizer.engine.graph_core.authoring import (
     DATUM,
@@ -37,10 +37,23 @@ from anonymizer.engine.row_partitioning import cell_text, resolve_source_positio
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.schemas.shared import to_python
 from anonymizer.engine.value_matching import _normalized, count_values, entity_spans
+from anonymizer.interface.errors import AnonymizerWorkflowError
 
 # Whether Replace fails a built-in detection row whose detected value occurs outside every kept span. Custom detectors
 # are always checked. Off until it is ruled: a built-in span model that misses a repeat would then fail the row.
 UNSPANNED_CHECK_BUILTIN = False
+
+
+RecordId = NewType("RecordId", str)
+"""The facade's label for one input record, from its ``_anonymizer_record_id``; it lives within one call."""
+
+
+@dataclass(frozen=True)
+class RowDetections:
+    """One input record's detections: its record id and the kept (collapsed) entities."""
+
+    record_id: RecordId
+    entities: EntitiesSchema
 
 
 @dataclass
@@ -50,7 +63,7 @@ class DetectState:
     detected: list[EntityDetectionResult] = field(default_factory=list)
     owners: list[Datum] = field(default_factory=list)
     elapsed: list[float] = field(default_factory=list)
-    rows: dict[Datum, EntitiesSchema] = field(default_factory=dict)
+    rows: dict[Datum, RowDetections] = field(default_factory=dict)
     failures: list[FailedRecord] = field(default_factory=list)
 
 
@@ -75,6 +88,9 @@ def detect_step(
         state.elapsed.append(time.perf_counter() - started)
         state.failures.extend(result.failed_records)
         positions = resolve_positions(dataframe, result)
+        ids = _input_ids(dataframe)
+        record_ids = [ids[position] for position in positions]
+        _check_carried_ids(result.dataframe, record_ids)
         surviving = [target[position] for position in positions]
         state.owners.extend(surviving)
         raw_entities = result.dataframe.get(COL_FINAL_ENTITIES, repeat({}, len(positions)))
@@ -87,13 +103,13 @@ def detect_step(
                 entities = EntitiesSchema.from_raw(raw, strict=True)
             except ValueError:
                 malformed.add(datum)
-                state.rows[datum] = EntitiesSchema()
+                state.rows[datum] = RowDetections(record_ids[row], EntitiesSchema())
                 continue
             spanned = [e.value for e in entities.entities]  # before the collapse: a dropped span's value counts too
             if covered := covered_spans(datum, entities):
                 rebuilt[row] = covered
                 entities = EntitiesSchema(entities=[e for i, e in enumerate(entities.entities) if i not in covered])
-            state.rows[datum] = entities
+            state.rows[datum] = RowDetections(record_ids[row], entities)
             # A span that breaks the contract fails the row with its own reason first.
             sound = not mention_problem(accepted_mentions(datum, entities))
             # Replace replaces spans only: every value the detector reported (its spans' values, collapsed spans
@@ -107,20 +123,39 @@ def detect_step(
             if entities.entities:
                 rebuilt.setdefault(row, set())
         # Later steps read the by-value column for every returned row, so it is added even when no row is rebuilt.
-        if rebuilt or COL_ENTITIES_BY_VALUE not in result.dataframe.columns:
-            state.detected[-1] = dataclasses.replace(result, dataframe=_with_entities(result.dataframe, rebuilt))
+        frame = result.dataframe
+        if rebuilt or COL_ENTITIES_BY_VALUE not in frame.columns:
+            frame = _with_entities(frame, rebuilt)
+        # Every returned row carries the input record id at its resolved position: later stages name it by that id.
+        if RECORD_ID_COLUMN not in frame.columns:
+            frame = frame.assign(**{RECORD_ID_COLUMN: pd.Series(record_ids, index=frame.index, dtype=object)})
+        if frame is not result.dataframe:
+            state.detected[-1] = dataclasses.replace(result, dataframe=frame)
         # A non-mention entry fails the record with ``invalid_output``; a ``Refusal`` with its own reason.
         mentions: list[tuple[object, ...]] = [
             ("malformed",)
             if d in malformed
             else (Refusal("unspanned_value"),)
             if d in unspanned
-            else tuple(accepted_mentions(d, state.rows[d]))
+            else tuple(accepted_mentions(d, state.rows[d].entities))
             for d in surviving
         ]
         return per_target(mentions, positions, len(target))
 
     return Operation.phase_scoped("detect", run_detection, {"target": DATUM}, {"mentions": MENTIONS}, Requests.opaque())
+
+
+def _input_ids(dataframe: pd.DataFrame) -> list[RecordId]:
+    """Each input row's record id; the seam attaches the column, so a frame without it is a wiring fault."""
+    if RECORD_ID_COLUMN not in dataframe.columns:
+        raise AnonymizerWorkflowError(f"The detect step's input has no {RECORD_ID_COLUMN} column")
+    return [RecordId(str(i)) for i in dataframe[RECORD_ID_COLUMN]]
+
+
+def _check_carried_ids(returned: pd.DataFrame, record_ids: list[RecordId]) -> None:
+    """A returned frame that carries record ids must carry each placed row's input id."""
+    if RECORD_ID_COLUMN in returned.columns and [str(i) for i in returned[RECORD_ID_COLUMN]] != record_ids:
+        raise AnonymizerWorkflowError("The detection result's record ids disagree with the rows it is placed at")
 
 
 def missing(text: object) -> bool:

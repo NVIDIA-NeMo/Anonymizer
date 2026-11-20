@@ -65,6 +65,7 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import NddAdapter
@@ -111,6 +112,11 @@ _GOOD_QA = (
     '```json\n{"items": [{"id": 1, "aspect": "Charge", "importance": "important", '
     '"question": "What is charged?", "reference_answer": "The card."}]}\n```'
 )
+
+
+def _ids(frame: pd.DataFrame) -> pd.DataFrame:
+    """``frame`` with the record id column the ``Anonymizer`` seam attaches before the detect step."""
+    return frame.assign(**{RECORD_ID_COLUMN: [f"r{i}" for i in range(len(frame))]})
 
 
 _MESSAGE_COUNTS: dict[str, list[int]] = defaultdict(list)
@@ -851,7 +857,7 @@ def _repair_run(tmp_path: Path, workflow: type[RewriteWorkflow], max_repair_iter
     frame = _seeded_rows()
     detected = EntityDetectionResult(dataframe=frame, failed_records=[], source_positions=(0, 1))
     return workflow(adapter=_adapter(tmp_path)).run_with_detection(
-        frame[[COL_TEXT]],
+        _ids(frame[[COL_TEXT]]),
         detect=lambda _: detected,
         replace_model_selection=load_default_model_selection().replace,
         privacy_goal=_PRIVACY_GOAL,

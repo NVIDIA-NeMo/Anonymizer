@@ -54,6 +54,11 @@ from anonymizer.interface.anonymizer import Anonymizer
 from tests.detector_results import as_detector_result, returns_detector_result
 
 
+def _ids(frame: pd.DataFrame) -> pd.DataFrame:
+    """``frame`` with the record id column the ``Anonymizer`` seam attaches before the detect step."""
+    return frame.assign(**{RECORD_ID_COLUMN: [f"r{i}" for i in range(len(frame))]})
+
+
 def _build_entities_payload(payload_kind: str) -> object:
     entities_list = [
         {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
@@ -127,7 +132,7 @@ def test_substitute_consistency_shares_values_across_records_only_for_run(
         }
     )
     result = ReplacementWorkflow(llm_workflow=LlmReplaceWorkflow(adapter=adapter)).run_with_detection(
-        frame,
+        _ids(frame),
         detect=lambda df: EntityDetectionResult(df, [], tuple(range(len(df)))),
         replace_method=Substitute(consistency=consistency),
         model_configs=stub_model_configs,

@@ -37,7 +37,6 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
-    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detect_step import DetectState, detect_step
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
@@ -691,11 +690,9 @@ class RewriteWorkflow:
         detection, detection_elapsed = state.detected[0], state.elapsed[0]
         entity_rows, passthrough_rows = split(set())  # empty only if ``rewrite`` never ran
         rejected = {a.target: a.reason for a in result.attempts if a.operation == "detect" and a.status == "failed"}
-        frame = detection.dataframe
-        ids = list((frame[RECORD_ID_COLUMN] if RECORD_ID_COLUMN in frame.columns else frame.index).astype(str))
         rows.failed.extend(
-            FailedRecord(ids[row], "detect", rejected[datum])
-            for row, datum in enumerate(state.owners)
+            FailedRecord(state.rows[datum].record_id, "detect", rejected[datum])
+            for datum in state.owners
             if datum in rejected and rejected[datum] != "missing_output"
         )
         _apply_passthrough_defaults(passthrough_rows)

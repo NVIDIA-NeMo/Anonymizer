@@ -35,10 +35,13 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.detection.result import render_detector_result, validate_detector_result
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.ndd.model_loader import load_default_model_selection
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.schemas import LatentEntitySchema
 from anonymizer.interface.anonymizer import Anonymizer
+from anonymizer.interface.errors import AnonymizerWorkflowError
 from tests.detector_results import builtin_stub
 
 TEXTS = {"a": "Alice lives in Paris.", "b": "Bob met Alice."}
@@ -227,3 +230,70 @@ def test_the_detection_log_line_counts_a_custom_detectors_spans(caplog: pytest.L
     with caplog.at_level(logging.INFO, logger="anonymizer"):
         anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=DATA)
     assert "Detection complete — 3 entities found across 2 records" in caplog.text
+
+
+@pytest.mark.parametrize("mode", ["replace", "rewrite"])
+def test_a_record_left_out_of_a_reordered_partial_result_fails_once_as_dropped_output(mode: str) -> None:
+    """Rows for C then A, for inputs A, B and C: B is reported exactly once, as ``dropped_output``, by its id."""
+    data = TextRecordsInput(records=[TextRecord(id=i, text=f"{i} text") for i in ("A", "B", "C")])
+
+    class Partial:
+        def run(self, dataframe: pd.DataFrame, **_: object) -> DetectorResult:
+            return DetectorResult(rows=(DetectorRow("C"), DetectorRow("A")))
+
+    class Stub(RewriteWorkflow):
+        def _produce(self, rows: Any, **options: Any) -> Any:
+            def produce() -> None:
+                rows.frame[COL_REWRITTEN_TEXT] = ["rewritten"] * len(rows.frame)
+
+            return produce
+
+    anonymizer = Anonymizer(detection_workflow=Partial(), rewrite_runner=Stub(Mock()))  # ty: ignore[invalid-argument-type]
+    config = AnonymizerConfig(replace=Redact()) if mode == "replace" else AnonymizerConfig(rewrite=Rewrite())
+    result = anonymizer.run(config=config, data=data)
+    assert result.failed_records == [FailedRecord("B", "detect", "dropped_output")]
+    assert sorted(result.dataframe["text"]) == ["A text", "C text"]
+
+
+# --- identity: every row and failure carries its input record id (B1) ------------------------------------------------
+
+
+def _frame_without_ids(frame: pd.DataFrame, **_: object) -> EntityDetectionResult:
+    return _frame_of(frame.drop(columns=[RECORD_ID_COLUMN]))
+
+
+@pytest.mark.parametrize("mode", ["replace", "rewrite"])
+def test_a_built_in_frame_without_ids_gets_the_input_id_at_each_placed_row(mode: str) -> None:
+    """H6: the released row carries the id of the input row it answers, not a generated or missing one."""
+
+    class Stub(RewriteWorkflow):
+        def _produce(self, rows: Any, **options: Any) -> Any:
+            def produce() -> None:
+                rows.frame[COL_REWRITTEN_TEXT] = ["rewritten"] * len(rows.frame)
+
+            return produce
+
+    anonymizer = Anonymizer(detection_workflow=builtin_stub(_frame_without_ids), rewrite_runner=Stub(Mock()))
+    config = AnonymizerConfig(replace=Redact()) if mode == "replace" else AnonymizerConfig(rewrite=Rewrite())
+    result = anonymizer.run(config=config, data=DATA)
+    assert list(result.trace_dataframe[RECORD_ID_COLUMN]) == list(TEXTS)
+
+
+def test_a_built_in_frame_whose_ids_disagree_with_its_positions_raises() -> None:
+    def swapped(frame: pd.DataFrame, **_: object) -> EntityDetectionResult:
+        result = _frame_of(frame)
+        result.dataframe[RECORD_ID_COLUMN] = list(reversed(list(frame[RECORD_ID_COLUMN])))
+        return result
+
+    with pytest.raises(AnonymizerWorkflowError, match="disagree"):
+        Anonymizer(detection_workflow=builtin_stub(swapped)).run(config=AnonymizerConfig(replace=Redact()), data=DATA)
+
+
+def test_the_substitute_map_step_needs_the_record_id_column() -> None:
+    """The second uuid5 generator is gone: a frame without ids is a wiring fault, not a reason to invent ids."""
+    by_value = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
+    frame = pd.DataFrame({COL_TEXT: ["Alice"], COL_ENTITIES_BY_VALUE: [by_value]})
+    with pytest.raises(AnonymizerWorkflowError, match=RECORD_ID_COLUMN):
+        LlmReplaceWorkflow(adapter=Mock()).generate_validated_maps(
+            frame, model_configs=[], selected_models=load_default_model_selection().replace, instructions=None
+        )
