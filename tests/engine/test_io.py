@@ -11,6 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from anonymizer.config.anonymizer_config import AnonymizerInput, TextRecord, TextRecordsInput
+from anonymizer.engine import constants
 from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
     COL_REWRITTEN_TEXT,
@@ -18,6 +19,7 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
     RECORD_ID_COLUMN,
     RESERVED_INPUT_COLUMNS,
+    RESULT_COLUMNS,
 )
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.io.writer import write_output
@@ -202,6 +204,21 @@ def test_read_input_keeps_user_columns_and_documented_output_names(tmp_path: Pat
 def test_read_input_allows_a_reserved_name_as_the_text_column(tmp_path: Path, text_column: str) -> None:
     inp = _write_input(pd.DataFrame({text_column: ["hello"]}), tmp_path, text_column=text_column)
     assert read_input(inp).dataframe[COL_TEXT].tolist() == ["hello"]
+
+
+@pytest.mark.parametrize("column", sorted(RESULT_COLUMNS))
+def test_read_input_renames_every_result_column(tmp_path: Path, column: str) -> None:
+    inp = _write_input(pd.DataFrame({"bio": ["text"], column: ["input"]}), tmp_path, text_column="bio")
+    columns = set(read_input(inp).dataframe.columns)
+    assert f"{column}__input" in columns
+    assert column not in columns
+
+
+def test_every_internal_column_constant_is_reserved() -> None:
+    """A ``COL_*`` defined below the set in ``constants.py`` would silently escape it."""
+    internal = {v for k, v in vars(constants).items() if k.startswith("COL_") and isinstance(v, str) and v[0] == "_"}
+    assert internal <= RESERVED_INPUT_COLUMNS
+    assert RESULT_COLUMNS.isdisjoint(RESERVED_INPUT_COLUMNS)
 
 
 @pytest.mark.parametrize("suffix", ["_replaced", "_with_spans", "_rewritten"])
