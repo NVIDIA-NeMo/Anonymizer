@@ -71,9 +71,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     strategy_group.add_argument(
         "--hash-algorithm",
-        choices=["sha256", "sha1", "md5"],
+        choices=["sha256"],
         default=None,
-        help="Hash only: digest algorithm (default sha256).",
+        help="Hash only: digest algorithm (sha256, the only one Hash accepts). The key is read from ANONYMIZER_HASH_KEY.",
     )
     strategy_group.add_argument(
         "--digest-length", type=int, default=None, help="Hash only: hex characters kept from the digest (default 12)."
