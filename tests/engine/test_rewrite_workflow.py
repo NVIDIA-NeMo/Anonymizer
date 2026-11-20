@@ -2263,6 +2263,19 @@ def test_leftovers_reject_a_result_without_the_trace() -> None:
         result.leftovers(0)
 
 
+def test_leftovers_reject_a_row_whose_rewritten_text_was_withheld(tmp_path: Path) -> None:
+    """The last repair keeps ``Alice`` and still leaks, so its text is withheld: the audit must not count it as clean."""
+    adapter = _ScriptedAdapter({"rec": 99}, repaired="Alice repaired {1}")
+    result = _run_result(adapter, tmp_path)
+
+    assert pd.isna(result.dataframe["text_rewritten"].iloc[0])
+    assert ("failed", "replacements_applied", "e0:N1,D1,O1") in [
+        (r.code, r.check, r.cause) for r in result.outcome(0).reasons
+    ]
+    with pytest.raises(ValueError, match="withheld"):
+        result.leftovers(0)
+
+
 def test_a_name_with_marks_out_of_canonical_order_copied_verbatim_is_not_met(tmp_path: Path) -> None:
     """The value and both texts are matched in one normalized form, so marks NFKD reorders still match."""
     name = "Mira\U0001d157\U0001d16d\U0001d16e"

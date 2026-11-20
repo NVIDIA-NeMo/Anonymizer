@@ -280,6 +280,9 @@ instead of dropping it, and the run ends with one warning counting such records 
   before, flagged and `not_met`; it is still flagged and `not_met`.
 - What to do: read the warning; a step listed for most records points at that step's model. Expect null rewritten
   text for repaired records that still leak, and treat null text as "not released".
+- `result.leftovers(row)` raises `ValueError` for a Rewrite row whose rewritten text is null (withheld or never
+  produced). It counted no leftovers for such a row before, even when the row's saved `replacements_applied` cause
+  counted a value in the withheld candidate. `result.outcome(row)` keeps that cause.
 
 ### #407: frozen config and one options object
 
