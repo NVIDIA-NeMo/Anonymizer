@@ -513,9 +513,11 @@ class Anonymizer:
                 with ``overlapping_output_ownership``, ``mention_out_of_range``,
                 ``mention_slice_mismatch`` or ``mention_unlabelled``; in Rewrite a
                 payload that does not parse fails with ``invalid_output`` (Replace
-                rejects it at ``replace``). Each row's ``_entities_by_value`` view
-                is derived from its kept ``final_entities`` spans; a view the
-                detector returns is not used. These checks and the derived view
+                rejects it at ``replace``). For a row with spans, the
+                ``_entities_by_value`` view is that of its kept spans plus every
+                detector pair whose value occurs in the row's text outside those
+                spans; a row without
+                spans keeps the detector's view. These checks and the derived view
                 apply only when the detector returns source positions or unique
                 record ids (ids exist only with ``TextRecordsInput``) and leaves
                 each row's text unchanged; otherwise the result is used as

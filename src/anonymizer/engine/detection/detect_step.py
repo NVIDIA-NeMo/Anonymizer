@@ -24,8 +24,8 @@ from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.graph_core.authoring import DATUM, MENTIONS, Datum, Mention, Operation, Requests, mention_problem
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.backend import per_target
-from anonymizer.engine.row_partitioning import try_resolve_source_positions
-from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.row_partitioning import cell_text, try_resolve_source_positions
+from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.schemas.shared import to_python
 
 
@@ -85,9 +85,10 @@ def detect_step(
                 rebuilt[row] = covered
                 entities = EntitiesSchema(entities=[e for i, e in enumerate(entities.entities) if i not in covered])
             state.rows[datum] = entities
-            # The by-value rule: the view is always derived from the row's kept entities. A detector's own view is
-            # not used: a pair no kept span has would leave the rewrite's deterministic replacements unready.
-            rebuilt.setdefault(row, set())
+            # The by-value rule: a row with spans gets the view of its kept spans plus every detector pair whose value
+            # occurs in its text outside them (see ``_with_entities``); a row without spans keeps the detector's view.
+            if entities.entities:
+                rebuilt.setdefault(row, set())
         # Later steps read the by-value column for every returned row, so it is added even when no row is rebuilt.
         if rebuilt or COL_ENTITIES_BY_VALUE not in result.dataframe.columns:
             state.detected[-1] = dataclasses.replace(result, dataframe=_with_entities(result.dataframe, rebuilt))
@@ -146,8 +147,13 @@ def covered_spans(datum: Datum, entities: EntitiesSchema) -> set[int]:
 
 def _with_entities(frame: pd.DataFrame, covered: dict[int, set[int]]) -> pd.DataFrame:
     """A copy of ``frame`` whose rows at the positions in ``covered`` lose those entities, with their by-value view
-    rebuilt from the kept entities (the column is added when the detector returned none; a row not in ``covered``
-    keeps its cell, or a missing one).
+    rebuilt (the column is added when the detector returned none; a row not in ``covered`` keeps its cell).
+
+    The invariant: for each row, every value the detector reports, from a span or a by-value pair, that occurs in the
+    row's text is either in the replacement view or fails the row. Nothing reported is dropped silently, and released
+    text never holds such a value unflagged. So a rebuilt view is the view of the kept spans plus every pair of the
+    detector's own view whose value occurs in the row's text outside those spans; a value inside a kept span is
+    protected by that span, and a value that does not occur protects nothing.
 
     A rewritten entities cell keeps its own encoding (a JSON string stays a string) and its own keys. A rebuilt
     by-value cell takes the encoding of the column's first present cell, else of its row's entities cell, so a
@@ -160,14 +166,52 @@ def _with_entities(frame: pd.DataFrame, covered: dict[int, set[int]]) -> pd.Data
     if has_entities:
         frame[COL_FINAL_ENTITIES] = final
     by_value = list(frame[COL_ENTITIES_BY_VALUE]) if COL_ENTITIES_BY_VALUE in frame.columns else [None] * len(given)
+    texts = [cell_text(t) for t in frame[COL_TEXT]] if COL_TEXT in frame.columns else [""] * len(given)
     sample = next((cell for cell in by_value if not _absent(cell)), None)
     frame[COL_ENTITIES_BY_VALUE] = [
-        _encoded_like(given[row] if sample is None else sample, _build_entities_by_value(final[row]))
+        _encoded_like(
+            given[row] if sample is None else sample,
+            _union(_build_entities_by_value(final[row]), raw, texts[row], final[row]),
+        )
         if row in covered
         else raw
         for row, raw in enumerate(by_value)
     ]
     return frame
+
+
+def _union(derived: dict[str, Any], listed: object, text: str, entities: object) -> dict[str, Any]:
+    """``derived`` plus every pair of ``listed`` whose value occurs in ``text`` outside the spans of ``entities``."""
+    items = {item["value"]: list(item["labels"]) for item in derived["entities_by_value"]}
+    for value, labels in unspanned_pairs(listed, text, entities):
+        merged = items.setdefault(value, [])
+        merged.extend(label for label in labels if label not in merged)
+    return {**derived, "entities_by_value": [{"value": v, "labels": labels} for v, labels in items.items()]}
+
+
+def unspanned_pairs(listed: object, text: str, entities: object) -> list[tuple[str, list[str]]]:
+    """The pairs of the by-value cell ``listed`` whose value occurs in ``text`` at least once outside every span of
+    ``entities``: values the detector reported that its spans do not protect."""
+    spans = [(e.start_position, e.end_position) for e in EntitiesSchema.from_raw(entities).entities]
+    unspanned = []
+    for value, labels in _listed_pairs(listed):
+        start = text.find(value)
+        while start >= 0:
+            if not any(s <= start and start + len(value) <= e for s, e in spans):
+                unspanned.append((value, labels))
+                break
+            start = text.find(value, start + 1)
+    return unspanned
+
+
+def _listed_pairs(listed: object) -> list[tuple[str, list[str]]]:
+    if _absent(listed):
+        return []
+    return [
+        (item.value, list(item.labels))
+        for item in EntitiesByValueSchema.from_raw(listed).entities_by_value
+        if item.value
+    ]
 
 
 def _without(raw: object, covered: set[int]) -> object:

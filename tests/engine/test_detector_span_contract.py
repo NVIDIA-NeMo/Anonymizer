@@ -717,13 +717,15 @@ def test_a_detector_without_a_by_value_column_completes_whatever_its_rows(
     assert (list(result.dataframe[column]) if column in result.dataframe.columns else []) == texts
 
 
+@pytest.mark.parametrize("extra", ["occurs", "absent"])
 @pytest.mark.parametrize("shape", ["good", "nested"])
-def test_a_by_value_view_with_an_extra_pair_is_derived_and_protected(shape: str, tmp_path: Path) -> None:
-    """A detector's view listing a pair no kept span has is replaced by the view of its kept spans, so the rewrite's
-    deterministic replacements stay ready and no protected value reaches the baseline text."""
+def test_a_by_value_view_keeps_the_extra_pairs_that_occur_in_the_text(shape: str, extra: str, tmp_path: Path) -> None:
+    """A row with spans gets the view of its kept spans plus every detector pair whose value occurs in its text. A
+    pair whose value does not occur is dropped, so the rewrite's deterministic replacements stay ready."""
     entities = [NAME, CITY] if shape == "good" else SHAPES["nested_inner_first"][0]
+    pair = ("lives", "other") if extra == "occurs" else ("Zurich", "city")
     view = _build_entities_by_value({"entities": [NAME, CITY]})
-    view = {**view, "entities_by_value": [*view["entities_by_value"], {"value": "lives", "labels": ["other"]}]}
+    view = {**view, "entities_by_value": [*view["entities_by_value"], {"value": pair[0], "labels": [pair[1]]}]}
 
     class ExtraPairDetector(_Detector):
         def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
@@ -741,23 +743,24 @@ def test_a_by_value_view_with_an_extra_pair_is_derived_and_protected(shape: str,
     anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=AnonymizerInput(source=str(source)))
 
     row = frames[0].to_dict("records")[0]
-    assert _requested_pairs(row[COL_ENTITIES_BY_VALUE]) == KEPT_PAIRS
-    # The rewrite generation's replacement step, fed what a model would ask for: every pair it was shown.
-    pairs = _requested_pairs(row[COL_ENTITIES_BY_VALUE])
-    prepared = _prepare_rewrite_tagged_text(
-        {
-            **row,
-            COL_REPLACEMENT_MAP: _substitute_map(pd.DataFrame({COL_ENTITIES_BY_VALUE: [row[COL_ENTITIES_BY_VALUE]]}))[
-                0
-            ],
-            COL_REWRITE_DISPOSITION_BLOCK: [
-                {"entity_value": v, "entity_label": lab, "protection_method_suggestion": "replace"} for v, lab in pairs
-            ],
-            COL_TAG_NOTATION: "bracket",
-        }
-    )
-    assert prepared[COL_REWRITE_REPLACEMENT_READY] is True
-    assert not [v for v in PROTECTED if v in prepared[COL_REWRITE_BASELINE_TEXT]]
+    assert _requested_pairs(row[COL_ENTITIES_BY_VALUE]) == KEPT_PAIRS | ({pair} if extra == "occurs" else set())
+    if extra == "absent":
+        pairs = _requested_pairs(row[COL_ENTITIES_BY_VALUE])
+        prepared = _prepare_rewrite_tagged_text(
+            {
+                **row,
+                COL_REPLACEMENT_MAP: _substitute_map(
+                    pd.DataFrame({COL_ENTITIES_BY_VALUE: [row[COL_ENTITIES_BY_VALUE]]})
+                )[0],
+                COL_REWRITE_DISPOSITION_BLOCK: [
+                    {"entity_value": v, "entity_label": lab, "protection_method_suggestion": "replace"}
+                    for v, lab in pairs
+                ],
+                COL_TAG_NOTATION: "bracket",
+            }
+        )
+        assert prepared[COL_REWRITE_REPLACEMENT_READY] is True
+        assert not [v for v in PROTECTED if v in prepared[COL_REWRITE_BASELINE_TEXT]]
 
 
 @pytest.mark.parametrize("mode", ["redact", "substitute", "rewrite"])
@@ -811,3 +814,37 @@ def test_a_missing_by_value_cell_on_a_malformed_row_fails_only_that_row(mode: st
 
     assert result.failed_records == [FailedRecord("0", "detect", "invalid_output")]
     assert list(result.dataframe["text_rewritten"]) == ["rewritten"]
+
+
+def test_a_spans_row_and_a_spans_free_row_in_one_batch_both_keep_their_reported_values(tmp_path: Path) -> None:
+    """A row with spans and a pair outside them gets its spans' view plus that pair; a row with no spans keeps the
+    detector's view. Every reported value that occurs in a row's text is in that row's view."""
+    with_extra = _view(*FULL_PAIRS, ("lives", "other"))
+    control_view = _build_entities_by_value({"entities": CONTROL_ENTITIES})
+
+    class BothShapesDetector(_Detector):
+        def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+            frame = dataframe.copy()
+            frame[COL_FINAL_ENTITIES] = [{"entities": [NAME, CITY]}, {"entities": []}]
+            frame[COL_ENTITIES_BY_VALUE] = [with_extra, control_view]
+            return EntityDetectionResult(frame, [], tuple(range(len(frame))))
+
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": [TEXT, CONTROL]}).to_csv(source, index=False)
+    frames: list[pd.DataFrame] = []
+    anonymizer = Anonymizer(
+        detection_workflow=cast(EntityDetectionWorkflow, BothShapesDetector([])),
+        rewrite_runner=_capturing(RewriteWorkflow(Mock()), frames),
+    )
+    anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=AnonymizerInput(source=str(source)))
+
+    rows = {row[COL_TEXT]: row for row in frames[0].to_dict("records")}
+    assert _requested_pairs(rows[TEXT][COL_ENTITIES_BY_VALUE]) == KEPT_PAIRS | {("lives", "other")}
+    assert _requested_pairs(rows[CONTROL][COL_ENTITIES_BY_VALUE]) == PAIRS_BY_TEXT[CONTROL]
+
+
+FULL_PAIRS = (("Alice Smith", "full_name"), ("Paris", "city"))
+
+
+def _view(*pairs: tuple[str, str]) -> dict[str, Any]:
+    return {"entities_by_value": [{"value": v, "labels": [lab]} for v, lab in pairs]}

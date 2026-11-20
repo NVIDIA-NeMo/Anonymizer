@@ -292,10 +292,11 @@ corrects the Detection entry "Detector spans are checked against the text", whic
   and an unlabelled span that no labelled span covers fails with `mention_unlabelled`.
 - In Rewrite, a `final_entities` payload that does not parse fails the record with `invalid_output`. Replace still
   rejects it at `replace`.
-- Each row's `_entities_by_value` view is derived from its kept spans. A view the detector returns is not used, and
-  the column may be left out.
+- For a row with spans, the `_entities_by_value` view is that of its kept spans plus every pair of the detector's
+  view whose value occurs in the row's text outside them; a row without spans keeps the detector's view. The column may be left
+  out.
 - These rules apply when the detector reports source positions or unique record ids and leaves the text unchanged.
-- What to do: match the new failure reasons, and stop building `_entities_by_value` in a custom detector.
+- What to do: match the new failure reasons.
 
 ### #407: frozen config and one options object
 
