@@ -5,8 +5,9 @@
 
 Declare datums and the relations between them, compose operations into a workflow, call :func:`prepare` to
 admit the workflow before any operation runs, then call :func:`protect` to run it synchronously on the calling
-thread. The kernel registers the kinds ``text``, ``mentions``, ``context``, ``datum``, ``assessment`` and
-``record``; callers register any other kind their operations produce with :func:`register_kind`.
+thread. The kernel registers the kinds ``text``, ``mentions``, ``context``, ``datum``, ``assessment``,
+``session-view``, ``decisions``, ``identities`` and ``record``; callers register any other kind their operations
+produce with :func:`register_kind`. A :class:`Session` passed as ``session=`` keeps assignments across calls.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from anonymizer.engine.graph_core.authoring import (
     Datum,
     Dependency,
     GraphScope,
+    Identity,
     Limits,
     Mention,
     Operation,
@@ -39,6 +41,14 @@ from anonymizer.engine.graph_core.execution import (
     protect,
 )
 from anonymizer.engine.graph_core.kernel import CancelToken, GraphRejection, register_kind
+from anonymizer.engine.graph_core.session import (
+    Decision,
+    Session,
+    SessionMode,
+    SessionSnapshot,
+    SessionView,
+    SubjectKey,
+)
 
 __all__ = [
     "Advisory",
@@ -48,9 +58,11 @@ __all__ = [
     "ContextSource",
     "ContextView",
     "Datum",
+    "Decision",
     "Dependency",
     "GraphRejection",
     "GraphScope",
+    "Identity",
     "InspectionSummary",
     "Limits",
     "Mention",
@@ -62,6 +74,11 @@ __all__ = [
     "Reason",
     "Record",
     "Requests",
+    "Session",
+    "SessionMode",
+    "SessionSnapshot",
+    "SessionView",
+    "SubjectKey",
     "TargetOutcome",
     "Workflow",
     "prepare",

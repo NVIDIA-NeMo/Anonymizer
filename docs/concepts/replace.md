@@ -181,6 +181,75 @@ AnonymizerConfig(replace=Hash(key=os.environ["ANONYMIZER_HASH_KEY"], digest_leng
 
 ---
 
+## Keeping substitutes across calls (provisional)
+
+To give a value the same substitute in several calls, for example across the parts of one long document, pass one
+`Session` to each call with `session=`. `Anonymizer.run` and `Anonymizer.preview` both take it. The Session is
+provisional and may change.
+
+```python
+from anonymizer import AnonymizerConfig, Substitute
+from anonymizer.graph import Session, SessionSnapshot
+
+session = Session(stable_replacements=True)
+config = AnonymizerConfig(replace=Substitute())
+for part in parts:  # each part is an AnonymizerInput or TextRecordsInput
+    result = anonymizer.run(config=config, data=part, session=session)
+
+saved = session.snapshot().to_bytes()  # to continue later, or in another process
+session = Session.restore(SessionSnapshot.from_bytes(saved))
+```
+
+- Under a stable Session, Substitute works as `consistency="run"` across every call that uses the Session. A value
+  keeps one substitute per label across calls; one value under two labels can get two substitutes. The outputs of those
+  calls are linkable. Limit linkage by how widely you use one
+  Session. Each call logs its changes to the Session as counts at INFO, and the result carries them as
+  `result.session_changes`: `added`, `reused`, `revised` and `ignored` assignments, new record-local `fallbacks`,
+  and the placeholders the call created, by cause (`placeholders_protected`: the model proposed a value from the
+  record; `placeholders_taken`: another value, or another label of the same value, in the call holds it;
+  `placeholders_session`: only the Session rules it out). It is `None` without a stable Session.
+- Two different values never share a substitute across those calls, and a new substitute never equals a value an
+  earlier call replaced.
+- A value the Session already holds needs no new mapping from the model: a returned record that omits it takes the
+  held substitute, is not retried for it and does not fail for it. A record the model does not return at all still
+  fails, held values or not, and a record can still fail for a value the Session does not hold.
+  If the model omits a held value whose substitute equals a value detected in the new record, that value gets a
+  placeholder in that record.
+- Redact, Annotate and Hash run unchanged and leave the Session unchanged. Hash is stable across calls only when
+  every call uses the same hash configuration.
+- Rewrite, and a custom replace runner that overrides `run()`, `run_with_detection()` or its map workflow's
+  `generate_validated_maps()`, reject a stable Session with `InvalidConfigError` before detection starts. Anonymizer
+  cannot verify that an override passes the Session on, so an override that forwards `**kwargs` or `session` is
+  rejected too.
+- Custom workflows and runners passed to `Anonymizer` (`detection_workflow`, `replace_runner`, `rewrite_runner`,
+  `combined_rewrite_runner`) are an advanced and testing seam: Anonymizer keeps calling an override the way its base
+  method was called, and when a call needs something an override cannot be shown to support, the call fails with an
+  error instead of running without it.
+- The snapshot bytes hold original values in plain text. Protecting them is your responsibility.
+- The Session also holds record-local fallback entries: a substitute used in one record in place of a value's shared
+  one is recorded so no other value, and no other label of the same value, takes it later. Within a call too, a
+  substitute is either a value's shared one or a record-local fallback, never both, so replaying the same rows, when
+  their values all take their shared substitutes, gives the same text and leaves the snapshot unchanged, whatever
+  order the model returns its entries or the detector its rows in. Each spelling's letter case follows the value's
+  spelling at its earliest mention, in row order; a re-cased substitute that would become another value (`Işıl` upper
+  cased is `IŞIL`) is used as assigned. A call whose earliest spelling of a value differs can get another letter case
+  of its substitute. A row that itself needs a record-local fallback gets a new placeholder each time it is
+  replayed, because fallbacks are not reused. These entries are bookkeeping, not assignments.
+- `Session()` without `stable_replacements=True` retains nothing, and the call behaves as it does without
+  `session=`. A custom replace runner is called as it is without `session=`, so an override written before `session`
+  existed keeps working.
+
+See [Graph SDK reference](graph-sdk/reference.md#session-provisional) for the Session itself.
+
+To read what a row was given, `result.replacement_map(row)` returns its entries as `Replacement(original, label,
+synthetic, placeholder)`. `placeholder` is a token-shape check tied to the entry's label: it is true when the substitute
+has the form of a placeholder for that label, such as `[SUBSTITUTE_FIRST_NAME_1]` for `first_name`, in any letter
+case (`[substitute_first_name_1]` too); a token shaped for another label reads false. It holds whether Anonymizer minted
+it in this call, the Session held it from an earlier call, or the model proposed it. `result.session_changes` counts
+only the placeholders minted in the call.
+
+---
+
 ## Evaluating replace output
 
 After running `replace`, you can score detection recall and the quality of substitutions using LLM-as-judge evaluation. See [Evaluation](evaluation.md) for details on the always-on entity coverage judge, the three Substitute quality judges (type fidelity, attribute fidelity, relational consistency), the opt-in detection validity judge, and how to call `Anonymizer.evaluate()`.

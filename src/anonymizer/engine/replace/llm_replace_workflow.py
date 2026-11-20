@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import Counter
 from collections.abc import Container
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from math import inf
 from typing import Literal
 
 import pandas as pd
@@ -21,6 +23,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_FOR_REPLACE,
     COL_ENTITIES_FOR_REPLACE_JSON,
     COL_ENTITY_EXAMPLES,
+    COL_FINAL_ENTITIES,
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_SOURCE,
     COL_REPLACEMENT_RETRY_CONTEXT,
@@ -28,16 +31,19 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
     _jinja,
 )
+from anonymizer.engine.graph_core.session import BY_VALUE, FALLBACK, Decision, SessionView, Slot
+from anonymizer.engine.graph_core.session import normalize as _fold
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import BackendRun, DataDesignerBackend
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
-from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
+from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema, EntityReplacementMapSchema
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
+_PLACEHOLDER = re.compile(r"\[SUBSTITUTE_(.+)_([1-9]\d*)\]")  # see ``_is_placeholder``
 REPLACEMENT_MAP_SOURCE_LLM = "llm"
 
 # Workflow-internal scratch columns used only to build the replacement-generator
@@ -56,6 +62,8 @@ class LlmReplaceResult:
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
     source_positions: tuple[int, ...] | None = None
+    decisions: tuple[tuple[Decision, ...], ...] = ()  # per returned row, under a stable Session only
+    placeholder_counts: dict[str, int] = field(default_factory=dict)  # minted this call, by cause
 
 
 class LlmReplaceWorkflow:
@@ -75,6 +83,7 @@ class LlmReplaceWorkflow:
         entities_column: str = COL_ENTITIES_BY_VALUE,
         preview_num_records: int | None = None,
         consistency: Literal["record", "run"] = "record",
+        session: SessionView | None = None,
     ) -> LlmReplaceResult:
         """Generate complete Substitute maps, retrying missing pairs once.
 
@@ -85,7 +94,16 @@ class LlmReplaceWorkflow:
         completeness retry also fails only the affected records. The complete
         maps then go through ``_fold_replacement_maps`` under ``consistency``
         like any other proposal.
+
+        Under a stable ``session``, that fold runs in ``"run"`` mode, starts
+        from the Session's assignments and returns each kept row's decisions;
+        any other ``session`` is ignored. A requested pair the Session already
+        holds counts as covered when the model omits it: it takes the Session's
+        substitute, is not retried and cannot fail its record.
         """
+        view = session if session is not None and session.mode.stable_replacements else None
+        if view is not None:
+            consistency = "run"
         source = dataframe.copy()
         source[ROW_ORDER_COL] = range(len(source))
         if RECORD_ID_COLUMN not in source and not source.empty:
@@ -158,6 +176,15 @@ class LlmReplaceWorkflow:
                 ]
                 accepted[position]["replacements"].extend(additions)
                 missing[position] -= {(entry["original"], entry["label"]) for entry in additions}
+                if view is not None:
+                    # A pair the Session holds is covered: the fold uses the Session's substitute for it anyway.
+                    held = [
+                        {"original": value, "label": label, "synthetic": synthetic}
+                        for value, label in sorted(missing[position])
+                        if (synthetic := view.lookup((BY_VALUE, label, _fold(value)))) is not None
+                    ]
+                    accepted[position]["replacements"].extend(held)
+                    missing[position] -= {(entry["original"], entry["label"]) for entry in held}
 
             # Positional association survives duplicate record IDs and reordered
             # workflow output. Do not retry rows already dropped by DataDesigner.
@@ -195,8 +222,16 @@ class LlmReplaceWorkflow:
         output = source.iloc[kept].drop(columns=[ROW_ORDER_COL]).copy().reset_index(drop=True)
         output[COL_REPLACEMENT_MAP] = pd.Series([accepted[position] for position in kept], dtype=object)
         output[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
-        output[COL_REPLACEMENT_MAP] = _fold_frame(output, entities_column, consistency)
-        return LlmReplaceResult(dataframe=output, failed_records=failed, source_positions=tuple(kept))
+        output[COL_REPLACEMENT_MAP], decisions, placeholder_counts = _fold_frame(
+            output, entities_column, consistency, view
+        )
+        return LlmReplaceResult(
+            dataframe=output,
+            failed_records=failed,
+            source_positions=tuple(kept),
+            decisions=decisions,
+            placeholder_counts=placeholder_counts,
+        )
 
     def generate_map_only(
         self,
@@ -261,7 +296,7 @@ class LlmReplaceWorkflow:
         # Input positions of the rows that came back, in output order: the rows the LLM dropped are absent.
         positions = tuple(sorted((*passthrough_rows[ROW_ORDER_COL], *output_df[ROW_ORDER_COL])))
         combined = merge_and_reorder(output_df, passthrough_rows)
-        combined[COL_REPLACEMENT_MAP] = _fold_frame(combined, entities_column, consistency)
+        combined[COL_REPLACEMENT_MAP], _, _ = _fold_frame(combined, entities_column, consistency)
         return LlmReplaceResult(
             dataframe=combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
             failed_records=run_result.failed_records,
@@ -318,27 +353,48 @@ def _entities_for_pairs(pairs: set[tuple[str, str]]) -> EntitiesByValueSchema:
     )
 
 
-def _fold_frame(frame: pd.DataFrame, entities_column: str, consistency: Literal["record", "run"]) -> list[dict]:
-    """``_fold_replacement_maps`` over ``frame``'s maps, recorded as the ``LlmReplaceWorkflow.fold`` stage."""
+def _fold_frame(
+    frame: pd.DataFrame,
+    entities_column: str,
+    consistency: Literal["record", "run"],
+    view: SessionView | None = None,
+) -> tuple[list[dict], tuple[tuple[Decision, ...], ...], dict[str, int]]:
+    """``_fold_replacement_maps`` over ``frame``'s maps, recorded as the ``LlmReplaceWorkflow.fold`` stage: the maps,
+    each row's decisions under ``view`` and the placeholders minted, by cause."""
     requested = [_requested_values(EntitiesByValueSchema.from_raw(v)) for v in frame[entities_column]]
+    spans = None
+    if view is not None and COL_FINAL_ENTITIES in frame.columns:
+        spans = [_first_offsets(raw) for raw in frame[COL_FINAL_ENTITIES]]
     tally: Counter[tuple[str, ...]] = Counter()
+    decisions: list[tuple[Decision, ...]] = []
+    placeholder_counts: Counter[str] = Counter()
     with stage_timer("LlmReplaceWorkflow.fold", consistency=consistency, input_row_count=len(frame)) as fields:
-        maps = _fold_replacement_maps(frame[COL_REPLACEMENT_MAP].tolist(), consistency, requested, tally)
+        maps = _fold_replacement_maps(
+            frame[COL_REPLACEMENT_MAP].tolist(), consistency, requested, tally, view, decisions, spans
+        )
         fields["entry_count"] = sum(len(m.get("replacements", [])) for m in maps)
         fields["records_with_placeholder"] = tally.pop(("records_with_placeholder",), 0)
         fallbacks: dict[str, dict[str, int]] = {}
         for (label, step), n in sorted(tally.items()):
             fallbacks.setdefault(label, {})[step] = n
+            if step.startswith("placeholder_"):
+                placeholder_counts[step.removeprefix("placeholder_")] += n
         fields["fallback_counts"] = fallbacks
-    return maps
+    return maps, tuple(decisions), dict(placeholder_counts)
 
 
-def _fold(value: str) -> str:
-    return " ".join(value.casefold().split())
+def _first_offsets(raw: object) -> dict[str, int]:
+    """Each exact entity value of a row at its first accepted mention's start offset."""
+    offsets: dict[str, int] = {}
+    for entity in EntitiesSchema.from_raw(raw).entities:
+        if entity.value and entity.start_position < offsets.get(entity.value, entity.start_position + 1):
+            offsets[entity.value] = entity.start_position
+    return offsets
 
 
 def _recase(synthetic: str, *, like: str, source: str) -> str:
-    if like == source:
+    """``synthetic`` in ``like``'s case where it differs from ``source``'s; a placeholder is always kept as minted."""
+    if like == source or _is_placeholder(synthetic):
         return synthetic
     if like.isupper():
         return synthetic.upper()
@@ -352,8 +408,12 @@ def _fold_replacement_maps(
     consistency: Literal["record", "run"],
     requested: list[set[str]] | None = None,
     tally: Counter[tuple[str, ...]] | None = None,
+    view: SessionView | None = None,
+    decisions: list[tuple[Decision, ...]] | None = None,
+    spans: list[dict[str, int]] | None = None,
 ) -> list[dict]:
-    """Give entries with the same (label, case- and whitespace-folded value) one substitute, re-cased to each original.
+    """Give entries with the same (label, case- and whitespace-folded value) one substitute, re-cased to each original
+    (a placeholder is never re-cased).
 
     ``"record"`` shares within each record; ``"run"`` also gives each key the first record's substitute. A shared
     substitute collides when its folded form equals a value in its record (its map's originals and ``requested``), a
@@ -364,20 +424,72 @@ def _fold_replacement_maps(
     one.
 
     In ``"run"`` mode the fallback also collides with a substitute another key emitted in the record, and a substitute
-    emitted for one key anywhere in the run collides for every other key, so two keys never share one; placeholders are
-    numbered across the run. A key holding a run-wide mapping ignores other keys' proposals, so its run-wide substitute
-    wins over them. When that substitute collides in a record and the key falls back, its fallback is checked like any
-    other key's: a key earlier in the record that already emitted the same value keeps it, and the holder moves on to a
-    placeholder.
+    emitted for one key anywhere in the run collides for every key of another value, so different values never
+    share one (one value under two labels may); placeholders are numbered across the run. A key holding a run-wide
+    mapping ignores other keys' proposals, so its run-wide substitute wins over them. When that substitute collides in a
+    record and the key falls back, its fallback is checked like any other key's: a key earlier in the record that
+    already emitted the same value keeps it, and the holder moves on to a placeholder. Without a ``view``, a key is
+    never blocked by another key for the same normalized value (one value under two labels). With one, that holds for
+    run-wide substitutes only: a substitute that another key of the call, any label, emitted as a record-local fallback
+    cannot become a key's run-wide substitute, and one that another key holds run-wide cannot be a key's record-local
+    fallback, in either order.
 
     When given, ``tally`` counts each fallback as ``(label, step)`` with step ``own``, ``placeholder_taken``
-    (``"run"`` only) or ``placeholder_protected`` (its own proposal folds to a value in its record), plus
+    (``"run"`` only: another key emitted it), ``placeholder_session`` (only the Session's view rules it out) or
+    ``placeholder_protected`` (its own proposal folds to a value in its record), plus
     ``("records_with_placeholder",)``.
+
+    With a stable Session's ``view`` (``"run"`` mode only), each key's casing reference in a record is its spelling at
+    the earliest accepted mention (``spans``: each exact value's first start offset in the record), ties and values
+    without a span broken by exact value; the maps are in target order. That spelling's entry gives the record's shared
+    substitute and, when that collides, the key's fallback, so neither the model's entry order nor the detector's return
+    order changes which spelling gives a key's substitute or its letter case; between different values that compete for
+    one substitute, the model's order still decides on the first call, and a replay keeps that outcome. A key the run
+    has not mapped yet takes the Session's assignment for that spelling. A shared
+    substitute is re-cased to another spelling only when the re-cased form normalizes to the same value; otherwise it is
+    emitted as assigned, and a placeholder for the entry's label is always kept as minted, so only a genuine alternate
+    is a fallback. A substitute also collides when the view's ``assigned_to_other_value`` finds it assigned to another
+    subject or normalized value, or to a fallback entry; the key's own slot and the same normalized value under any
+    other label do not count, so a value under two labels can keep one substitute. A record-local fallback also collides
+    when the view's ``assigned_elsewhere`` finds it assigned to any other slot, the same value's other labels included,
+    since the Session then holds it as a fallback too. Unless it is the key's own held substitute, it also collides when
+    it is a value the Session holds. A placeholder is never one the Session assigns to another key. ``decisions`` then
+    gets one tuple per map: a decision for each key first used in that map, holding the key's run-wide substitute, and
+    one for each record-local substitute not marked before, under the fallback subject and keyed by that substitute, so
+    later calls treat it as taken.
     """
     run_wide: dict[tuple[str, str], tuple[str, str]] = {}
     taken: dict[str, set[tuple[str, str]]] = {}
+    decided: set[tuple[str, str]] = set()
+    marked: set[tuple[str, str]] = set()  # (label, normalized record-local substitute)
     run_placeholders: Counter[str] = Counter()
     folded: list[dict] = []
+
+    def held(key: tuple[str, str], own: tuple[str, str]) -> tuple[str, str]:
+        if view is not None and key not in run_wide and (assigned := view.lookup((BY_VALUE, *key))) is not None:
+            run_wide[key] = (own[0], assigned)
+        return run_wide.get(key, own)
+
+    # Under a view, what the call emitted so far, by normalized substitute: each key's own run-wide substitute
+    # (``emitted_stable``) and its record-local fallbacks (``emitted_local``). A substitute is one of the two, never both, whatever
+    # the label: the Session holds a fallback against every other slot.
+    emitted_stable: dict[str, set[tuple[str, str]]] = {}
+    emitted_local: dict[str, set[tuple[str, str]]] = {}
+
+    def crosses(value: str, key: tuple[str, str], *, fixes: bool) -> bool:
+        if view is None:
+            return False
+        holding = key in run_wide and _fold(run_wide[key][1]) == value
+        slot = (BY_VALUE, *key)
+        # A record-local fallback must not be any other slot's assignment, the same value's other labels included.
+        elsewhere = view.assigned_to_other_value(value, slot) if fixes else view.assigned_elsewhere(value, slot)
+        return elsewhere or (not holding and view.is_original(value))
+
+    def across_labels(value: str, key: tuple[str, str], *, fixes: bool) -> bool:
+        """Whether another key of the call, any label, holds ``value`` the other way: as a fallback when it would
+        become ``key``'s run-wide substitute (``fixes``), as its run-wide substitute when it would be a fallback."""
+        return any(other != key for other in (emitted_local if fixes else emitted_stable).get(value, ()))
+
     for index, raw in enumerate(maps):
         keyed = [((e["label"], _fold(e["original"])), e) for e in raw.get("replacements", [])]
         originals = {key[1] for key, _ in keyed} | {_fold(v) for v in (requested[index] if requested else ())}
@@ -386,10 +498,27 @@ def _fold_replacement_maps(
             proposed.setdefault(_fold(entry["synthetic"]), set()).add(key)
         emitted: dict[str, set[tuple[str, str]]] = {}
 
-        def collides(value: str, key: tuple[str, str], *, shared: bool) -> bool:
+        def collides(value: str, key: tuple[str, str], *, shared: bool, fixes: bool = True) -> bool:
             rivals = proposed.get(value, set()) if shared and key not in run_wide else set()
             others = rivals | emitted.get(value, set()) | taken.get(value, set())
-            return value in originals or bool(others - {key})
+            blocked = any(other[1] != key[1] for other in others)
+            if view is not None:
+                blocked = blocked or across_labels(value, key, fixes=fixes)
+            return value in originals or blocked or crosses(value, key, fixes=fixes)
+
+        reference: dict[tuple[str, str], tuple[str, str]] = {}
+        if view is not None:
+            offsets = spans[index] if spans is not None else {}
+            for key, entry in sorted(keyed, key=lambda ke: (offsets.get(ke[1]["original"], inf), ke[1]["original"])):
+                reference.setdefault(key, (entry["original"], entry["synthetic"]))
+
+        def render(source: tuple[str, str], entry: dict) -> str:
+            recased = _recase(source[1], like=entry["original"], source=source[0])
+            if view is None:
+                return recased
+            if is_placeholder(entry["label"], source[1]) or _fold(recased) != _fold(source[1]):
+                return source[1]
+            return recased
 
         record: dict[tuple[str, str], tuple[str, str]] = {}
         placeholders: Counter[str] = run_placeholders if consistency == "run" else Counter()
@@ -398,22 +527,32 @@ def _fold_replacement_maps(
         for key, entry in keyed:
             own = (entry["original"], entry["synthetic"])
             first = key not in record
-            source = record.setdefault(key, run_wide.get(key, own))
-            synthetic = _recase(source[1], like=entry["original"], source=source[0])
+            source = record.setdefault(key, held(key, reference.get(key, own)))
+            synthetic = render(source, entry)
             if collides(_fold(synthetic), key, shared=True):
                 step = "own" if entry["synthetic"] != synthetic else None
                 source = own
                 synthetic = entry["synthetic"]
+                if view is not None and first and key in reference:
+                    # The key's fallback in this record is its reference spelling's proposal, not the proposal of
+                    # whichever spelling the model listed first.
+                    source = reference[key]
+                    synthetic = render(source, entry)
                 value = _fold(synthetic)
-                if value in originals if consistency == "record" else collides(value, key, shared=False):
-                    in_record = value in originals
-                    step = "placeholder_protected" if in_record else "placeholder_taken"
+                # The fallback becomes the key's run-wide substitute only when the key has none yet.
+                fixes = first and key not in run_wide
+                if value in originals if consistency == "record" else collides(value, key, shared=False, fixes=fixes):
+                    rival = any(other[1] != key[1] for other in emitted.get(value, set()) | taken.get(value, set()))
+                    rival = rival or (view is not None and across_labels(value, key, fixes=fixes))
+                    cause = "protected" if value in originals else "taken" if rival else "session"
+                    step = f"placeholder_{cause}"
                     placeholders[entry["label"]] += 1
                     used += 1
+                    protected: tuple[Container[str], ...] = (originals, proposed, emitted, taken)
+                    if view is not None:
+                        protected = (*protected, _AssignedElsewhere(view, (BY_VALUE, *key)))
                     synthetic = _collision_safe_synthetic(
-                        entry["label"],
-                        index=placeholders[entry["label"]],
-                        protected_original_values=(originals, proposed, emitted, taken),
+                        entry["label"], index=placeholders[entry["label"]], protected_original_values=protected
                     )
                     source = (entry["original"], synthetic)
                 if first:
@@ -421,6 +560,10 @@ def _fold_replacement_maps(
                 if tally is not None and step:
                     tally[(entry["label"], step)] += 1
             emitted.setdefault(_fold(synthetic), set()).add(key)
+            if view is not None:
+                emitted_value = _fold(synthetic)
+                is_shared = emitted_value == _fold(run_wide.get(key, record[key])[1])
+                (emitted_stable if is_shared else emitted_local).setdefault(emitted_value, set()).add(key)
             out.append({**entry, "synthetic": synthetic})
         if used and tally is not None:
             tally[("records_with_placeholder",)] += 1
@@ -431,6 +574,16 @@ def _fold_replacement_maps(
                 run_wide.setdefault(key, source)
             for value, keys in emitted.items():
                 taken.setdefault(value, set()).update(keys)
+        if decisions is not None and view is not None:
+            fresh = [key for key in record if key not in decided]
+            row = [Decision((BY_VALUE, *key), run_wide[key][1]) for key in fresh]
+            decided.update(fresh)
+            for key, entry in zip((k for k, _ in keyed), out):
+                local = (key[0], _fold(entry["synthetic"]))
+                if local[1] != _fold(run_wide[key][1]) and local not in marked:
+                    row.append(Decision((FALLBACK, *local), local[1]))
+                    marked.add(local)
+            decisions.append(tuple(row))
         folded.append({**raw, "replacements": out})
     return folded
 
@@ -469,7 +622,9 @@ def _filter_replacement_map_to_input_entities(
     the same exact label against the full requested inventory, then restores
     the trusted original. Ambiguous or otherwise changed originals are dropped.
     Collisions between a substitute and a value are left to
-    ``_fold_replacement_maps``.
+    ``_fold_replacement_maps``. Without reconciliation (the Rewrite path), an
+    unfilled pair takes the same value's substitute under another label, else
+    an entry with the exact same original; Substitute retries it instead.
     """
     if isinstance(raw_map, BaseModel):
         raw_map = raw_map.model_dump(mode="python")
@@ -494,7 +649,7 @@ def _filter_replacement_map_to_input_entities(
             key = (value.translate(_UNICODE_SPACE_TRANSLATION), label)
             equivalent_pairs.setdefault(key, set()).add((value, label))
     filtered: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    filled: dict[tuple[str, str], str] = {}
     reconciled_labels: Counter[str] = Counter()
     for replacement in parsed_map.replacements:
         key = (replacement.original, replacement.label)
@@ -506,13 +661,32 @@ def _filter_replacement_map_to_input_entities(
             key = next(iter(candidates))
             if key in exact_pairs:
                 continue
-        if key in seen:
+        if key in filled:
             continue
         if replacement.original != key[0]:
             replacement = replacement.model_copy(update={"original": key[0]})
             reconciled_labels[replacement.label] += 1
-        seen.add(key)
+        filled[key] = replacement.synthetic
         filtered.append(replacement.model_dump())
+    if not reconcile_unicode_whitespace:
+        # Rewrite path only; Substitute retries an unfilled pair instead. An unfilled pair (the model echoed joined
+        # labels, or returned one entry for a value detected under several labels) takes the substitute of the same
+        # value under another label, else the first entry with the exact same original under any label. It keeps the
+        # requested original and label, since Replace resolves by the exact pair first.
+        by_original: dict[str, str] = {}
+        for replacement in parsed_map.replacements:
+            by_original.setdefault(replacement.original, replacement.synthetic)
+        for entity in parsed_entities.entities_by_value:
+            same_value = next(
+                (filled[(entity.value, lb)] for lb in entity.labels if (entity.value, lb) in filled), None
+            )
+            for label in entity.labels:
+                if not (entity.value and label) or (entity.value, label) in filled:
+                    continue
+                synthetic = same_value or by_original.get(entity.value)
+                if synthetic is not None:
+                    filled[(entity.value, label)] = synthetic
+                    filtered.append({"original": entity.value, "label": label, "synthetic": synthetic})
 
     if reconciled_labels:
         logger.debug(
@@ -543,16 +717,41 @@ def _filter_replacement_map_to_input_entities(
     return {"replacements": filtered}
 
 
+class _AssignedElsewhere:
+    """A Session view as a protected container: the values it assigns to a slot other than ``slot``, and every
+    original value it holds, so a new placeholder never equals what an earlier call replaced."""
+
+    __slots__ = ("_slot", "_view")
+
+    def __init__(self, view: SessionView, slot: Slot) -> None:
+        self._view, self._slot = view, slot
+
+    def __contains__(self, value: object) -> bool:
+        return isinstance(value, str) and (
+            self._view.assigned_elsewhere(value, self._slot) or self._view.is_original(value)
+        )
+
+
+def _label_token(label: str) -> str:
+    return "".join(char.upper() if char.isalnum() else "_" for char in label).strip("_") or "VALUE"
+
+
+def _is_placeholder(value: str) -> bool:
+    """Whether ``value`` is a token ``_collision_safe_synthetic`` can mint."""
+    match = _PLACEHOLDER.fullmatch(value)
+    return match is not None and _label_token(match[1]) == match[1]
+
+
 def _placeholder_prefix(label: str) -> str:
-    label_token = "".join(char.upper() if char.isalnum() else "_" for char in label).strip("_") or "VALUE"
-    return f"[SUBSTITUTE_{label_token}_"
+    return f"[SUBSTITUTE_{_label_token(label)}_"
 
 
 def is_placeholder(label: str, synthetic: str) -> bool:
-    """Whether ``synthetic`` is a placeholder ``_collision_safe_synthetic`` builds for ``label``, in any case (the fold
-    re-cases a substitute to each variant of its original)."""
-    prefix = _placeholder_prefix(label).casefold()
-    return synthetic.casefold().startswith(prefix) and synthetic.endswith("]") and synthetic[len(prefix) : -1].isdigit()
+    """Whether ``synthetic`` has the shape of a placeholder for ``label`` (``[SUBSTITUTE_<LABEL>_<digits>]``), in any
+    case (the fold re-cases a substitute to each variant of its original). The shape is looser than what
+    ``_collision_safe_synthetic`` mints: any ``str.isdigit`` digits are accepted, including a leading zero."""
+    prefix, folded = _placeholder_prefix(label).casefold(), synthetic.casefold()
+    return folded.startswith(prefix) and folded.endswith("]") and folded[len(prefix) : -1].isdigit()
 
 
 def _collision_safe_synthetic(label: str, *, index: int, protected_original_values: tuple[Container[str], ...]) -> str:

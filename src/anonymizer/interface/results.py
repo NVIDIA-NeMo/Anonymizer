@@ -10,14 +10,51 @@ import pandas as pd
 from anonymizer.config.anonymizer_config import DetectionScope
 from anonymizer.config.replace_strategies import Annotate, Hash, ReplaceMethod
 from anonymizer.config.rewrite import PrivacyGoal
-from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_SENSITIVITY_DISPOSITION
+from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACEMENT_MAP, COL_SENSITIVITY_DISPOSITION
 from anonymizer.engine.graph_core.execution import TargetOutcome
+from anonymizer.engine.graph_core.session import SessionChanges
 from anonymizer.engine.ndd.adapter import FailedRecord
+from anonymizer.engine.replace.llm_replace_workflow import is_placeholder
 from anonymizer.engine.rewrite.rewrite_workflow import rewrite_leftovers
 from anonymizer.engine.row_partitioning import cell_text
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.engine.value_matching import Leftover, count_values, entity_spans
-from anonymizer.interface.display import render_record_html
+from anonymizer.interface.display import _normalize_replacement_map, render_record_html
+
+
+@dataclass(frozen=True)
+class SessionCallChanges:
+    """What one call did to its stable Session; placeholders are those the call minted, by cause."""
+
+    added: int = 0
+    reused: int = 0
+    revised: int = 0
+    ignored: int = 0
+    fallbacks: int = 0
+    placeholders_protected: int = 0
+    placeholders_taken: int = 0
+    placeholders_session: int = 0
+
+    @classmethod
+    def _of(cls, changes: SessionChanges, placeholders: dict[str, int]) -> SessionCallChanges:
+        added = changes.accepted - changes.fallbacks
+        counts = (placeholders.get(cause, 0) for cause in ("protected", "taken", "session"))
+        return cls(added, changes.reused, changes.revised, changes.ignored, changes.fallbacks, *counts)
+
+
+@dataclass(frozen=True)
+class Replacement:
+    """One replacement map entry. ``placeholder`` is a token-shape check tied to the entry's label: it is true when
+    ``synthetic`` has the shape of a placeholder for ``label``, such as ``[SUBSTITUTE_FIRST_NAME_1]``
+    for ``first_name``, in any letter case; a token shaped for another label reads false. It does not say who
+    produced it: Anonymizer may have minted it in this call, the Session may have held it
+    from an earlier call, or the model may have proposed it. The result's ``session_changes`` counts only the
+    placeholders minted in the call."""
+
+    original: str
+    label: str
+    synthetic: str
+    placeholder: bool
 
 
 def _without_secrets(method: ReplaceMethod | None) -> ReplaceMethod | None:
@@ -65,6 +102,21 @@ class _DisplayMixin:
         if row < 0 or row >= len(outcomes):
             raise IndexError(f"Record index {row} is out of bounds for {len(outcomes)} records.")
         return outcomes[row]
+
+    def replacement_map(self, row: int) -> tuple[Replacement, ...]:
+        """The replacement map of output row ``row``; empty when the trace carries no map. Each entry's
+        ``placeholder`` is the token-shape check described on :class:`Replacement`.
+
+        Raises:
+            IndexError: ``row`` is not an output row.
+        """
+        if row < 0 or row >= len(self.trace_dataframe):
+            raise IndexError(f"Record index {row} is out of bounds for {len(self.trace_dataframe)} records.")
+        if COL_REPLACEMENT_MAP not in self.trace_dataframe.columns:
+            return ()
+        entries = _normalize_replacement_map(self.trace_dataframe[COL_REPLACEMENT_MAP].iloc[row])
+        parts = [(str(e.get("original", "")), str(e.get("label", "")), str(e.get("synthetic", ""))) for e in entries]
+        return tuple(Replacement(o, lb, s, is_placeholder(lb, s)) for o, lb, s in parts if o and lb and s)
 
     def leftovers(self, row: int) -> tuple[Leftover, ...]:
         """Each detected value of output row ``row`` as the leftover check counts it, in ``cause`` order: Replace's
@@ -192,6 +244,7 @@ class AnonymizerResult(_DisplayMixin):
     detection_scope: DetectionScope | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
+    session_changes: SessionCallChanges | None = field(default=None, repr=False, compare=False)
     _outcome_ids: tuple[str, ...] | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -266,6 +319,7 @@ class PreviewResult(_DisplayMixin):
     detection_scope: DetectionScope | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
+    session_changes: SessionCallChanges | None = field(default=None, repr=False, compare=False)
     _outcome_ids: tuple[str, ...] | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:

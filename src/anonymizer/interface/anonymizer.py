@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextvars
+import dataclasses
 import functools
 import inspect
 import logging
@@ -74,10 +75,8 @@ from anonymizer.engine.graph_core.authoring import (
     DATUM,
     TEXT,
     Assessment,
-    GraphScope,
     Limits,
     Operation,
-    ProtectionGraph,
     Requests,
     Workflow,
 )
@@ -86,13 +85,15 @@ from anonymizer.engine.graph_core.execution import (
     AdvisoryStatus,
     ProtectionResult,
     TargetOutcome,
-    prepare,
-    protect,
 )
 from anonymizer.engine.graph_core.kernel import Status, register_kind
+from anonymizer.engine.graph_core.session import Session
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.backend import call_on_empty_input, raise_if_cancelled
+from anonymizer.engine.ndd.backend import (
+    rows_as_graph,
+    run_invocation,
+)
 from anonymizer.engine.ndd.model_loader import (
     parse_model_configs,
     parse_model_providers,
@@ -103,10 +104,10 @@ from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
-from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+from anonymizer.engine.rewrite.rewrite_workflow import REWRITE_METRICS, RewriteWorkflow
 from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.interface.errors import InvalidConfigError
-from anonymizer.interface.results import AnonymizerResult, PreviewResult
+from anonymizer.interface.results import AnonymizerResult, PreviewResult, SessionCallChanges
 from anonymizer.logging import LOG_INDENT, configure_logging, reapply_log_levels
 from anonymizer.measurement import (
     record_record_metrics,
@@ -136,7 +137,6 @@ logger = logging.getLogger("anonymizer")
 
 
 REPLACE_METRICS = register_kind("replace-metrics", lambda v: isinstance(v, dict), copy=dict)
-REWRITE_METRICS = register_kind("rewrite-metrics", lambda v: isinstance(v, dict), copy=dict)
 COVERAGE_METRICS = register_kind("coverage-metrics", lambda v: isinstance(v, dict), copy=dict)
 
 # Verifiers by verdict column: (verifier name, reason when the verdict is not 1.0).
@@ -194,8 +194,7 @@ def _evaluate_on_graph(
     raised as 0.4.0 raised it.
     """
     texts = frame[candidate_column] if candidate_column in frame.columns else [None] * len(frame)
-    scope = GraphScope()
-    graph = ProtectionGraph(scope, tuple(scope.datum("" if text is None else str(text)) for text in texts))
+    graph = rows_as_graph(texts, none_as_empty=True)
     failures: list[FailedRecord] = []
     current = frame
 
@@ -236,12 +235,7 @@ def _evaluate_on_graph(
     operations = (*bodies, *verifiers)
     workflow = Workflow("evaluate", operations)
     limits = Limits(max_operations=len(operations), max_targets=len(graph.targets), max_mentions=0, max_context_items=0)
-    result = protect(prepare(graph, workflow, limits=limits))
-    call_on_empty_input(graph, *bodies)
-    for entry in result.state.entries:
-        if entry.error is not None and not operations[entry.node].is_verifier:
-            raise entry.error
-    raise_if_cancelled(result)
+    result = run_invocation(graph, workflow, limits, on_empty=bodies)
     return current, failures, result
 
 
@@ -371,6 +365,32 @@ def _log_unavailable_scores(
             f"{label}: {unavailable}/{applicable_count}" for label, unavailable, applicable_count in unavailable_scores
         )
         logger.warning("%s scores unavailable — %s.", group_label, details)
+
+
+def _reject_runner_without_session(runner: ReplacementWorkflow, config: AnonymizerConfig) -> None:
+    """Reject a replace runner that a stable Session cannot be shown to reach: one whose ``run()`` or
+    ``run_with_detection()``, or under Substitute whose map workflow's ``generate_validated_maps()``, is not the stock
+    method bound to its own object (the runner, or the runner's ``_llm_workflow``). The check compares the bound
+    method's function and the object it is bound to, so an override set on the instance counts, and so does the stock
+    function bound to another object or to the class. It does not read signatures: a ``**kwargs`` override that drops
+    ``session`` would otherwise run without it."""
+    hooks: list[tuple[str, object, Callable[..., object], object]] = [
+        ("run()", runner.run, ReplacementWorkflow.run, runner),
+        ("run_with_detection()", runner.run_with_detection, ReplacementWorkflow.run_with_detection, runner),
+    ]
+    llm_workflow = getattr(runner, "_llm_workflow", None)
+    if isinstance(config.replace, Substitute) and llm_workflow is not None:
+        name = "generate_validated_maps() on its replacement map workflow"
+        stock = LlmReplaceWorkflow.generate_validated_maps
+        hooks.append((name, llm_workflow.generate_validated_maps, stock, llm_workflow))
+    for name, method, stock, owner in hooks:
+        if getattr(method, "__func__", None) is not stock or getattr(method, "__self__", None) is not owner:
+            raise InvalidConfigError(
+                f"A custom replace runner that overrides {name} cannot take part in a stable Session: Anonymizer "
+                "cannot verify that an override passes the Session on, and one that does not would give substitutes "
+                "the Session never records. This includes an override that forwards **kwargs. To change the replace "
+                "model, set it through model_configs; to keep a custom runner, run without a stable Session."
+            )
 
 
 def _initialize_logging() -> None:
@@ -591,6 +611,7 @@ class Anonymizer:
         *,
         config: AnonymizerConfig,
         data: AnonymizerInput | TextRecordsInput,
+        session: Session | None = None,
     ) -> AnonymizerResult:
         """Run the full anonymization pipeline (detection + replacement).
 
@@ -600,15 +621,26 @@ class Anonymizer:
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
             data: File-backed or in-memory records and optional dataset context.
+            session: A ``Session`` from ``anonymizer.graph`` (provisional). Pass the same
+                ``Session(stable_replacements=True)`` to several calls and Substitute gives each
+                detected value, by label and value, the same substitute in every call; Redact,
+                Annotate and Hash leave it unchanged. Rewrite, and a custom replace runner that
+                overrides ``run()``, ``run_with_detection()`` or its map workflow's
+                ``generate_validated_maps()``, even one that forwards ``**kwargs``, reject a stable
+                Session with ``InvalidConfigError`` before detection.
+                Its snapshot holds original values in plain text. See the Replace concepts page.
         """
         self._validate_preflight_config(config)
+        self._check_session(config, session)
         context = read_input(data)
         input_df = context.dataframe
         t_start = time.perf_counter()
         status = TaskStatusEnum.COMPLETED
         result: AnonymizerResult | None = None
         try:
-            result = self._run_internal(config=config, data=data, context=context, preview_num_records=None)
+            result = self._run_internal(
+                config=config, data=data, context=context, preview_num_records=None, session=session
+            )
             return result
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
@@ -714,6 +746,7 @@ class Anonymizer:
         config: AnonymizerConfig,
         data: AnonymizerInput | TextRecordsInput,
         num_records: int = 10,
+        session: Session | None = None,
     ) -> PreviewResult:
         """Run the pipeline on a subset of records for quick inspection.
 
@@ -724,15 +757,19 @@ class Anonymizer:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
             data: File-backed or in-memory records and optional dataset context.
             num_records: Maximum records to process (default 10).
+            session: A ``Session`` kept across calls, as in :meth:`run`.
         """
         self._validate_preflight_config(config)
+        self._check_session(config, session)
         context = read_input(data, nrows=num_records)
         input_df = context.dataframe
         t_start = time.perf_counter()
         status = TaskStatusEnum.COMPLETED
         result: AnonymizerResult | None = None
         try:
-            result = self._run_internal(config=config, data=data, context=context, preview_num_records=num_records)
+            result = self._run_internal(
+                config=config, data=data, context=context, preview_num_records=num_records, session=session
+            )
             return PreviewResult(
                 dataframe=result.dataframe,
                 trace_dataframe=result.trace_dataframe,
@@ -748,6 +785,7 @@ class Anonymizer:
                 detection_scope=result.detection_scope,
                 data_summary=result.data_summary,
                 _outcomes=result._outcomes,
+                session_changes=result.session_changes,
                 _outcome_ids=result._outcome_ids,
             )
         except KeyboardInterrupt:
@@ -1044,6 +1082,7 @@ class Anonymizer:
         data: AnonymizerInput | TextRecordsInput,
         context: ResolvedInput,
         preview_num_records: int | None,
+        session: Session | None = None,
     ) -> AnonymizerResult:
         input_df = context.dataframe
         mode = "replace" if config.replace is not None else "rewrite"
@@ -1069,6 +1108,7 @@ class Anonymizer:
                 data=data,
                 context=context,
                 preview_num_records=preview_num_records,
+                session=session,
             )
             measurement.update(
                 output_row_count=len(result.trace_dataframe),
@@ -1083,6 +1123,7 @@ class Anonymizer:
         data: AnonymizerInput | TextRecordsInput,
         context: ResolvedInput,
         preview_num_records: int | None,
+        session: Session | None = None,
     ) -> AnonymizerResult:
         input_df = context.dataframe
         num_records = len(input_df)
@@ -1183,6 +1224,7 @@ class Anonymizer:
             return result
 
         t0 = time.perf_counter()
+        session_changes: SessionCallChanges | None = None
         if config.replace is not None and self._replace_runner.__class__.run is not ReplacementWorkflow.run:
             # A caller's runner overrides run(): detect, then call that override with the detection frame.
             detection_result = detect(input_df)
@@ -1203,6 +1245,11 @@ class Anonymizer:
         elif config.replace is not None:
             # Passed only when set: a caller's run_with_detection override may predate the keyword.
             unspanned = {"unspanned_check": True} if self._custom_detection or UNSPANNED_CHECK_BUILTIN else {}
+            # Only a stable Session is passed: without one, an override with the signature before ``session`` is
+            # called exactly as before.
+            stable: dict[str, Any] = (
+                {"session": session} if session is not None and session.mode.stable_replacements else {}
+            )
             replace_result = self._replace_runner.run_with_detection(
                 input_df,
                 detect=detect_then_announce,
@@ -1210,6 +1257,7 @@ class Anonymizer:
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.replace,
                 preview_num_records=preview_num_records,
+                **stable,
                 **unspanned,
             )
             assert replace_result.detection is not None
@@ -1222,6 +1270,10 @@ class Anonymizer:
             final_df = replace_result.dataframe
             post_detection_failures = replace_result.failed_records[len(detection_failures) :]
             outcomes = replace_result.outcomes
+            if session is not None and session.mode.stable_replacements:
+                session_changes = SessionCallChanges._of(
+                    replace_result.session_changes, replace_result.placeholder_counts
+                )
         else:
             assert config.rewrite is not None
             privacy_goal = admitted_goal
@@ -1286,6 +1338,11 @@ class Anonymizer:
             len(post_detection_failures) - rejected_at_detect,
             replacement_elapsed,
         )
+        if session_changes is not None:
+            logger.info(
+                LOG_INDENT + "session changes: %s",
+                ", ".join(f"{n} {name}" for name, n in dataclasses.asdict(session_changes).items()),
+            )
 
         all_failures = [*detection_failures, *post_detection_failures]
         if all_failures:
@@ -1324,8 +1381,25 @@ class Anonymizer:
             ),
             data_summary=data.data_summary,
             _outcomes=outcomes,
+            session_changes=session_changes,
             _outcome_ids=None if outcomes is None else _record_ids(final_df),
             effective_entity_labels=effective_labels,
+        )
+
+    def _check_session(self, config: AnonymizerConfig, session: object) -> None:
+        """Reject, before any detection or model call, a ``session`` this run cannot take."""
+        if session is None:
+            return
+        if not isinstance(session, Session):
+            raise InvalidConfigError(f"session must be a Session from anonymizer.graph, not {type(session).__name__}.")
+        if not session.mode.stable_replacements:
+            return
+        if config.replace is not None:
+            _reject_runner_without_session(self._replace_runner, config)
+            return
+        # Rewrite takes no Session yet, whatever its runner, so a custom rewrite runner needs no runner check.
+        raise InvalidConfigError(
+            "Rewrite cannot take a stable Session. Use a replace strategy, or run Rewrite without a stable Session."
         )
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:

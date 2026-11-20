@@ -68,6 +68,8 @@ step has one, it is filled from a **seed**: a value the SDK supplies for every t
 | `mentions` | `mentions` | The mentions declared on the graph for this target |
 | `context` | `context` | The context items this target may read |
 | `target` | `datum` | The target itself |
+| `session` | `session-view` | A read-only view of the run's Session (see [Session](reference.md#session-provisional)) |
+| `identities` | `identities` | The identity declarations on this target |
 | `record` | `record` | The record this target belongs to |
 
 The **candidate** is the text a step produces for a target. Each step with an output port named `text` makes a new

@@ -136,6 +136,7 @@ def test_record_and_graph_reprs_show_no_text_or_ids() -> None:
     r = scope.record((a, b))
     g = graph.ProtectionGraph(scope, (a, b), records=(r,))
     assert repr(r) == "Record(<opaque>, 2 members)"
+    assert repr(scope.record((a,))) == "Record(<opaque>, 1 member)"
     for secret in (SECRET, scope._token, r._id, a._id, b._id):
         assert secret not in repr(r) and secret not in repr(g)
         assert all(secret not in repr(x) for x in g.all_records)
@@ -254,6 +255,7 @@ def test_graph_without_records_keeps_its_fields_and_positional_order() -> None:
         "context",
         "dependencies",
         "groups",
+        "identities",
         "records",
     ]
     with pytest.raises(TypeError):

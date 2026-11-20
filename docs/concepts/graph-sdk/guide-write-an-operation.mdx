@@ -48,7 +48,7 @@ name.
 
 To read other values, declare them in `inputs` as `{port name: kind}`. Any input port that no earlier step
 outputs is filled from a seed: `text` (current candidate), `source` (original text), `mentions`, `context`,
-`target` and `record`. The [concepts page](/concepts/graph-sdk/concepts#compose-operations-ports-and-workflows) lists their kinds.
+`target`, `session` (a read-only Session view), `identities` and `record`. The [concepts page](/concepts/graph-sdk/concepts#compose-operations-ports-and-workflows) lists their kinds.
 
 ## Return several values
 
@@ -172,5 +172,6 @@ port_kind_mismatch | wrong-kind.target: datum != text
 `unbound_port` means no earlier step outputs that port and no seed has its name. `port_kind_mismatch` means the
 port exists with another kind.
 
-Other rules checked when you build an operation: an output may not be named `record` (`seed_output_reserved`),
+Other rules checked when you build an operation: an output may not be named `session`, `identities` or `record`
+(`seed_output_reserved`),
 and `checks` and `subject` must be tuples, so write `("text",)`, not `"text"` (`names_not_tuple`).

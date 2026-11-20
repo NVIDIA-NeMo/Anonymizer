@@ -1292,6 +1292,24 @@ def test_measured_substitute_fold_stages_pass_strict_ingress(
     ]
 
 
+def test_wandb_ingress_accepts_a_session_caused_placeholder(wandb_ingress_tool: ModuleType) -> None:
+    payload = {
+        "schema_version": 2,
+        "record_type": "stage",
+        "run_id": "run-a",
+        "run_tags": {},
+        "timestamp_unix_sec": 1.0,
+        "stage": "LlmReplaceWorkflow.fold",
+        "status": "completed",
+        "elapsed_sec": 0.0,
+        "consistency": "run",
+        "entry_count": 1,
+        "records_with_placeholder": 1,
+        "fallback_counts": {"first_name": {"placeholder_session": 1}},
+    }
+    wandb_ingress_tool.StageMeasurement.model_validate(payload, strict=True)
+
+
 @pytest.mark.parametrize(
     "updates",
     [

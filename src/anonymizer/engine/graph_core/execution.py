@@ -23,6 +23,7 @@ from anonymizer.engine.graph_core import kernel as k
 from anonymizer.engine.graph_core.authoring import (
     CONTEXT,
     DATUM,
+    IDENTITIES,
     MENTIONS,
     RECORD,
     TEXT,
@@ -38,13 +39,23 @@ from anonymizer.engine.graph_core.authoring import (
     mention_problem,
     utf8_size,
 )
+from anonymizer.engine.graph_core.session import DECISIONS, SESSION_VIEW, Decision, Session, SessionChanges, SessionMode
 
 Terminal = Literal["success", "failed", "cancelled", "blocked"]
 Qualification = Literal["met", "not_met", "not_assessed"]
 AttemptStatus = Literal["running", "succeeded", "failed", "blocked", "cancelled"]
 AdvisoryStatus = Literal["passed", "failed", "could_not_assess", "scored", "not_applicable"]
 
-SEEDS = {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "context": CONTEXT, "target": DATUM, "record": RECORD}
+SEEDS = {
+    "text": TEXT,
+    "source": TEXT,
+    "mentions": MENTIONS,
+    "context": CONTEXT,
+    "target": DATUM,
+    "session": SESSION_VIEW,
+    "identities": IDENTITIES,
+    "record": RECORD,
+}
 _SEAL_KEY = secrets.token_bytes(32)
 
 
@@ -73,6 +84,7 @@ class PreparedProtection:
     capabilities: frozenset[str] = frozenset()
     final_text: int | None = None
     seal: str = field(default="", repr=False)
+    session_mode: SessionMode = SessionMode()
 
     def summary(self) -> InspectionSummary:
         return InspectionSummary(self.names, len(self.graph.targets), self.planned_requests)
@@ -88,16 +100,21 @@ def prepare(
     limits: Limits | None = None,
     capabilities: tuple[str, ...] | None = None,
     request_budget: int | None = None,
+    session: Session | None = None,
 ) -> PreparedProtection:
     """Validate everything before effects and compile an immutable plan. No callback runs here.
 
     ``capabilities`` names the operation implementations admitted for this invocation (default: the workflow's);
     ``request_budget`` rejects the workflow here when its planned external-request count is unknown, opaque or
-    above the budget; it is not enforced while the workflow runs.
+    above the budget; it is not enforced while the workflow runs. ``session`` is read for its mode only; the
+    prepared value holds no live Session, and ``protect`` must get a Session of the same mode.
     """
     _reject_bare_string("capabilities", capabilities, "operation names")
+    mode = _session_mode(session)
+    if mode.identity_matching:
+        raise k.GraphRejection("session_mode_unsupported")
     with _measure("graph_prepare", operation_count=None, target_count=len(graph.targets)) as m:
-        prepared = _prepare(graph, workflow, limits, capabilities, request_budget)
+        prepared = _prepare(graph, workflow, limits, capabilities, request_budget, mode)
         m["operation_count"] = len(prepared.names)
     return prepared
 
@@ -108,6 +125,7 @@ def _prepare(
     limits: Limits | None,
     capabilities: tuple[str, ...] | None,
     request_budget: int | None,
+    mode: SessionMode,
 ) -> PreparedProtection:
     limits = limits or Limits()
 
@@ -129,6 +147,8 @@ def _prepare(
         raise k.GraphRejection("duplicate_operation_name", ", ".join(duplicates))
     admitted = frozenset(name for name, _ in ops) if capabilities is None else frozenset(capabilities)
     _admit(graph, ops, limits, admitted)
+    if mode.stable_replacements and not any(DECISIONS in op.outputs.values() for _, op in ops):
+        raise k.GraphRejection("session_without_resolution")
     planned = _planned(ops, len(graph.targets))
     if request_budget is not None and (planned.value is None or planned.bound == "opaque"):
         raise k.GraphRejection("hard_budget_without_visibility")  # never downgraded to soft
@@ -147,7 +167,9 @@ def _prepare(
     if planned.bound == "opaque":
         planned = Count(None, "unknown")
     names = tuple(n for n, _ in ops)
-    prepared = PreparedProtection(graph, workflow, limits, plan, names, planned, covering, admitted, final_text)
+    prepared = PreparedProtection(
+        graph, workflow, limits, plan, names, planned, covering, admitted, final_text, session_mode=mode
+    )
     return replace(prepared, seal=_seal(prepared))
 
 
@@ -155,8 +177,8 @@ def _covering(ops: tuple[tuple[str, Operation], ...], plan: k.Plan, final: int) 
     """The verifiers whose every declared subject derives from the final candidate, from declared ports only.
 
     A candidate version is the index of the operation whose ``text`` output it is, or -1 for the source text. The
-    seeds ``text``, ``source``, ``mentions`` and ``target`` derive from the source text; ``context`` and ``record``
-    from none.
+    seeds ``text``, ``source``, ``mentions`` and ``target`` derive from the source text; ``context``, ``session``,
+    ``identities`` and ``record`` from none.
     Interim rule: every output of a text-producing operation derives from the version it emits, so evidence it
     returns beside its text counts as about that text. Any other operation's outputs derive from all its inputs.
     """
@@ -164,7 +186,7 @@ def _covering(ops: tuple[tuple[str, Operation], ...], plan: k.Plan, final: int) 
     covering = set()
     for i, (name, op) in enumerate(ops):
         read = {
-            port: (frozenset() if port in ("context", "record") else frozenset({-1}))
+            port: (frozenset() if port in ("context", "session", "identities", "record") else frozenset({-1}))
             if source.node is None
             else outputs[source.node][source.port]
             for port, source in plan.sources[i].items()
@@ -374,6 +396,7 @@ class ProtectionResult:
     retrievals: tuple[Retrieval, ...]
     outcomes: tuple[TargetOutcome, ...]
     consistent: bool
+    session_changes: SessionChanges = SessionChanges()
 
     @property
     def targets(self) -> tuple[Datum, ...]:
@@ -548,20 +571,35 @@ class ProtectionResult:
 # ---------------------------------------------------------------- execution
 
 
-def protect(prepared: PreparedProtection, *, cancel: k.CancelToken | None = None) -> ProtectionResult:
+def protect(
+    prepared: PreparedProtection, *, cancel: k.CancelToken | None = None, session: Session | None = None
+) -> ProtectionResult:
     """Execute synchronously on the calling thread in a copy of the calling context.
 
     Callbacks and providers run on this thread. A raising callback closes its target as failed; nothing is raised.
     ``cancel`` stops new dispatches and retrievals; a frame nested in another inherits its
     cancellation.
+
+    ``session`` (default: a fresh off/off Session private to the call) must have the mode ``prepare`` saw
+    (``session_mismatch``) and no other execution may hold it (``session_busy``); both are checked before effects.
     """
     if not isinstance(prepared, PreparedProtection) or prepared.seal != _seal(prepared):
         raise k.GraphRejection("not_prepared")
     _admit(prepared.graph, prepared.workflow.flatten(), prepared.limits, prepared.capabilities)
-    with _measure("graph_protect", **_counts(prepared)) as m:
-        result = k.run_in_frame(_protect, prepared, token=cancel)
+    if _session_mode(session) != prepared.session_mode:
+        raise k.GraphRejection("session_mismatch")
+    # Without a Session, a fresh private off/off one: nothing else can hold it, and it accepts nothing.
+    session = Session() if session is None else session
+    with session._hold(), _measure("graph_protect", **_counts(prepared)) as m:
+        result = k.run_in_frame(_protect, prepared, session, token=cancel)
         m["terminal_counts"] = dict(Counter(o.terminal for o in result.outcomes))
     return result
+
+
+def _session_mode(session: Session | None) -> SessionMode:
+    if session is not None and not isinstance(session, Session):
+        raise k.GraphRejection("not_a_session")
+    return SessionMode() if session is None else session.mode
 
 
 def _measure(stage: str, **fields: Any) -> contextlib.AbstractContextManager[dict[str, Any]]:
@@ -578,7 +616,7 @@ def _counts(p: PreparedProtection) -> dict[str, int]:
     return {"operation_count": len(p.names), "target_count": len(p.graph.targets)}
 
 
-def _protect(p: PreparedProtection) -> ProtectionResult:
+def _protect(p: PreparedProtection, session: Session) -> ProtectionResult:
     token = k.current_token()
     cancelled = (lambda: token.cancelled) if token is not None else (lambda: False)
     g = p.graph
@@ -586,6 +624,10 @@ def _protect(p: PreparedProtection) -> ProtectionResult:
     mentions: dict[Datum, list] = {}
     for m in sorted(g.mentions, key=lambda m: m.start):
         mentions.setdefault(m.datum, []).append(m)
+    view = session._view()
+    identities: dict[Datum, list] = {}
+    for i in sorted(g.identities, key=lambda i: (i.start, i.end)):
+        identities.setdefault(i.target, []).append(i)
     scopes: dict[Datum, list] = {}
     for cs in g.context:
         scopes.setdefault(cs.target, []).extend(cs.items)
@@ -609,6 +651,8 @@ def _protect(p: PreparedProtection) -> ProtectionResult:
                 "mentions": m,
                 "context": tuple(items),
                 "target": d,
+                "session": view,
+                "identities": tuple(identities.get(d, ())),
                 "record": g.record_of(d),
             }
         )
@@ -619,7 +663,26 @@ def _protect(p: PreparedProtection) -> ProtectionResult:
     with _measure("graph_reconcile", **_counts(p)) as m:
         result = _reconcile(p, state, tuple(retrievals))
         m["terminal_counts"] = dict(Counter(o.terminal for o in result.outcomes))
-    return result
+    return replace(result, session_changes=_accept_decisions(p, state, result.consistent, session))
+
+
+def _acceptance_order(graph: ProtectionGraph) -> range:
+    """The target order in which decisions are accepted; the first fixes a new slot."""
+    return range(len(graph.targets))
+
+
+def _accept_decisions(p: PreparedProtection, state: k.State, consistent: bool, session: Session) -> SessionChanges:
+    """Accept the ``decisions`` outputs of every succeeded operation, whatever the release; a cancelled or
+    inconsistent invocation accepts nothing. Order: target, then operation, then the emitted tuple."""
+    if state.cancelled or not consistent:
+        return SessionChanges()
+    ports = [[port for port, name in node.outputs.items() if name == DECISIONS] for node in p.plan.nodes]
+    found: list[tuple[Decision, str]] = []
+    for u in _acceptance_order(p.graph):
+        outputs = state.rows[u].outputs
+        for i in sorted(outputs):
+            found += [(d, p.names[i]) for port in ports[i] for d in outputs[i][port]]
+    return session._accept(found)
 
 
 def _mention_review(p: PreparedProtection) -> k.Review:

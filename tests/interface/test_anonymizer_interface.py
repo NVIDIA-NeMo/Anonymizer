@@ -1574,6 +1574,43 @@ def test_evaluate_reports_a_raising_verifier_as_its_advisory(stub_input: Anonymi
     ]
 
 
+class _Unreadable:
+    __hash__ = object.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        raise RuntimeError("unreadable verdict")
+
+
+@pytest.mark.parametrize("column", [COL_DETECTION_VALID, COL_ENTITY_COVERAGE], ids=["detection", "coverage"])
+def test_evaluate_rewrite_reports_an_unreadable_judge_value_as_its_advisory(
+    stub_input: AnonymizerInput, column: str
+) -> None:
+    anonymizer, _, _, rewrite_runner = _make_anonymizer()
+    run_result = _with_record_id(anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input))
+    eval_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            RECORD_ID_COLUMN: ["r1"],
+            COL_REWRITTEN_TEXT: ["Alice works at Globex"],
+            COL_NEEDS_HUMAN_REVIEW: pd.array([False], dtype="boolean"),
+            COL_JUDGE_EVALUATION: [None],
+            COL_DETECTION_VALID: pd.Series([True], dtype=object),
+        }
+    )
+    coverage = {COL_ENTITY_COVERAGE: [0.5], COL_MISSED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]]}
+    if column == COL_DETECTION_VALID:
+        eval_df[COL_DETECTION_VALID] = pd.Series([_Unreadable()], dtype=object)
+    else:
+        coverage[COL_ENTITY_COVERAGE] = pd.Series([_Unreadable()], dtype=object)
+    rewrite_runner.evaluate.return_value = RewriteResult(dataframe=eval_df, failed_records=[])
+    with patch("anonymizer.interface.anonymizer.EntityCoverageWorkflow") as coverage_workflow:
+        coverage_workflow.return_value.run_non_critical.return_value = (eval_df.assign(**coverage), [])
+        outcome = anonymizer.evaluate(run_result, config=EvaluateConfig(compute_detection_validity=True)).outcome(0)
+
+    check = "detection-validity" if column == COL_DETECTION_VALID else "coverage"
+    assert (check, "could_not_assess", "raised") in [(a.check, a.status, a.cause) for a in outcome.advisories]
+
+
 def test_evaluate_rewrite_reports_each_judge_through_outcome(stub_input: AnonymizerInput) -> None:
     anonymizer, _, _, rewrite_runner = _make_anonymizer()
     run_result = anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input)

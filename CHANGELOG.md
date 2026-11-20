@@ -492,8 +492,29 @@ not when the run starts.
 ### #408: caller-held Session
 
 **`session=` on `run` and `preview`.** A `Session` from `anonymizer.graph` keeps substitutes stable across calls.
-Without a session, output is unchanged. Under a stable session, `run` and `preview` reject Rewrite and a custom
-replace runner that overrides `run()`. The session and its snapshots are provisional.
+Under a stable session, `run` and `preview` reject Rewrite and a custom replace runner that overrides `run()`. The
+session and its snapshots are provisional.
+- In run mode (`consistency="run"`), a value detected under two labels can keep one substitute, where run mode used
+  to give the second label a placeholder; for such a value, record-mode (default) output is unchanged from v0.5.0.
+- What to do: in run mode, if you relied on a placeholder for the second label, read `result.replacement_map(row)`,
+  whose entries carry each label and its substitute.
+- Without a stable session, including `Session()`, a custom replace runner's `run_with_detection()` and its map
+  workflow's `generate_validated_maps()` are called as before `session` existed, so overrides with the older
+  signatures keep working.
+- Under a stable session, a custom replace runner is also rejected before detection when it overrides
+  `run_with_detection()` or its map workflow's `generate_validated_maps()`, even when the override forwards
+  `**kwargs` or `session`, and when the stock method is bound to another object.
+- Under a stable session, a value detected under two labels never gets one substitute as a record-local fallback
+  under one label and as the shared substitute under the other. The second use gets a placeholder instead, in either
+  row order and across calls. Replaying the same rows, when their values all take their shared substitutes, gives
+  the same text and snapshot, whatever order the model returns its entries or the detector its rows in; letter case
+  follows each value's earliest mention, and a substitute that re-casing would turn into another value (`Işıl`) is
+  used as assigned. A call whose earliest spelling of a value differs can get another letter case. A row that itself
+  needs a fallback gets a new placeholder on each replay, because fallbacks are not reused.
+- `result.replacement_map(row)` entries carry `placeholder`, a token-shape check tied to the entry's label: it is
+  true for a substitute shaped like that label's placeholder, such as `[SUBSTITUTE_FIRST_NAME_1]` for `first_name`, in
+  any letter case, whether Anonymizer minted it, the session held it, or the model proposed it.
+  `result.session_changes` counts only the placeholders minted in the call.
 
 **Placeholders are kept as minted.** A variant of a value that received a placeholder gets the placeholder exactly as
 minted, not re-cased (for example `[substitute_first_name_1]`). v0.5.0 had no re-casing, so this changes output only

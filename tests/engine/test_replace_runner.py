@@ -42,6 +42,7 @@ from anonymizer.engine.evaluation.replace.relational_consistency_judge import Re
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
 from anonymizer.engine.graph_core.authoring import ProtectionGraph, Workflow
 from anonymizer.engine.graph_core.execution import PreparedProtection, ProtectionResult
+from anonymizer.engine.ndd import backend
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.replace import route
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult, LlmReplaceWorkflow
@@ -860,14 +861,14 @@ def test_replace_reports_detected_values_added(
 
 def _without_advisory_verifier(graph: ProtectionGraph, build_map: Callable[..., dict]) -> ProtectionResult:
     """The same rows run with the advisory verifier removed: the outcome the check must not change."""
-    real_prepare = route.prepare
+    real_prepare = backend.prepare
 
     def drop_advisory(g: ProtectionGraph, workflow: Workflow, **kwargs: Any) -> PreparedProtection:
         steps = tuple(op for op in workflow.steps if op.name != "verify-no-original")
         return real_prepare(g, dataclasses.replace(workflow, steps=steps), **kwargs)
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(route, "prepare", drop_advisory)
+        mp.setattr(backend, "prepare", drop_advisory)
         return route._protect_rows(graph, "redact", build_map, False)
 
 

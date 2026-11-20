@@ -47,6 +47,13 @@ Import the module as `from anonymizer import graph as g`.
 | `InspectionSummary` | Content-free counts for a plan or a run. |
 | `GraphRejection` | The error raised for invalid declarations and workflows. |
 | `register_kind` | Register a port value kind. |
+| `Session` | Caller-held state that keeps assignments across runs (provisional). |
+| `SessionMode` | The mode of a `Session`. |
+| `SessionView` | The read-only view of a `Session` an operation receives. |
+| `SessionSnapshot` | A Session's state as bytes, for moving it between processes. |
+| `SubjectKey` | The subject part of a Session slot. |
+| `Decision` | An assignment an operation returns for the Session to accept. |
+| `Identity` | A span of a target declared to belong to one subject. |
 
 ## Declaring the graph
 
@@ -76,7 +83,7 @@ delivered.
 **`Dependency(dependent, on)`**, **`OutputGroup(members)`**: see
 [Release related texts together](/concepts/graph-sdk/guide-release-together).
 
-**`ProtectionGraph(scope, targets, mentions=(), context=(), dependencies=(), groups=(), *, records=())`**
+**`ProtectionGraph(scope, targets, mentions=(), context=(), dependencies=(), groups=(), *, records=(), identities=())`**
 
 - Sequences are copied into tuples, so changing your lists later has no effect. The same holds for the sequences
   passed to the relation types, to `Operation` and to `Workflow`. Constructing any of these values has no effect:
@@ -94,7 +101,7 @@ delivered.
 - `scope` is `"target"` (once per target) or `"phase_scoped"` (once for all ready targets).
 - `checks`: the checks a verifier's assessment answers. `subject`: the input ports it is about. Both are tuples.
 - `is_verifier`: `True` when an output has kind `"assessment"`.
-- An output named `record` raises `seed_output_reserved`. An `assessment` output alongside other outputs or under
+- An output named `session`, `identities` or `record` raises `seed_output_reserved`. An `assessment` output alongside other outputs or under
   another port name, or an output port named `assessment` of another kind, raises
   `GraphRejection("verifier_ports")`.
 
@@ -141,7 +148,8 @@ value.
 
 ### Built-in kinds and seeds
 
-The built-in kinds are `text`, `mentions`, `context`, `datum`, `assessment` and `record`.
+The built-in kinds are `text`, `mentions`, `context`, `datum`, `assessment`, `session-view`, `decisions`,
+`identities` and `record`.
 
 | Seed | Kind | Value |
 |---|---|---|
@@ -150,6 +158,8 @@ The built-in kinds are `text`, `mentions`, `context`, `datum`, `assessment` and 
 | `mentions` | `mentions` | Mentions declared on the graph for the target, by start offset |
 | `context` | `context`, or the structured kind of the graph's context sources | Tuple of context items |
 | `target` | `datum` | The target |
+| `session` | `session-view` | A read-only view of the run's Session (see [Session](#session-provisional)) |
+| `identities` | `identities` | The target's identity declarations |
 | `record` | `record` | The target's record |
 
 An input port binds to the latest earlier output of the same name, else to the seed of that name.
@@ -157,7 +167,7 @@ An input port binds to the latest earlier output of the same name, else to the s
 ### What a verifier's subject traces to (provisional)
 
 `prepare` decides whether a verifier checked the final candidate from declared ports only. The seeds `text`,
-`source`, `mentions` and `target` trace to the original text; `context` and `record` trace to no text. Each step with
+`source`, `mentions` and `target` trace to the original text; `context`, `session`, `identities` and `record` trace to no text. Each step with
 a `text` output makes a new candidate, and every output of that step traces to that candidate; this rule, that
 evidence returned beside a text is about that text, is marked interim in the code. Any other step's outputs trace
 to everything its inputs trace to. A verifier counts for required checks only when every subject port traces to the
@@ -183,7 +193,7 @@ but bases its verdict on an earlier value is still accepted. To stop a target ea
 
 ## Preparing and running
 
-**`prepare(graph, workflow, *, limits=None, capabilities=None, request_budget=None) -> PreparedProtection`**
+**`prepare(graph, workflow, *, limits=None, capabilities=None, request_budget=None, session=None) -> PreparedProtection`**
 
 - Runs no callback and no context provider.
 - `limits`: defaults to `Limits()`.
@@ -197,7 +207,7 @@ but bases its verdict on an earlier value is still accepted. To stop a target ea
 `summary() -> InspectionSummary`. It cannot be pickled or copied (`TypeError`), and `protect` refuses a value with
 any field replaced after `prepare` (`not_prepared`).
 
-**`protect(prepared, *, cancel=None) -> ProtectionResult`**: runs on the calling thread. Rechecks limits and
+**`protect(prepared, *, cancel=None, session=None) -> ProtectionResult`**: runs on the calling thread. Rechecks limits and
 capabilities first. A callback's `Exception` fails its target; `protect` does not raise it. `BaseException`, such
 as `KeyboardInterrupt`, propagates. Every `Assessment` a verifier returns must name the target it was produced
 for; one without a target, or naming another target, makes the whole run inconsistent, so no target qualifies,
@@ -206,6 +216,44 @@ a callback, whose steps the cancellation stops, raises `AnonymizerWorkflowError`
 output.
 
 **`CancelToken()`**: `cancel()`, settable from any thread; `cancelled` property. Checked before each call.
+
+## Session (provisional)
+
+A `Session` is caller-held state that lets an assignment outlive one `protect` call; it is provisional and may
+change. Pass the same object to `prepare(..., session=s)` and `protect(prepared, session=s)`.
+
+- `Session()` retains nothing; `Session(stable_replacements=True)` keeps each assignment an operation decides, so a
+  later call can reuse it. An invalid mode raises `session_mode_invalid`. `SessionMode` is the mode of a Session.
+- Operations read a `SessionView` from the `session` seed with `lookup(slot)`, where a slot is
+  `(SubjectKey, label, normalized value)` (otherwise `invalid_slot`; a value that is not a `str`: `invalid_value`);
+  `assigned_elsewhere(value, slot)` and `is_original(value)` ask whether a value, normalized, is another slot's
+  assignment or any slot's source value, `assigned_to_other_value(value, slot)` whether it is the assignment of a
+  slot for another subject or normalized source value (a fallback entry always counts), and the view offers no
+  listing.
+- `SubjectKey` takes a non-empty string (`invalid_subject_key`) and rejects the names the SDK reserves for itself,
+  `by-value` and `substitute-fallback` (`reserved_subject_key`). A `substitute-fallback` entry is bookkeeping, not
+  an assignment: Substitute writes one for a substitute it used in one record in place of a value's assignment, no
+  lookup for a value returns it, it only keeps that substitute from going to another value in a later call, and it
+  counts in `session_changes.accepted` and again in `session_changes.fallbacks`.
+- `s.size` is the number of assignments the Session holds and `s.label_counts()` the same by label; both leave out
+  fallback entries. An empty Session is still truthy, so test `s is None` rather than `s`.
+- Operations change the Session only by returning a tuple of `Decision(slot, value, supersedes=False)` values on an
+  output port of kind `decisions` (`invalid_decision` otherwise). `protect` finds decisions by kind: it accepts every
+  output port of kind `decisions`, whatever its name, and ignores a port named `decisions` of another kind. It
+  accepts them once, after the run, in target order: the first decision fixes a new slot, a different later one is
+  ignored unless it sets `supersedes=True`, and `result.session_changes` counts what happened. A cancelled or
+  inconsistent run accepts nothing; a withheld target's decisions are still accepted.
+- `prepare` rejects a stable Session whose workflow has no `decisions` output (`session_without_resolution`) and
+  `identity_matching=True` (`session_mode_unsupported`); `protect` rejects a Session of another mode
+  (`session_mismatch`) and one that another execution is using (`session_busy`). A `session=` that is not a
+  `Session` raises `not_a_session`. Without `session=`, `protect` runs with a fresh Session that retains nothing.
+- A Session cannot be pickled; `s.snapshot().to_bytes()` and `Session.restore(SessionSnapshot.from_bytes(data))`
+  move it between processes (`snapshot_incompatible` otherwise), and the bytes hold original values in plain text.
+- `ProtectionGraph(..., identities=(Identity(target, start, end, subject_key), ...))` declares that mentions inside a
+  span of a target are that subject's; operations read a target's declarations from the `identities` seed, and spans
+  of different subjects on one target may not overlap (`identity_conflict`). `identities` is not copied: it must be
+  a tuple of `Identity` values whose subject is a `SubjectKey` (`invalid_identity`), each span inside its target
+  (`identity_out_of_range`).
 
 ## Results
 
@@ -227,6 +275,7 @@ output.
 | `attempts` | One `Attempt` per target for each step call that happened; a phase-scoped call records one per target it received |
 | `retrievals` | One `Retrieval` per context source |
 | `summary()` | `InspectionSummary` |
+| `session_changes` | What the run's decisions did to its Session (see [Session](#session-provisional)) |
 
 The read methods (`content`, `value`, `compose`, `reconstruct`, `assemble_regions`, `ledger`) read the saved
 result and never run a callback again. `assemble_regions` keeps the text outside the listed ranges, and ranges
@@ -325,7 +374,12 @@ fails that target with the refusal's reason (`unspanned_value`); it is not part 
 | `invalid_request_count` | `Requests` | Count is negative or not an integer. |
 | `names_not_tuple` | `Operation`, `Workflow`, `prepare` | `checks`, `subject`, `requires` or `capabilities` given as a string. |
 | `verifier_ports` | `Operation` | An `assessment` output alongside other outputs or under another name, or an output port named `assessment` of another kind. |
-| `seed_output_reserved` | `Operation` | An output named `record`. |
+| `seed_output_reserved` | `Operation` | An output named `session`, `identities` or `record`. |
+| `invalid_subject_key`, `reserved_subject_key` | `SubjectKey` | An empty key, or `by-value` or `substitute-fallback`. |
+| `invalid_slot`, `invalid_value` | `SessionView` | A slot that is not `(SubjectKey, str, str)`, or a value that is not a `str`. |
+| `invalid_slot`, `invalid_decision` | `Decision` | A slot that is not `(SubjectKey, str, str)`; a value that is not a `str`, or `supersedes` that is not a `bool`. |
+| `session_mode_invalid` | `Session` | An invalid mode. |
+| `snapshot_incompatible` | `Session.restore`, `SessionSnapshot.from_bytes` | Not a snapshot, or bytes this version cannot read. |
 
 **When building the graph** (`ProtectionGraph`)
 
@@ -342,6 +396,9 @@ fails that target with the refusal's reason (`unspanned_value`); it is not part 
 | `group_overlap` | A target in two output groups. |
 | `foreign_record` | A record from another scope. |
 | `record_overlap` | A target in two records, or twice in one. |
+| `invalid_identity` | `identities` is not a tuple of `Identity` values whose subject is a `SubjectKey`. |
+| `identity_out_of_range` | An identity span outside its target. |
+| `identity_conflict` | Spans of different subjects overlap on one target. |
 
 **At `prepare`** (limit and capability codes are checked again by `protect`)
 
@@ -361,6 +418,11 @@ fails that target with the refusal's reason (`unspanned_value`); it is not part 
 | `final_text_not_text` | The last `text` output has a kind other than `text`. |
 | `verifier_subject_invalid` | A verifier with `checks` but no `subject`; a subject port that is not an input or traces to no text; or `subject` on a non-verifier. |
 | `required_check_not_final` | A required check with no verifier of the final candidate. `detail` names it. |
+| `not_a_session` | `session=` is not a `Session` (also at `protect`). |
+| `session_without_resolution` | A stable Session with no `decisions` output in the workflow. |
+| `session_mode_unsupported` | A Session with `identity_matching=True`. |
+| `session_mismatch` | At `protect`: a Session of another mode than the one prepared. |
+| `session_busy` | At `protect` or `snapshot`: another execution is using the Session. |
 
 **At `protect`**
 
