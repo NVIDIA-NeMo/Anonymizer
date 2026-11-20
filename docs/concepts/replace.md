@@ -233,10 +233,8 @@ session = Session.restore(SessionSnapshot.from_bytes(saved))
   order the model returns its entries or the detector its rows in. Each spelling's letter case follows the value's
   spelling at its earliest mention, in row order; a re-cased substitute that would become another value (`Işıl` upper
   cased is `IŞIL`) is used as assigned. A call whose earliest spelling of a value differs can get another letter case
-  of its substitute. A row that
-  itself needs a record-local fallback gets a new placeholder each time it is replayed, because fallbacks are not
-  reused. These
-  entries are bookkeeping, not assignments.
+  of its substitute. A row that itself needs a record-local fallback gets a new placeholder each time it is
+  replayed, because fallbacks are not reused. These entries are bookkeeping, not assignments.
 - `Session()` without `stable_replacements=True` retains nothing, and the call behaves as it does without
   `session=`. A custom replace runner is called as it is without `session=`, so an override written before `session`
   existed keeps working.

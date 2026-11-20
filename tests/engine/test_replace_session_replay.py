@@ -131,28 +131,59 @@ _CASES = {
         ["Bob left.", "BOB came back."],
         1,
     ),
+    # The shared substitute collides with a value of the record: the key's fallback is its reference spelling's
+    # proposal (Bob, itself a value, so a placeholder), not that of the spelling the model listed first (Zed).
+    "collision-different-proposals": (
+        ["Alice met ALICE and Bob."],
+        {"Alice met ALICE and Bob.": [("Alice", "first_name"), ("ALICE", "first_name"), ("Bob", "first_name")]},
+        [("Alice", "first_name", "Bob"), ("ALICE", "first_name", "Zed"), ("Bob", "first_name", "Carl")],
+        ["[SUBSTITUTE_FIRST_NAME_1] met [SUBSTITUTE_FIRST_NAME_1] and Carl."],
+        2,
+    ),
+    # A placeholder for a custom label whose token is not plain upper case (ǰ upper-cases to J plus a combining
+    # caron) is kept as minted for every spelling.
+    "custom-label-placeholder": (
+        ["Alice met ALICE and Bob."],
+        {"Alice met ALICE and Bob.": [("Alice", "ǰ"), ("ALICE", "ǰ"), ("Bob", "first_name")]},
+        [("Alice", "ǰ", "Bob"), ("ALICE", "ǰ", "Bob"), ("Bob", "first_name", "Carl")],
+        ["[SUBSTITUTE_J̌_1] met [SUBSTITUTE_J̌_1] and Carl."],
+        2,
+    ),
+}
+_FIRST_CALL_PLACEHOLDERS = {"collision-different-proposals": 1, "custom-label-placeholder": 1}
+_ORDERS = {
+    "as-input": (False, False),
+    "model-reversed": (True, False),
+    "detector-reversed": (False, True),
+    "both-reversed": (True, True),
 }
 
 
+def _ordered(mentions: Mentions, entries: list[tuple[str, str, str]], order: str) -> tuple[_Detector, list]:
+    model_reversed, detector_reversed = _ORDERS[order]
+    detector = _Detector(mentions, reverse_entities=detector_reversed, reverse_rows=detector_reversed)
+    return detector, entries[::-1] if model_reversed else entries
+
+
 @pytest.mark.parametrize("case", list(_CASES))
-@pytest.mark.parametrize("detector_order", ["as-input", "reversed"])
-@pytest.mark.parametrize("model_order", ["as-input", "reversed"])
+@pytest.mark.parametrize("replay_order", list(_ORDERS))
+@pytest.mark.parametrize("first_order", list(_ORDERS))
 def test_a_replay_after_restore_gives_the_same_text_and_checkpoint(
-    tmp_path: Path, case: str, detector_order: str, model_order: str
+    tmp_path: Path, case: str, first_order: str, replay_order: str
 ) -> None:
+    """The first call, under any model and detector order, gives one text; every replay after a restore, under any
+    order, gives that text, reuses each assignment and leaves the checkpoint bytes unchanged."""
     texts, mentions, entries, expected, assignments = _CASES[case]
     session = Session(stable_replacements=True)
-    first = _run(tmp_path, texts, _Detector(mentions), entries, session)
+    first = _run(tmp_path, texts, *_ordered(mentions, entries, first_order), session)
     assert list(first.dataframe["text_replaced"]) == expected
-    assert first.session_changes == SessionCallChanges(added=assignments)
+    placeholders = _FIRST_CALL_PLACEHOLDERS.get(case, 0)
+    assert first.session_changes == SessionCallChanges(added=assignments, placeholders_protected=placeholders)
     saved = session.snapshot().to_bytes()
 
-    reversed_ = detector_order == "reversed"
-    detector = _Detector(mentions, reverse_entities=reversed_, reverse_rows=reversed_)
-    replay_entries = entries[::-1] if model_order == "reversed" else entries
     restored = Session.restore(SessionSnapshot.from_bytes(saved))
     for _ in range(2):
-        replay = _run(tmp_path, texts, detector, replay_entries, restored)
+        replay = _run(tmp_path, texts, *_ordered(mentions, entries, replay_order), restored)
         assert list(replay.dataframe["text_replaced"]) == expected
         assert replay.session_changes == SessionCallChanges(reused=assignments)
         assert restored.snapshot().to_bytes() == saved

@@ -441,20 +441,20 @@ def _fold_replacement_maps(
 
     With a stable Session's ``view`` (``"run"`` mode only), each key's casing reference in a record is its spelling at
     the earliest accepted mention (``spans``: each exact value's first start offset in the record), ties and values
-    without a span broken by exact value; the maps are in target order. That spelling's entry gives the record's
-    shared substitute, so neither the model's entry order nor the detector's return order changes the text. A key the
-    run has not mapped yet takes the Session's assignment for that spelling. A shared substitute is re-cased to
-    another spelling only when the re-cased form normalizes to the same value; otherwise it is emitted as assigned,
-    and a placeholder for the entry's label is always kept as minted, so only a genuine alternate is a fallback. A substitute also collides when the view's
-    ``assigned_to_other_value`` finds it assigned to another subject or normalized value, or to a fallback entry; the
-    key's own slot and the same normalized value under any other label do not count, so a value under two labels can
-    keep one substitute. A record-local fallback also collides when the view's ``assigned_elsewhere`` finds it
-    assigned to any other slot, the same value's other labels included, since the Session then holds it as a fallback
-    too. Unless it is the key's own held substitute, it also collides when it is a value the Session holds.
-    A placeholder is never one the Session assigns to another key. ``decisions`` then gets one tuple per map: a
-    decision for each key first used in that map, holding the key's run-wide substitute, and one for each record-local
-    substitute not marked before, under the fallback subject and keyed by that substitute, so later calls treat it as
-    taken.
+    without a span broken by exact value; the maps are in target order. That spelling's entry gives the record's shared
+    substitute and, when that collides, the key's fallback, so neither the model's entry order nor the detector's return
+    order changes the text. A key the run has not mapped yet takes the Session's assignment for that spelling. A shared
+    substitute is re-cased to another spelling only when the re-cased form normalizes to the same value; otherwise it is
+    emitted as assigned, and a placeholder for the entry's label is always kept as minted, so only a genuine alternate
+    is a fallback. A substitute also collides when the view's ``assigned_to_other_value`` finds it assigned to another
+    subject or normalized value, or to a fallback entry; the key's own slot and the same normalized value under any
+    other label do not count, so a value under two labels can keep one substitute. A record-local fallback also collides
+    when the view's ``assigned_elsewhere`` finds it assigned to any other slot, the same value's other labels included,
+    since the Session then holds it as a fallback too. Unless it is the key's own held substitute, it also collides when
+    it is a value the Session holds. A placeholder is never one the Session assigns to another key. ``decisions`` then
+    gets one tuple per map: a decision for each key first used in that map, holding the key's run-wide substitute, and
+    one for each record-local substitute not marked before, under the fallback subject and keyed by that substitute, so
+    later calls treat it as taken.
     """
     run_wide: dict[tuple[str, str], tuple[str, str]] = {}
     taken: dict[str, set[tuple[str, str]]] = {}
@@ -531,6 +531,11 @@ def _fold_replacement_maps(
                 step = "own" if entry["synthetic"] != synthetic else None
                 source = own
                 synthetic = entry["synthetic"]
+                if view is not None and first and key in reference:
+                    # The key's fallback in this record is its reference spelling's proposal, not the proposal of
+                    # whichever spelling the model listed first.
+                    source = reference[key]
+                    synthetic = render(source, entry)
                 value = _fold(synthetic)
                 # The fallback becomes the key's run-wide substitute only when the key has none yet.
                 fixes = first and key not in run_wide
