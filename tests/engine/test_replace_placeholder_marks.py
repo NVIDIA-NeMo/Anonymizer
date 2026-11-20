@@ -21,12 +21,14 @@ from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
     _build_entities_by_value,
 )
+from anonymizer.engine.detection.result import DetectorResult
 from anonymizer.engine.graph_core.session import Session
 from anonymizer.engine.ndd.adapter import NddAdapter, WorkflowRunResult
 from anonymizer.engine.replace.llm_replace_workflow import _collision_safe_synthetic, _is_placeholder
 from anonymizer.interface.anonymizer import Anonymizer
 
 TEXT = "Bob met Jon and jon."
+from tests.detector_results import as_detector_result
 
 
 def _entities(label: str) -> dict[str, Any]:
@@ -50,7 +52,10 @@ class _Detector:
     def __init__(self, label: str) -> None:
         self.label = label
 
-    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+    def run(self, dataframe: pd.DataFrame, **_: object) -> DetectorResult:
+        return as_detector_result(dataframe, self.frame(dataframe))
+
+    def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
         frame = dataframe.copy()
         found = [_entities(self.label) for _ in frame[COL_TEXT]]
         frame[COL_FINAL_ENTITIES] = found
