@@ -25,7 +25,7 @@ Import the module as `from anonymizer import graph as g`.
 | `ContextSource` | A named provider of context items, with item and byte bounds, called once per run. |
 | `Dependency` | Withhold `dependent` when `on` is withheld. |
 | `OutputGroup` | Release `members` together or not at all. |
-| `Record` | A group of targets that belong together. Made only by `GraphScope.record`. |
+| `Record` | A group of targets that belong together. Made only by `GraphScope.record`. It does not change release for now: each target is released on its own checks; use `OutputGroup` for all-or-none release. Releasing a complete record is planned as the default. |
 | `ProtectionGraph` | The targets of one run and their relations. |
 | `Operation` | One step. Also `Operation.verifier` and `Operation.phase_scoped`. |
 | `Workflow` | An ordered sequence of operations and nested workflows. |
@@ -135,7 +135,8 @@ passed in and stay blocked. Declared requests count once per run. The older name
 `invalid_request_count`.
 
 **`Assessment(satisfied, target=None, reason="")`**: `satisfied` is `True`, `False` or `None` (could not decide).
-`target` must be the target the verifier was called for.
+`target` must be the target the verifier was called for. A verifier must assess the candidate it is given in that
+call: a verdict computed for an earlier candidate is not checked again.
 
 **`register_kind(name, check, measure=None, copy=None) -> str`**: registers a kind for the whole process and returns
 its name. Registering a name again returns it unchanged and keeps the first definition. `check(value) -> bool`;
