@@ -443,8 +443,12 @@ JSON dumps of a config mask the key; a pickled config keeps it. Validation error
 ### #408: caller-held Session
 
 **`session=` on `run` and `preview`.** A `Session` from `anonymizer.graph` keeps substitutes stable across calls.
-Without a session, output is unchanged. Under a stable session, `run` and `preview` reject Rewrite and a custom
-replace runner that overrides `run()`. The session and its snapshots are provisional.
+Under a stable session, `run` and `preview` reject Rewrite and a custom replace runner that overrides `run()`. The
+session and its snapshots are provisional.
+- Without a session, one value detected under two labels now gets one substitute across its labels. v0.5.0 gave the
+  second label a placeholder.
+- What to do: if you relied on a placeholder for the second label, read `result.replacement_map(row)`, whose entries
+  carry each label and its substitute.
 - Without a stable session, including `Session()`, a custom replace runner's `run_with_detection()` and its map
   workflow's `generate_validated_maps()` are called as before `session` existed, so overrides with the older
   signatures keep working.
@@ -455,8 +459,9 @@ replace runner that overrides `run()`. The session and its snapshots are provisi
   under one label and as the shared substitute under the other. The second use gets a placeholder instead, in either
   row order and across calls. Replaying a row whose values all take their shared substitutes gives the same text and
   snapshot; a row that itself needs a fallback gets a new placeholder on each replay, because fallbacks are not reused.
-- `result.replacement_map(row)` entries carry `placeholder`, a token-shape check: it is true for a substitute shaped
-  like `[SUBSTITUTE_FIRST_NAME_1]`, whether Anonymizer minted it, the session held it, or the model proposed it.
+- `result.replacement_map(row)` entries carry `placeholder`, a token-shape check tied to the entry's label: it is
+  true for a substitute shaped like that label's placeholder, such as `[SUBSTITUTE_FIRST_NAME_1]` for `first_name`, in
+  any letter case, whether Anonymizer minted it, the session held it, or the model proposed it.
   `result.session_changes` counts only the placeholders minted in the call.
 
 **Placeholders are kept as minted.** A variant of a value that received a placeholder gets the placeholder exactly as
