@@ -13,9 +13,20 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr, f
 
 
 def _normalize_replace_kind(value: Any) -> Any:
-    """Lowercase the ``kind`` key of dict input so ``{"kind": "Redact"}`` is accepted."""
-    if isinstance(value, dict) and isinstance(value.get("kind"), str):
-        return {**value, "kind": value["kind"].lower()}
+    """Lowercase the ``kind`` key of dict input so ``{"kind": "Redact"}`` is accepted.
+
+    Input that will not reach ``Hash`` has any ``key`` masked, and a list or other collection is replaced by its type
+    name: a union or discriminator error carries its whole input, so either would otherwise echo a Hash key.
+    """
+    if isinstance(value, dict):
+        kind = value.get("kind")
+        if isinstance(kind, str):
+            value = {**value, "kind": kind.lower()}
+        if value.get("kind") != "hash" and "key" in value:
+            value = {**value, "key": "**********"}
+        return value
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return f"<{type(value).__name__}>"
     return value
 
 
@@ -150,12 +161,18 @@ HASH_KEY_REQUIRED_MESSAGE = (
 )
 
 
-class _UnencodableKey:
+class _RejectedKey:
+    """Stands in for a rejected key, so the error raised for it carries no key material."""
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+
     def __repr__(self) -> str:
-        return "<key not encodable as UTF-8>"
+        return "<rejected key>"
 
 
-_UNENCODABLE_KEY = _UnencodableKey()
+_UNENCODABLE_KEY = _RejectedKey("key must be text that encodes as UTF-8")
+_NOT_A_STRING_KEY = _RejectedKey("key must be a string")
 
 
 class Hash(ReplaceMethodBase):
@@ -192,19 +209,26 @@ class Hash(ReplaceMethodBase):
         if key is None:
             raise ValueError(HASH_KEY_REQUIRED_MESSAGE)
         secret = key.get_secret_value() if isinstance(key, SecretStr) else key
-        if isinstance(secret, str):
+        # Swap a rejected key for a marker so the error raised for it carries no key material.
+        if isinstance(secret, bytes):
             try:
-                secret.encode("utf-8")
-            except UnicodeEncodeError:
-                # Swap the key for a marker so the error raised for it carries no key material.
+                secret.decode("utf-8")
+            except UnicodeDecodeError:
                 return {**data, "key": _UNENCODABLE_KEY}
+            return data
+        if not isinstance(secret, str):
+            return {**data, "key": _NOT_A_STRING_KEY}
+        try:
+            secret.encode("utf-8")
+        except UnicodeEncodeError:
+            return {**data, "key": _UNENCODABLE_KEY}
         return data
 
     @field_validator("key", mode="before")
     @classmethod
     def reject_unencodable_key(cls, value: Any) -> Any:
-        if value is _UNENCODABLE_KEY:
-            raise ValueError("key must be text that encodes as UTF-8")
+        if isinstance(value, _RejectedKey):
+            raise ValueError(value.message)
         return value
 
     @field_validator("key")

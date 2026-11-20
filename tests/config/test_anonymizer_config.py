@@ -80,6 +80,17 @@ _KEY = "s3cr3t-key-material"
             {"replace": {"kind": "hash", "key": _KEY}, "detect": {"gliner_threshold": 5}}
         ),
         lambda: AnonymizerConfig.model_validate({"replace": {"kind": "hash", "key": _KEY}, "emit_telemetry": "maybe"}),
+        lambda: AnonymizerConfig.model_validate({"replace": {"kind": "hsh", "key": _KEY}}),
+        lambda: AnonymizerConfig.model_validate({"replace": {"key": _KEY}}),
+        lambda: AnonymizerConfig.model_validate({"replace": {"kind": 5, "key": _KEY}}),
+        lambda: AnonymizerConfig.model_validate_json(f'{{"replace": {{"kind": "hsh", "key": "{_KEY}"}}}}'),
+        lambda: AnonymizerConfig.model_validate({"replace": [{"kind": "hash", "key": _KEY}]}),
+        lambda: AnonymizerConfig.model_validate({"replace": ({"kind": "hash", "key": _KEY},)}),
+        lambda: Hash.model_validate({"key": [_KEY]}),
+        lambda: Hash.model_validate({"key": {"k": _KEY}}),
+        lambda: Hash.model_validate({"key": _KEY.encode() + b"\xff"}),
+        lambda: AnonymizerConfig.model_validate({"replace": {"kind": "hash", "key": 1234567}}),
+        lambda: AnonymizerConfig.model_validate_json('{"replace": {"kind": "hash", "key": 1234567.5}}'),
     ],
     ids=[
         "algorithm",
@@ -92,16 +103,28 @@ _KEY = "s3cr3t-key-material"
         "config-algorithm",
         "config-detect",
         "config-telemetry",
+        "bad-kind",
+        "no-kind",
+        "int-kind",
+        "bad-kind-json",
+        "replace-list",
+        "replace-tuple",
+        "key-list",
+        "key-dict",
+        "key-bad-bytes",
+        "key-int",
+        "key-float-json",
     ],
 )
 def test_validation_errors_carry_no_key(build: Any) -> None:
     with pytest.raises(ValidationError) as exc_info:
         build()
     error = exc_info.value
-    assert _KEY not in str(error)
-    assert _KEY not in repr(error.errors())
-    assert _KEY not in error.json()
-    assert _KEY.encode() not in pickle.dumps(error)
+    for secret in (_KEY, "1234567"):
+        assert secret not in str(error)
+        assert secret not in repr(error.errors())
+        assert secret not in error.json()
+        assert secret.encode() not in pickle.dumps(error)
 
 
 def test_hash_rejects_a_key_that_is_not_utf8_without_echoing_it() -> None:
