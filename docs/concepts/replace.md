@@ -234,7 +234,7 @@ session = Session.restore(SessionSnapshot.from_bytes(saved))
   `session=`. A custom replace runner is called as it is without `session=`, so an override written before `session`
   existed keeps working.
 
-See [Graph SDK](graph-sdk.md#session-provisional) for the Session itself.
+See [Graph SDK reference](graph-sdk/reference.md#session-provisional) for the Session itself.
 
 To read what a row was given, `result.replacement_map(row)` returns its entries as `Replacement(original, label,
 synthetic, placeholder)`. `placeholder` is a token-shape check tied to the entry's label: it is true when the substitute
