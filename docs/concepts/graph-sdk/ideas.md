@@ -135,8 +135,35 @@ Each pattern below uses only public names. None is shown as a full program here.
 | One prompt per row | A phase-scoped step reads the `record` seed and sends the fields of each record to the model together. | `Record`, `Operation.phase_scoped` | [Release related texts together](guide-release-together.md#records) |
 | Conversation-aware protection | Earlier turns, or a structured profile, reach a step as bounded context that is read but never released. | `ContextScope`, `ContextSource`, `ContextView`, `register_kind`, `Limits(max_context_bytes=)` | [Give an operation context](guide-give-an-operation-context.md) |
 | Long documents by section | Each section is a target, so a failure stays in its section; the document is rebuilt only from available candidates. | `ProtectionResult.assemble_regions` | [Rebuild a document](guide-rebuild-documents.md) |
-| Consistent keys across a trace | Tool results, messages and tool arguments of one agent trace are targets; a phase-scoped step assigns one substitute per real value across all of them; an output group releases the trace as a whole; a verifier rejects two values mapped to one key. | `Operation.phase_scoped`, `OutputGroup`, `Operation.verifier` | [Process all targets in one call](guide-batch-targets.md) |
 | Compare two strategies on the same data | Build two workflows over the same graph and compare their summaries; `prepare` and `protect` keep no state between runs. | `prepare`, `protect`, `InspectionSummary` | [Find out why a target was withheld](guide-read-outcomes.md) |
+
+## Proposed: consistent order IDs across an agent trace
+
+This is a proposed worked example, not a shipped program. It describes a workflow the SDK's pieces are meant to
+support; no page or test runs it yet.
+
+An agent trace has several parts: the customer's message, a tool result that lists the customer's orders, and the
+agent's tool call `cancel_order(order_id=...)`. Each part is a target, and the parts of one trace form one record
+and one output group. A phase-scoped step reads the `record` seed and replaces each order ID with a substitute, so
+the parts of one trace can be replaced together.
+
+The property to protect is a relationship, not a spelling: **the order in the cancellation argument must be the
+order the customer chose.** Two things make it harder than mapping each ID to one substitute:
+
+- One call of a phase-scoped step can hold targets from several records, so the step has to group by record, not
+  by call.
+- Within one record, the same token, such as `O-102`, can name an order in one place and a catalog item in another.
+  A map keyed on the text alone cannot tell them apart.
+
+So a verifier that only rejects two values mapped to one key is not enough: it passes a trace whose cancellation
+now points at a different order that has its own distinct key. The verifier this example needs checks that the
+substitute in the tool call is the substitute of the order the customer named, and the output group then releases
+the trace only as a whole.
+
+The runnable pieces are shown separately: one call for many targets in
+[Process all targets in one call](guide-batch-targets.md), and records and output groups in
+[Release related texts together](guide-release-together.md). Keeping the same substitute for the same order across
+separate runs needs your own store today (see below).
 
 ## Limits of what the SDK offers today
 
