@@ -470,8 +470,12 @@ class itself, including its subclasses and `Mock(spec=EntityDetectionWorkflow)`.
   detector-supplied text column, `tagged_text` or `source_positions` is no longer read.
 - Failures from a custom `detection_workflow` are named by the input record's id (the `TextRecord` id, or a
   generated id for file input), not by the returned row's index.
-- The "Detection complete — N entities found" log line counts the final entities, so a custom detector's spans are
-  counted. It counted the built-in detector's candidates before, and 0 for a custom detector.
+- The "Detection complete — N entities found" log line counts the final (kept) entities for every detector, the
+  built-in one included. Before, it counted candidates: the built-in detector's, and 0 for a custom detector.
+- Built-in detection in the Replace modes now replaces a missed repeat: where a detected value occurs again without a
+  span, a span with the first detected span's label is added (`"source": "repeat"` in `final_entities`), and the
+  occurrence is replaced like the others. It was released unreplaced before. The added span covers the whole matched
+  word, so `order #W3916020` becomes `order [REDACTED_ORDER_ID]`. Rewrite is unchanged.
 - What to do: build one `DetectorRow` per input row from `dataframe["_anonymizer_record_id"]`, move each span from
   the `final_entities` dict into `DetectedSpan(start, end, label, value)`, and move any value listed only in
   `_entities_by_value` into `extra_values`. See "Custom detection workflows".

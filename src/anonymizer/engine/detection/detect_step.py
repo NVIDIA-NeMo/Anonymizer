@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from itertools import repeat
-from typing import Any, NewType, cast
+from typing import Any, Literal, NewType, cast
 
 import pandas as pd
 
@@ -35,14 +35,10 @@ from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.backend import per_target
 from anonymizer.engine.row_partitioning import cell_text, resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
+from anonymizer.engine.schemas.detection import EntitySchema
 from anonymizer.engine.schemas.shared import to_python
 from anonymizer.engine.value_matching import _normalized, count_values, entity_spans
 from anonymizer.interface.errors import AnonymizerWorkflowError
-
-# Whether Replace fails a built-in detection row whose detected value occurs outside every kept span. Custom detectors
-# are always checked. Off until it is ruled: a built-in span model that misses a repeat would then fail the row.
-UNSPANNED_CHECK_BUILTIN = False
-
 
 RecordId = NewType("RecordId", str)
 """The facade's label for one input record, from its ``_anonymizer_record_id``; it lives within one call."""
@@ -54,6 +50,7 @@ class RowDetections:
 
     record_id: RecordId
     entities: EntitiesSchema
+    added: tuple[EntitySchema, ...] = ()  # spans the engine added at a built-in detector's missed repeats
 
 
 @dataclass
@@ -72,14 +69,17 @@ def detect_step(
     detect: Callable[[pd.DataFrame], EntityDetectionResult],
     state: DetectState,
     *,
-    spans_only: bool = False,
+    repeats: Literal["release", "fail", "protect"] = "release",
 ) -> Operation:
     """The ``detect`` operation over ``dataframe``: one ``detect`` call, its outcome recorded in ``state``.
 
     The seam has already placed every returned row at one distinct input position (``resolve_positions``).
 
-    With ``spans_only`` (Replace, which replaces spans and nothing else), a row whose by-value view lists a value that
-    occurs in its text outside every kept span fails with ``unspanned_value``: no step would protect that value.
+    ``repeats`` says what happens to a reported value that occurs in the text outside every kept span (a missed
+    repeat). Replace replaces spans and nothing else, so with ``"fail"`` (a custom detector) the row fails with
+    ``unspanned_value``, and with ``"protect"`` (the built-in detector) a span is added at each such occurrence, with
+    the label of the first returned span whose value has the same normalized key. ``"release"`` (Rewrite) leaves it
+    to the by-value view the rewriter reads.
     """
 
     def run_detection(target: tuple[Datum, ...]) -> list[tuple[object, ...] | None]:
@@ -95,6 +95,7 @@ def detect_step(
         state.owners.extend(surviving)
         raw_entities = result.dataframe.get(COL_FINAL_ENTITIES, repeat({}, len(positions)))
         rebuilt: dict[int, set[int]] = {}  # row -> the entities it loses
+        appended: dict[int, list[EntitySchema]] = {}  # row -> its kept spans once repeat spans are added
         malformed: set[Datum] = set()
         unspanned: set[Datum] = set()
         by_value = result.dataframe.get(COL_ENTITIES_BY_VALUE, repeat(None, len(positions)))
@@ -105,17 +106,27 @@ def detect_step(
                 malformed.add(datum)
                 state.rows[datum] = RowDetections(record_ids[row], EntitiesSchema())
                 continue
-            spanned = [e.value for e in entities.entities]  # before the collapse: a dropped span's value counts too
+            returned = list(entities.entities)  # before the collapse: a dropped span's value counts too
+            spanned = [e.value for e in returned]
             if covered := covered_spans(datum, entities):
                 rebuilt[row] = covered
                 entities = EntitiesSchema(entities=[e for i, e in enumerate(entities.entities) if i not in covered])
-            state.rows[datum] = RowDetections(record_ids[row], entities)
             # A span that breaks the contract fails the row with its own reason first.
             sound = not mention_problem(accepted_mentions(datum, entities))
             # Replace replaces spans only: every value the detector reported (its spans' values, collapsed spans
             # included, and its pairs) must lie inside a kept span wherever it occurs.
-            values = spanned + [value for value, _ in _listed_pairs(listed)]
-            if spans_only and sound and values_outside_spans(datum.text, entities, values):
+            pairs = _listed_pairs(listed)
+            values = spanned + [value for value, _ in pairs]
+            added: list[EntitySchema] = []
+            if repeats == "protect" and sound:
+                added = _repeat_spans(datum.text, entities, values, _first_labels(returned, pairs))
+                if added:  # an added span that contains a kept span is the outer span: collapse again
+                    merged = EntitiesSchema(entities=[*entities.entities, *added])
+                    inner = covered_spans(datum, merged)
+                    entities = EntitiesSchema(entities=[e for i, e in enumerate(merged.entities) if i not in inner])
+                    appended[row] = list(entities.entities)
+            state.rows[datum] = RowDetections(record_ids[row], entities, tuple(added))
+            if repeats != "release" and sound and values_outside_spans(datum.text, entities, values):
                 unspanned.add(datum)
             # The by-value rule: a row with spans gets the view of its kept spans plus every detector pair, and every
             # collapsed span's value, that occurs in its text outside them (see ``_with_entities``); a row without
@@ -125,7 +136,7 @@ def detect_step(
         # Later steps read the by-value column for every returned row, so it is added even when no row is rebuilt.
         frame = result.dataframe
         if rebuilt or COL_ENTITIES_BY_VALUE not in frame.columns:
-            frame = _with_entities(frame, rebuilt)
+            frame = _with_entities(frame, rebuilt, appended)
         # Every returned row carries the input record id at its resolved position: later stages name it by that id.
         if RECORD_ID_COLUMN not in frame.columns:
             frame = frame.assign(**{RECORD_ID_COLUMN: pd.Series(record_ids, index=frame.index, dtype=object)})
@@ -202,7 +213,9 @@ def covered_spans(datum: Datum, entities: EntitiesSchema) -> set[int]:
     return covered
 
 
-def _with_entities(frame: pd.DataFrame, covered: dict[int, set[int]]) -> pd.DataFrame:
+def _with_entities(
+    frame: pd.DataFrame, covered: dict[int, set[int]], appended: dict[int, list[EntitySchema]] | None = None
+) -> pd.DataFrame:
     """A copy of ``frame`` whose rows at the positions in ``covered`` lose those entities, with their by-value view
     rebuilt (the column is added when the detector returned none; a row not in ``covered`` keeps its cell).
 
@@ -219,7 +232,11 @@ def _with_entities(frame: pd.DataFrame, covered: dict[int, set[int]]) -> pd.Data
     frame = frame.copy()
     has_entities = COL_FINAL_ENTITIES in frame.columns
     given = list(frame[COL_FINAL_ENTITIES]) if has_entities else [None] * len(frame)
-    final = [_without(raw, covered[row]) if covered.get(row) else raw for row, raw in enumerate(given)]
+    appended = appended or {}
+    final = [
+        _with_added(raw, appended[row]) if row in appended else _without(raw, covered[row]) if covered.get(row) else raw
+        for row, raw in enumerate(given)
+    ]
     if has_entities:
         frame[COL_FINAL_ENTITIES] = final
     by_value = list(frame[COL_ENTITIES_BY_VALUE]) if COL_ENTITIES_BY_VALUE in frame.columns else [None] * len(given)
@@ -303,6 +320,65 @@ def _without(raw: object, covered: set[int]) -> object:
     if not isinstance(entities, list):  # a wrapped model or another shape ``from_raw`` reads: use what it read
         entities = [e.model_dump(mode="json") for e in EntitiesSchema.from_raw(raw).entities]
     return _encoded_like(raw, {**payload, "entities": [e for i, e in enumerate(entities) if i not in covered]})
+
+
+def _with_added(raw: object, kept: list[EntitySchema]) -> object:
+    """The entities payload ``raw`` with its entities replaced by ``kept`` (a row that gained repeat spans), in its
+    own encoding and keeping its other keys; ``raw`` itself when the row gained none."""
+    if not kept:
+        return raw
+    payload = cast(dict[str, Any], to_python(json.loads(raw) if isinstance(raw, str) else raw))
+    return _encoded_like(raw, {**payload, "entities": [e.model_dump(mode="json") for e in kept]})
+
+
+def _first_labels(returned: list[EntitySchema], pairs: list[tuple[str, list[str]]]) -> dict[str, str]:
+    """Each reported value's label for an added span, by normalized key: the first returned span's (in detector
+    order, before the collapse), else the value's first by-value label."""
+    labels: dict[str, str] = {}
+    for entity in returned:
+        if entity.label:
+            labels.setdefault(_normalized(entity.value), entity.label)
+    for value, listed in pairs:
+        if listed:
+            labels.setdefault(_normalized(value), listed[0])
+    return labels
+
+
+def _repeat_spans(text: str, kept: EntitiesSchema, values: list[str], labels: dict[str, str]) -> list[EntitySchema]:
+    """A labelled span (``source="repeat"``) at each occurrence of a reported value outside every kept span.
+
+    Occurrences are ``count_values``' undetected spans, and for a value it cannot match (a one-character key in an
+    unspaced script) each plain match outside the kept spans. An occurrence that partly overlaps a kept or an earlier
+    added span is left out, so the row still fails ``unspanned_value``; one that contains a kept span is added, and the
+    collapse keeps it as the outer span."""
+    distinct = [v for v in dict.fromkeys(values) if v]
+    spans = entity_spans(text, kept.entities)
+    taken = [(span.start, span.end) for span, _ in spans if span is not None]
+    found: list[tuple[int, int, str]] = []
+    judged = set()
+    for leftover in count_values(text, spans, "", distinct):
+        judged.add(_normalized(leftover.value))
+        found.extend((u.start, u.end, leftover.value) for u in leftover.undetected_spans)
+    for value in distinct:
+        if _normalized(value) not in judged:
+            start = text.find(value)
+            while start >= 0:
+                end = start + len(value)
+                if not any(s <= start and end <= e for s, e in taken):
+                    found.append((start, end, value))
+                start = text.find(value, start + 1)
+    added: list[EntitySchema] = []
+    for start, end, value in sorted(set(found)):
+        label = labels.get(_normalized(value))
+        crosses = any(s < end and start < e and not (start <= s and e <= end) for s, e in taken)
+        if label and not crosses:
+            taken.append((start, end))
+            added.append(
+                EntitySchema(
+                    value=text[start:end], label=label, start_position=start, end_position=end, source="repeat"
+                )
+            )
+    return added
 
 
 def _encoded_like(raw: object, payload: dict[str, Any]) -> object:

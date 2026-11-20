@@ -1040,17 +1040,19 @@ def test_a_value_inside_a_longer_word_is_not_an_unspanned_occurrence(
     assert result.failed_records == []
 
 
-@pytest.mark.parametrize(("custom", "builtin_checked"), [(True, False), (False, False), (False, True)])
-def test_the_replace_check_scope(custom: bool, builtin_checked: bool, tmp_path: Path) -> None:
-    """Custom detectors are always checked; built-in detection only when ``UNSPANNED_CHECK_BUILTIN`` is set."""
+@pytest.mark.parametrize("custom", [True, False], ids=["custom", "builtin"])
+def test_the_replace_check_scope(custom: bool, tmp_path: Path) -> None:
+    """A custom detector's missed repeat fails the row; the built-in detector's gets a span and is replaced."""
     text = "Bob met Bob's sister."
-    with patch("anonymizer.interface.anonymizer.UNSPANNED_CHECK_BUILTIN", builtin_checked):
-        result, _ = _one_row_run(tmp_path, text, [_at(text, "Bob", "first_name")], None, "redact", custom=custom)
+    result, _ = _one_row_run(tmp_path, text, [_at(text, "Bob", "first_name")], None, "redact", custom=custom)
 
-    checked = custom or builtin_checked
-    assert result.failed_records == (
-        [FailedRecord(_rid(tmp_path / "in.csv", 0), "detect", "unspanned_value")] if checked else []
-    )
+    if custom:
+        assert result.failed_records == [FailedRecord(_rid(tmp_path / "in.csv", 0), "detect", "unspanned_value")]
+    else:
+        assert result.failed_records == []
+        assert list(result.dataframe["text_replaced"]) == ["[REDACTED_FIRST_NAME] met [REDACTED_FIRST_NAME]'s sister."]
+        spans = result.dataframe["final_entities"].iloc[0]["entities"]
+        assert [(e["start_position"], e["source"]) for e in spans] == [(0, "detector"), (8, "repeat")]
 
 
 # Tokens that collide: a value inside a longer word, repeats, a case and an accent variant, adjacent values.

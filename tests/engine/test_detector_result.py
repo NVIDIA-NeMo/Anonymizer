@@ -32,7 +32,11 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
     RECORD_ID_COLUMN,
 )
-from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
+from anonymizer.engine.detection.detection_workflow import (
+    EntityDetectionResult,
+    EntityDetectionWorkflow,
+    _build_entities_by_value,
+)
 from anonymizer.engine.detection.result import render_detector_result, validate_detector_result
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import load_default_model_selection
@@ -297,3 +301,75 @@ def test_the_substitute_map_step_needs_the_record_id_column() -> None:
         LlmReplaceWorkflow(adapter=Mock()).generate_validated_maps(
             frame, model_configs=[], selected_models=load_default_model_selection().replace, instructions=None
         )
+
+
+# --- values: a built-in detector's missed repeat in Replace (B2, V2) -------------------------------------------------
+
+
+def _builtin_first_only(frame: pd.DataFrame, **_: object) -> EntityDetectionResult:
+    """The built-in detector spanning only the first occurrence of "Bob" and "Alice"."""
+    out = frame.copy()
+    entities = []
+    for text in out[COL_TEXT]:
+        spans = []
+        for value in ("Bob", "Alice"):
+            if value in text:
+                start = text.index(value)
+                spans.append(
+                    {"value": value, "label": "first_name", "start_position": start, "end_position": start + len(value)}
+                )
+        entities.append({"entities": spans})
+    out[COL_FINAL_ENTITIES] = entities
+    out[COL_ENTITIES_BY_VALUE] = [_build_entities_by_value(e) for e in entities]
+    return EntityDetectionResult(out, [], tuple(range(len(out))))
+
+
+REPEATS = TextRecordsInput(records=[TextRecord(id="r", text="Bob met Alice, then Bob and Alice left.")])
+
+
+def test_a_built_in_substitute_run_replaces_every_repeat_with_one_map_entry() -> None:
+    """Added repeat spans take the first span's label, so the map keeps one entry per value and every occurrence
+    gets the same substitute."""
+
+    def run_workflow(self: NddAdapter, df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
+        out = df.copy().reset_index(drop=True)
+        out[COL_REPLACEMENT_MAP] = [
+            {
+                "replacements": [
+                    {"original": v, "label": "first_name", "synthetic": s}
+                    for v, s in (("Bob", "Dan"), ("Alice", "Carol"))
+                ]
+            }
+            for _ in range(len(out))
+        ]
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
+
+    anonymizer = Anonymizer(detection_workflow=builtin_stub(_builtin_first_only))
+    with patch.object(NddAdapter, "run_workflow", run_workflow):
+        result = anonymizer.run(config=AnonymizerConfig(replace=Substitute()), data=REPEATS)
+    assert result.failed_records == []
+    released = result.dataframe["text_replaced"].iloc[0]
+    assert released == "Dan met Carol, then Dan and Carol left."
+    spans = result.dataframe["final_entities"].iloc[0]["entities"]
+    assert sorted(e["source"] for e in spans) == ["detector", "detector", "repeat", "repeat"]
+    assert {e["label"] for e in spans} == {"first_name"}
+
+
+def test_the_built_in_rewrite_view_is_the_view_of_its_final_entities() -> None:
+    """I5: Rewrite releases a missed repeat to the rewriter as before, and the view it reads is exactly the view
+    derived from the row's final entities."""
+    seen: list[pd.DataFrame] = []
+
+    class Stub(RewriteWorkflow):
+        def _produce(self, rows: Any, **options: Any) -> Any:
+            def produce() -> None:
+                seen.append(rows.frame.copy())
+                rows.frame[COL_REWRITTEN_TEXT] = ["rewritten"] * len(rows.frame)
+
+            return produce
+
+    anonymizer = Anonymizer(detection_workflow=builtin_stub(_builtin_first_only), rewrite_runner=Stub(Mock()))
+    anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=REPEATS)
+    row = seen[0].iloc[0]
+    assert row[COL_ENTITIES_BY_VALUE] == _build_entities_by_value(row[COL_FINAL_ENTITIES])
+    assert all(e.get("source") != "repeat" for e in row[COL_FINAL_ENTITIES]["entities"])

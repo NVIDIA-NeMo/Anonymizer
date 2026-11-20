@@ -62,7 +62,6 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
     RECORD_ID_COLUMN,
 )
-from anonymizer.engine.detection.detect_step import UNSPANNED_CHECK_BUILTIN
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.detection.result import from_detection_frame, render_detector_result, validate_detector_result
@@ -1253,7 +1252,7 @@ class Anonymizer:
         elif config.replace is not None:
             # Passed only when set: a caller's run_with_detection override may predate the keyword.
             custom = self._detector_kind == "custom"
-            unspanned = {"unspanned_check": True} if custom or UNSPANNED_CHECK_BUILTIN else {}
+            unspanned = {"unspanned_check": True} if custom else {}
             # Only a stable Session is passed: without one, an override with the signature before ``session`` is
             # called exactly as before.
             stable: dict[str, Any] = (

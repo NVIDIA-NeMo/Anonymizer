@@ -94,7 +94,11 @@ script, such as 王, which that rule does not match, counts wherever it appears.
 Annotate, Substitute) replace spans only, so with a custom detector a row with a reported value that occurs in its
 text outside every kept span fails at the `detect` step with the reason `unspanned_value`. That includes a span's
 value repeated without a span, and a value that crosses two spans (`Paris/Rome` over spans on `Paris` and `Rome`).
-Built-in detection is not held to this check.
+With built-in detection, the Replace modes instead add a span at each such occurrence (a missed repeat), with the
+label of the first detected span of the same value, so `final_entities` can hold spans the detector did not return
+(marked `"source": "repeat"`). The added span replaces the whole matched word, so text around a detected value, such as
+`#` in `order #W3916020`, is replaced with it. Rewrite passes a missed repeat to the rewriter in its replacement view,
+as before.
 
 Custom runners (`replace_runner`, `rewrite_runner`) are an advanced and testing seam. The rows a runner's `evaluate()`
 returns are matched by record id only; Anonymizer never matches rows by order or text.
