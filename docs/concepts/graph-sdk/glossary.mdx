@@ -30,7 +30,7 @@ The graph SDK is provisional. Names, signatures and default values may change in
 | Final candidate | The candidate made by the last step that outputs `text`. It is what the SDK releases. |
 | Kind | A registered type name for port values, such as `"text"`, `"datum"` or `"mentions"`. Add your own with `register_kind`. |
 | Limits (`Limits`) | Upper bounds on the size of one run: targets, operations, mentions, context items and optional byte ceilings. |
-| Mention (`Mention`) | A labelled half-open span `[start, end)` of a target's original text. |
+| Mention (`Mention`) | A half-open span, with a non-empty label, `[start, end)` of a target's original text. |
 | Operation (`Operation`) | One step: a name, your function, its input and output ports, and its declared requests. |
 | Output group (`OutputGroup`) | A set of targets released all together or not at all. |
 | Phase-scoped operation | An operation called once for all targets that reached it, receiving a tuple of values per input port. Built with `Operation.phase_scoped`. |

@@ -99,6 +99,7 @@ that rule's code; other targets continue.
 | `mention_not_on_target` | The mention's datum is not the target being processed. |
 | `mention_out_of_range` | `start` and `end` are not integers with `0 <= start < end <= len(text)`. |
 | `mention_slice_mismatch` | The mention's `text` differs from the slice of the original text. |
+| `mention_unlabelled` | The mention's `label` is empty. |
 | `overlapping_output_ownership` | Two mentions of the target overlap. |
 | `over_limit` | The mentions of one call would pass `Limits.max_mentions`; every target of that call fails. |
 

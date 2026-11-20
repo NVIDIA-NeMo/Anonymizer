@@ -56,8 +56,8 @@ Import the module as `from anonymizer import graph as g`.
 **`Datum`**: field `text`. Equality and hashing use identity only; two datums with the same text are not equal. Its
 `repr` hides the text.
 
-**`Mention(datum, start, end, label, text=None)`**: `[start, end)` is a character range of `datum.text`. When
-`text` is given it must equal that slice.
+**`Mention(datum, start, end, label, text=None)`**: `[start, end)` is a character range of `datum.text`. `label`
+must not be empty (`mention_unlabelled`). When `text` is given it must equal that slice.
 
 **`ContextView(target, over, start, end)`**: the span `[start, end)` of datum `over`, delivered as context to
 `target`.
@@ -233,12 +233,31 @@ available candidate is refused (`unavailable_input`); it is never filled with so
 `not_assessed`); `available` (has a final candidate); `protected`; `reasons`; `reason` (last code or `""`);
 `withheld_by`; `advisories`; `error` (never rendered).
 
-**`Reason(code, check="", verifier="", cause="")`**: codes listed in
-[Find out why a target was withheld](guide-read-outcomes.md#the-fields-of-a-targetoutcome). `cause` is set for
-`could_not_assess` only.
+**`Reason(code, check="", verifier="", cause="")`**: `check` and `verifier` name the check a code concerns; `cause`
+is the verifier's stated reason for `failed` and `could_not_assess`, and empty otherwise. The codes:
+
+| Code | Cause |
+|---|---|
+| `failed` | A required check returned `False`. |
+| `could_not_assess` | A required check returned `None`. |
+| `missing` | A required check has no assessment from a verifier of the final candidate for this target. |
+| `raised` | A step raised, or a phase-scoped step returned an exception for this target. |
+| `missing_output` | A phase-scoped step returned `None` for this target. |
+| `invalid_output` | A step returned a value of the wrong kind or port names, or a detector returned an entry that is not a `Mention`. |
+| `mention_not_on_target`, `mention_out_of_range`, `mention_slice_mismatch`, `mention_unlabelled`, `overlapping_output_ownership` | Mentions a step returned broke a mention rule. |
+| `over_limit` | Mentions returned in one call passed `Limits.max_mentions`. |
+| `binding_failed` | A context source this target reads did not return usable items. |
+| `cancelled` | The run was cancelled before this target finished. |
+| `blocked` | The target did not finish and no step of it failed, for example because it was never dispatched. |
+| `inconsistent_invocation` | A verifier in the run returned an assessment naming another target or none. |
+| `withheld` | The target is `met`, but a dependency or a member of its output group was withheld. |
+| `annotation` | The target is `met`, but the workflow is an annotation workflow, which never releases. |
+
+[Find out why a target was withheld](guide-read-outcomes.md#the-fields-of-a-targetoutcome) shows them in a program.
 
 **`Advisory(check, verifier, status, cause="")`**: `status` is `passed`, `failed` or `could_not_assess`; `cause`
-is the assessment's `reason` for `failed` and `could_not_assess`.
+is the assessment's `reason` for `failed` and `could_not_assess`. Results of `Anonymizer.evaluate()` also use the
+statuses `scored` and `not_applicable` for their judges; see [Evaluation](../evaluation.md#outcomes-after-evaluate).
 
 **`InspectionSummary`**: `operations`, `targets`, `planned_requests`, `terminals`, `qualifications`, `reasons`,
 `observed`, `protected`, `consistent`, `budget`; `render() -> str`. Before a run only the first three are set.
@@ -249,6 +268,21 @@ none did. `total` adds the context retrievals (`binding`) to that sum with the s
 used as reported, whatever the step declared. `budget` compares the observed requests with the planned count:
 `exceeded` when the requests reported so far already pass a known plan, `within` when every step that could make
 requests reported and their sum stays within it, and `unknown` otherwise.
+
+The rows of `observed`, in the order `render()` prints them:
+
+| Row | Counts | Reads |
+|---|---|---|
+| `binding` | Context sources retrieved | Always exact |
+| `correction` | Corrections the SDK made to a step's output | `exact 0` when every step that ran declares no requests, else `unknown` |
+| `retry` | Calls the SDK repeated | `exact 0` when every step that ran declares no requests, else `unknown` |
+| `total` | `binding` plus `requests` | As exact as `requests` |
+| `requests` | The external requests steps reported | Exact, a lower bound, or unknown, as above |
+
+The SDK itself never corrects an output or repeats a call, so `correction` and `retry` never count anything. A
+repair or retry your own function makes inside one call is part of that call: it is invisible to these rows and
+counts only through the requests the step reports. The two rows read `unknown`, not `exact 0`, once a step that can
+make requests has run, because such a step may retry internally.
 
 ### Values without an exported type
 
@@ -261,33 +295,12 @@ These arrive from the SDK but their classes are not exported. Read their fields;
 | Attempt | `ProtectionResult.attempts` | `target`, `operation`, `status` (`succeeded` or `failed`; the type also names `running`, `blocked` and `cancelled`, which a finished result does not contain), `reason`, `ref` (a random identifier for the entry) |
 | Count | `planned_requests`, `observed` | `value` (`int` or `None`), `bound` (`exact`, `upper`, `lower`, `unknown`); prints as `exact 3` or `unknown` |
 
-## Measurement
-
-With an `anonymizer.measurement` session active, `prepare`, `protect` and outcome reconciliation each record one
-`stage` record (`graph_prepare`, `graph_protect`, `graph_reconcile`) carrying only operation and target counts,
-terminal counts and elapsed time.
-
 ## In the `Anonymizer` class
 
-The `Anonymizer` class keeps the same outcomes. `result.outcome(row)` on the `AnonymizerResult` or `PreviewResult`
-of `run()` or `preview()` returns the `TargetOutcome` of that output row. A row index outside the result raises
-`IndexError`, as does a result from `evaluate()` or a custom runner, which carries no outcomes.
-
-- In Replace mode, `not_met` means the row's replacements did not all land: the `replacements_applied` check
-  failed, for example because the replacement map omitted a detected entity.
-- In Rewrite mode, `not_met` means a final privacy check on the rewritten text failed.
-- Either way the row is still in the output frame, so read its outcome before releasing it.
-- In Replace and Rewrite modes, detection runs as the first phase-scoped step of the same call that replaces or
-  rewrites.
-
-Redact, Hash and Substitute rows (not Annotate) carry the advisory `no_detected_value_outside_replacements`.
-`failed` means a detected value still occurs in the text outside the replaced spans, `passed` means it does not,
-and `could_not_assess` means the check could not compare them. Each kept part between replaced spans is scanned
-separately, so a replaced span's edge counts as a word boundary: a value that straddles the edge is not found, and
-a value next to the edge can be flagged where a scan of the whole text would not flag it. The check matches words,
-not meanings: an ordinary word spelled like a detected value, such as "will" when the name "Will" was detected, is
-reported even though it is not the name, and a replacement that happens to equal another detected value is not
-reported.
+`run()` and `preview()` results of the `Anonymizer` class carry one `TargetOutcome` per output row:
+`result.outcome(row)`. What `not_met` and the advisories mean there depends on the mode: see
+[Replace](../replace.md#reading-each-rows-outcome), [Rewrite](../rewrite.md#reading-each-rows-outcome), and, for the
+judges that `evaluate()` appends, [Evaluation](../evaluation.md#outcomes-after-evaluate).
 
 ## Rejection codes
 
@@ -316,7 +329,7 @@ reported.
 | `view_out_of_range` | A context view outside its datum. |
 | `duplicate_context_source` | Two different sources with one name. |
 | `mention_not_on_target` | A declared mention on a context datum. |
-| `mention_out_of_range`, `mention_slice_mismatch`, `overlapping_output_ownership` | A declared mention breaks a mention rule. Declared mentions must be `Mention` values. |
+| `mention_out_of_range`, `mention_slice_mismatch`, `mention_unlabelled`, `overlapping_output_ownership` | A declared mention breaks a mention rule. Declared mentions must be `Mention` values. |
 | `dependency_cycle` | Dependencies form a cycle. |
 | `group_overlap` | A target in two output groups. |
 | `foreign_record` | A record from another scope. |

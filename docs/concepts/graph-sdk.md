@@ -156,7 +156,10 @@ workflow.
 
 ## If you only use the `Anonymizer` class
 
-`run()` and `preview()` results carry the same kind of outcome per output row. `result.outcome(row)` returns the
-row's `TargetOutcome`. In Replace mode, `not_met` means the row's replacements did not all land; in Rewrite mode it
-means a final privacy check on the rewritten text failed. The row stays in the output frame either way, so read its
-outcome before you release it. See [Find out why a target was withheld](graph-sdk/guide-read-outcomes.md) for the fields.
+You do not need this SDK to read a verdict. `run()` and `preview()` results carry one `TargetOutcome` per output
+row, the same type described here: `result.outcome(row)`. A row stays in the output frame even when it is not
+released, so read its outcome before you use the row. What `not_met` means depends on the mode:
+
+- [Replace](replace.md#reading-each-rows-outcome): the row's replacements did not all land.
+- [Rewrite](rewrite.md#reading-each-rows-outcome): a final privacy check on the rewritten text failed.
+- [Evaluation](evaluation.md#outcomes-after-evaluate): what the judges of `evaluate()` add to each row's outcome.

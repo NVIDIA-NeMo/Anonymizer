@@ -73,13 +73,13 @@ A `Reason` has `code`, `check`, `verifier` and `cause`. The codes:
 
 | Code | Meaning |
 |---|---|
-| `failed` | A required check returned `False`. `check` and `verifier` name it. |
+| `failed` | A required check returned `False`. `check` and `verifier` name it; `cause` holds the verifier's reason. |
 | `could_not_assess` | A required check returned `None`. `cause` holds the verifier's reason. |
 | `missing` | A required check has no assessment from a verifier of the final candidate for this target. `prepare` and the verifier construction rules are designed to prevent this, so it is not expected in normal use. |
 | `raised` | A step raised, or a phase-scoped step returned an exception for this target. |
 | `missing_output` | A phase-scoped step returned `None` for this target. |
 | `invalid_output` | A step returned a value of the wrong kind or the wrong port names. |
-| `mention_not_on_target`, `mention_out_of_range`, `mention_slice_mismatch`, `overlapping_output_ownership` | A detector's mentions broke a rule ([guide](guide-custom-detector.md)). |
+| `mention_not_on_target`, `mention_out_of_range`, `mention_slice_mismatch`, `mention_unlabelled`, `overlapping_output_ownership` | A detector's mentions broke a rule ([guide](guide-custom-detector.md)). |
 | `over_limit` | Mentions returned in one call passed `Limits.max_mentions`. |
 | `binding_failed` | A context source this target reads did not return usable items ([guide](guide-give-an-operation-context.md)). |
 | `cancelled` | The run was cancelled before this target finished. |
