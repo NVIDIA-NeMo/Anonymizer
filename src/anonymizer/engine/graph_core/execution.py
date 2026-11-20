@@ -740,7 +740,7 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
                 if a.satisfied is None:
                     reasons += [Reason("could_not_assess", c, name, a.reason) for c in checks]
                 elif a.satisfied is not True:
-                    reasons += [Reason("failed", c, name) for c in checks]
+                    reasons += [Reason("failed", c, name, a.reason) for c in checks]
             reasons += [Reason("missing", c) for c in requires if c not in covered]
             qual = "not_met" if reasons else "met"
         verdicts.append((terminal, qual, reasons))

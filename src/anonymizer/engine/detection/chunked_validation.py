@@ -65,6 +65,7 @@ from anonymizer.engine.schemas import (
     ValidationRequestDecisionSets,
     ValidationRequestInventory,
 )
+from anonymizer.engine.spans import Span
 
 logger = logging.getLogger("anonymizer.detection.chunked_validation")
 
@@ -193,11 +194,7 @@ def build_validation_conflict_groups(
             item.observation_id,
         ),
     )
-    return group_overlapping_spans(
-        ordered,
-        start_position=lambda observation: observation.start_position,
-        end_position=lambda observation: observation.end_position,
-    )
+    return group_overlapping_spans(ordered, span=lambda observation: observation.span)
 
 
 def chunk_validation_conflict_groups(
@@ -255,19 +252,15 @@ def prepare_validation_requests(
     groups = build_validation_conflict_groups(detection_result.observations)
     chunks = chunk_validation_conflict_groups(groups, max_entities_per_call)
     prepared: list[_PreparedValidationRequest] = []
+    view = detection_result.source_view.span
     for request_index, chunk in enumerate(chunks, start=1):
-        observations = [observation for group in chunk for observation in group]
         if len(chunks) == 1 and single_chunk_full_text:
-            context_start = detection_result.source_view.start_position
-            context_end = detection_result.source_view.end_position
+            context = view
         else:
-            context_start = max(
-                detection_result.source_view.start_position,
-                min(item.start_position for item in observations) - excerpt_window_chars,
-            )
-            context_end = min(
-                detection_result.source_view.end_position,
-                max(item.end_position for item in observations) + excerpt_window_chars,
+            covered = Span.cover(observation.span for group in chunk for observation in group)
+            context = Span(
+                max(view.start, covered.start - excerpt_window_chars),
+                min(view.end, covered.end + excerpt_window_chars),
             )
 
         entries: list[ValidationInventoryEntry] = []
@@ -279,28 +272,29 @@ def prepare_validation_requests(
             if len(group) > 1:
                 conflict_group_id = f"g{next_group_alias}"
                 next_group_alias += 1
-                group_start = min(item.start_position for item in group)
-                group_end = max(item.end_position for item in group)
+                bounds = Span.cover(observation.span for observation in group)
+                marker = bounds.shifted(-context.start)
                 prompt_markers.append(
                     EntitySpan(
                         entity_id=conflict_group_id,
-                        value=canonical_text[group_start:group_end],
+                        value=canonical_text[bounds.slice],
                         label=f"NAGROUP_{conflict_group_id}",
-                        start_position=group_start - context_start,
-                        end_position=group_end - context_start,
+                        start_position=marker.start,
+                        end_position=marker.end,
                         score=0.0,
                         source="validation_prompt",
                     )
                 )
             else:
                 observation = group[0]
+                marker = observation.span.shifted(-context.start)
                 prompt_markers.append(
                     EntitySpan(
                         entity_id=observation.observation_id,
                         value=observation.value,
                         label=observation.label,
-                        start_position=observation.start_position - context_start,
-                        end_position=observation.end_position - context_start,
+                        start_position=marker.start,
+                        end_position=marker.end,
                         score=observation.native_score or 0.0,
                         source="validation_prompt",
                     )
@@ -321,10 +315,10 @@ def prepare_validation_requests(
 
         context_view = SourceView(
             source_text_ref=detection_result.source_view.source_text_ref,
-            start_position=context_start,
-            end_position=context_end,
+            start_position=context.start,
+            end_position=context.end,
         )
-        source_context = canonical_text[context_start:context_end]
+        source_context = canonical_text[context.slice]
         inventory = ValidationRequestInventory(
             request_id=f"validation-request-{request_index}",
             source_text_ref=detection_result.source_view.source_text_ref,
@@ -345,8 +339,8 @@ def prepare_validation_requests(
                     "conflict_group_id": entry.conflict_group_id,
                     "value": entry.value,
                     "label": entry.label,
-                    "start_position": entry.start_position - context_start,
-                    "end_position": entry.end_position - context_start,
+                    "start_position": entry.start_position - context.start,
+                    "end_position": entry.end_position - context.start,
                     "decision": None,
                     "proposed_label": None,
                     "reason": None,

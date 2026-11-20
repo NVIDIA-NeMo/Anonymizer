@@ -44,6 +44,7 @@ from anonymizer.engine.schemas import (
     EntityReplacementMapSchema,
     EntitySchema,
 )
+from anonymizer.engine.spans import Span
 
 logger = logging.getLogger(__name__)
 
@@ -191,16 +192,13 @@ def _render_highlighted_text(text: str, entities: list[EntitySchema]) -> str:
     parts: list[str] = []
     cursor = 0
     for entity in sorted_entities:
-        if (
-            entity.start_position < cursor
-            or entity.end_position <= entity.start_position
-            or entity.end_position > len(text)
-        ):
+        span = Span.in_text(entity.start_position, entity.end_position, text)
+        if span is None or span.start < cursor:
             continue
 
         _, border_color = _color_for_label(entity.label)
-        parts.append(html.escape(text[cursor : entity.start_position]))
-        entity_value = html.escape(text[entity.start_position : entity.end_position])
+        parts.append(html.escape(text[cursor : span.start]))
+        entity_value = html.escape(text[span.slice])
         parts.append(
             f'<span style="border:1.5px solid {border_color};'
             f'padding:1px 4px;border-radius:3px">'
@@ -208,7 +206,7 @@ def _render_highlighted_text(text: str, entities: list[EntitySchema]) -> str:
             f'<span style="color:{border_color};font-size:0.75em;font-weight:600;'
             f'margin-left:3px;opacity:0.85">| {html.escape(entity.label)}</span></span>'
         )
-        cursor = entity.end_position
+        cursor = span.end
 
     parts.append(html.escape(text[cursor:]))
     return "".join(parts)
@@ -251,24 +249,22 @@ def _build_replaced_entities(
     search_from = 0
 
     for entity in sorted_entities:
-        start = entity.start_position
-        end = entity.end_position
-        value = entity.value
-        label = entity.label
-        if start < original_cursor or end <= start or end > len(original_text):
+        span = Span.in_text(entity.start_position, entity.end_position, original_text)
+        if span is None or span.start < original_cursor:
             continue
 
-        synthetic = _resolve_synthetic(value, label, lookups)
-        original_span = original_text[start:end]
+        label = entity.label
+        synthetic = _resolve_synthetic(entity.value, label, lookups)
+        original_value = original_text[span.slice]
 
         pos = replaced_text.find(synthetic, search_from) if synthetic else -1
-        if pos < 0 and synthetic != original_span:
-            pos = replaced_text.find(original_span, search_from)
+        if pos < 0 and synthetic != original_value:
+            pos = replaced_text.find(original_value, search_from)
             if pos >= 0:
-                synthetic = original_span
+                synthetic = original_value
 
         if pos < 0:
-            original_cursor = end
+            original_cursor = span.end
             continue
 
         replaced_entities.append(
@@ -280,7 +276,7 @@ def _build_replaced_entities(
             )
         )
         search_from = pos + len(synthetic)
-        original_cursor = end
+        original_cursor = span.end
 
     return replaced_entities
 

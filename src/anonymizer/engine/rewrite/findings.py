@@ -3,10 +3,11 @@
 
 """What each finding means for one evaluated rewrite row.
 
-Each risk-tolerance preset lists, as data, which findings send a row to repair and which flag it
-for human review (``_RISK_TOLERANCE_BUNDLES`` in ``anonymizer.config.rewrite``). To add a finding,
-add a ``Finding`` member there (and to ``RepairFinding`` if repair can act on it), its condition in
-``present_findings`` here, and list it in the presets that should act on it.
+Each risk-tolerance preset lists, as data, which findings send a row to repair
+(``_RISK_TOLERANCE_BUNDLES`` in ``anonymizer.config.rewrite``). To add a finding, add a ``Finding``
+member there (and to ``RepairFinding`` if repair can act on it), its condition in
+``present_findings`` here, and list it in the presets that should repair on it. The review flag is
+not decided here: see ``_flag_review`` in ``anonymizer.engine.rewrite.rewrite_workflow``.
 """
 
 from __future__ import annotations
@@ -49,11 +50,6 @@ def present_findings(row: Mapping[str, Any], evaluation: EvaluationCriteria) -> 
 def needs_repair(row: Mapping[str, Any], evaluation: EvaluationCriteria) -> bool:
     """True when a finding the preset repairs on holds."""
     return not present_findings(row, evaluation).isdisjoint(evaluation.repair_on)
-
-
-def needs_human_review(row: Mapping[str, Any], evaluation: EvaluationCriteria) -> bool:
-    """True when a finding the preset flags for review holds."""
-    return not present_findings(row, evaluation).isdisjoint(evaluation.flag_on)
 
 
 def _metric(value: Any) -> float | None:
