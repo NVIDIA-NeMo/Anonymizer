@@ -161,5 +161,5 @@ row, the same type described here: `result.outcome(row)`. A row stays in the out
 released, so read its outcome before you use the row. What `not_met` means depends on the mode:
 
 - [Replace](replace.md#reading-each-rows-outcome): the row's replacements did not all land.
-- [Rewrite](rewrite.md#reading-each-rows-outcome): a final privacy check on the rewritten text failed.
+- [Rewrite](rewrite.md#reading-each-rows-outcome): a final check on the rewritten text failed or could not be assessed.
 - [Evaluation](evaluation.md#outcomes-after-evaluate): what the judges of `evaluate()` add to each row's outcome.

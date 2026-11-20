@@ -207,10 +207,11 @@ is scanned whole, replacements included:
 - `could_not_assess`: the check could not run.
 
 A `failed` advisory's `cause` lists each value over that bound as `e<i>:N<n>,D<d>,O<o>`, joined by `;`: `i` is the
-position of the value's first detected span among the row's entities sorted by start, `n` the value's occurrences
+position, among the row's entities sorted by start, of the value's own detected span, else of the first
+detected span that contains one of its matches, or `-` (`e-`) when no detected span holds it; `n` the value's occurrences
 in the source, `d` those inside a detected span, and `o` its occurrences in the replaced text. It holds no record
-text. To see which value an entry names and where it occurs, `result.leftovers(row)` returns one `Leftover` per
-value, in `cause` order, with its `position`, `value`, `label`, `span`, `in_source`, `undetected_spans` and
+text. To see which value an entry names and where it occurs, `result.leftovers(row)` returns one `Leftover` for
+every detected value, in the order `cause` uses (`cause` lists only those over the bound), with its `position`, `value`, `label`, `span`, `in_source`, `undetected_spans` and
 `output_spans`; unlike `cause`, it returns record text. For example:
 
 ```python

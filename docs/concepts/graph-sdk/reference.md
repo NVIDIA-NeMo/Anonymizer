@@ -301,6 +301,8 @@ These arrive from the SDK but their classes are not exported. Read their fields;
 `result.outcome(row)`. What `not_met` and the advisories mean there depends on the mode: see
 [Replace](../replace.md#reading-each-rows-outcome), [Rewrite](../rewrite.md#reading-each-rows-outcome), and, for the
 judges that `evaluate()` appends, [Evaluation](../evaluation.md#outcomes-after-evaluate).
+In Replace and Rewrite modes, detection runs as the first phase-scoped step of the same call that replaces or
+rewrites.
 
 ## Rejection codes
 
