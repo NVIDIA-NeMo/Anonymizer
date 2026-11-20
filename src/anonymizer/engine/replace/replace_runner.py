@@ -163,7 +163,7 @@ class ReplacementWorkflow:
         detector: Literal["builtin", "custom"] = "builtin",
     ) -> ReplacementResult:
         """Detect entities with ``detect`` and apply the replacement strategy as one graph invocation; ``session``
-        goes to that invocation and to ``run`` when detection output must be rerouted.
+        goes to that invocation.
 
         ``detector`` names the kind of detector behind ``detect``. A reported value that occurs outside every kept
         span fails its row at ``detect`` for a ``"custom"`` detector; for the ``"builtin"`` one a span is added there.
