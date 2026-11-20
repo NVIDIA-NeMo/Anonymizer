@@ -350,6 +350,7 @@ def _finalization_column(states: list[EvaluationState]) -> CustomColumnConfig:
         COL_NEEDS_REPAIR,
         COL_REPAIR_ITERATIONS,
         COL_NEEDS_HUMAN_REVIEW,
+        COL_REWRITTEN_TEXT_NEXT,
     ]
 
     @custom_column_generator(
@@ -383,6 +384,11 @@ def _finalization_column(states: list[EvaluationState]) -> CustomColumnConfig:
         row[COL_ANY_HIGH_LEAKED] = row.get(state.any_high_leaked)
         row[COL_NEEDS_REPAIR] = row.get(state.needs_repair)
         row[COL_REPAIR_ITERATIONS] = state.iteration
+        # As staged keeps ``_rewritten_text__next``: the latest repair candidate, even one whose evaluation was lost.
+        row[COL_REWRITTEN_TEXT_NEXT] = next(
+            (text for later in reversed(states[1:]) if isinstance(text := row.get(later.rewritten_text), str)),
+            None,
+        )
         # A placeholder that keeps the column's place and type: ``_flag_review`` assigns the flag after the final checks.
         row[COL_NEEDS_HUMAN_REVIEW] = False
         return row
