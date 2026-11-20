@@ -9,6 +9,7 @@ import re
 from collections import Counter
 from collections.abc import Container
 from dataclasses import dataclass, field
+from math import inf
 from typing import Literal
 
 import pandas as pd
@@ -22,6 +23,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_FOR_REPLACE,
     COL_ENTITIES_FOR_REPLACE_JSON,
     COL_ENTITY_EXAMPLES,
+    COL_FINAL_ENTITIES,
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_SOURCE,
     COL_REPLACEMENT_RETRY_CONTEXT,
@@ -36,7 +38,7 @@ from anonymizer.engine.ndd.backend import BackendRun, DataDesignerBackend
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
-from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
+from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema, EntityReplacementMapSchema
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import record_stage, stage_timer
 
@@ -360,12 +362,15 @@ def _fold_frame(
     """``_fold_replacement_maps`` over ``frame``'s maps, recorded as the ``LlmReplaceWorkflow.fold`` stage: the maps,
     each row's decisions under ``view`` and the placeholders minted, by cause."""
     requested = [_requested_values(EntitiesByValueSchema.from_raw(v)) for v in frame[entities_column]]
+    spans = None
+    if view is not None and COL_FINAL_ENTITIES in frame.columns:
+        spans = [_first_offsets(raw) for raw in frame[COL_FINAL_ENTITIES]]
     tally: Counter[tuple[str, ...]] = Counter()
     decisions: list[tuple[Decision, ...]] = []
     placeholder_counts: Counter[str] = Counter()
     with stage_timer("LlmReplaceWorkflow.fold", consistency=consistency, input_row_count=len(frame)) as fields:
         maps = _fold_replacement_maps(
-            frame[COL_REPLACEMENT_MAP].tolist(), consistency, requested, tally, view, decisions
+            frame[COL_REPLACEMENT_MAP].tolist(), consistency, requested, tally, view, decisions, spans
         )
         fields["entry_count"] = sum(len(m.get("replacements", [])) for m in maps)
         fields["records_with_placeholder"] = tally.pop(("records_with_placeholder",), 0)
@@ -376,6 +381,15 @@ def _fold_frame(
                 placeholder_counts[step.removeprefix("placeholder_")] += n
         fields["fallback_counts"] = fallbacks
     return maps, tuple(decisions), dict(placeholder_counts)
+
+
+def _first_offsets(raw: object) -> dict[str, int]:
+    """Each exact entity value of a row at its first accepted mention's start offset."""
+    offsets: dict[str, int] = {}
+    for entity in EntitiesSchema.from_raw(raw).entities:
+        if entity.value and entity.start_position < offsets.get(entity.value, entity.start_position + 1):
+            offsets[entity.value] = entity.start_position
+    return offsets
 
 
 def _recase(synthetic: str, *, like: str, source: str) -> str:
@@ -396,6 +410,7 @@ def _fold_replacement_maps(
     tally: Counter[tuple[str, ...]] | None = None,
     view: SessionView | None = None,
     decisions: list[tuple[Decision, ...]] | None = None,
+    spans: list[dict[str, int]] | None = None,
 ) -> list[dict]:
     """Give entries with the same (label, case- and whitespace-folded value) one substitute, re-cased to each original
     (a placeholder is never re-cased).
@@ -424,8 +439,11 @@ def _fold_replacement_maps(
     ``placeholder_protected`` (its own proposal folds to a value in its record), plus
     ``("records_with_placeholder",)``.
 
-    With a stable Session's ``view`` (``"run"`` mode only), a key the run has not mapped yet takes the Session's
-    assignment as held for its first spelling in the call; later spellings are re-cased against that one. A substitute also collides when the view's
+    With a stable Session's ``view`` (``"run"`` mode only), each key's casing reference in a record is its spelling at
+    the earliest accepted mention (``spans``: each exact value's first start offset in the record), ties and values
+    without a span broken by exact value; the maps are in target order. That spelling's entry gives the record's
+    shared substitute, so neither the model's entry order nor the detector's return order changes the text. A key the
+    run has not mapped yet takes the Session's assignment for that spelling; other spellings are re-cased against it. A substitute also collides when the view's
     ``assigned_to_other_value`` finds it assigned to another subject or normalized value, or to a fallback entry; the
     key's own slot and the same normalized value under any other label do not count, so a value under two labels can
     keep one substitute. A record-local fallback also collides when the view's ``assigned_elsewhere`` finds it
@@ -484,6 +502,12 @@ def _fold_replacement_maps(
                 blocked = blocked or across_labels(value, key, fixes=fixes)
             return value in originals or blocked or crosses(value, key, fixes=fixes)
 
+        reference: dict[tuple[str, str], tuple[str, str]] = {}
+        if view is not None:
+            offsets = spans[index] if spans is not None else {}
+            for key, entry in sorted(keyed, key=lambda ke: (offsets.get(ke[1]["original"], inf), ke[1]["original"])):
+                reference.setdefault(key, (entry["original"], entry["synthetic"]))
+
         record: dict[tuple[str, str], tuple[str, str]] = {}
         placeholders: Counter[str] = run_placeholders if consistency == "run" else Counter()
         used = 0
@@ -491,7 +515,7 @@ def _fold_replacement_maps(
         for key, entry in keyed:
             own = (entry["original"], entry["synthetic"])
             first = key not in record
-            source = record.setdefault(key, held(key, own))
+            source = record.setdefault(key, held(key, reference.get(key, own)))
             synthetic = _recase(source[1], like=entry["original"], source=source[0])
             if collides(_fold(synthetic), key, shared=True):
                 step = "own" if entry["synthetic"] != synthetic else None

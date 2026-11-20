@@ -153,6 +153,12 @@ def _substitute_map_step(
 
     def generate_maps(target: tuple[Datum, ...], session: tuple[SessionView, ...]) -> list[dict[str, Any] | None]:
         source, owners = frame(target)
+        if session and session[0].mode.stable_replacements:
+            # The fold reads rows in order and the first spelling of a value fixes its casing, so a stable Session
+            # sees the rows in target order, whatever order the detector returned them in.
+            order = {datum: i for i, datum in enumerate(target)}
+            rows = sorted(range(len(owners)), key=lambda row: order[owners[row]])
+            source, owners = source.iloc[rows], [owners[row] for row in rows]
         # Only a stable view is passed: without one, an override with the signature before ``session`` is called
         # exactly as before.
         stable: dict[str, Any] = {"session": session[0]} if session and session[0].mode.stable_replacements else {}
