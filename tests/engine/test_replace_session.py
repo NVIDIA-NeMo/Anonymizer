@@ -490,13 +490,82 @@ class _OldSignature(ReplacementWorkflow):
         )
 
 
-def test_an_old_run_with_detection_override_works_without_a_session(tmp_path: Path) -> None:
+class _DroppingRunner(ReplacementWorkflow):
+    """Overrides ``run_with_detection`` with ``**kwargs`` and delegates without ``session``."""
+
+    def run_with_detection(self, dataframe: pd.DataFrame, **kwargs: Any) -> ReplacementResult:
+        kwargs.pop("session", None)
+        return super().run_with_detection(dataframe, **kwargs)
+
+
+class _OldValidatedMaps(LlmReplaceWorkflow):
+    """Overrides ``generate_validated_maps`` with the signature it had before ``session``."""
+
+    def generate_validated_maps(  # ty: ignore[invalid-method-override]
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        model_configs: Any,
+        selected_models: Any,
+        instructions: str | None = None,
+        entities_column: str = COL_ENTITIES_BY_VALUE,
+        preview_num_records: int | None = None,
+        consistency: Any = "record",
+    ) -> Any:
+        return super().generate_validated_maps(
+            dataframe,
+            model_configs=model_configs,
+            selected_models=selected_models,
+            instructions=instructions,
+            entities_column=entities_column,
+            preview_num_records=preview_num_records,
+            consistency=consistency,
+        )
+
+
+class _DroppingMaps(LlmReplaceWorkflow):
+    """Overrides ``generate_validated_maps`` with ``**kwargs`` and delegates without ``session``."""
+
+    def generate_validated_maps(self, dataframe: pd.DataFrame, **kwargs: Any) -> Any:
+        kwargs.pop("session", None)
+        return super().generate_validated_maps(dataframe, **kwargs)
+
+
+class _OldMapOnly(LlmReplaceWorkflow):
+    """Overrides ``generate_map_only`` with its signature, which never took ``session``."""
+
+    def generate_map_only(self, dataframe: pd.DataFrame, **kwargs: Any) -> Any:
+        return super().generate_map_only(dataframe, **kwargs)
+
+
+_HOOKS: dict[str, tuple[type[ReplacementWorkflow], type[LlmReplaceWorkflow]]] = {
+    "old-validated-maps": (ReplacementWorkflow, _OldValidatedMaps),
+    "dropping-validated-maps": (ReplacementWorkflow, _DroppingMaps),
+    "old-run-with-detection": (_OldSignature, LlmReplaceWorkflow),
+    "dropping-run-with-detection": (_DroppingRunner, LlmReplaceWorkflow),
+    "old-map-only": (ReplacementWorkflow, _OldMapOnly),
+}
+
+
+def _hooked(hook: str) -> Anonymizer:
+    """An Anonymizer whose replace runner carries ``_HOOKS[hook]``'s overrides."""
+    runner_type, llm_type = _HOOKS[hook]
     detector = cast(EntityDetectionWorkflow, _Detector())
-    runner = _OldSignature(llm_workflow=LlmReplaceWorkflow(adapter=Anonymizer(detection_workflow=detector)._adapter))
-    anonymizer = Anonymizer(detection_workflow=detector, replace_runner=runner)
+    runner = runner_type(llm_workflow=llm_type(adapter=Anonymizer(detection_workflow=detector)._adapter))
+    return Anonymizer(detection_workflow=detector, replace_runner=runner)
+
+
+@pytest.mark.parametrize("hook", list(_HOOKS))
+@pytest.mark.parametrize("session", [_UNSET, None, Session()], ids=["absent", "none", "off-session"])
+@pytest.mark.parametrize("preview", [False, True], ids=["run", "preview"])
+def test_an_old_hook_override_works_without_a_stable_session(
+    tmp_path: Path, hook: str, session: Session | None, preview: bool
+) -> None:
     texts, proposals = ["Alice lives in Paris."], {"Alice": "Bob", "Paris": "Lyon"}
-    expected = _protect(tmp_path, texts, proposals, trace=True)
-    pd.testing.assert_frame_equal(_protect(tmp_path, texts, proposals, anonymizer=anonymizer, trace=True), expected)
+    expected = _protect(tmp_path, texts, proposals, trace=True, preview=preview)
+    output = _protect(tmp_path, texts, proposals, session, anonymizer=_hooked(hook), trace=True, preview=preview)
+    pd.testing.assert_frame_equal(output, expected)
+    assert list(output["text_replaced"]) == ["Bob lives in Lyon."]
 
 
 def test_a_placeholder_is_reused_verbatim_in_a_later_call(tmp_path: Path) -> None:

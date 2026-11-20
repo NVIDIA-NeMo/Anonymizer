@@ -153,11 +153,14 @@ def _substitute_map_step(
 
     def generate_maps(target: tuple[Datum, ...], session: tuple[SessionView, ...]) -> list[dict[str, Any] | None]:
         source, owners = frame(target)
+        # Only a stable view is passed: without one, an override with the signature before ``session`` is called
+        # exactly as before.
+        stable: dict[str, Any] = {"session": session[0]} if session and session[0].mode.stable_replacements else {}
         result = llm_workflow.generate_validated_maps(
             source,
             instructions=replace_method.instructions,
             consistency=replace_method.consistency,
-            session=session[0] if session else None,
+            **stable,
             **map_arguments,
         )
         failures.extend(result.failed_records)

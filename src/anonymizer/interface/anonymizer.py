@@ -1080,7 +1080,9 @@ class Anonymizer:
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.replace,
                 preview_num_records=preview_num_records,
-                **({} if session is None else {"session": session}),  # a caller's override may predate it
+                # Only a stable Session is passed: without one, an override with the signature before ``session``
+                # is called exactly as before.
+                **({"session": session} if session is not None and session.mode.stable_replacements else {}),
             )
             assert replace_result.detection is not None
             detected_df, detection_failures = (

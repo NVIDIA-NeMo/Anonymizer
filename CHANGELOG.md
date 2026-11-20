@@ -307,6 +307,9 @@ not when the run starts.
 **`session=` on `run` and `preview`.** A `Session` from `anonymizer.graph` keeps substitutes stable across calls.
 Without a session, output is unchanged. Under a stable session, `run` and `preview` reject Rewrite and a custom
 replace runner that overrides `run()`. The session and its snapshots are provisional.
+- Without a stable session, including `Session()`, a custom replace runner's `run_with_detection()` and its map
+  workflow's `generate_validated_maps()` are called as before `session` existed, so overrides with the older
+  signatures keep working.
 
 **Placeholders are kept as minted.** A variant of a value that received a placeholder gets the placeholder exactly as
 minted, not re-cased (for example `[substitute_first_name_1]`). v0.5.0 had no re-casing, so this changes output only

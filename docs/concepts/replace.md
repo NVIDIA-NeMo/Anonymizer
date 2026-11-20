@@ -214,7 +214,8 @@ session = Session.restore(SessionSnapshot.from_bytes(saved))
 - The Session also holds record-local fallback entries: a substitute used in one record in place of a value's shared
   one is recorded so no other value takes it later. These entries are bookkeeping, not assignments.
 - `Session()` without `stable_replacements=True` retains nothing, and the call behaves as it does without
-  `session=`.
+  `session=`. A custom replace runner is called as it is without `session=`, so an override written before `session`
+  existed keeps working.
 
 See [Graph SDK](graph-sdk.md#session-provisional) for the Session itself.
 
