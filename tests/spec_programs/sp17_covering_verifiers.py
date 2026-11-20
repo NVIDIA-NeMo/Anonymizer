@@ -85,7 +85,11 @@ def program() -> list[dict[str, str]]:
         prepared.covering_verifiers == {1, 2}
         and [o.qualification for o in outcomes] == ["met", "not_met", "not_met"]
         and [o.reasons for o in outcomes]
-        == [(), (Reason("failed", "second", "second"),), (Reason("failed", "first", "first"),)]
+        == [
+            (),
+            (Reason("failed", "second", "second", "second_failed"),),
+            (Reason("failed", "first", "first", "first_failed"),),
+        ]
         and reasons == [["", ""], ["", "second_failed"], ["first_failed", ""]]
         and set(r.protected) == {a},
         f"covering={sorted(prepared.covering_verifiers)}, qualification={[o.qualification for o in outcomes]}, "

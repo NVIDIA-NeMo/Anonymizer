@@ -6,7 +6,7 @@
 Each row lowers to one target datum whose exact, non-overlapping entity spans are its mentions. A row is a transform
 (``replace``: the 0.4.0 per-row replacement) followed by a verifier (``verify-patches``: one patch per accepted
 mention, checked by source-plus-patches reconstruction). Except under Annotate, a second verifier
-(``verify-no-original``) reports the non-required check ``no_detected_value_outside_replacements`` as an
+(``verify-no-original``) reports the non-required check ``no_detected_value_added`` as an
 advisory. The legacy DataFrame projection derives from the canonical result without rerunning work; Annotate
 output is an annotation result and is never Protected.
 
@@ -67,9 +67,10 @@ from anonymizer.engine.replace.strategies import (
     _parse_replacements,
     apply_replacements_to_spans,
 )
-from anonymizer.engine.row_partitioning import resolve_source_positions
+from anonymizer.engine.row_partitioning import cell_text, resolve_source_positions
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
-from anonymizer.engine.value_matching import compile_values
+from anonymizer.engine.spans import Span
+from anonymizer.engine.value_matching import count_values, format_cause
 from anonymizer.logging import ProgressTracker
 from anonymizer.measurement import record_stage
 
@@ -166,6 +167,7 @@ def run_replace_pipeline(
     llm_workflow: LlmReplaceWorkflow | None,
     map_arguments: dict[str, Any],
     reroute: Callable[[pd.DataFrame], ReplacementResult],
+    unspanned_check: bool = False,
 ) -> ReplacementResult:
     """Run ``detect``, the Substitute map step and the per-target replace and verify as one invocation.
 
@@ -176,7 +178,7 @@ def run_replace_pipeline(
     text, fails every target at ``detect``, and ``reroute`` replaces over the detection frame as returned.
     """
     scope = GraphScope()
-    graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in dataframe[COL_TEXT]))
+    graph = ProtectionGraph(scope, tuple(scope.datum(cell_text(text)) for text in dataframe[COL_TEXT]))
     state = DetectState()
     failures, detected, owners, elapsed = state.failures, state.detected, state.owners, state.elapsed
     malformed: list[FailedRecord] = []
@@ -191,7 +193,7 @@ def run_replace_pipeline(
         positions = result.source_positions and tuple(result.source_positions[i] for i in kept.index)
         return dataclasses.replace(result, dataframe=kept.reset_index(drop=True), source_positions=positions)
 
-    detect_op = detect_step(dataframe, detect_replaceable, state)
+    detect_op = detect_step(dataframe, detect_replaceable, state, spans_only=unspanned_check)
     tracker = ProgressTracker(total=len(graph.targets), label="Replacement")
     map_step = build_map = None
     if isinstance(replace_method, Substitute):
@@ -267,7 +269,7 @@ def _ready_rows(
 
 
 def _lower(dataframe: pd.DataFrame, text_column: str, entities_column: str) -> ProtectionGraph:
-    """One target per row (``str(text)``, as 0.4.0) with its accepted entity spans as mentions."""
+    """One target per row (``cell_text(text)``) with its accepted entity spans as mentions."""
     n = len(dataframe)
     texts = dataframe[text_column] if text_column in dataframe.columns else repeat("", n)
     raw_entities = dataframe[entities_column] if entities_column in dataframe.columns else repeat({}, n)
@@ -275,7 +277,7 @@ def _lower(dataframe: pd.DataFrame, text_column: str, entities_column: str) -> P
     targets: list[Datum] = []
     mentions: list[Mention] = []
     for text, raw in zip(texts, raw_entities):
-        targets.append(datum := scope.datum(str(text)))
+        targets.append(datum := scope.datum(cell_text(text)))
         mentions.extend(accepted_mentions(datum, EntitiesSchema.from_raw(raw, strict=True)))
     return ProtectionGraph(scope, tuple(targets), tuple(mentions))
 
@@ -344,8 +346,8 @@ def _protect_rows(
         no_original = Operation.verifier(
             "verify-no-original",
             _verify_no_original,
-            {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "replacement_map": REPLACEMENT_MAP, "target": DATUM},
-            checks=("no_detected_value_outside_replacements",),
+            {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "target": DATUM},
+            checks=("no_detected_value_added",),
             subject=("text",),
         )
         operations = (*operations, no_original)
@@ -402,26 +404,15 @@ def _patches(source: str, mentions: tuple[Mention, ...], replacement_map: dict) 
     return [patches.get((source[m.start : m.end], m.label)) for m in mentions]
 
 
-def _verify_no_original(
-    text: str, source: str, mentions: tuple[Mention, ...], replacement_map: dict, target: Datum
-) -> Assessment:
-    """Whether no accepted mention's value occurs in the kept text (the source outside every patch), under the rule
-    Rewrite's ``replacements_applied`` uses. Never raises: an error or a candidate that is not source-plus-patches
-    could not be assessed. Each kept part is scanned separately, so a patch edge counts as a word boundary."""
+def _verify_no_original(text: str, source: str, mentions: tuple[Mention, ...], target: Datum) -> Assessment:
+    """Whether the replaced text, substitutes included, holds no accepted mention's value more often than the source
+    holds it outside every mention (``count_values``, the rule Rewrite's ``replacements_applied`` uses); the reason
+    names each value over that bound. Never raises: an error could not be assessed."""
     try:
-        parts: list[str] = []
-        cursor = 0
-        for m, synthetic in zip(mentions, _patches(source, mentions, replacement_map)):
-            if synthetic is None:
-                continue  # an unpatched mention stays in the kept text
-            parts += [source[cursor : m.start], synthetic]
-            cursor = m.end
-        parts.append(source[cursor:])
-        if "".join(parts) != text:
-            return Assessment(None, target, "reconstruction_mismatch")
-        occurs = compile_values({source[m.start : m.end] for m in mentions})
-        found = any(occurs(part) for part in parts[::2])  # the kept parts
-        return Assessment(not found, target)
+        ordered = sorted(mentions, key=lambda m: m.start)
+        leftovers = count_values(source, [(Span(m.start, m.end), m.label) for m in ordered], text)
+        over = [x for x in leftovers if x.over_bound]
+        return Assessment(not over, target, format_cause(over))
     except Exception:
         return Assessment(None, target, "check_error")
 

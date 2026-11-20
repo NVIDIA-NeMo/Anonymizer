@@ -62,6 +62,7 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
     RECORD_ID_COLUMN,
 )
+from anonymizer.engine.detection.detect_step import UNSPANNED_CHECK_BUILTIN
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
@@ -503,6 +504,29 @@ class Anonymizer:
                 support and otherwise raise ``InvalidConfigError``. Methods without
                 ``entity_label_examples`` remain supported when no examples are configured;
                 configuring unsupported examples raises ``InvalidConfigError`` too.
+                Its entity spans must be half-open, within the text, non-empty,
+                labelled, and slice to their ``value`` exactly. Identical spans
+                collapse into the first labelled one, keeping its label, and a span
+                contained in a labelled span gives way to the outer span; later
+                steps and the result's ``final_entities`` see the collapsed spans; a
+                detector-supplied ``tagged_text`` is not regenerated from them.
+                Any other overlap or contract break fails the record at ``detect``
+                with ``overlapping_output_ownership``, ``mention_out_of_range``,
+                ``mention_slice_mismatch`` or ``mention_unlabelled``; in Rewrite a
+                payload that does not parse fails with ``invalid_output`` (Replace
+                rejects it at ``replace``). For a row with spans, the
+                ``_entities_by_value`` view is that of its kept spans plus every
+                detector pair, and every collapsed span's value, that occurs in
+                the row's text outside those spans; a row without spans keeps the detector's view. In the
+                Replace modes, a row whose view holds a value that occurs in its
+                text outside every kept span fails at ``detect`` with
+                ``unspanned_value``.
+                These checks and the derived view
+                apply only when the detector returns source positions or unique
+                record ids (ids exist only with ``TextRecordsInput``) and leaves
+                each row's text unchanged; otherwise the result is used as
+                returned, may stop the run, and a record may be released with its
+                spans unprotected.
             replace_runner: Custom replacement workflow (advanced/testing). Its ``evaluate()`` must keep each row's
                 record id: ``evaluate()`` matches judge rows to records only by id, reports a row without one
                 unassessed, and reports a row given another record's id as that record.
@@ -549,6 +573,7 @@ class Anonymizer:
             self._data_designer.set_run_config(data_designer_run_config)
         self._adapter = NddAdapter(data_designer=self._data_designer)
         self._detection_workflow = detection_workflow or EntityDetectionWorkflow(adapter=self._adapter)
+        self._custom_detection = detection_workflow is not None
         self._replace_runner = replace_runner or ReplacementWorkflow(
             llm_workflow=LlmReplaceWorkflow(adapter=self._adapter),
             detection_judge=DetectionJudgeWorkflow(adapter=self._adapter),
@@ -1176,6 +1201,8 @@ class Anonymizer:
             replacement_elapsed = time.perf_counter() - t0
             outcomes = None
         elif config.replace is not None:
+            # Passed only when set: a caller's run_with_detection override may predate the keyword.
+            unspanned = {"unspanned_check": True} if self._custom_detection or UNSPANNED_CHECK_BUILTIN else {}
             replace_result = self._replace_runner.run_with_detection(
                 input_df,
                 detect=detect_then_announce,
@@ -1183,6 +1210,7 @@ class Anonymizer:
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.replace,
                 preview_num_records=preview_num_records,
+                **unspanned,
             )
             assert replace_result.detection is not None
             detected_df, detection_failures = (
@@ -1238,11 +1266,13 @@ class Anonymizer:
                 outcomes = rewrite_result.outcomes
             final_df = rewrite_result.dataframe
         entity_count = _count_entities(detected_df)
-        detection_failed = len(detection_failures)
+        # Rows the graph rejects at its ``detect`` step come back with the later steps' failures; count them here.
+        rejected_at_detect = sum(f.step == "detect" for f in post_detection_failures)
+        detection_failed = len(detection_failures) + rejected_at_detect
         logger.info(
             LOG_INDENT + "📋 Detection complete — %d entities found across %d records (%d failed) [%.1fs]",
             entity_count,
-            len(detected_df),
+            len(detected_df) - rejected_at_detect,
             detection_failed,
             detection_elapsed,
         )
@@ -1253,13 +1283,15 @@ class Anonymizer:
         logger.info(
             LOG_INDENT + "📋 %s complete (%d failed) [%.1fs]",
             "Rewrite" if config.rewrite is not None else "Replacement",
-            len(post_detection_failures),
+            len(post_detection_failures) - rejected_at_detect,
             replacement_elapsed,
         )
 
         all_failures = [*detection_failures, *post_detection_failures]
         if all_failures:
-            logger.warning("%d record(s) failed during pipeline processing.", len(all_failures))
+            logger.warning(
+                "%d record(s) failed during pipeline processing: %s.", len(all_failures), _failure_tally(all_failures)
+            )
         text_col = context.resolved_text_column
         renamed_trace = _rename_output_columns(final_df, resolved_text_column=text_col)
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
@@ -1676,6 +1708,42 @@ def _step_to_field(step: str) -> str:
             return "rewrite_repair"
         case _:
             return "unknown"
+
+
+# The reasons the protection graph gives a failed record: an operation's own failure, or a rejected mention.
+_KNOWN_FAILURE_REASONS = frozenset(
+    {
+        "invalid_output",
+        "mention_not_on_target",
+        "mention_out_of_range",
+        "mention_slice_mismatch",
+        "mention_unlabelled",
+        "missing_output",
+        "over_limit",
+        "overlapping_output_ownership",
+        "raised",
+        "unspanned_value",
+    }
+)
+# Graph operation names a failed record can carry besides the workflow names ``_step_to_field`` knows.
+_KNOWN_FAILURE_STEPS = frozenset({"replace", "rewrite", "verify-no-original", "verify-patches"})
+
+
+def _failure_tally(failed: list[FailedRecord]) -> str:
+    """``step/reason=count`` per failure kind, for a log line: never a record id or value.
+
+    Only known steps and reason codes are named, since a caller's detector or runner can put anything in a failed
+    record. A failure with any other reason is counted under its step alone, and one with any other step under
+    ``other``.
+    """
+
+    def kind(failure: FailedRecord) -> str:
+        step, reason = failure.step, failure.reason
+        if step not in _KNOWN_FAILURE_STEPS and _step_to_field(step) == "unknown":
+            return "other"
+        return f"{step}/{reason}" if reason in _KNOWN_FAILURE_REASONS else step
+
+    return ", ".join(f"{key}={count}" for key, count in sorted(Counter(map(kind, failed)).items()))
 
 
 def _collect_failure_counts(failed: list[FailedRecord]) -> dict[str, int]:

@@ -54,6 +54,7 @@ from anonymizer.engine.schemas import (
     SourceView,
     ValidationRequestDecisionSets,
 )
+from anonymizer.engine.spans import Span
 
 logger = logging.getLogger("anonymizer.detection.augmentation")
 
@@ -223,8 +224,7 @@ async def _call_async(
 class _GroundedOccurrence:
     """One exact source occurrence of an augmenter response item."""
 
-    start_position: int
-    end_position: int
+    span: Span
     label: str
     item_index: int
 
@@ -254,7 +254,7 @@ def _ground_augmentation_items(
     """Keep independently grounded items without allocating observation IDs."""
     if source_view.end_position > len(canonical_text):
         raise ValueError("augmentation source view exceeds canonical text")
-    view_text = canonical_text[source_view.start_position : source_view.end_position]
+    view_text = canonical_text[source_view.span.slice]
     occurrences: list[_GroundedOccurrence] = []
     failures: list[AugmentationGroundingFailure] = []
     grounded_entities = AugmentedEntitiesSchema()
@@ -281,15 +281,8 @@ def _ground_augmentation_items(
                 )
             )
         for view_relative_start in matches:
-            canonical_start = source_view.start_position + view_relative_start
-            occurrences.append(
-                _GroundedOccurrence(
-                    start_position=canonical_start,
-                    end_position=canonical_start + len(value),
-                    label=item.label,
-                    item_index=item_index,
-                )
-            )
+            span = Span(view_relative_start, view_relative_start + len(value)).shifted(source_view.start_position)
+            occurrences.append(_GroundedOccurrence(span=span, label=item.label, item_index=item_index))
 
     return _GroundedAugmentationItems(
         grounded_entities=grounded_entities,
@@ -309,22 +302,17 @@ def _to_detection_result(
     """Assign source-ordered observation IDs after grounding and retry finish."""
     ordered_occurrences = sorted(
         occurrences,
-        key=lambda occurrence: (
-            occurrence.start_position,
-            occurrence.end_position,
-            normalize_candidate_label(occurrence.label),
-            occurrence.item_index,
-        ),
+        key=lambda occurrence: (occurrence.span, normalize_candidate_label(occurrence.label), occurrence.item_index),
     )
     observations = tuple(
         Observation(
             detection_result_id=detection_result_id,
             observation_id=f"o{observation_index}",
             source_text_ref=source_view.source_text_ref,
-            value=canonical_text[occurrence.start_position : occurrence.end_position],
+            value=canonical_text[occurrence.span.slice],
             label=occurrence.label,
-            start_position=occurrence.start_position,
-            end_position=occurrence.end_position,
+            start_position=occurrence.span.start,
+            end_position=occurrence.span.end,
             source_kind=SOURCE_KIND_AUGMENTER,
             source_instance=source_instance,
             admission_route=AdmissionRoute.direct_acceptance,

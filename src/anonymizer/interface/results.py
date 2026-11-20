@@ -8,10 +8,15 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from anonymizer.config.anonymizer_config import DetectionScope
-from anonymizer.config.replace_strategies import Hash, ReplaceMethod
+from anonymizer.config.replace_strategies import Annotate, Hash, ReplaceMethod
 from anonymizer.config.rewrite import PrivacyGoal
+from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_SENSITIVITY_DISPOSITION
 from anonymizer.engine.graph_core.execution import TargetOutcome
 from anonymizer.engine.ndd.adapter import FailedRecord
+from anonymizer.engine.rewrite.rewrite_workflow import rewrite_leftovers
+from anonymizer.engine.row_partitioning import cell_text
+from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.value_matching import Leftover, count_values, entity_spans
 from anonymizer.interface.display import render_record_html
 
 
@@ -60,6 +65,51 @@ class _DisplayMixin:
         if row < 0 or row >= len(outcomes):
             raise IndexError(f"Record index {row} is out of bounds for {len(outcomes)} records.")
         return outcomes[row]
+
+    def leftovers(self, row: int) -> tuple[Leftover, ...]:
+        """Each detected value of output row ``row`` as the leftover check counts it, in ``cause`` order: Replace's
+        advisory ``no_detected_value_added``, or Rewrite's ``replacements_applied`` and its review flag. Holds record
+        text, for auditing your own result.
+
+        The check is the one of the saved strategy (``rewrite_config`` or ``replace_method``), and the source cell is
+        read as that check reads it. A result with neither saved is read as Rewrite when it has the rewritten column.
+
+        Raises:
+            IndexError: ``row`` is not a row of ``trace_dataframe``.
+            ValueError: an Annotate result, or one without the source, output or ``final_entities`` columns; or a
+                Rewrite row whose rewritten text is null (withheld or never produced), which has no output to count.
+                ``outcome(row)`` keeps the reasons the run assessed, including a failed check's ``cause``.
+        """
+        replace_method = getattr(self, "replace_method", None)
+        if isinstance(replace_method, Annotate):
+            raise ValueError("Annotate results have no leftover check.")
+        frame, text = self.trace_dataframe, self.resolved_text_column
+        rewritten = f"{text}_rewritten"
+        if getattr(self, "rewrite_config", None) is not None:
+            is_rewrite = True
+        elif replace_method is not None:
+            is_rewrite = False
+        else:
+            is_rewrite = rewritten in frame.columns
+        output = rewritten if is_rewrite else f"{text}_replaced"
+        if not {text, output, COL_FINAL_ENTITIES} <= set(frame.columns):
+            raise ValueError("This result has no leftover trace (source, output and final_entities columns).")
+        if row < 0 or row >= len(frame):
+            raise IndexError(f"Record index {row} is out of bounds for {len(frame)} records.")
+        record = frame.iloc[row].to_dict()
+        if is_rewrite:
+            if pd.isna(record[output]):
+                raise ValueError(
+                    f"Record {row} has no rewritten text (withheld or never produced), so there is no output to "
+                    "count; outcome(row) keeps the assessed reasons."
+                )
+            disposition = record.get(COL_SENSITIVITY_DISPOSITION)
+            return rewrite_leftovers(record[text], record[COL_FINAL_ENTITIES], record[output], disposition) or ()
+        # The Replace verifier counts the row's mentions; the graph admits only exact, non-overlapping mentions of
+        # these entities, so converting final_entities here gives the same spans.
+        source = cell_text(record[text])
+        entities = EntitiesSchema.from_raw(record[COL_FINAL_ENTITIES]).entities
+        return count_values(source, entity_spans(source, entities), str(record[output]))
 
     def display_record(self, index: int | None = None) -> None:
         """Render a record with entity highlights and replacement map in a notebook.

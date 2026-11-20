@@ -117,7 +117,10 @@ COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES = "attribute_fidelity_invalid_entities" 
 # Internal columns (prefixed with _)
 
 COL_DOMAIN = "_domain"
+COL_DOMAIN_UNAVAILABLE = "_domain_unavailable"  # internal: whether _domain holds the fallback, not a response
 COL_DOMAIN_SUPPLEMENT = "_domain_supplement"
+# internal: the evaluation steps (bit flags) that had no response in any round so far; popped before output
+COL_EVALUATION_UNAVAILABLE = "_evaluation_unavailable"
 COL_DOMAIN_SUPPLEMENT_PRIVACY = "_domain_supplement_privacy"
 COL_ENTITY_CLASSIFICATION_LOCAL = "_entity_classification_local"  # label -> category, from the default table
 COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS = "_entity_classification_unmapped_labels"  # labels not in default table
@@ -163,6 +166,28 @@ COL_LEAKAGE_MASS = "leakage_mass"
 COL_WEIGHTED_LEAKAGE_RATE = "weighted_leakage_rate"
 COL_ANY_HIGH_LEAKED = "any_high_leaked"
 COL_NEEDS_HUMAN_REVIEW = "needs_human_review"
+
+# Define every ``COL_*`` above this block: the two sets below are built from the names that exist here.
+#
+# RESULT_COLUMNS: the user-facing result names (``final_entities``, ``utility_score``, ``judge_evaluation``, ...),
+# every ``COL_*`` that does not start with an underscore except ``tagged_text``. The reader renames an input column
+# that has one of these names, so a result column never carries input data.
+RESULT_COLUMNS: frozenset[str] = frozenset(
+    value
+    for name, value in tuple(globals().items())
+    if name.startswith("COL_") and isinstance(value, str) and not value.startswith("_") and value != COL_TAGGED_TEXT
+)
+
+# RESERVED_INPUT_COLUMNS: names the pipeline treats as its own columns, which an input column may not carry: the
+# record id and every internal ``COL_*`` (underscore-prefixed, plus ``tagged_text``).
+RESERVED_INPUT_COLUMNS: frozenset[str] = frozenset(
+    {RECORD_ID_COLUMN, COL_TAGGED_TEXT}
+    | {
+        value
+        for name, value in tuple(globals().items())
+        if name.startswith("COL_") and isinstance(value, str) and value.startswith("_")
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Entity labels and examples

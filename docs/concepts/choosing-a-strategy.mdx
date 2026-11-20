@@ -249,7 +249,7 @@ Notes:
 
 - `minimal` and `low` differ mostly in how aggressively repair triggers. Both auto-repair on any high-sensitivity leak.
 - `high` does **not** auto-repair single high-sensitivity leaks. Use only when you have downstream review.
-- `max_repair_iterations` (default 3) caps cost. Set to 0 to skip repair entirely while still computing leakage / utility metrics — useful for audits.
+- `max_repair_iterations` (default 3) caps cost. Set to 0 to skip repair entirely while still computing leakage / utility metrics — useful for audits. Records that fail a privacy check have their rewritten text withheld (null); `trace_dataframe` keeps it in `_full_rewrite`.
 
 ---
 

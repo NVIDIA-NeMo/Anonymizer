@@ -28,9 +28,53 @@ navigation:
   - page: Self-hosting GLiNER
     path: ../../concepts/self-hosting-gliner.mdx
     slug: self-hosting-gliner
-  - page: Graph SDK
+  - section: Graph SDK
     path: ../../concepts/graph-sdk.mdx
     slug: graph-sdk
+    contents:
+    - page: Concepts
+      path: ../../concepts/graph-sdk/concepts.mdx
+      slug: concepts
+    - page: Glossary
+      path: ../../concepts/graph-sdk/glossary.mdx
+      slug: glossary
+    - section: Guides
+      slug: guides
+      skip-slug: true
+      contents:
+      - page: Write an operation
+        path: ../../concepts/graph-sdk/guide-write-an-operation.mdx
+        slug: guide-write-an-operation
+      - page: Add a verifier and require a check
+        path: ../../concepts/graph-sdk/guide-verify-and-require-checks.mdx
+        slug: guide-verify-and-require-checks
+      - page: Process all targets in one call
+        path: ../../concepts/graph-sdk/guide-batch-targets.mdx
+        slug: guide-batch-targets
+      - page: Give an operation context
+        path: ../../concepts/graph-sdk/guide-give-an-operation-context.mdx
+        slug: guide-give-an-operation-context
+      - page: Write your own detector
+        path: ../../concepts/graph-sdk/guide-custom-detector.mdx
+        slug: guide-custom-detector
+      - page: Release related texts together
+        path: ../../concepts/graph-sdk/guide-release-together.mdx
+        slug: guide-release-together
+      - page: Set limits, budget requests and cancel
+        path: ../../concepts/graph-sdk/guide-limits-budgets-cancel.mdx
+        slug: guide-limits-budgets-cancel
+      - page: Rebuild a document from protected parts
+        path: ../../concepts/graph-sdk/guide-rebuild-documents.mdx
+        slug: guide-rebuild-documents
+      - page: Find out why a target was withheld
+        path: ../../concepts/graph-sdk/guide-read-outcomes.mdx
+        slug: guide-read-outcomes
+    - page: Ideas
+      path: ../../concepts/graph-sdk/ideas.mdx
+      slug: ideas
+    - page: Reference
+      path: ../../concepts/graph-sdk/reference.mdx
+      slug: reference
   - page: Deploy Local Models
     path: ../../concepts/inference-services.mdx
     slug: inference-services

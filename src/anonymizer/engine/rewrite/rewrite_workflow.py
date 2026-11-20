@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import pandas as pd
@@ -20,6 +21,7 @@ from anonymizer.engine.constants import (
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_VALID,
     COL_ENTITIES_BY_VALUE,
+    COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
@@ -28,6 +30,7 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
+    COL_REPLACEMENT_MAP,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
     COL_SENSITIVITY_DISPOSITION,
@@ -56,8 +59,9 @@ from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
+from anonymizer.engine.ndd.model_response import no_response
 from anonymizer.engine.ndd.workflow_utils import run_columns
-from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow, is_placeholder
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
@@ -65,6 +69,7 @@ from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
 from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
+from anonymizer.engine.rewrite.response_summary import mark_evaluation_unavailable, warn_kept_without_response
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
 )
@@ -76,8 +81,9 @@ from anonymizer.engine.row_partitioning import (
     restore_diagnostic_columns,
     split_rows,
 )
-from anonymizer.engine.schemas import EntitiesByValueSchema
-from anonymizer.engine.value_matching import any_value_occurs
+from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
+from anonymizer.engine.spans import Spans
+from anonymizer.engine.value_matching import Leftover, count_values, entity_spans, format_cause
 from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.rewrite.workflow")
@@ -136,7 +142,7 @@ def _detection_valid_fraction(row: pd.Series) -> float | None:
 def _has_entities(entities_by_value: object) -> bool:
     """Return True if this record has at least one detected entity."""
     entities_by_value = normalize_payload(entities_by_value)
-    if not entities_by_value or not isinstance(entities_by_value, dict):
+    if entities_by_value is pd.NA or not entities_by_value or not isinstance(entities_by_value, dict):
         return False
     items = entities_by_value.get("entities_by_value")
     if not isinstance(items, list):
@@ -280,27 +286,86 @@ def _rewrite_entry(row: dict[str, object]) -> dict[str, object] | RewriteUnavail
         "utility_score": row.get(COL_UTILITY_SCORE),
         "leakage_mass": row.get(COL_LEAKAGE_MASS),
         "any_high_leaked": row.get(COL_ANY_HIGH_LEAKED),
-        "replacements_applied": _no_original_value(text, row.get(COL_SENSITIVITY_DISPOSITION)),
         "weighted_leakage_rate": row.get(COL_WEIGHTED_LEAKAGE_RATE),
+        **_leftover_metrics(row),
+        "placeholder_in_text": _placeholder_in_text(text, row.get(COL_REPLACEMENT_MAP)),
     }
     return {"text": text, "metrics": metrics}
 
 
-def _no_original_value(text: str, disposition: object) -> bool | None:
-    """Whether no value the policy replaces appears in ``text``; ``None`` when the disposition is unavailable.
+def _placeholder_in_text(text: str, replacement_map: object) -> bool:
+    """Whether ``text`` holds a placeholder substitute of the row's replacement map; ``False`` without a map.
 
-    The values are the non-latent disposition entries whose suggestion is ``replace``. Each is matched on its own by
-    ``_occurs``.
+    A placeholder stands in for a substitute that collided with a value in the record. It leaks nothing, so the row
+    stays met, but text that carries one needs review. The match is loose: any case, brackets optional, ``_``, ``-``
+    or one space between words, and the separator before the number optional. The number is required.
     """
+    payload = normalize_payload(replacement_map)
+    entries = payload.get("replacements") if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        return False
+    folded = text.casefold()
+    return any(
+        _placeholder_pattern(entry["synthetic"]).search(folded)
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("label"), str)
+        and isinstance(entry.get("synthetic"), str)
+        and is_placeholder(entry["label"], entry["synthetic"])
+    )
+
+
+def _placeholder_pattern(placeholder: str) -> re.Pattern[str]:
+    """The loose casefolded pattern of ``placeholder``, an ``is_placeholder`` substitute. Its words are the minted
+    token's own, split at each ``_`` with empty items kept, so a label's punctuation runs match as minted."""
+    token, number = placeholder.casefold()[1:-1].rsplit("_", 1)
+    number = re.escape(number)
+    separator = r"[_\- ]"
+    body = separator.join(re.escape(word) for word in token.split("_"))
+    return re.compile(rf"(?<![^\W_]){body}{separator}?{number}(?!\d)")
+
+
+def _leftover_metrics(row: Mapping[str, object]) -> dict[str, bool | str | None]:
+    """The leftover metrics of one record, from ``rewrite_leftovers``: ``replacements_applied``, no value the policy
+    replaces is over the bound in the rewritten text (``None`` when the disposition is unavailable), with
+    ``replacements_applied_cause`` naming each value over it; and ``undetected_value_kept``, the rewritten text holds
+    such a value that the source also holds outside the detected spans."""
+    leftovers = rewrite_leftovers(
+        row.get(COL_TEXT), row.get(COL_FINAL_ENTITIES), row[COL_REWRITTEN_TEXT], row.get(COL_SENSITIVITY_DISPOSITION)
+    )
+    over = [x for x in leftovers or () if x.over_bound]
+    return {
+        "replacements_applied": None if leftovers is None else not over,
+        "replacements_applied_cause": format_cause(over),
+        "undetected_value_kept": any(x.undetected_kept for x in leftovers or ()),
+    }
+
+
+def rewrite_leftovers(
+    source: object, final_entities: object, rewritten: object, disposition: object
+) -> tuple[Leftover, ...] | None:
+    """``count_values`` for one Rewrite record: the values the policy replaces (non-latent disposition entries
+    suggesting ``replace``) in the rewritten text, bounded by the source text and its detected spans; ``None`` when
+    the disposition is unavailable. When no value has a position (no usable detected span is the value or holds one of
+    its matches), every occurrence counts as detected (``undetected_spans`` is empty, though no detected span holds
+    the matches), so any occurrence in the rewritten text is over the bound."""
     payload = normalize_payload(disposition)
     if isinstance(payload, dict) and payload.get("sensitivity_disposition") == []:
-        return True  # no detected entities: nothing is replaced
+        return ()  # no detected entities: nothing is replaced
     try:
         entries = parse_sensitivity_disposition(payload).sensitivity_disposition
     except (ValueError, TypeError):
         return None
     values = [e.entity_value for e in entries if e.protection_method_suggestion == "replace" and e.source != "latent"]
-    return not any_value_occurs(values, text)
+    source = source if isinstance(source, str) else ""
+    try:
+        entities = entity_spans(source, EntitiesSchema.from_raw(final_entities).entities)
+    except (ValueError, TypeError):
+        entities = []
+    leftovers = count_values(source, entities, str(rewritten), values)
+    if any(x.position is not None for x in leftovers):
+        return leftovers
+    return tuple(replace(x, undetected_spans=Spans()) for x in leftovers)
 
 
 def _unavailable(value: Any) -> bool:
@@ -323,7 +388,8 @@ def _leakage_within(metrics: dict[str, Any], limit: float | None) -> bool | None
 
 
 def _final_checks(evaluation: EvaluationCriteria) -> tuple[Operation, ...]:
-    """The privacy criteria over the final candidate's metrics, one model-free verifier per check."""
+    """The privacy criteria over the final candidate's metrics, one model-free verifier per check. A failed check
+    states the metric ``<check>_cause`` when the metrics carry one."""
     limit = evaluation.flag_leakage_above
     predicates: dict[str, Callable[[dict[str, Any]], bool | None]] = {
         "high_leak": _high_leak,
@@ -335,7 +401,9 @@ def _final_checks(evaluation: EvaluationCriteria) -> tuple[Operation, ...]:
         def assess(metrics: dict[str, Any], target: Datum) -> Assessment:
             satisfied = predicate(metrics)
             missing = "replacement_policy_unavailable" if check == "replacements_applied" else "metric_unavailable"
-            return Assessment(satisfied, target, missing if satisfied is None else "")
+            if satisfied is None:
+                return Assessment(None, target, missing)
+            return Assessment(satisfied, target, "" if satisfied else str(metrics.get(f"{check}_cause", "")))
 
         inputs = {"metrics": REWRITE_METRICS, "target": DATUM}
         return Operation.verifier(f"assess-{check}", assess, inputs, checks=(check,), subject=("metrics",))
@@ -382,11 +450,12 @@ def _protect_rewrite(
 def _flag_review(
     frame: pd.DataFrame, result: ProtectionResult, target_of: Mapping[int, Datum], evaluation: EvaluationCriteria
 ) -> None:
-    """Assign ``needs_human_review``: the row's target outcome is not qualified, or its utility is unavailable or
-    below the flag."""
+    """Assign ``needs_human_review``: the row's target outcome is not qualified, its rewritten text keeps a replaced
+    value that the source also holds outside the detected spans (``undetected_value_kept``) or a placeholder of its
+    replacement map (``placeholder_in_text``), or its utility is unavailable or below the flag."""
     floor = evaluation.flag_utility_below
     review = [
-        result.outcome(target_of[record[ROW_ORDER_COL]]).qualification != "met"
+        _needs_review(result, target_of[record[ROW_ORDER_COL]])
         or _unavailable(record.get(COL_UTILITY_SCORE))
         or (floor is not None and float(record[COL_UTILITY_SCORE]) < floor)
         for record in frame.to_dict("records")
@@ -394,6 +463,63 @@ def _flag_review(
     # The combined finalizer's column keeps its dtype under the overwrite.
     dtype = frame[COL_NEEDS_HUMAN_REVIEW].dtype if COL_NEEDS_HUMAN_REVIEW in frame.columns else bool
     frame[COL_NEEDS_HUMAN_REVIEW] = pd.Series(review, index=frame.index, dtype=dtype)
+
+
+def _withhold_unassessed(frame: pd.DataFrame) -> None:
+    """Null the rewritten text of rows whose privacy evaluation had no usable response.
+
+    The final checks have already run on the text and could not assess it; without a privacy verdict it is not
+    released. Rows whose text is already null are left alone (see ``_withhold_rewritten_text`` on null columns).
+    """
+    if COL_PRIVACY_QA_REANSWER not in frame.columns:
+        return
+    unassessed = frame[COL_PRIVACY_QA_REANSWER].map(no_response).astype(bool) & frame[COL_REWRITTEN_TEXT].notna()
+    if unassessed.any():
+        frame.loc[unassessed, COL_REWRITTEN_TEXT] = None
+
+
+_PRIVACY_CHECKS = frozenset({"high_leak", "leakage_within_threshold"})
+
+
+def _withhold_failed_repairs(frame: pd.DataFrame, result: ProtectionResult, target_of: Mapping[int, Datum]) -> None:
+    """Null the rewritten text of rows whose final candidate fails a privacy check, repaired or not.
+
+    Their outcome is already ``not_met`` and flagged; the failing candidate is not released, whether the repair loop
+    ran out of rounds, the preset does not send the row to repair, or ``max_repair_iterations`` is 0. Call it after
+    the summary, which counts a repaired row without text as an unparsed repair.
+    """
+    failed = [
+        any(
+            reason.code == "failed" and reason.check in _PRIVACY_CHECKS
+            for reason in result.outcome(target_of[record[ROW_ORDER_COL]]).reasons
+        )
+        for record in frame.to_dict("records")
+    ]
+    withheld = pd.Series(failed, index=frame.index, dtype=bool) & frame[COL_REWRITTEN_TEXT].notna()
+    if withheld.any():
+        frame.loc[withheld, COL_REWRITTEN_TEXT] = None
+
+
+def _none_for_missing_text(frame: pd.DataFrame) -> None:
+    """Give a withheld or missing rewritten text as ``None`` in both modes.
+
+    Combined mode's column has a string dtype, which stores ``None`` as ``pd.NA``; an object column keeps ``None``.
+    """
+    column = frame[COL_REWRITTEN_TEXT]
+    if column.isna().any():
+        frame[COL_REWRITTEN_TEXT] = column.astype(object).where(column.notna(), None)
+
+
+def _unavailable_if(outcome: TargetOutcome, withheld: bool) -> TargetOutcome:
+    """``outcome`` with ``available`` False when the row's rewritten text was withheld after the final checks."""
+    return replace(outcome, available=False) if withheld and outcome.available else outcome
+
+
+def _needs_review(result: ProtectionResult, target: Datum) -> bool:
+    metrics = result.value(target, "metrics") or {}
+    return result.outcome(target).qualification != "met" or bool(
+        metrics.get("undetected_value_kept") or metrics.get("placeholder_in_text")
+    )
 
 
 def _rewrite_lowered(
@@ -406,8 +532,7 @@ def _rewrite_lowered(
     """Run ``produce`` (the frame stages, leaving the final candidates in ``rows.frame``) as the ``rewrite`` operation.
 
     One target per entity row. The final checks qualify each target from its final evaluation, and
-    ``needs_human_review`` is set when that outcome is not qualified or the row's utility is unavailable or below the
-    flag.
+    ``_flag_review`` sets ``needs_human_review`` from that outcome and the row's utility.
     """
     scope = GraphScope()
     graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in entity_rows[COL_TEXT]))
@@ -424,7 +549,12 @@ def _rewrite_lowered(
 
     result = _protect_rewrite(graph, rewrite, evaluation)
     frame = rows.frame
-    _flag_review(frame, result, dict(zip(order, graph.targets)), evaluation)
+    target_of = dict(zip(order, graph.targets))
+    _flag_review(frame, result, target_of, evaluation)
+    warn_kept_without_response(frame)
+    _withhold_unassessed(frame)
+    _withhold_failed_repairs(frame, result, target_of)
+    _none_for_missing_text(frame)
     _apply_passthrough_defaults(passthrough_rows)
     return RewriteResult(
         dataframe=merge_and_reorder(frame, passthrough_rows),
@@ -586,7 +716,12 @@ class RewriteWorkflow:
         if entity_rows.empty:
             output = merge_and_reorder(passthrough_rows)
         else:
-            _flag_review(frame, result, dict(enumerate(state.owners)), evaluation)
+            target_of = dict(enumerate(state.owners))
+            _flag_review(frame, result, target_of, evaluation)
+            warn_kept_without_response(frame)
+            _withhold_unassessed(frame)
+            _withhold_failed_repairs(frame, result, target_of)
+            _none_for_missing_text(frame)
             output = merge_and_reorder(frame, passthrough_rows)
         record_stage(
             stage,
@@ -598,7 +733,8 @@ class RewriteWorkflow:
             failed_record_count=len(rows.failed),
         )
         positions = tuple(sorted([*frame[ROW_ORDER_COL], *passthrough_rows[ROW_ORDER_COL]]))
-        outcomes = tuple(result.outcome(state.owners[order]) for order in positions)
+        withheld = set() if entity_rows.empty else set(frame.loc[frame[COL_REWRITTEN_TEXT].isna(), ROW_ORDER_COL])
+        outcomes = tuple(_unavailable_if(result.outcome(state.owners[order]), order in withheld) for order in positions)
         failed = [*state.failures, *rows.failed]
         return RewriteResult(output, failed, positions, detection, detection_elapsed, outcomes)
 
@@ -751,6 +887,7 @@ class RewriteWorkflow:
         def evaluate(df: pd.DataFrame, iteration: int) -> pd.DataFrame:
             df = run_and_join(df, eval_columns, f"rewrite-evaluate-{iteration}", overwrite=True)
             _normalize_evaluation_payloads(df)
+            mark_evaluation_unavailable(df)  # the next round overwrites this round's columns
             return df
 
         def initial_evaluate() -> None:

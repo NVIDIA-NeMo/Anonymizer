@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -16,9 +17,12 @@ from anonymizer.engine.constants import (
     COL_ENTITY_COVERAGE_N_CANDIDATES,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
+    COL_LEAKAGE_MASS,
     COL_MISSED_ENTITIES,
     COL_REPLACEMENT_MAP,
     COL_SENSITIVITY_DISPOSITION,
+    COL_UTILITY_SCORE,
+    COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.rewrite.final_judge import PRIVACY_RUBRIC, QUALITY_RUBRIC, STYLE_RUBRIC
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
@@ -832,3 +836,36 @@ def test_rewrite_needs_human_review_label_is_rewrite_need_review() -> None:
     result = render_record_html(row, record_index=0)
     assert "Rewrite Needs Review" in result
     assert "<strong>Needs Review:</strong>" not in result
+
+
+def _make_rewrite_preview(metrics: dict[str, list[object]]) -> PreviewResult:
+    df = pd.DataFrame({"text": ["Alice"], "text_rewritten": ["Someone"], **metrics})
+    return PreviewResult(
+        dataframe=df, trace_dataframe=df, resolved_text_column="text", failed_records=[], preview_num_records=1
+    )
+
+
+@pytest.mark.parametrize("missing", [pd.NA, float("nan"), None], ids=["na", "nan", "none"])
+def test_display_record_says_not_available_for_a_missing_metric(missing: object) -> None:
+    """A kept row with no usable evaluation response has null metrics; they are named, not left blank or ``nan``."""
+    preview = _make_rewrite_preview(
+        {COL_UTILITY_SCORE: [missing], COL_LEAKAGE_MASS: [missing], COL_WEIGHTED_LEAKAGE_RATE: [missing]}
+    )
+    shown: list[str] = []
+    with patch("IPython.display.display", side_effect=lambda html: shown.append(html.data)):
+        preview.display_record(0)
+
+    (html,) = shown
+    for name in ("Utility", "Leakage", "Weighted Leakage Rate"):
+        assert f"<strong>{name}:</strong> not available</span>" in html
+    assert "</strong> nan</span>" not in html
+
+
+def test_display_record_omits_a_metric_the_row_lacks() -> None:
+    preview = _make_rewrite_preview({COL_LEAKAGE_MASS: [0.5]})
+    shown: list[str] = []
+    with patch("IPython.display.display", side_effect=lambda html: shown.append(html.data)):
+        preview.display_record(0)
+
+    assert "<strong>Leakage:</strong> 0.50</span>" in shown[0]
+    assert "Utility:" not in shown[0]
