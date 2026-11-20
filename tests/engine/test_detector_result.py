@@ -7,7 +7,7 @@ columns the engine renders from it for the later steps."""
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock, patch
 
 import pandas as pd
@@ -114,6 +114,12 @@ def test_a_subclass_or_spec_mock_returning_a_frame_raises(make: Any) -> None:
 # --- validation -------------------------------------------------------------------------------------------------------
 
 
+def _span_with(**fields: Any) -> DetectedSpan:
+    """A span with ``fields`` replaced, typed or not: the validator, not the type checker, must reject a bad one."""
+    values: dict[str, Any] = {"start": 0, "end": 5, "label": "first_name", "value": "Alice", **fields}
+    return DetectedSpan(**values)
+
+
 def _source() -> pd.DataFrame:
     return pd.DataFrame({COL_TEXT: list(TEXTS.values()), RECORD_ID_COLUMN: list(TEXTS)})
 
@@ -126,8 +132,28 @@ def _source() -> pd.DataFrame:
         DetectorResult(rows=(DetectorRow("a"),), failed=(FailedRecord("a", "detect", "x"),)),
         DetectorResult(failed=(FailedRecord("0", "detect", "x"),)),
         DetectorResult(rows=(DetectorRow("a", extra_values=(("Alice", ""),)),)),
+        DetectorResult(rows=(DetectorRow("a", spans=(_span_with(label=None),)),)),
+        DetectorResult(rows=(DetectorRow("a", spans=(_span_with(value=5),)),)),
+        DetectorResult(rows=(DetectorRow("a", spans=(_span_with(start=0.0),)),)),
+        DetectorResult(rows=(DetectorRow("a", spans=(_span_with(score="high"),)),)),
+        DetectorResult(rows=(DetectorRow("a", spans=(_span_with(source=None),)),)),
+        DetectorResult(rows=(DetectorRow("a", latent=cast(Any, ({"value": "Paris"},))),)),
+        DetectorResult(failed=(FailedRecord("a", "detect", cast(Any, None)),)),
     ],
-    ids=["unknown-id", "repeated-id", "answered-and-failed", "failure-without-an-input-id", "unlabelled-extra"],
+    ids=[
+        "unknown-id",
+        "repeated-id",
+        "answered-and-failed",
+        "failure-without-an-input-id",
+        "unlabelled-extra",
+        "null-label",
+        "non-text-value",
+        "float-offset",
+        "text-score",
+        "null-source",
+        "latent-dict",
+        "null-reason",
+    ],
 )
 def test_a_result_that_cannot_be_placed_is_a_batch_error(result: DetectorResult) -> None:
     with pytest.raises(InvalidDetectorResultError):
@@ -373,3 +399,20 @@ def test_the_built_in_rewrite_view_is_the_view_of_its_final_entities() -> None:
     row = seen[0].iloc[0]
     assert row[COL_ENTITIES_BY_VALUE] == _build_entities_by_value(row[COL_FINAL_ENTITIES])
     assert all(e.get("source") != "repeat" for e in row[COL_FINAL_ENTITIES]["entities"])
+
+
+def test_a_malformed_span_raises_before_any_model_call() -> None:
+    """A span with a null label used to reach the graph (and, in Rewrite, a model) before failing: it now raises."""
+
+    class Malformed:
+        def run(self, dataframe: pd.DataFrame, **_: object) -> DetectorResult:
+            rows = [DetectorRow(i, spans=(_span_with(label=None),)) for i in dataframe[RECORD_ID_COLUMN]]
+            return DetectorResult(rows=tuple(rows))
+
+    adapter_calls: list[str] = []
+    with patch.object(NddAdapter, "run_workflow", lambda *a, **k: adapter_calls.append("x")):
+        with pytest.raises(InvalidDetectorResultError, match="malformed span"):
+            Anonymizer(detection_workflow=Malformed()).run(  # ty: ignore[invalid-argument-type]
+                config=AnonymizerConfig(rewrite=Rewrite()), data=DATA
+            )
+    assert adapter_calls == []

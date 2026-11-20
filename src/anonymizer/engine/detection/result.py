@@ -5,7 +5,7 @@
 
 A custom ``detection_workflow`` returns a ``DetectorResult``: one ``DetectorRow`` per answered input record, named by
 the input's ``_anonymizer_record_id``, plus the records it failed. The built-in ``EntityDetectionWorkflow`` returns
-its own frame, which ``from_detection_frame`` places by source position. Either way the seam hands the later steps an
+its own frame, which ``place_detection_frame`` places by source position. Either way the seam hands the later steps an
 ``EntityDetectionResult`` whose rows are input rows, in input order, carrying their input record id.
 """
 
@@ -75,8 +75,11 @@ def validate_detector_result(source: pd.DataFrame, result: object) -> DetectorRe
     """``result`` when it can be placed against ``source``; else ``InvalidDetectorResultError``.
 
     Batch-level rules: the result is a ``DetectorResult``; every row and every failure names an input record id; no
-    id is answered twice or both answered and failed; every span and extra value is well typed. A span that breaks the
-    span contract (range, slice, label, overlap) is not a batch error: it fails its own record at ``detect``.
+    id is answered twice or both answered and failed; every field is well typed: a span's ``start`` and ``end`` are
+    ints, ``value``, ``label`` and ``source`` are strings and ``score`` is a number; an extra value is a non-empty
+    ``(value, label)`` pair of strings; a latent entry is a ``LatentEntity``; a failure's step and reason are strings.
+    A well-typed span that breaks the span contract (range, slice, an empty label, overlap) is not a batch error: it
+    fails its own record at ``detect`` with that contract's reason.
     """
     if not isinstance(result, DetectorResult):
         raise InvalidDetectorResultError(
@@ -91,17 +94,20 @@ def validate_detector_result(source: pd.DataFrame, result: object) -> DetectorRe
         _check_id(row.record_id, ids, "row")
         seen[row.record_id] += 1
         for span in row.spans:
-            if not isinstance(span, DetectedSpan) or not all(
-                isinstance(v, int) and not isinstance(v, bool) for v in (span.start, span.end)
-            ):
-                raise InvalidDetectorResultError(f"record {row.record_id!r} has a span that is not a DetectedSpan")
+            if not _well_typed(span):
+                raise InvalidDetectorResultError(f"record {row.record_id!r} has a malformed span: {span!r}")
+        for entity in row.latent:
+            if not isinstance(entity, LatentEntitySchema):
+                raise InvalidDetectorResultError(
+                    f"record {row.record_id!r} has a latent entry that is not a LatentEntity"
+                )
         for pair in row.extra_values:
             if not (isinstance(pair, tuple) and len(pair) == 2 and all(isinstance(v, str) and v for v in pair)):
                 raise InvalidDetectorResultError(
                     f"record {row.record_id!r} has an extra value that is not a non-empty (value, label) pair"
                 )
     for failure in result.failed:
-        if not isinstance(failure, FailedRecord):
+        if not isinstance(failure, FailedRecord) or not all(isinstance(v, str) for v in (failure.step, failure.reason)):
             raise InvalidDetectorResultError("DetectorResult.failed holds an entry that is not a FailedRecord")
         _check_id(failure.record_id, ids, "failure")
         seen[failure.record_id] += 1
@@ -139,7 +145,7 @@ def render_detector_result(source: pd.DataFrame, result: DetectorResult) -> Enti
     return EntityDetectionResult(frame, [*result.failed, *dropped], positions)
 
 
-def from_detection_frame(source: pd.DataFrame, result: object) -> EntityDetectionResult:
+def place_detection_frame(source: pd.DataFrame, result: object) -> EntityDetectionResult:
     """The built-in detector's ``result``, with every returned row placed at one distinct input position.
 
     The built-in workflow returns the adapter's frame, which carries the input record ids; a frame that cannot be
@@ -149,6 +155,19 @@ def from_detection_frame(source: pd.DataFrame, result: object) -> EntityDetectio
         raise InvalidDetectorResultError(f"EntityDetectionWorkflow.run returned {type(result).__name__}")
     positions = resolve_source_positions(source, result.dataframe, result.source_positions or None)
     return dataclasses.replace(result, source_positions=positions)
+
+
+def _well_typed(span: object) -> bool:
+    def integer(v: object) -> bool:
+        return isinstance(v, int) and not isinstance(v, bool)
+
+    return (
+        isinstance(span, DetectedSpan)
+        and integer(span.start)
+        and integer(span.end)
+        and all(isinstance(v, str) for v in (span.value, span.label, span.source))
+        and (integer(span.score) or isinstance(span.score, float))
+    )
 
 
 def _input_ids(source: pd.DataFrame) -> list[str]:

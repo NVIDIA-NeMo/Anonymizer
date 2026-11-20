@@ -54,14 +54,14 @@ The final selection is deterministic and greedy: longer spans are considered fir
 A custom `detection_workflow` returns a `DetectorResult` (exported from `anonymizer`). It holds one `DetectorRow` per
 input record it answers, named by that record's `_anonymizer_record_id` (the `TextRecord` id for `TextRecordsInput`,
 a generated id for file input; the detector receives it as a column), plus the records it could not process as
-`FailedRecord`s with step `detect`:
+`FailedRecord`s (also exported from `anonymizer`) with step `detect`:
 
 ```python
-from anonymizer import DetectedSpan, DetectorResult, DetectorRow
+from anonymizer import TEXT_COLUMN, DetectedSpan, DetectorResult, DetectorRow, FailedRecord
 
 def run(self, dataframe, **kwargs):
     rows = []
-    for record_id, text in zip(dataframe["_anonymizer_record_id"], dataframe["__nemo_anonymizer_text_input__"]):
+    for record_id, text in zip(dataframe["_anonymizer_record_id"], dataframe[TEXT_COLUMN]):
         start = text.find("Alice")
         spans = (DetectedSpan(start, start + 5, "first_name", "Alice"),) if start >= 0 else ()
         rows.append(DetectorRow(record_id=record_id, spans=spans))

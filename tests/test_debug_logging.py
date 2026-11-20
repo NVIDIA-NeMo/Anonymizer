@@ -77,13 +77,14 @@ def debug_messages(
         result = _stub_anonymizer.run(config=config, data=AnonymizerInput(source=str(csv_path)))
     first = input_record_ids(AnonymizerInput(source=str(csv_path)))[0]
     assert [(f.record_id, f.reason) for f in result.failed_records] == [(first, "timeout"), ("r2", "parse error")]
-    return [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+    # The detector failure's record id is the first input row's id; the test below checks no message carries it.
+    return [first, *(r.message for r in caplog.records if r.levelno == logging.DEBUG)]
 
 
 @pytest.mark.parametrize(
     "expected_substring",
     [
-        "r1",
+        "detector-failure-id",
         "r2",
         "input text lengths:",
         "detection config: threshold=",
@@ -93,11 +94,14 @@ def debug_messages(
     ],
 )
 def test_debug_log_contains(debug_messages: list[str], expected_substring: str) -> None:
-    if expected_substring in {"r1", "r2"}:
+    detector_failure_id, *messages = debug_messages
+    if expected_substring == "detector-failure-id":
+        expected_substring = detector_failure_id
+    if expected_substring in {detector_failure_id, "r2"}:
         # FailedRecord details remain public results, but are excluded from logs.
-        assert all(expected_substring not in m for m in debug_messages)
+        assert all(expected_substring not in m for m in messages)
     else:
-        assert any(expected_substring in m for m in debug_messages)
+        assert any(expected_substring in m for m in messages)
 
 
 @pytest.mark.parametrize("preset", ["default", "debug"])
@@ -131,9 +135,10 @@ def test_public_pipeline_returns_failed_record_details_without_logging_them(
             logger.handlers = handlers
             logger.setLevel(level)
             logger.propagate = propagate
-    # A detector failure is named by the input record's id; the runner's failure keeps its own.
+    # A detector failure is named by the input record's id; the runner's failure keeps its own. Neither is logged.
     assert [(f.step, f.reason) for f in result.failed_records] == [(canary, canary)] * 2
     assert result.failed_records[1].record_id == canary
+    assert result.failed_records[0].record_id not in stream.getvalue()
     assert result.trace_dataframe[canary].tolist() == ["Alice works at Acme", "Bob likes cats"]
     assert "2 total failures" in stream.getvalue()
     assert canary.lower() not in stream.getvalue().lower()

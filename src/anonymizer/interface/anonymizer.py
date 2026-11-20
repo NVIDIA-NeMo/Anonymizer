@@ -64,7 +64,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
-from anonymizer.engine.detection.result import from_detection_frame, render_detector_result, validate_detector_result
+from anonymizer.engine.detection.result import place_detection_frame, render_detector_result, validate_detector_result
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
@@ -1238,7 +1238,7 @@ class Anonymizer:
                 **detection_options,
             )
             if self._detector_kind == "builtin":
-                return from_detection_frame(frame, returned)
+                return place_detection_frame(frame, returned)
             return render_detector_result(frame, validate_detector_result(frame, returned))
 
         def detect_then_announce(frame: pd.DataFrame) -> EntityDetectionResult:
@@ -1809,6 +1809,7 @@ def _step_to_field(step: str) -> str:
 # The reasons the protection graph gives a failed record: an operation's own failure, or a rejected mention.
 _KNOWN_FAILURE_REASONS = frozenset(
     {
+        "dropped_output",
         "invalid_output",
         "mention_not_on_target",
         "mention_out_of_range",

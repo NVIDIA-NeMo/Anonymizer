@@ -30,8 +30,9 @@ class AnonymizerWorkflowError(AnonymizerError):
 
 
 class InvalidDetectorResultError(AnonymizerError):
-    """Raised when a custom ``detection_workflow`` returns a result that cannot be placed against its input.
+    """Raised when a ``detection_workflow`` returns a result that cannot be placed against its input.
 
-    The result is not a ``DetectorResult``, or it names a record id that is not an input id, or names one twice.
-    No record of that batch is released, and no model is called after detection.
+    A custom detector's result is not a ``DetectorResult``, holds a malformed span, extra value, latent entity or
+    failure, names a record id that is not an input id, or names one twice; or the built-in detector returned
+    something other than its frame. No record of that batch is released, and no model is called after detection.
     """
