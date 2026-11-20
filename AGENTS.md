@@ -60,7 +60,7 @@ input_df
   → output: {text_col}_replaced, {text_col}_with_spans, final_entities
 ```
 
-Validation runs before augmentation, not after: GLiNER is high-recall/low-precision, so its candidates need an LLM validation pass; the augmenter is itself an LLM finding what GLiNER missed, so its output is already high-precision and is not re-validated. Augmented entities are appended straight onto the validated set in `apply_augmented_entities` — see `resolve_overlaps()` in `engine/detection/postprocess.py` for how conflicting spans between the two are resolved.
+Validation runs before augmentation, not after: GLiNER is high-recall/low-precision, so its candidates need an LLM validation pass; the augmenter is itself an LLM finding what GLiNER missed, so its output is already high-precision and is not re-validated. Augmented candidates are merged with the validated ones in `merge_and_build_candidates` (`engine/detection/custom_columns.py`); `reconcile_candidates()` in `engine/detection/candidates.py` resolves conflicting spans between the two (longer spans first, then earlier starts; a later overlapping candidate is discarded).
 
 ### Rewrite mode — `AnonymizerConfig(rewrite=...)`
 

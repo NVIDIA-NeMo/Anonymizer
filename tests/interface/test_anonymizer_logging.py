@@ -254,6 +254,34 @@ def test_run_logs_failure_counts(stub_input: AnonymizerInput, caplog: pytest.Log
     assert "2 total failures" in messages
 
 
+def test_run_failure_warning_counts_steps_and_reasons_without_values(
+    stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture
+) -> None:
+    anonymizer = _make_logging_anonymizer(
+        detection_failures=[FailedRecord(record_id="r1", step="entity-detection", reason="Record dropped")],
+        replace_failures=[
+            FailedRecord(record_id="r2", step="detect", reason="mention_slice_mismatch"),
+            FailedRecord(record_id="r3", step="detect", reason="mention_slice_mismatch"),
+            FailedRecord(record_id="r4", step="replace", reason="malformed entities: input_value='Alice'"),
+            FailedRecord(record_id="r5", step="Alice Smith", reason="mention_slice_mismatch"),
+            # Code-shaped but not known: a caller's own detector may report a value as a step or a reason.
+            FailedRecord(record_id="r6", step="detect", reason="alice"),
+            FailedRecord(record_id="r7", step="alice", reason="smith"),
+        ],
+    )
+
+    with caplog.at_level(logging.INFO, logger="anonymizer"):
+        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    # Only known steps and reason codes are named: anything else may carry record content.
+    assert warnings == [
+        "7 record(s) failed during pipeline processing: "
+        "detect=1, detect/mention_slice_mismatch=2, entity-detection=1, other=2, replace=1."
+    ]
+    assert not [word for word in ("Alice", "alice", "smith", "r4", "r5", "r6", "r7") if word in caplog.text]
+
+
 def test_run_without_replacement_skips_replace_logs(
     stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture
 ) -> None:

@@ -303,6 +303,8 @@ These arrive from the SDK but their classes are not exported. Read their fields;
 judges that `evaluate()` appends, [Evaluation](../evaluation.md#outcomes-after-evaluate).
 In Replace and Rewrite modes, detection runs as the first phase-scoped step of the same call that replaces or
 rewrites.
+Anonymizer's own detection step may also put an internal refusal entry in place of a target's mentions, which
+fails that target with the refusal's reason (`unspanned_value`); it is not part of the public API.
 
 ## Rejection codes
 

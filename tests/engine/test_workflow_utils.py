@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -32,6 +33,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.ndd.adapter import NddAdapter, WorkflowRunResult
 from anonymizer.engine.ndd.workflow_utils import derive_seed_columns, run_columns, select_seed_cols
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
+from anonymizer.engine.schemas import EntitiesByValueSchema
 
 
 class _StubOutput(BaseModel):
@@ -189,6 +191,61 @@ def test_select_seed_cols_writes_models_and_numpy_values_as_plain_json() -> None
     seed = select_seed_cols(df, ["model", "array"])
     assert json.loads(seed["model"].iloc[0]) == {"result": "x"}
     assert json.loads(seed["array"].iloc[0]) == {"ids": [1, 2]}
+
+
+_PAIRS = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
+_PAIRS_JSON = json.dumps(_PAIRS)
+
+
+def _alone(cell: object) -> object:
+    """``cell`` as a one-cell column seeds it: the reference for the same cell in a mixed column."""
+    return select_seed_cols(pd.DataFrame({"c": pd.Series([cell], dtype=object)}), ["c"])["c"].iloc[0]
+
+
+@pytest.mark.parametrize(
+    "cells",
+    [
+        [_PAIRS, _PAIRS_JSON],
+        [_PAIRS_JSON, _PAIRS],
+        [None, _PAIRS_JSON, _PAIRS],
+        [float("nan"), _PAIRS],
+        [pd.NA, _PAIRS_JSON, _StubOutput(result="x")],
+    ],
+    ids=["dict_str", "str_dict", "none_str_dict", "nan_dict", "na_str_model"],
+)
+def test_select_seed_cols_encodes_each_cell_of_a_mixed_column_on_its_own(cells: list[object]) -> None:
+    seed = select_seed_cols(pd.DataFrame({"c": pd.Series(cells, dtype=object)}), ["c"])
+    for got, cell in zip(seed["c"], cells):
+        want = _alone(cell)
+        assert got == want if isinstance(want, str) else pd.isna(got) and pd.isna(want)
+    assert seed["c"].map(lambda v: isinstance(v, str)).tolist() == [
+        not (c is None or c is pd.NA or isinstance(c, float)) for c in cells
+    ]
+
+
+def test_select_seed_cols_keeps_every_by_value_cell_whatever_the_mix_and_order() -> None:
+    """Every seeded by-value cell reads back as its own cell's pairs, for random mixes of encodings in any order."""
+    rng = random.Random(432)
+    payloads = [{"entities_by_value": [{"value": f"v{i}", "labels": [f"l{i}", "x"]}]} for i in range(4)]
+    kinds = ["dict", "str", "none", "nan", "array"]
+    for _ in range(200):
+        cells: list[object] = []
+        for _ in range(rng.randint(1, 6)):
+            payload = rng.choice(payloads)
+            cells.append(
+                {
+                    "dict": payload,
+                    "str": json.dumps(payload),
+                    "none": None,
+                    "nan": float("nan"),
+                    "array": {"entities_by_value": np.array(payload["entities_by_value"], dtype=object)},
+                }[rng.choice(kinds)]
+            )
+        seed = select_seed_cols(
+            pd.DataFrame({COL_ENTITIES_BY_VALUE: pd.Series(cells, dtype=object)}), [COL_ENTITIES_BY_VALUE]
+        )
+        for got, cell in zip(seed[COL_ENTITIES_BY_VALUE], cells):
+            assert EntitiesByValueSchema.from_raw(got) == EntitiesByValueSchema.from_raw(cell), cells
 
 
 def test_run_columns_runs_sensitivity_disposition_columns(stub_rewrite_model_selection: RewriteModelSelection) -> None:
