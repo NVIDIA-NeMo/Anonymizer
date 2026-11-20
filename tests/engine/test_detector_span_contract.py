@@ -736,3 +736,29 @@ def test_a_complete_by_value_view_is_used_as_the_detector_returned_it(mode: str,
     )
 
     assert _requested_pairs(frames[0][COL_ENTITIES_BY_VALUE].iloc[0]) == KEPT_PAIRS | {("Acme", "organization")}
+
+
+@pytest.mark.parametrize("mode", ["redact", "substitute", "rewrite"])
+def test_the_trace_of_a_rebuilt_by_value_cell_writes_to_parquet(mode: str, tmp_path: Path) -> None:
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": [TEXT, CONTROL]}).to_csv(source, index=False)
+
+    def run_workflow(self: NddAdapter, df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
+        out = df.copy().reset_index(drop=True)
+        out[COL_REPLACEMENT_MAP] = _substitute_map(out)
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
+
+    anonymizer = Anonymizer(
+        detection_workflow=cast(EntityDetectionWorkflow, _MixedByValueDetector(0)),
+        rewrite_runner=_capturing(RewriteWorkflow(Mock()), []),
+    )
+    config = {
+        "redact": AnonymizerConfig(replace=Redact()),
+        "substitute": AnonymizerConfig(replace=Substitute()),
+        "rewrite": AnonymizerConfig(rewrite=Rewrite()),
+    }[mode]
+    with patch.object(NddAdapter, "run_workflow", run_workflow):
+        result = anonymizer.run(config=config, data=AnonymizerInput(source=str(source)))
+
+    result.trace_dataframe.to_parquet(tmp_path / "trace.parquet")
+    assert all(isinstance(cell, str) for cell in result.trace_dataframe[COL_ENTITIES_BY_VALUE])

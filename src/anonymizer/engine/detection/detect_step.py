@@ -151,22 +151,25 @@ def covered_spans(datum: Datum, entities: EntitiesSchema) -> set[int]:
 
 def _with_entities(frame: pd.DataFrame, covered: dict[int, set[int]]) -> pd.DataFrame:
     """A copy of ``frame`` whose rows at the positions in ``covered`` lose those entities, with their by-value view
-    rebuilt (the column is added, with a missing cell for every other row, when the detector returned none). Each rewritten cell keeps its own row's encoding
-    (a JSON string stays a string) and its own keys; later stages encode every seed cell on its own, so a column may
-    mix encodings."""
+    rebuilt (the column is added, with a missing cell for every other row, when the detector returned none).
+
+    A rewritten entities cell keeps its own encoding (a JSON string stays a string) and its own keys. A rebuilt
+    by-value cell takes the encoding of the column's first present cell, else of its row's entities cell, so a
+    homogeneous column stays homogeneous and the trace can be written to parquet. Seeds do not depend on it: later
+    stages encode every seed cell on its own."""
     frame = frame.copy()
     has_entities = COL_FINAL_ENTITIES in frame.columns
     given = list(frame[COL_FINAL_ENTITIES]) if has_entities else [None] * len(frame)
     final = [_without(raw, covered[row]) if covered.get(row) else raw for row, raw in enumerate(given)]
     if has_entities:
         frame[COL_FINAL_ENTITIES] = final
-    by_value = frame[COL_ENTITIES_BY_VALUE] if COL_ENTITIES_BY_VALUE in frame.columns else repeat(None)
+    by_value = list(frame[COL_ENTITIES_BY_VALUE]) if COL_ENTITIES_BY_VALUE in frame.columns else [None] * len(given)
+    sample = next((cell for cell in by_value if not _absent(cell)), None)
     frame[COL_ENTITIES_BY_VALUE] = [
-        # A rebuilt cell takes the encoding of its own stale cell, or, when that is missing, of its entities cell.
-        _encoded_like(given[row] if _absent(raw) else raw, _build_entities_by_value(final[row]))
+        _encoded_like(given[row] if sample is None else sample, _build_entities_by_value(final[row]))
         if row in covered
         else raw
-        for row, raw in zip(range(len(given)), by_value)
+        for row, raw in enumerate(by_value)
     ]
     return frame
 
