@@ -443,7 +443,9 @@ def _fold_replacement_maps(
     the earliest accepted mention (``spans``: each exact value's first start offset in the record), ties and values
     without a span broken by exact value; the maps are in target order. That spelling's entry gives the record's shared
     substitute and, when that collides, the key's fallback, so neither the model's entry order nor the detector's return
-    order changes the text. A key the run has not mapped yet takes the Session's assignment for that spelling. A shared
+    order changes which spelling gives a key's substitute or its letter case; between different values that compete for
+    one substitute, the model's order still decides on the first call, and a replay keeps that outcome. A key the run
+    has not mapped yet takes the Session's assignment for that spelling. A shared
     substitute is re-cased to another spelling only when the re-cased form normalizes to the same value; otherwise it is
     emitted as assigned, and a placeholder for the entry's label is always kept as minted, so only a genuine alternate
     is a fallback. A substitute also collides when the view's ``assigned_to_other_value`` finds it assigned to another
