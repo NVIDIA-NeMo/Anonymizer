@@ -87,7 +87,7 @@ from anonymizer.engine.graph_core.execution import (
     TargetOutcome,
 )
 from anonymizer.engine.graph_core.kernel import Status, register_kind
-from anonymizer.engine.graph_core.session import Session, SessionChanges
+from anonymizer.engine.graph_core.session import Session
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import (
@@ -1271,9 +1271,8 @@ class Anonymizer:
             post_detection_failures = replace_result.failed_records[len(detection_failures) :]
             outcomes = replace_result.outcomes
             if session is not None and session.mode.stable_replacements:
-                placeholders = getattr(replace_result, "placeholder_counts", {})
                 session_changes = SessionCallChanges._of(
-                    getattr(replace_result, "session_changes", SessionChanges()), placeholders
+                    replace_result.session_changes, replace_result.placeholder_counts
                 )
         else:
             assert config.rewrite is not None
