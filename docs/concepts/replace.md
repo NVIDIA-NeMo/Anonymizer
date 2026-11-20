@@ -208,8 +208,14 @@ session = Session.restore(SessionSnapshot.from_bytes(saved))
   placeholder in that record.
 - Redact, Annotate and Hash run unchanged and leave the Session unchanged. Hash is stable across calls only when
   every call uses the same hash configuration.
-- Rewrite, and a custom replace or rewrite runner that overrides `run()`, reject a stable Session with
-  `InvalidConfigError` before detection starts.
+- Rewrite, and a custom replace runner that overrides `run()`, `run_with_detection()` or its map workflow's
+  `generate_validated_maps()`, reject a stable Session with `InvalidConfigError` before detection starts. Anonymizer
+  cannot verify that an override passes the Session on, so an override that forwards `**kwargs` or `session` is
+  rejected too.
+- Custom workflows and runners passed to `Anonymizer` (`detection_workflow`, `replace_runner`, `rewrite_runner`,
+  `combined_rewrite_runner`) are an advanced and testing seam: Anonymizer keeps calling an override the way its base
+  method was called, and when a call needs something an override cannot be shown to support, the call fails with an
+  error instead of running without it.
 - The snapshot bytes hold original values in plain text. Protecting them is your responsibility.
 - The Session also holds record-local fallback entries: a substitute used in one record in place of a value's shared
   one is recorded so no other value takes it later. These entries are bookkeeping, not assignments.

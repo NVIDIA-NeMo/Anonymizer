@@ -568,6 +568,57 @@ def test_an_old_hook_override_works_without_a_stable_session(
     assert list(output["text_replaced"]) == ["Bob lives in Lyon."]
 
 
+_NAMED = {
+    "old-validated-maps": "generate_validated_maps() on its replacement map workflow",
+    "dropping-validated-maps": "generate_validated_maps() on its replacement map workflow",
+    "old-run-with-detection": "run_with_detection()",
+    "dropping-run-with-detection": "run_with_detection()",
+    "instance-run-with-detection": "run_with_detection()",
+}
+
+
+@pytest.mark.parametrize("hook", list(_NAMED))
+@pytest.mark.parametrize("preview", [False, True], ids=["run", "preview"])
+def test_an_overriding_hook_is_rejected_under_a_stable_session_before_detection(
+    tmp_path: Path, hook: str, preview: bool
+) -> None:
+    if hook == "instance-run-with-detection":
+        anonymizer = _hooked("old-map-only")
+        runner = anonymizer._replace_runner
+        stock = runner.run_with_detection
+        # Set on the instance, forwarding everything: still not the stock method.
+        object.__setattr__(runner, "run_with_detection", lambda *a, **kw: stock(*a, **kw))
+    else:
+        anonymizer = _hooked(hook)
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": ["Alice lives in Paris."]}).to_csv(source, index=False)
+    session = Session(stable_replacements=True)
+    call = anonymizer.preview if preview else anonymizer.run
+    before = _Detector.calls
+    message = f"A custom replace runner that overrides {_NAMED[hook]} cannot take part in a stable Session"
+    with (
+        patch.object(NddAdapter, "run_workflow") as model,
+        pytest.raises(InvalidConfigError, match=re.escape(message)) as raised,
+    ):
+        call(config=AnonymizerConfig(replace=Substitute()), data=AnonymizerInput(source=str(source)), session=session)
+    assert "forwards **kwargs" in str(raised.value)
+    assert _Detector.calls == before
+    assert model.call_count == 0
+    assert session.size == 0
+
+
+@pytest.mark.parametrize("preview", [False, True], ids=["run", "preview"])
+def test_a_generate_map_only_override_keeps_a_stable_session(tmp_path: Path, preview: bool) -> None:
+    """The Substitute route never calls ``generate_map_only``, so overriding it leaves the stock map step in place."""
+    anonymizer, session, results = _hooked("old-map-only"), Session(stable_replacements=True), []
+    _protect(tmp_path, ["Alice is here."], {"Alice": "Bob"}, session, results, anonymizer=anonymizer, preview=preview)
+    second = _protect(
+        tmp_path, ["Alice again."], {"Alice": "Zed"}, session, results, anonymizer=anonymizer, preview=preview
+    )
+    assert list(second["text_replaced"]) == ["Bob again."]
+    assert results == [SessionCallChanges(added=1), SessionCallChanges(reused=1)]
+
+
 def test_a_placeholder_is_reused_verbatim_in_a_later_call(tmp_path: Path) -> None:
     session = Session(stable_replacements=True)
     first = _protect(tmp_path, ["Alice and Carol."], {"Alice": "Bob", "Carol": "Bob"}, session)
