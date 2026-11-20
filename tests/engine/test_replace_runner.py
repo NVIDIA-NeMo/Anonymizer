@@ -989,14 +989,14 @@ def test_a_redact_template_that_brings_back_a_name_with_reordered_marks_fails_th
             {"text": ["Alice met Bob"]}, [[_ent("Alice", 0)]], Redact(format_template="Alice"), False, id="str"
         ),
         pytest.param(
-            {"text": ["Alice met Bob"], "_rewritten_text": ["note"]},
+            {"text": ["Alice met Bob"], "text_rewritten": ["note"]},
             [[_ent("Alice", 0)]],
             Redact(format_template="Alice"),
             False,
             id="metadata-column-named-like-the-rewrite-output",
         ),
         pytest.param(
-            {"text": ["Alice met Bob"], "_rewritten_text": ["note"]},
+            {"text": ["Alice met Bob"], "text_rewritten": ["note"]},
             [[_ent("Alice", 0)]],
             Redact(format_template="Alice"),
             True,
