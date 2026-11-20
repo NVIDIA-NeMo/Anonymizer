@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -285,32 +286,42 @@ def _rewrite_entry(row: dict[str, object]) -> dict[str, object] | RewriteUnavail
         "any_high_leaked": row.get(COL_ANY_HIGH_LEAKED),
         "weighted_leakage_rate": row.get(COL_WEIGHTED_LEAKAGE_RATE),
         **_leftover_metrics(row),
-        "placeholders_absent": _no_placeholder(text, row.get(COL_REPLACEMENT_MAP)),
+        "placeholder_in_text": _placeholder_in_text(text, row.get(COL_REPLACEMENT_MAP)),
     }
     return {"text": text, "metrics": metrics}
 
 
-def _no_placeholder(text: str, replacement_map: object) -> bool:
-    """Whether no placeholder substitute of the row's replacement map appears in ``text``, in any case; ``True``
-    without a map.
+def _placeholder_in_text(text: str, replacement_map: object) -> bool:
+    """Whether ``text`` holds a placeholder substitute of the row's replacement map; ``False`` without a map.
 
-    A placeholder stands in for a substitute that collided with a value in the record. It leaks nothing, but text
-    that carries one is visibly broken, so it is not released as protected.
+    A placeholder stands in for a substitute that collided with a value in the record. It leaks nothing, so the row
+    stays met, but text that carries one needs review. The match is loose: any case, brackets optional, ``_``, ``-``
+    or one space between words, and the separator before the number optional. The number is required.
     """
     payload = normalize_payload(replacement_map)
     entries = payload.get("replacements") if isinstance(payload, dict) else None
     if not isinstance(entries, list):
-        return True
-    placeholders = [
-        entry["synthetic"]
+        return False
+    folded = text.casefold()
+    return any(
+        _placeholder_pattern(entry["label"], entry["synthetic"]).search(folded)
         for entry in entries
         if isinstance(entry, dict)
         and isinstance(entry.get("label"), str)
         and isinstance(entry.get("synthetic"), str)
         and is_placeholder(entry["label"], entry["synthetic"])
-    ]
-    folded = text.casefold()
-    return not any(placeholder.casefold() in folded for placeholder in placeholders)
+    )
+
+
+def _placeholder_pattern(label: str, placeholder: str) -> re.Pattern[str]:
+    """The loose casefolded pattern of ``placeholder``, an ``is_placeholder`` substitute for ``label``."""
+    number = placeholder[placeholder.rindex("_") + 1 : -1]
+    words = ["substitute", *"".join(c.casefold() if c.isalnum() else " " for c in label).split()]
+    if len(words) == 1:
+        words.append("value")
+    separator = r"[_\- ]"
+    body = separator.join(re.escape(word) for word in words)
+    return re.compile(rf"(?<![^\W_]){body}{separator}?{int(number)}(?!\d)")
 
 
 def _leftover_metrics(row: Mapping[str, object]) -> dict[str, bool | str | None]:
@@ -383,7 +394,6 @@ def _final_checks(evaluation: EvaluationCriteria) -> tuple[Operation, ...]:
         "high_leak": _high_leak,
         "replacements_applied": _replacements_applied,
         "leakage_within_threshold": lambda metrics: _leakage_within(metrics, limit),
-        "placeholders_absent": lambda metrics: bool(metrics["placeholders_absent"]),
     }
 
     def verifier(check: str, predicate: Callable[[dict[str, Any]], bool | None]) -> Operation:
@@ -455,7 +465,9 @@ def _flag_review(
 
 def _needs_review(result: ProtectionResult, target: Datum) -> bool:
     metrics = result.value(target, "metrics") or {}
-    return result.outcome(target).qualification != "met" or bool(metrics.get("undetected_value_kept"))
+    return result.outcome(target).qualification != "met" or bool(
+        metrics.get("undetected_value_kept") or metrics.get("placeholder_in_text")
+    )
 
 
 def _rewrite_lowered(

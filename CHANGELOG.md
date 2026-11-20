@@ -265,6 +265,9 @@ holds it outside the detected spans. A failing check states counts and positions
 - Rewrite: `replacements_applied` uses the same bound. A row that keeps a replaced value within the bound stays met
   but is flagged for review through the metric `undetected_value_kept`. Rewrite rows carry no advisory.
 - New: `result.leftovers(row)` returns the counted values of a row, for auditing.
+- Rewrite: a placeholder from the row's replacement map left in the text flags the row for review through the
+  metric `placeholder_in_text`, loose forms included: any case, with or without brackets, with `_`, `-` or a space
+  between words. The row stays met.
 - What to do: update code that matches the advisory name. Expect fewer `not_met` Rewrite rows, and some new review
   flags.
 

@@ -63,7 +63,7 @@ from anonymizer.engine.rewrite.rewrite_workflow import (
     _detection_valid_fraction,
     _join_new_columns,
     _leftover_metrics,
-    _no_placeholder,
+    _placeholder_in_text,
 )
 from anonymizer.engine.spans import Span
 from anonymizer.engine.value_matching import format_cause
@@ -1982,30 +1982,141 @@ def _run_outcome(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
         ),
     ],
 )
-def test_placeholder_in_released_text_fails_a_final_check(
+def test_placeholder_in_released_text_flags_the_row(
     replacements: list[dict[str, str]], requested: set[str], text: str, tmp_path: Path
 ) -> None:
-    """A substitute that folds to a value in its record becomes a placeholder; text that keeps it is not released."""
+    """A substitute that folds to a value in its record becomes a placeholder; text that keeps it stays met and is
+    flagged for review."""
     (folded,) = _fold_replacement_maps([{"replacements": replacements}], "record", [requested])
     assert any(entry["synthetic"] in text for entry in folded["replacements"])
 
     result = _run_result(_ScriptedAdapter({"rec": 0}, initial=text, replacement_map=folded), tmp_path)
 
     outcome = result.outcome(0)
-    assert outcome.qualification == "not_met"
-    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [("failed", "placeholders_absent", "")]
+    assert outcome.qualification == "met"
+    assert outcome.reasons == ()
     assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [True]
 
 
-def test_substitute_shaped_like_a_placeholder_for_another_label_passes() -> None:
+_PLACEHOLDER_MAP = {
+    "replacements": [{"original": "Alice", "label": "first_name", "synthetic": "[SUBSTITUTE_FIRST_NAME_1]"}]
+}
+_PLACEHOLDER_FORMS = [
+    pytest.param("[SUBSTITUTE_FIRST_NAME_1] studied here.", id="exact"),
+    pytest.param("SUBSTITUTE_FIRST_NAME_1 studied here.", id="no-brackets"),
+    pytest.param("[SUBSTITUTE FIRST NAME 1] studied here.", id="spaces"),
+    pytest.param("SUBSTITUTE FIRST NAME 1 studied here.", id="spaces-no-brackets"),
+    pytest.param("substitute_first_name_1 studied here.", id="lowercase"),
+    pytest.param("[SUBSTITUTE-FIRST-NAME-1] studied here.", id="hyphens"),
+    pytest.param("SUBSTITUTE_FIRST_NAME1 studied here.", id="no-separator-before-number"),
+    pytest.param("(SUBSTITUTE_FIRST_NAME_1) studied here.", id="parentheses"),
+]
+_NOT_PLACEHOLDER_FORMS = [
+    pytest.param("Substitute teacher 1 studied here.", id="other-label"),
+    pytest.param("[SUBSTITUTE_FIRST_NAME] studied here.", id="number-dropped"),
+    pytest.param("[FIRST_NAME_1] studied here.", id="label-alone"),
+    pytest.param("[FIRST_NAME] studied here.", id="bare-label"),
+    pytest.param("[SUBSTITUTE_FIRST_NAME_10] studied here.", id="other-number"),
+    pytest.param("Maria studied here.", id="no-placeholder"),
+]
+
+
+def _combined_run_result(text: str, tmp_path: Path) -> Any:
+    """Run one ``Alice`` row through ``Anonymizer.run()`` on the combined route, whose adapter returns ``text`` as the
+    rewrite with ``_PLACEHOLDER_MAP`` as the replacement map."""
+    from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
+
+    source = "Alice works at Acme"
+    policy = [
+        {"id": 1, "sensitivity": "high", "protection_method_suggestion": "replace", "source": "tagged"}
+        | {"category": "direct_identifier", "entity_label": "first_name", "entity_value": "Alice"}
+    ]
+
+    def run_workflow(seed: pd.DataFrame, **_: object) -> WorkflowRunResult:
+        out = seed.copy()
+        out[COL_REPLACEMENT_MAP] = [_PLACEHOLDER_MAP] * len(out)
+        out[COL_REWRITTEN_TEXT] = text
+        out[COL_SENSITIVITY_DISPOSITION] = [{"sensitivity_disposition": policy}] * len(out)
+        out[COL_UTILITY_SCORE] = 0.9
+        out[COL_LEAKAGE_MASS] = 0.0
+        out[COL_WEIGHTED_LEAKAGE_RATE] = 0.0
+        out[COL_ANY_HIGH_LEAKED] = False
+        out[COL_NEEDS_REPAIR] = False
+        out[COL_REPAIR_ITERATIONS] = 0
+        out[COL_NEEDS_HUMAN_REVIEW] = False
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = run_workflow
+    columns = {
+        RECORD_ID_COLUMN: ["rec"],
+        COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
+        COL_FINAL_ENTITIES: [{"entities": [_span(source, "Alice")]}],
+    }
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**columns), failed_records=[], source_positions=(0,)
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": [source]}).to_csv(csv_path, index=False)
+    anonymizer = Anonymizer(
+        detection_workflow=detector, combined_rewrite_runner=CombinedRewriteWorkflow(adapter=adapter)
+    )
+    with patch(_REPLACE_PATCH):
+        return anonymizer.run(
+            config=AnonymizerConfig(
+                rewrite=Rewrite(
+                    privacy_goal=_PRIVACY_GOAL,
+                    risk_tolerance="minimal",
+                    max_repair_iterations=0,
+                    use_combined_graph=True,
+                ),
+                emit_telemetry=False,
+            ),
+            data=AnonymizerInput(source=str(csv_path), text_column="text"),
+        )
+
+
+def _staged_or_combined(route: str, text: str, tmp_path: Path) -> Any:
+    if route == "combined":
+        return _combined_run_result(text, tmp_path)
+    return _run_result(_ScriptedAdapter({"rec": 0}, initial=text, replacement_map=_PLACEHOLDER_MAP), tmp_path)
+
+
+@pytest.mark.parametrize("route", ["staged", "combined"])
+@pytest.mark.parametrize("text", _PLACEHOLDER_FORMS)
+def test_own_placeholder_in_any_form_flags_a_met_row(route: str, text: str, tmp_path: Path) -> None:
+    """The row's own placeholder, exact or loosely reformatted, keeps the row met and flags it for review."""
+    result = _staged_or_combined(route, text, tmp_path)
+
+    outcome = result.outcome(0)
+    assert (outcome.qualification, outcome.protected, outcome.reasons) == ("met", True, ())
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [True]
+
+
+@pytest.mark.parametrize("route", ["staged", "combined"])
+@pytest.mark.parametrize("text", _NOT_PLACEHOLDER_FORMS)
+def test_text_that_is_not_the_rows_placeholder_is_not_flagged(route: str, text: str, tmp_path: Path) -> None:
+    """Another label, a dropped or different number, or the label alone is not the row's placeholder."""
+    result = _staged_or_combined(route, text, tmp_path)
+
+    outcome = result.outcome(0)
+    assert (outcome.qualification, outcome.protected) == ("met", True)
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False]
+
+
+def test_substitute_shaped_like_a_placeholder_for_another_label_is_not_flagged() -> None:
     """Only a placeholder built for the entry's own label counts; ordinary substitutes never do."""
-    text = "[SUBSTITUTE_CITY_1] and Clara"
-    assert _no_placeholder(text, {"replacements": [{"label": "first_name", "synthetic": "[SUBSTITUTE_CITY_1]"}]})
-    assert _no_placeholder(text, {"replacements": [{"label": "first_name", "synthetic": "Clara"}]})
-    assert not _no_placeholder(
+    text = "[SUBSTITUTE_CITY_1] and Clara, substitute teacher 1"
+    assert not _placeholder_in_text(
+        text, {"replacements": [{"label": "first_name", "synthetic": "[SUBSTITUTE_CITY_1]"}]}
+    )
+    assert not _placeholder_in_text(text, {"replacements": [{"label": "first_name", "synthetic": "Clara"}]})
+    assert _placeholder_in_text(
         text, json.dumps({"replacements": [{"label": "city", "synthetic": "[SUBSTITUTE_CITY_1]"}]})
     )
-    assert _no_placeholder(text, None)
+    assert _placeholder_in_text(text, {"replacements": [{"label": "teacher", "synthetic": "[SUBSTITUTE_TEACHER_1]"}]})
+    assert not _placeholder_in_text(text, None)
 
 
 @pytest.mark.parametrize(
