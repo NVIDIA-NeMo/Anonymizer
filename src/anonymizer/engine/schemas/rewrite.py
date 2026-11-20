@@ -394,6 +394,8 @@ class PrivacyAnswer(str, Enum):
 
 _NULL_PRIVACY_ANSWER_REASON = "Model returned null answer; defaulted to highest-confidence leak."
 _NULL_PRIVACY_REASON = "Model returned no reason."
+_EMPTY_PRIVACY_REASON = "Model returned an empty reason."
+_PRIVACY_REASON_LIMIT = 200
 
 
 class PrivacyQuestionSchema(BaseModel):
@@ -481,7 +483,7 @@ class PrivacyAnswerItemSchema(BaseModel):
     id: int
     answer: PrivacyAnswer
     confidence: float = Field(ge=0.0, le=1.0)
-    reason: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=_PRIVACY_REASON_LIMIT)
     evidence: list[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
@@ -505,6 +507,15 @@ class PrivacyAnswerItemSchema(BaseModel):
     def normalize_null_confidence(cls, value: object) -> object:
         """Default an explicit JSON null to highest-confidence leakage."""
         return 1.0 if value is None else value
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def fit_reason(cls, value: object) -> object:
+        """Default a blank reason and cut a long one to the limit: the reason only informs repair, so neither
+        rejects the answer. The declared limits stay in the schema the model is shown."""
+        if not isinstance(value, str):
+            return value
+        return value[:_PRIVACY_REASON_LIMIT] if value.strip() else _EMPTY_PRIVACY_REASON
 
     @field_validator("evidence", mode="before")
     @classmethod

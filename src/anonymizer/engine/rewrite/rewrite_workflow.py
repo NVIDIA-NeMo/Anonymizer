@@ -59,6 +59,7 @@ from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
+from anonymizer.engine.ndd.model_response import no_response
 from anonymizer.engine.ndd.workflow_utils import run_columns
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow, is_placeholder
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
@@ -68,6 +69,7 @@ from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
 from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
+from anonymizer.engine.rewrite.response_summary import mark_evaluation_unavailable, warn_kept_without_response
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
 )
@@ -463,6 +465,56 @@ def _flag_review(
     frame[COL_NEEDS_HUMAN_REVIEW] = pd.Series(review, index=frame.index, dtype=dtype)
 
 
+def _withhold_unassessed(frame: pd.DataFrame) -> None:
+    """Null the rewritten text of rows whose privacy evaluation had no usable response.
+
+    The final checks have already run on the text and could not assess it; without a privacy verdict it is not
+    released. Rows whose text is already null are left alone (see ``_withhold_rewritten_text`` on null columns).
+    """
+    if COL_PRIVACY_QA_REANSWER not in frame.columns:
+        return
+    unassessed = frame[COL_PRIVACY_QA_REANSWER].map(no_response).astype(bool) & frame[COL_REWRITTEN_TEXT].notna()
+    if unassessed.any():
+        frame.loc[unassessed, COL_REWRITTEN_TEXT] = None
+
+
+_PRIVACY_CHECKS = frozenset({"high_leak", "leakage_within_threshold"})
+
+
+def _withhold_failed_repairs(frame: pd.DataFrame, result: ProtectionResult, target_of: Mapping[int, Datum]) -> None:
+    """Null the rewritten text of rows whose final candidate fails a privacy check, repaired or not.
+
+    Their outcome is already ``not_met`` and flagged; the failing candidate is not released, whether the repair loop
+    ran out of rounds, the preset does not send the row to repair, or ``max_repair_iterations`` is 0. Call it after
+    the summary, which counts a repaired row without text as an unparsed repair.
+    """
+    failed = [
+        any(
+            reason.code == "failed" and reason.check in _PRIVACY_CHECKS
+            for reason in result.outcome(target_of[record[ROW_ORDER_COL]]).reasons
+        )
+        for record in frame.to_dict("records")
+    ]
+    withheld = pd.Series(failed, index=frame.index, dtype=bool) & frame[COL_REWRITTEN_TEXT].notna()
+    if withheld.any():
+        frame.loc[withheld, COL_REWRITTEN_TEXT] = None
+
+
+def _none_for_missing_text(frame: pd.DataFrame) -> None:
+    """Give a withheld or missing rewritten text as ``None`` in both modes.
+
+    Combined mode's column has a string dtype, which stores ``None`` as ``pd.NA``; an object column keeps ``None``.
+    """
+    column = frame[COL_REWRITTEN_TEXT]
+    if column.isna().any():
+        frame[COL_REWRITTEN_TEXT] = column.astype(object).where(column.notna(), None)
+
+
+def _unavailable_if(outcome: TargetOutcome, withheld: bool) -> TargetOutcome:
+    """``outcome`` with ``available`` False when the row's rewritten text was withheld after the final checks."""
+    return replace(outcome, available=False) if withheld and outcome.available else outcome
+
+
 def _needs_review(result: ProtectionResult, target: Datum) -> bool:
     metrics = result.value(target, "metrics") or {}
     return result.outcome(target).qualification != "met" or bool(
@@ -497,7 +549,12 @@ def _rewrite_lowered(
 
     result = _protect_rewrite(graph, rewrite, evaluation)
     frame = rows.frame
-    _flag_review(frame, result, dict(zip(order, graph.targets)), evaluation)
+    target_of = dict(zip(order, graph.targets))
+    _flag_review(frame, result, target_of, evaluation)
+    warn_kept_without_response(frame)
+    _withhold_unassessed(frame)
+    _withhold_failed_repairs(frame, result, target_of)
+    _none_for_missing_text(frame)
     _apply_passthrough_defaults(passthrough_rows)
     return RewriteResult(
         dataframe=merge_and_reorder(frame, passthrough_rows),
@@ -659,7 +716,12 @@ class RewriteWorkflow:
         if entity_rows.empty:
             output = merge_and_reorder(passthrough_rows)
         else:
-            _flag_review(frame, result, dict(enumerate(state.owners)), evaluation)
+            target_of = dict(enumerate(state.owners))
+            _flag_review(frame, result, target_of, evaluation)
+            warn_kept_without_response(frame)
+            _withhold_unassessed(frame)
+            _withhold_failed_repairs(frame, result, target_of)
+            _none_for_missing_text(frame)
             output = merge_and_reorder(frame, passthrough_rows)
         record_stage(
             stage,
@@ -671,7 +733,8 @@ class RewriteWorkflow:
             failed_record_count=len(rows.failed),
         )
         positions = tuple(sorted([*frame[ROW_ORDER_COL], *passthrough_rows[ROW_ORDER_COL]]))
-        outcomes = tuple(result.outcome(state.owners[order]) for order in positions)
+        withheld = set() if entity_rows.empty else set(frame.loc[frame[COL_REWRITTEN_TEXT].isna(), ROW_ORDER_COL])
+        outcomes = tuple(_unavailable_if(result.outcome(state.owners[order]), order in withheld) for order in positions)
         failed = [*state.failures, *rows.failed]
         return RewriteResult(output, failed, positions, detection, detection_elapsed, outcomes)
 
@@ -824,6 +887,7 @@ class RewriteWorkflow:
         def evaluate(df: pd.DataFrame, iteration: int) -> pd.DataFrame:
             df = run_and_join(df, eval_columns, f"rewrite-evaluate-{iteration}", overwrite=True)
             _normalize_evaluation_payloads(df)
+            mark_evaluation_unavailable(df)  # the next round overwrites this round's columns
             return df
 
         def initial_evaluate() -> None:

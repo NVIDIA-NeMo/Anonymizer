@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -29,6 +30,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_ENTITY_CLASSIFICATION,
     COL_FINAL_ENTITIES,
+    COL_FULL_REWRITE,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
     COL_LEAKED_PRIVACY_ITEMS,
@@ -1003,7 +1005,11 @@ def test_repair_loop_through_run_returns_each_rows_last_repair(
 
     out = result.dataframe
     assert result.failed_records == []
-    assert _by_id(out, COL_REWRITTEN_TEXT) == {"twice": "twice-2", "exhausted": "exhausted-3"}
+    # The exhausted row still leaks after its last repair, so its text is withheld; the trace keeps the candidate.
+    texts = _by_id(out, COL_REWRITTEN_TEXT)
+    assert texts["twice"] == "twice-2"
+    assert pd.isna(texts["exhausted"])
+    assert _by_id(out, COL_REWRITTEN_TEXT_NEXT)["exhausted"] == "exhausted-3"
     assert _by_id(out, COL_REPAIR_ITERATIONS) == {"twice": 2, "exhausted": 3}
     assert _by_id(out, COL_LEAKAGE_MASS) == {"twice": 0.0, "exhausted": 3.0}
     assert {k: bool(v) for k, v in _by_id(out, COL_NEEDS_HUMAN_REVIEW).items()} == {"twice": False, "exhausted": True}
@@ -1911,6 +1917,11 @@ def test_run_reports_each_rows_protection_outcome(tmp_path: Path) -> None:
     assert [reason.check for reason in result.outcome(1).reasons] == ["leakage_within_threshold"]
 
 
+def _run_one(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
+    """Run one ``Alice`` row through ``Anonymizer.run()`` with ``adapter`` and return the result."""
+    return _run_result(adapter, tmp_path)
+
+
 def _span(text: str, value: str, start: int = 0, label: str = "first_name") -> dict:
     begin = text.index(value, start)
     return {"value": value, "label": label, "start_position": begin, "end_position": begin + len(value)}
@@ -2409,6 +2420,19 @@ def test_leftovers_reject_a_result_without_the_trace() -> None:
         result.leftovers(0)
 
 
+def test_leftovers_reject_a_row_whose_rewritten_text_was_withheld(tmp_path: Path) -> None:
+    """The last repair keeps ``Alice`` and still leaks, so its text is withheld: the audit must not count it as clean."""
+    adapter = _ScriptedAdapter({"rec": 99}, repaired="Alice repaired {1}")
+    result = _run_result(adapter, tmp_path)
+
+    assert pd.isna(result.dataframe["text_rewritten"].iloc[0])
+    assert ("failed", "replacements_applied", "e0:N1,D1,O1") in [
+        (r.code, r.check, r.cause) for r in result.outcome(0).reasons
+    ]
+    with pytest.raises(ValueError, match="withheld"):
+        result.leftovers(0)
+
+
 def test_a_name_with_marks_out_of_canonical_order_copied_verbatim_is_not_met(tmp_path: Path) -> None:
     """The value and both texts are matched in one normalized form, so marks NFKD reorders still match."""
     name = "Mira\U0001d157\U0001d16d\U0001d16e"
@@ -2434,3 +2458,100 @@ def test_a_name_whose_marks_reorder_after_a_dropped_mark_is_counted(tmp_path: Pa
         ("failed", "replacements_applied", "e0:N1,D1,O1")
     ]
     assert format_cause(result.leftovers(0)) == "e0:N1,D1,O1"
+
+
+class _NoPrivacyResponseAdapter(_ScriptedAdapter):
+    """Evaluation has no privacy response: the response and its metrics are missing, typed as DataDesigner returns them."""
+
+    def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **kwargs: object) -> WorkflowRunResult:
+        result = super().run_workflow(seed, workflow_name=workflow_name, **kwargs)
+        if workflow_name.startswith("rewrite-evaluate-"):
+            frame, missing = result.dataframe, [None] * len(result.dataframe)
+            frame[COL_PRIVACY_QA_REANSWER] = None
+            for column in (COL_LEAKAGE_MASS, COL_WEIGHTED_LEAKAGE_RATE):
+                frame[column] = pd.array(missing, dtype="double[pyarrow]")
+            frame[COL_ANY_HIGH_LEAKED] = pd.array(missing, dtype="bool[pyarrow]")
+            frame[COL_NEEDS_REPAIR] = pd.array([False] * len(frame), dtype="bool[pyarrow]")
+        return result
+
+
+def test_row_without_a_privacy_response_is_kept_withheld_and_flagged(tmp_path: Path) -> None:
+    result = _run_one(_NoPrivacyResponseAdapter({"rec": 0}), tmp_path)
+
+    assert result.failed_records == []
+    assert len(result.dataframe) == 1
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row["text_rewritten"])
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [
+        ("could_not_assess", "high_leak", "metric_unavailable"),
+        ("could_not_assess", "leakage_within_threshold", "metric_unavailable"),
+    ]
+
+
+class _NoRewriteResponseAdapter(_NoPrivacyResponseAdapter):
+    """The rewrite response never parsed: no rewritten text, so evaluation asks nothing and every metric is missing."""
+
+    def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **kwargs: object) -> WorkflowRunResult:
+        result = super().run_workflow(seed, workflow_name=workflow_name, **kwargs)
+        if workflow_name == "rewrite-pipeline":
+            result.dataframe[COL_REWRITTEN_TEXT] = None
+            result.dataframe[COL_FULL_REWRITE] = None
+        elif workflow_name.startswith("rewrite-evaluate-"):
+            result.dataframe[COL_UTILITY_SCORE] = pd.array([None] * len(result.dataframe), dtype="double[pyarrow]")
+        return result
+
+
+def test_row_without_a_rewrite_response_is_kept_without_text_and_flagged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.responses"):
+        result = _run_one(_NoRewriteResponseAdapter({"rec": 0}), tmp_path)
+
+    assert result.failed_records == []
+    assert len(result.dataframe) == 1
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row["text_rewritten"])
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert not outcome.available
+    assert not outcome.protected
+    assert [record.getMessage() for record in caplog.records if record.name == "anonymizer.rewrite.responses"] == [
+        "Rows kept without a usable model response after their retries, by step: rewrite=1. "
+        "If most rows are listed, check that step's model."
+    ]
+
+
+class _NoDispositionResponseAdapter(_NoRewriteResponseAdapter):
+    """No disposition response had the right entry count: no disposition, so neither the rewrite nor evaluation asks."""
+
+    def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **kwargs: object) -> WorkflowRunResult:
+        result = super().run_workflow(seed, workflow_name=workflow_name, **kwargs)
+        if workflow_name == "rewrite-pipeline":
+            result.dataframe[COL_SENSITIVITY_DISPOSITION] = None
+        return result
+
+
+def test_row_without_a_disposition_response_is_kept_without_text_and_flagged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.responses"):
+        result = _run_one(_NoDispositionResponseAdapter({"rec": 0}), tmp_path)
+
+    assert result.failed_records == []
+    assert len(result.dataframe) == 1
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row["text_rewritten"])
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert not outcome.available
+    assert not outcome.protected
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [("raised", "", "")]
+    assert [record.getMessage() for record in caplog.records if record.name == "anonymizer.rewrite.responses"] == [
+        "Rows kept without a usable model response after their retries, by step: sensitivity disposition=1. "
+        "If most rows are listed, check that step's model."
+    ]

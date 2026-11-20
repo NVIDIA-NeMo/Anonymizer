@@ -71,7 +71,9 @@ class _DisplayMixin:
 
         Raises:
             IndexError: ``row`` is not a row of ``trace_dataframe``.
-            ValueError: an Annotate result, or one without the source, output or ``final_entities`` columns.
+            ValueError: an Annotate result, or one without the source, output or ``final_entities`` columns; or a
+                Rewrite row whose rewritten text is null (withheld or never produced), which has no output to count.
+                ``outcome(row)`` keeps the reasons the run assessed, including a failed check's ``cause``.
         """
         replace_method = getattr(self, "replace_method", None)
         if isinstance(replace_method, Annotate):
@@ -91,6 +93,11 @@ class _DisplayMixin:
             raise IndexError(f"Record index {row} is out of bounds for {len(frame)} records.")
         record = frame.iloc[row].to_dict()
         if is_rewrite:
+            if pd.isna(record[output]):
+                raise ValueError(
+                    f"Record {row} has no rewritten text (withheld or never produced), so there is no output to "
+                    "count; outcome(row) keeps the assessed reasons."
+                )
             disposition = record.get(COL_SENSITIVITY_DISPOSITION)
             return rewrite_leftovers(record[text], record[COL_FINAL_ENTITIES], record[output], disposition) or ()
         # The Replace verifier counts the row's mentions; the graph admits only exact, non-overlapping mentions of

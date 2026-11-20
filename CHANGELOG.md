@@ -338,6 +338,39 @@ holds it outside the detected spans. A failing check states counts and positions
 - What to do: update code that matches the advisory name. Expect fewer `not_met` Rewrite rows, and some new review
   flags.
 
+### #431: rows kept without a model response
+
+**Rewrite keeps a record whose model response cannot be parsed, at every step.** Domain, disposition, meaning units,
+quality questions, rewrite and repair responses that still cannot be parsed after their retries keep the record
+instead of dropping it, and the run ends with one warning counting such records per step.
+- The count for an evaluation step includes a record whose response was missing in an earlier repair round, not only
+  in the last one.
+- A record whose final candidate fails a privacy check (`high_leak` or `leakage_within_threshold`) now has its
+  rewritten text withheld (null), whether or not it was repaired, as a record whose repair response cannot be parsed
+  does, and its outcome reads `available=False`. It was released before, flagged and `not_met`; it is still flagged
+  and `not_met`. This includes every failing record under `max_repair_iterations=0`, and a record whose high leak the
+  `high` preset does not send to repair.
+- What to do: read the warning; a step listed for most records points at that step's model. Treat null rewritten text
+  as "not released"; an audit pass with `max_repair_iterations=0` finds the withheld first rewrite in
+  `trace_dataframe`'s `_full_rewrite`.
+- `result.leftovers(row)` raises `ValueError` for a Rewrite row whose rewritten text is null (withheld or never
+  produced). It counted no leftovers for such a row before, even when the row's saved `replacements_applied` cause
+  counted a value in the withheld candidate. `result.outcome(row)` keeps that cause.
+- `display_record` shows "not available" for a null Utility, Leakage or Weighted Leakage Rate (`None`, NA or NaN). It
+  showed a blank for NA, `nan` for NaN, and omitted the metric for `None`.
+- Withheld or missing Rewrite text is `None` in both modes. The combined mode (`Rewrite(use_combined_graph=True)`)
+  gave `pd.NA`.
+- A Rewrite step whose model keeps giving no usable response now stops early. When the share of a step's last
+  `shutdown_error_window` rows without a usable response reaches `shutdown_error_rate` (by default 5 of 10), that step
+  sends no further requests and logs one warning naming the step, the rate, the window and the threshold. Rows that
+  finished are returned; each row not run is listed in `failed_records` with the reason `stopped_early (<step>)`, and
+  the stop does not raise. Each repair round counts on its own, in both modes. An error the stop did not cause still
+  fails the run. Before, DataDesigner's own shutdown stopped the run, which raised `AnonymizerWorkflowError`
+  when no row had finished. A dataset smaller than the window never stops.
+- What to do: check the named step's model; set `RunConfig(disable_early_shutdown=True)` to run every row anyway.
+- The per-row warning for a disposition with the wrong number of entries now gives both counts, as in
+  `entry_count_mismatch: 4 entries, 2 expected`; it said `unparseable_response`.
+
 ### #407: frozen config and one options object
 
 **Config fields cannot be reassigned.** `AnonymizerConfig`, `Detect`, `Rewrite`, `PrivacyGoal`, the replace

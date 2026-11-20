@@ -23,6 +23,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_FOR_REPLACE,
     COL_ENTITIES_FOR_REPLACE_JSON,
     COL_ENTITY_EXAMPLES,
+    COL_EVALUATION_UNAVAILABLE,
     COL_LEAKAGE_MASS,
     COL_LEAKED_PRIVACY_ITEMS,
     COL_NEEDS_HUMAN_REVIEW,
@@ -45,6 +46,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.ndd.model_response import step_names
 from anonymizer.engine.ndd.workflow_utils import run_columns
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
@@ -60,6 +62,7 @@ from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
+from anonymizer.engine.rewrite.response_summary import evaluation_unavailable
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
 )
@@ -227,7 +230,8 @@ def _remap_custom_column(
             model_aliases=model_aliases,
         )
         async def remapped_generator(row: dict[str, Any], generator_params: Any, models: dict) -> dict[str, Any]:
-            generated = await generator(_canonical_row(row, mapping), generator_params, models)
+            with step_names(mapping):  # each round's requests count in that round's window
+                generated = await generator(_canonical_row(row, mapping), generator_params, models)
             return _copy_remapped_outputs(row, generated, outputs, mapping)
 
     elif column.generator_params is not None:
@@ -337,6 +341,7 @@ def _finalization_column(states: list[EvaluationState]) -> CustomColumnConfig:
     )
     required_columns.append(COL_REWRITE_REPLACEMENT_READY)
     side_effect_columns = [
+        COL_EVALUATION_UNAVAILABLE,
         COL_QUALITY_QA_REANSWER,
         COL_PRIVACY_QA_REANSWER,
         COL_QUALITY_QA_COMPARE,
@@ -347,6 +352,7 @@ def _finalization_column(states: list[EvaluationState]) -> CustomColumnConfig:
         COL_NEEDS_REPAIR,
         COL_REPAIR_ITERATIONS,
         COL_NEEDS_HUMAN_REVIEW,
+        COL_REWRITTEN_TEXT_NEXT,
     ]
 
     @custom_column_generator(
@@ -358,6 +364,18 @@ def _finalization_column(states: list[EvaluationState]) -> CustomColumnConfig:
             (candidate for candidate in reversed(states) if row.get(candidate.needs_repair) is not None),
             states[0],
         )
+        # The rounds before the chosen one are dropped with the internal columns: keep which steps had no response.
+        # ``_quality_qa`` is not required: the evaluation columns already wait for it, and a graph may lack it.
+        unavailable = 0
+        for earlier in states[: states.index(state) + 1]:
+            unavailable |= evaluation_unavailable(
+                row,
+                rewritten_text=earlier.rewritten_text,
+                quality_reanswer=earlier.quality_reanswer,
+                quality_compare=earlier.quality_compare,
+                privacy_reanswer=earlier.privacy_reanswer,
+            )
+        row[COL_EVALUATION_UNAVAILABLE] = unavailable
         row[COL_REWRITTEN_TEXT] = row.get(state.rewritten_text)
         row[COL_QUALITY_QA_REANSWER] = normalize_payload(row.get(state.quality_reanswer))
         row[COL_PRIVACY_QA_REANSWER] = normalize_payload(row.get(state.privacy_reanswer))
@@ -368,6 +386,8 @@ def _finalization_column(states: list[EvaluationState]) -> CustomColumnConfig:
         row[COL_ANY_HIGH_LEAKED] = row.get(state.any_high_leaked)
         row[COL_NEEDS_REPAIR] = row.get(state.needs_repair)
         row[COL_REPAIR_ITERATIONS] = state.iteration
+        # As staged keeps ``_rewritten_text__next``: the candidate of the round chosen above, None before any repair.
+        row[COL_REWRITTEN_TEXT_NEXT] = row.get(state.rewritten_text) if state.iteration > 0 else None
         # A placeholder that keeps the column's place and type: ``_flag_review`` assigns the flag after the final checks.
         row[COL_NEEDS_HUMAN_REVIEW] = False
         return row
