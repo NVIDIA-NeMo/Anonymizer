@@ -525,7 +525,11 @@ Rules:
 5. When replacing geographic locations, keep the replacements within
    a coherent region so that travel routes and residences remain plausible.
 
-CRITICAL: Every entity MUST have a different synthetic value. Never return original=synthetic.
+6. Keep replacements valid in their surrounding structure, including dictionary keys.
+   Do not introduce duplicate keys or change value types.
+
+CRITICAL: Every replacement must differ from its original, and distinct original values
+must not collapse to the same replacement.
 
 Before generating replacements, verify:
    - That each new_value is clearly different in meaning from the original and is not a synonym or simple rewording.
