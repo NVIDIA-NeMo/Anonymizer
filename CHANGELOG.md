@@ -5,7 +5,7 @@
 This section lists what changes for users between v0.5.0 and v1.0.0. It will be updated until the release, and
 becomes the v1.0.0 release notes after #319 lands on `main`.
 
-- **Describes:** commit `36ae00f6`, the head of the #319 branch.
+- **Describes:** commit `affd605a`, the head of the #319 branch.
 - **Compared against:** v0.5.0 (`81bcea43`).
 - **Last reconciled with main at `628be95a`.** The next update reads `git log 628be95a..main` and the new commits on
   the #319 branch.
@@ -75,7 +75,7 @@ validation drops it and augmentation does not add it.
 
 **The augmenter asks for schema-constrained output.** On OpenAI-compatible providers, augmenter requests send the
 response JSON schema as `response_format`. If the provider rejects the field, the request is retried once without it.
-A malformed augmenter reply is retried under the run's restart and correction limits instead of dropping the record.
+A malformed augmenter response is retried under the run's restart and correction limits instead of dropping the record.
 - What to do: nothing for most providers. To turn the schema off, set `response_format` in the model's or provider's
   `extra_body`.
 - Changed in: #319 (`21a10a08`, `1302866d`), #422.
@@ -162,12 +162,40 @@ coverage judge reports missed entities. The `run()` result is not changed.
 - What to do: nothing.
 - Changed in: #356.
 
+**Each Replace judge runs in its own workflow.** `evaluate()` on a Replace result ran every judge as a column of one
+DataDesigner workflow, and DataDesigner dropped a record when any of its columns failed, so one judge's unusable
+response emptied every judge's score for that record. Now each active judge runs as its own workflow, one after
+another. A judge that fails for a record leaves only its own score empty, and each record failure DataDesigner returns
+for a judge adds its own entry to `failed_records`. A judge whose whole workflow raises is logged at WARNING and leaves
+its scores empty for every row without adding to `failed_records`. `evaluate()` takes the sum of the judge times
+instead of the longest.
+- What to do: nothing. Expect one `failed_records` entry per judge and row that DataDesigner reports as failed; its
+  `reason` names the judge's column when the cause was recorded. Expect a longer `evaluate()` whenever more than one
+  judge is active (always for Substitute).
+- Changed in: #434.
+
+**Judges read only the columns they need, and a failed judge is logged.** Each evaluation judge sends DataDesigner only
+the columns its prompt reads, then puts its verdict back on the full trace by source position, so the returned trace
+keeps every column with its original values. A result whose index repeats is scored row by row. A stage that reads
+nested cells from a frame loaded from parquet now seeds them as plain JSON (numpy arrays become lists, models their
+fields); the seed used to hold their printed form. A judge failure that leaves its scores empty (the Replace
+judges, the Rewrite final judge and the Rewrite detection validity judge) is logged at WARNING with the exception class
+and the number of rows, never the message. v0.5.0 logged these at DEBUG.
+- What to do: nothing. Alert on the new WARNING lines if you watch for unavailable scores.
+- Changed in: #411, #420.
+
 ### Results
 
 **Nested result columns are plain Python objects.** `final_entities` and `judge_evaluation` are returned as Python
 objects, not Arrow structs. They round-trip through `to_parquet` and `pd.read_parquet`.
 - What to do: read these columns as Python dicts.
 - Changed in: #352.
+
+**`skipped_span_label_counts` is JSON text.** In `trace_dataframe`, in `_replacement_application`,
+`skipped_span_label_counts` is JSON text (for example `"{}"`) instead of a dict, so trace frames can be written to
+Parquet. An empty dict became a struct with no fields, which Parquet cannot store.
+- What to do: parse it with `json.loads`.
+- Changed in: #429.
 
 **Trace frame columns changed.** Internal columns of `trace_dataframe`, whose names start with `_`, were added,
 removed, renamed and reordered. For example, `_validated_entities` and `_seed_tagged_text` are gone, and
@@ -182,11 +210,33 @@ the column and a fixed summary of the cause. Detection and map failures have the
   `anonymizer.interface.results`; its defining module moved.
 - Changed in: #349, #392, #396.
 
-**Results from custom runners have no outcomes.** A `replace_runner` or `rewrite_runner` whose class overrides `run()`
-keeps the older detect-then-run path. Its results, and `evaluate()` results, carry no outcomes, and
-`result.outcome(row)` raises `IndexError`.
-- What to do: use the built-in runners to get outcomes.
+**Custom-runner `run()` and `preview()` results have no outcomes.** A `replace_runner` or `rewrite_runner` whose class
+overrides `run()` keeps the older detect-then-run path. Its `run()` and `preview()` results carry no outcomes, and
+`result.outcome(row)` raises `IndexError`. An `evaluate()` result carries one outcome per row, as the next entry
+says.
+- What to do: use the built-in runners to get outcomes from `run()` and `preview()`.
 - Changed in: #319.
+
+**`evaluate()` results report outcomes.** `result.outcome(row)` on an `evaluate()` result no longer raises
+`IndexError`. It returns the row's outcome from the evaluated `run()` or `preview()` result, with one advisory per judge
+appended. The advisory's `check` and `verifier` name the judge (`coverage`, `rewrite-judge`, `detection-validity`,
+`type-fidelity`, `relational-consistency` or `attribute-fidelity`), and its `status` is `passed`, `failed`,
+`could_not_assess`, `scored` (the rewrite judge, which has no pass threshold, returned scores) or `not_applicable` (the
+rewrite judge skips a row with no detected entities). A judge never changes qualification or release, so
+`qualification` and `protected` still say what the run decided. The evaluate frame does not change.
+- Matching: judge rows and the run's outcomes are matched to records only by a non-null `_anonymizer_record_id` that
+  occurs once in the evaluated result, once among the judge's rows and once among the run's own outcomes. Row order
+  and text are never used. A row without an id, or whose id does not occur exactly once in the evaluated result and
+  among the judge's rows, cannot be placed: it is `not_assessed` and unprotected, and each judge reads
+  `could_not_assess` with cause `unplaced`. A placed row whose id does not occur exactly once among the run's outcomes
+  is `not_assessed` and unprotected, but keeps its judges' actual advisories.
+  Outcomes are looked up by id, so reordering or filtering the result's rows before `evaluate()` keeps each row's own
+  outcome. A result with no outcomes, such as one from a custom runner or one saved before outcomes were kept, gives
+  `not_assessed` and unprotected rows with their judges' advisories.
+- What to do: a custom `replace_runner` or `rewrite_runner` must keep each row's `_anonymizer_record_id` in the
+  trace it returns and in its `evaluate()` output. Every built-in runner does. A row a custom runner gives another
+  record's id is reported as that record.
+- Changed in: #387.
 
 **A detector that changes the text loses per-row outcomes.** When a custom detector returns a row whose text differs
 from its input, the run replaces or rewrites the detector's frame as returned. That call has no per-row outcomes.
@@ -233,6 +283,22 @@ an `Error: ...` line. It ends the command with its traceback, as a wiring fault.
 **Telemetry key for the combined Rewrite path.** Failures from `Rewrite(use_combined_graph=True)` count under
 `rewrite_pipeline`, not `unknown`.
 - Changed in: #373.
+
+### Internal changes
+
+These change no public name and no behaviour for supported input.
+
+- **Unused private code is removed.** The private structured-column subclass in the detection workflow, the adapter
+  branch that converted it, and `_resolve_model_providers` in `anonymizer.interface.anonymizer`, which only forwarded
+  to `parse_model_providers`. Nothing created the subclass after #305 (#433).
+- **Nested cells have one reader.** Six parse functions in `anonymizer.engine.rewrite.parsers` and four hand-written
+  replacement-map parsers read cells through `read_cell` and `EntityReplacementMapSchema.from_raw`. The sensitivity
+  disposition parser's error message uses the wording of the other parsers (#412).
+- **Stages run through one helper.** `run_columns` in `anonymizer.engine.ndd.workflow_utils` derives the seed columns,
+  seeds the frame and runs the columns for the Rewrite, evaluation and Replace stages (#411).
+- **A missing import is restored.** #429 began writing skipped span label counts with `json.dumps` in
+  `anonymizer.engine.replace.strategies` while #412 removed that module's `json` import. Together every local
+  replacement raised `NameError` on this branch. #435 restores the import. v0.5.0 never had the fault.
 
 ### New public names
 
@@ -316,34 +382,18 @@ against the #319 branch.
 trailing field each. Operation outputs named `session`, `identities` or `record` are rejected, and the subject keys
 `by-value` and `substitute-fallback` are reserved.
 
-### #387: evaluate() outcomes
+### #427, #430
 
-**`evaluate()` results report outcomes.** `result.outcome(row)` on an `evaluate()` result lists one reason per judge
-check, and no longer raises `IndexError`. `protected` is always `False`. The evaluate frame does not change.
-
-### #427, #429, #430
-
-**#427: Rewrite keeps a record whose evaluation reply cannot be parsed.** A record whose evaluation reply still
+**#427: Rewrite keeps a record whose evaluation response cannot be parsed.** A record whose evaluation response still
 cannot be parsed after its retries is now kept instead of dropped. When the privacy evaluation has no answer, its
 rewritten text is withheld; any unavailable metrics are null; and the record is flagged for human review with a
 `not_met` outcome. Each evaluation call now retries in a second conversation (at most 8 requests). A privacy answer's
 `reason` that is too long is now shortened and an empty one gets a default, instead of the whole answer being
 rejected.
 
-**#429: `skipped_span_label_counts` is JSON text.** In `trace_dataframe`, in `_replacement_application`,
-`skipped_span_label_counts` is now JSON text (for example `"{}"`) instead of a dict, so trace frames can be written to
-Parquet.
-- What to do: parse it with `json.loads`.
-
 **#430: Span-based bounds.** Internal. No behaviour change for any reachable input.
 
-### #411, #412, #413, #416, #419
-
-**#411: nested cells are seeded as plain JSON.** A frame read back from parquet, with numpy arrays in its nested
-cells, now runs; every row used to be rejected. No public name changes.
-
-**#412: one reader for nested cells.** Internal. The sensitivity disposition parser's error message changes
-wording.
+### #413, #416, #419
 
 **#413: graph port values must be plain.** The built-in dict port kinds accept only plain JSON-like values. A value
 with no plain form, such as `pd.NA` or a timestamp, fails its target as `invalid_output`. This affects
