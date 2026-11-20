@@ -96,7 +96,10 @@ text outside every kept span fails at the `detect` step with the reason `unspann
 value repeated without a span, and a value that crosses two spans (`Paris/Rome` over spans on `Paris` and `Rome`).
 With built-in detection, the Replace modes instead add a span at each such occurrence (a missed repeat), with the
 label of the first detected span of the same value, so `final_entities` can hold spans the detector did not return
-(marked `"source": "repeat"`). The added span replaces the whole matched word, so text around a detected value, such as
+(marked `"source": "repeat"`). An occurrence that partly overlaps a kept span (it crosses a span's edge, as the first
+"New York" does in "New York University is in New York." with spans on "York University" and the second "New York")
+gets no span: the row fails at the `detect` step with `unspanned_value`, as with a custom detector. The added span
+replaces the whole matched word, so text around a detected value, such as
 `#` in `order #W3916020`, is replaced with it. Rewrite passes a missed repeat to the rewriter in its replacement view,
 as before.
 

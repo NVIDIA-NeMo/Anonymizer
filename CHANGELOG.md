@@ -466,7 +466,9 @@ class itself, including its subclasses and `Mock(spec=EntityDetectionWorkflow)`.
   name of the text column a detector receives) are exported from `anonymizer`.
 - A result that cannot be placed against the input raises `InvalidDetectorResultError` before any model call: any
   other return type, a malformed span, extra value or failure, an id that is not an input id, or an id answered or
-  failed twice. Such a result was rerouted before: the rest of the run worked over the detector's frame as returned, without these checks.
+  failed twice. Before, each case went differently: a frame whose rows could not be placed was rerouted, and the run
+  worked over it as returned, without these checks; a return value that is not a frame, such as a dict, raised
+  `AttributeError`; and a span with a null label failed its record at `replace`.
 - A record the result neither answers nor fails fails at `detect` with `dropped_output`.
 - The engine renders `final_entities`, `_entities_by_value`, `tagged_text` and `_latent_entities` from the result. A
   detector-supplied text column, `tagged_text` or `source_positions` is no longer read.
@@ -491,7 +493,8 @@ class itself, including its subclasses and `Mock(spec=EntityDetectionWorkflow)`.
 - Built-in detection in the Replace modes now replaces a missed repeat: where a detected value occurs again without a
   span, a span with the first detected span's label is added (`"source": "repeat"` in `final_entities`), and the
   occurrence is replaced like the others. It was released unreplaced before. The added span covers the whole matched
-  word, so `order #W3916020` becomes `order [REDACTED_ORDER_ID]`. Rewrite is unchanged.
+  word, so `order #W3916020` becomes `order [REDACTED_ORDER_ID]`. A repeat that crosses a kept span's edge gets no
+  span, and its row fails at `detect` with `unspanned_value`; such a row was released before. Rewrite is unchanged.
 - A `replace_runner` whose `run_with_detection` override does not accept the `detector` keyword (or `**kwargs`) now
   raises `InvalidConfigError` before detection, naming the keyword. The facade passes
   `detector="builtin" | "custom"` on every call. With a custom detector such an override raised `TypeError` on an

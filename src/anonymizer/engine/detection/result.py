@@ -84,11 +84,17 @@ def validate_detector_result(source: pd.DataFrame, result: object) -> DetectorRe
             f"detection_workflow.run returned {type(result).__name__}; return a DetectorResult "
             '(see "Custom detection workflows")'
         )
+    if not _sequence(result.rows) or not _sequence(result.failed):
+        raise InvalidDetectorResultError("DetectorResult.rows and .failed must each be a tuple or a list")
     ids = set(_input_ids(source))
     seen: Counter[str] = Counter()
     for row in result.rows:
         if not isinstance(row, DetectorRow):
             raise InvalidDetectorResultError(f"DetectorResult.rows holds a {type(row).__name__}, not a DetectorRow")
+        if not all(_sequence(part) for part in (row.spans, row.extra_values, row.latent)):
+            raise InvalidDetectorResultError(
+                f"record {row.record_id!r}: spans, extra_values and latent must each be a tuple or a list"
+            )
         _check_id(row.record_id, ids, "row")
         seen[row.record_id] += 1
         for span in row.spans:
@@ -154,6 +160,12 @@ def place_detection_frame(source: pd.DataFrame, result: object) -> EntityDetecti
         raise InvalidDetectorResultError(f"EntityDetectionWorkflow.run returned {type(result).__name__}")
     positions = resolve_source_positions(source, result.dataframe, result.source_positions or None)
     return dataclasses.replace(result, source_positions=positions)
+
+
+def _sequence(value: object) -> bool:
+    """Only a tuple or a list is accepted: an iterator would be consumed by validation, and ``None`` or a number is
+    not a collection."""
+    return isinstance(value, (tuple, list))
 
 
 def _well_typed(span: object) -> bool:

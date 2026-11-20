@@ -243,8 +243,8 @@ def _evaluate_on_graph(
 def _require_detector_keyword(runner: object) -> None:
     """Raise ``InvalidConfigError`` before detection when ``runner`` overrides ``run_with_detection`` without the
     ``detector`` keyword (or ``**kwargs``): the facade passes it on every call."""
-    method = getattr(type(runner), "run_with_detection", None)
-    if method is None or method is ReplacementWorkflow.run_with_detection:
+    method = getattr(runner, "run_with_detection", None)  # an instance attribute counts, as the facade calls it
+    if method is None or getattr(method, "__func__", None) is ReplacementWorkflow.run_with_detection:
         return
     if not _accepts_keyword(method, "detector"):
         raise InvalidConfigError(

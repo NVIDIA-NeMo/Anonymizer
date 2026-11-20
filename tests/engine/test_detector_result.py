@@ -416,3 +416,109 @@ def test_a_malformed_span_raises_before_any_model_call() -> None:
                 config=AnonymizerConfig(rewrite=Rewrite()), data=DATA
             )
     assert adapter_calls == []
+
+
+def _builtin_spans(*spans: tuple[str, str, int]) -> Any:
+    """A built-in detector returning ``(value, label, nth occurrence)`` spans for every row."""
+
+    def run(frame: pd.DataFrame, **_: object) -> EntityDetectionResult:
+        out = frame.copy()
+        entities = []
+        for text in out[COL_TEXT]:
+            found: list[dict[str, object]] = []
+            for value, label, nth in spans:
+                at = -1
+                for _occurrence in range(nth + 1):
+                    at = text.index(value, at + 1)
+                start = at
+                found.append(
+                    {"value": value, "label": label, "start_position": start, "end_position": start + len(value)}
+                )
+            entities.append({"entities": found})
+        out[COL_FINAL_ENTITIES] = entities
+        out[COL_ENTITIES_BY_VALUE] = [_build_entities_by_value(e) for e in entities]
+        return EntityDetectionResult(out, [], tuple(range(len(out))))
+
+    return builtin_stub(run)
+
+
+def test_a_built_in_repeat_that_crosses_a_kept_span_fails_the_row() -> None:
+    """The first "New York" crosses the kept span "York University": no span is added there, and Replace fails the
+    row with ``unspanned_value`` rather than release it."""
+    data = TextRecordsInput(records=[TextRecord(id="r", text="New York University is in New York.")])
+    detector = _builtin_spans(("York University", "organization", 0), ("New York", "city", 0))
+    detector.run.side_effect = _shift_new_york(detector.run.side_effect)
+    result = Anonymizer(detection_workflow=detector).run(config=AnonymizerConfig(replace=Redact()), data=data)
+    assert result.failed_records == [FailedRecord("r", "detect", "unspanned_value")]
+    assert result.dataframe.empty
+
+
+def _shift_new_york(run: Any) -> Any:
+    """Move the "New York" span to the second occurrence (the first is inside "New York University")."""
+
+    def shifted(frame: pd.DataFrame, **kwargs: object) -> EntityDetectionResult:
+        result = run(frame, **kwargs)
+        for cell in result.dataframe[COL_FINAL_ENTITIES]:
+            for entity in cell["entities"]:
+                if entity["value"] == "New York":
+                    entity["start_position"], entity["end_position"] = 26, 34
+        result.dataframe[COL_ENTITIES_BY_VALUE] = [
+            _build_entities_by_value(c) for c in result.dataframe[COL_FINAL_ENTITIES]
+        ]
+        return result
+
+    return shifted
+
+
+def test_a_built_in_repeat_takes_the_first_returned_label_when_labels_conflict() -> None:
+    data = TextRecordsInput(records=[TextRecord(id="r", text="Paris met Paris in Paris.")])
+    detector = _builtin_spans(("Paris", "first_name", 0), ("Paris", "city", 2))
+    result = Anonymizer(detection_workflow=detector).run(config=AnonymizerConfig(replace=Redact()), data=data)
+    assert result.failed_records == []
+    added = [e for e in result.dataframe["final_entities"].iloc[0]["entities"] if e["source"] == "repeat"]
+    assert [(e["start_position"], e["label"]) for e in added] == [(10, "first_name")]
+
+
+def test_a_built_in_case_variant_repeat_gets_the_same_substitute() -> None:
+    """The repeat span keeps the text's case ("alice"); the map's fold gives both variants one substitute."""
+    pairs: list[object] = []
+
+    def run_workflow(self: NddAdapter, df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
+        out = df.copy().reset_index(drop=True)
+        pairs.extend(out[COL_ENTITIES_BY_VALUE])
+        out[COL_REPLACEMENT_MAP] = [
+            {
+                "replacements": [
+                    {"original": "Alice", "label": "first_name", "synthetic": "Carol"},
+                    {"original": "alice", "label": "first_name", "synthetic": "dana"},
+                ]
+            }
+        ] * len(out)
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
+
+    data = TextRecordsInput(records=[TextRecord(id="r", text="Alice met alice.")])
+    with patch.object(NddAdapter, "run_workflow", run_workflow):
+        result = Anonymizer(detection_workflow=_builtin_spans(("Alice", "first_name", 0))).run(
+            config=AnonymizerConfig(replace=Substitute()), data=data
+        )
+    assert result.failed_records == []
+    assert result.dataframe["text_replaced"].iloc[0] == "Carol met carol."
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        DetectorResult(rows=cast(Any, None)),
+        DetectorResult(failed=cast(Any, 3)),
+        DetectorResult(rows=cast(Any, (DetectorRow("a") for _ in range(1)))),
+        DetectorResult(rows=(DetectorRow("a", spans=cast(Any, None)),)),
+        DetectorResult(rows=(DetectorRow("a", extra_values=cast(Any, 1)),)),
+        DetectorResult(rows=(DetectorRow("a", latent=cast(Any, iter(()))),)),
+    ],
+    ids=["rows-none", "failed-int", "rows-generator", "spans-none", "extra-int", "latent-iterator"],
+)
+def test_a_result_whose_collections_are_not_sequences_is_a_batch_error(result: DetectorResult) -> None:
+    """Only tuples and lists are accepted: ``None`` or a number raised a plain ``TypeError``, and a generator would
+    be consumed by validation and render nothing."""
+    with pytest.raises(InvalidDetectorResultError, match="tuple or a list"):
+        validate_detector_result(_source(), result)

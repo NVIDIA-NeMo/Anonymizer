@@ -1183,7 +1183,7 @@ def test_an_old_signature_run_with_detection_override_fails_early_naming_the_key
     custom: bool, tmp_path: Path
 ) -> None:
     """With a custom detector the facade passed ``unspanned_check=True`` and the override raised ``TypeError``
-    (#319 review 4644413727); the built-in leg ran. Both now fail before detection with an error that names
+    (a review on the line); the built-in leg ran. Both now fail before detection with an error that names
     ``detector`` and how to update the override."""
     text = "Bob met Ann."
     spans = [_at(text, "Bob", "first_name"), _at(text, "Ann", "first_name")]
@@ -1191,6 +1191,38 @@ def test_an_old_signature_run_with_detection_override_fails_early_naming_the_key
         _one_row_run(
             tmp_path, text, spans, None, "redact", custom=custom, replace_runner=_OldRunner(llm_workflow=Mock())
         )
+
+
+def test_an_instance_level_override_without_the_keyword_fails_early(tmp_path: Path) -> None:
+    """The facade calls ``runner.run_with_detection``, so a function set on the instance is checked too."""
+    runner = ReplacementWorkflow(llm_workflow=Mock())
+    runner.run_with_detection = _OldRunner.run_with_detection.__get__(runner)  # ty: ignore[invalid-assignment]
+    text = "Bob met Ann."
+    spans = [_at(text, "Bob", "first_name"), _at(text, "Ann", "first_name")]
+    with pytest.raises(InvalidConfigError, match="does not accept the detector"):
+        _one_row_run(tmp_path, text, spans, None, "redact", replace_runner=runner)
+
+
+def test_a_positional_only_detector_parameter_fails_early(tmp_path: Path) -> None:
+    class PositionalRunner(ReplacementWorkflow):
+        def run_with_detection(  # ty: ignore[invalid-method-override]
+            self,
+            dataframe: pd.DataFrame,
+            detector: str = "builtin",
+            /,
+            *,
+            detect: Any,
+            replace_method: Any,
+            model_configs: Any,
+            selected_models: Any,
+            preview_num_records: int | None = None,
+        ) -> Any:
+            raise AssertionError("not reached")
+
+    text = "Bob met Ann."
+    spans = [_at(text, "Bob", "first_name"), _at(text, "Ann", "first_name")]
+    with pytest.raises(InvalidConfigError, match="does not accept the detector"):
+        _one_row_run(tmp_path, text, spans, None, "redact", replace_runner=PositionalRunner(llm_workflow=Mock()))
 
 
 def test_an_override_that_takes_the_detector_keyword_receives_the_detector_kind(tmp_path: Path) -> None:
