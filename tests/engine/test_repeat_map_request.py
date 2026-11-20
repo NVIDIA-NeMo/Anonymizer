@@ -72,3 +72,32 @@ def test_a_repeat_span_that_absorbs_a_kept_span_keeps_its_value_in_the_map_reque
     released = result.dataframe["text_replaced"].iloc[0]
     assert SHORT not in released
     assert released.count("credit card ending in 4492") == 2
+
+
+def _detect_nested(self: object, frame: pd.DataFrame, **_: object) -> EntityDetectionResult:
+    """The phrase spanned only at its second occurrence, with "1065" nested inside it (the detector's own collapse
+    drops it, so it is never kept); the first phrase is a missed repeat."""
+    second = TEXT.rindex(WIDE)
+    short = TEXT.rindex(SHORT)
+    spans = [
+        {"value": WIDE, "label": "card_last_four", "start_position": second, "end_position": second + len(WIDE)},
+        {"value": SHORT, "label": "card_last_four", "start_position": short, "end_position": short + len(SHORT)},
+    ]
+    out = frame.copy()
+    out[COL_FINAL_ENTITIES] = [{"entities": spans}] * len(out)
+    out[COL_ENTITIES_BY_VALUE] = [_build_entities_by_value({"entities": spans})] * len(out)
+    return EntityDetectionResult(out, [], tuple(range(len(out))))
+
+
+def test_a_nested_value_seen_only_inside_a_missed_repeat_stays_in_the_map_request() -> None:
+    """Before the repeat span, "1065" occurred outside every kept span (inside the first phrase), so the base asked for
+    it; the repeat span must not take it out of the request."""
+    data = TextRecordsInput(records=[TextRecord(id="r", text=TEXT)])
+    with (
+        patch.object(NddAdapter, "run_workflow", _map_model),
+        patch.object(EntityDetectionWorkflow, "run", _detect_nested),
+    ):
+        result = Anonymizer().run(config=AnonymizerConfig(replace=Substitute()), data=data)
+    assert result.failed_records == []
+    released = result.dataframe["text_replaced"].iloc[0]
+    assert SHORT not in released
