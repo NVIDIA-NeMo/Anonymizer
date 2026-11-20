@@ -28,6 +28,7 @@ from data_designer.interface.errors import (
 from anonymizer.engine.constants import RECORD_ID_COLUMN
 from anonymizer.engine.ndd import adapter as ndd_adapter
 from anonymizer.engine.ndd.adapter import NddAdapter
+from anonymizer.engine.ndd.model_response import _RUN_STOP
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
 _FORBIDDEN_BACKEND_STRINGS = ("Data Designer", "DataDesigner", "data_designer", "DD")
@@ -405,3 +406,48 @@ def test_workflow_failure_warning_shortens_backend_exception_class(
     assert warning_msg.endswith(f": {label}.")
     _assert_no_backend_reference(warning_msg)
     assert "SENTINEL-RECORD-TEXT" not in caplog.text
+
+
+def test_run_workflow_on_no_rows_returns_the_declared_columns_without_running() -> None:
+    """A stage after one that stopped early before any row finished runs on nothing."""
+    mock_dd = Mock(spec=DataDesigner)
+    adapter = NddAdapter(data_designer=mock_dd)
+
+    result = adapter.run_workflow(
+        pd.DataFrame({"text": pd.Series([], dtype=object)}),
+        model_configs=[_make_model_config()],
+        columns=_make_columns(),
+        workflow_name="rewrite-evaluate-0",
+    )
+
+    mock_dd.create.assert_not_called()
+    assert result.dataframe.empty
+    assert {"text", RECORD_ID_COLUMN, "output"} <= set(result.dataframe.columns)
+    assert result.failed_records == []
+
+
+def test_run_workflow_lists_rows_not_run_after_a_step_stopped_early() -> None:
+    """DataDesigner's own shutdown raises when no row finished; after a stop that is not an error."""
+    mock_dd = Mock(spec=DataDesigner)
+
+    def stop_then_shut_down(*args: object, **kwargs: object) -> None:
+        stop = _RUN_STOP.get()
+        assert stop is not None
+        for _ in range(stop.window):
+            stop.record("_domain", True)
+        raise DataDesignerEarlyShutdownError("early shutdown")
+
+    mock_dd.create.side_effect = stop_then_shut_down
+    adapter = NddAdapter(data_designer=mock_dd)
+
+    result = adapter.run_workflow(
+        pd.DataFrame({"text": ["row-1", "row-2"]}),
+        model_configs=[_make_model_config()],
+        columns=_make_columns(),
+        workflow_name="rewrite-pipeline",
+    )
+
+    assert result.dataframe.empty
+    assert "output" in result.dataframe.columns
+    assert [(r.step, r.reason) for r in result.failed_records] == [("rewrite-pipeline", "stopped_early (_domain)")] * 2
+    assert _RUN_STOP.get() is None  # the stop belongs to that run only

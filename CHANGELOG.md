@@ -290,6 +290,15 @@ instead of dropping it, and the run ends with one warning counting such records 
   showed a blank for NA, `nan` for NaN, and omitted the metric for `None`.
 - Withheld or missing Rewrite text is `None` in both modes. The combined mode (`Rewrite(use_combined_graph=True)`)
   gave `pd.NA`.
+- A Rewrite step whose model keeps giving no usable response now stops early. When the share of a step's last
+  `shutdown_error_window` rows without a usable response reaches `shutdown_error_rate` (by default 5 of 10), that step
+  sends no further requests and logs one warning naming the step, the rate, the window and the threshold. Rows that
+  finished are returned; each row not run is listed in `failed_records` with the reason `stopped_early (<step>)`, and
+  the run does not raise. Before, DataDesigner's own shutdown stopped the run, which raised `AnonymizerWorkflowError`
+  when no row had finished. A dataset smaller than the window never stops.
+- What to do: check the named step's model; set `RunConfig(disable_early_shutdown=True)` to run every row anyway.
+- The per-row warning for a disposition with the wrong number of entries now gives both counts, as in
+  `entry_count_mismatch: 4 entries, 2 expected`; it said `unparseable_response`.
 
 ### #407: frozen config and one options object
 

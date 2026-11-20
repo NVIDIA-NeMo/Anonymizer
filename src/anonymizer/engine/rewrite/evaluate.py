@@ -442,7 +442,7 @@ def _make_quality_reanswer_column(evaluator_alias: str) -> Any:
         recipe = PydanticResponseRecipe(data_type=QualityAnswersSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_quality_reanswer_prompt(row))
         parser = _make_quality_answer_parser(recipe, expected_ids)
-        response = await ask(models[evaluator_alias], prompt, parser, EVALUATE_BUDGET)
+        response = await ask(models[evaluator_alias], prompt, parser, EVALUATE_BUDGET, step=COL_QUALITY_QA_REANSWER)
         row[COL_QUALITY_QA_REANSWER] = _stored(response, COL_QUALITY_QA_REANSWER)
         return row
 
@@ -464,7 +464,7 @@ def _make_privacy_reanswer_column(evaluator_alias: str) -> Any:
         recipe = PydanticResponseRecipe(data_type=PrivacyAnswersSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_privacy_reanswer_prompt(row))
         parser = _make_privacy_answer_parser(recipe, expected_ids)
-        response = await ask(models[evaluator_alias], prompt, parser, EVALUATE_BUDGET)
+        response = await ask(models[evaluator_alias], prompt, parser, EVALUATE_BUDGET, step=COL_PRIVACY_QA_REANSWER)
         row[COL_PRIVACY_QA_REANSWER] = _stored(response, COL_PRIVACY_QA_REANSWER)
         return row
 
@@ -486,7 +486,7 @@ def _make_quality_compare_column(evaluator_alias: str) -> Any:
         recipe = PydanticResponseRecipe(data_type=QACompareResultsSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_quality_compare_prompt(row))
         parser = _make_qa_compare_parser(recipe, expected_ids)
-        response = await ask(models[evaluator_alias], prompt, parser, EVALUATE_BUDGET)
+        response = await ask(models[evaluator_alias], prompt, parser, EVALUATE_BUDGET, step=COL_QUALITY_QA_COMPARE)
         row[COL_QUALITY_QA_COMPARE] = _stored(response, COL_QUALITY_QA_COMPARE)
         return row
 

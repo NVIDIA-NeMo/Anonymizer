@@ -48,7 +48,7 @@ def _parser(response: str) -> tuple[str, bool]:
 def test_ask_states(responses: tuple[str, ...], expected: ModelResponse[str]) -> None:
     facade = _Facade(*responses)
 
-    response = asyncio.run(ask(facade, "prompt", _parser, RetryBudget(corrections=3, restarts=1)))
+    response = asyncio.run(ask(facade, "prompt", _parser, RetryBudget(corrections=3, restarts=1), step="answer"))
 
     assert response == expected
     assert facade.kwargs == {"max_correction_steps": 3, "max_conversation_restarts": 1}
@@ -60,7 +60,7 @@ def test_ask_lets_other_model_errors_through() -> None:
             raise ModelTimeoutError("Timeout")
 
     with pytest.raises(ModelTimeoutError):
-        asyncio.run(ask(_Down(), "prompt", _parser, RetryBudget(corrections=0, restarts=0)))
+        asyncio.run(ask(_Down(), "prompt", _parser, RetryBudget(corrections=0, restarts=0), step="answer"))
 
 
 def test_budget_bounds_requests() -> None:

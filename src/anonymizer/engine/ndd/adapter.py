@@ -36,6 +36,7 @@ from anonymizer.engine.constants import COL_REGEX_ENTITIES, RECORD_ID_COLUMN
 from anonymizer.engine.graph_core.observe import report_requests
 from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame, designer_hook
 from anonymizer.engine.ndd.failed_record import FailedRecord as FailedRecord
+from anonymizer.engine.ndd.model_response import STOPPED_EARLY, RunStop, run_stop
 from anonymizer.engine.ndd.storage import prepare_json_storage_column, prepare_json_storage_seed
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
@@ -443,6 +444,8 @@ class NddAdapter:
             `WorkflowRunResult` with the output DataFrame and any `FailedRecord` entries.
         """
         workflow_input_df = self._attach_record_ids(df=df)
+        if workflow_input_df.empty:  # e.g. an earlier stage stopped early before any row finished
+            return WorkflowRunResult(_no_rows(workflow_input_df, columns), [], (), 0)
         source_frame = WorkflowSourceFrame.capture(workflow_input_df)
         logger.debug("NDD workflow starting with %d records", len(workflow_input_df))
         col_names = [c.name for c in columns]
@@ -474,6 +477,8 @@ class NddAdapter:
         with tempfile.TemporaryDirectory(prefix=f"anonymizer_{workflow_name}_") as tmp_dir:
             seed_path = str(Path(tmp_dir) / "seed.parquet")
             task_traces: list[_TaskTrace] = []
+            stop = RunStop.from_run_config(getattr(self._data_designer, "run_config", None))
+            output_df, source_positions = _no_rows(workflow_input_df, columns), ()  # when no row finished before a stop
             try:
                 seed_df = prepare_json_storage_seed(source_frame.seed())
                 seed_source = LocalFileSeedSource.from_dataframe(seed_df, seed_path)
@@ -488,6 +493,7 @@ class NddAdapter:
                     usage_probe,
                     _temporary_dd_task_trace(self._data_designer, collector=collector),
                     source_frame.bind_generators(self._data_designer),
+                    run_stop(stop),
                 ):
                     if preview_num_records is None:
                         run_results = self._data_designer.create(
@@ -562,6 +568,7 @@ class NddAdapter:
             surviving_positions=set(source_positions),
             task_traces=task_traces,
             buffer_size=record_count if preview_num_records is not None else _run_buffer_size(self._data_designer),
+            stopped=tuple(stop.stopped),
         )
         _success_model_usage = usage_probe.model_usage()
         with self._run_lock:
@@ -679,6 +686,12 @@ class NddAdapter:
         return uuid.uuid5(uuid.NAMESPACE_URL, serialized).hex
 
 
+def _no_rows(frame: pd.DataFrame, columns: list[ColumnConfigT]) -> pd.DataFrame:
+    """No rows, with the columns a run would have added, so a later stage still finds the columns it reads."""
+    declared = [name for c in columns for name in (c.name, *getattr(c, "side_effect_columns", []))]
+    return frame.iloc[0:0].reindex(columns=list(dict.fromkeys([*frame.columns, *declared])))
+
+
 def _missing_records(
     *,
     workflow_name: str,
@@ -686,14 +699,21 @@ def _missing_records(
     surviving_positions: set[int],
     task_traces: list[_TaskTrace],
     buffer_size: int | None,
+    stopped: tuple[str, ...] = (),
 ) -> list[FailedRecord]:
-    """Fail each input row absent from the output, with the cause its own task traces recorded."""
+    """Fail each input row absent from the output, with the cause its own task traces recorded.
+
+    After a step stopped early (``stopped``), a row with no other recorded cause was not run: it is listed as
+    ``stopped_early (<step>)``, whether DataDesigner cancelled it or the step refused its request.
+    """
     reasons = _failure_reasons_by_position(
         record_count=len(record_ids), task_traces=task_traces, buffer_size=buffer_size or len(record_ids)
     )
+    if stopped:
+        reasons = {position: reason for position, reason in reasons.items() if reason != STOPPED_EARLY}
     missing = [position for position in range(len(record_ids)) if position not in surviving_positions]
     untraced = [position for position in missing if position not in reasons]
-    if untraced and reasons:
+    if untraced and reasons and not stopped:
         logger.warning(
             "%d record(s) in '%s' failed with no recorded error; the run's most common failure was: %s",
             len(untraced),
@@ -701,6 +721,8 @@ def _missing_records(
             _most_common_cause(list(reasons.values())),
         )
     untraced_reason = _UNTRACED_REASON if reasons else _MISSING_RECORD_REASON
+    if stopped:
+        untraced_reason = f"{STOPPED_EARLY} ({', '.join(stopped)})"
     failed = [
         FailedRecord(record_id=record_ids[position], step=workflow_name, reason=reasons.get(position, untraced_reason))
         for position in missing
@@ -774,6 +796,8 @@ def _failure_reason(trace: _TaskTrace) -> str:
             "No partial regex result was returned."
         )
     error = str(_trace_attr(trace, "error") or "")
+    if f"{STOPPED_EARLY}: " in error:  # a request the run's early stop refused; the caller names the step
+        return STOPPED_EARLY
     cause_match = _CAUSE_LINE.search(error)
     if cause_match is None:
         known = _KNOWN_FAILURE.search(error)
