@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import ClassVar, Mapping, TypeVar, cast
+from collections.abc import Mapping
+from typing import ClassVar, TypeVar, cast
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
@@ -19,17 +20,21 @@ from anonymizer.engine.constants import (
     COL_ENTITY_COVERAGE_JUDGE,
     COL_ENTITY_COVERAGE_N_CANDIDATES,
     COL_MISSED_ENTITIES,
-    COL_REPLACEMENT_APPLICATION,
     COL_TEXT,
     DEFAULT_ENTITY_LABELS,
+    RECORD_ID_COLUMN,
     _jinja,
 )
 from anonymizer.engine.detection.postprocess import normalize_label, normalize_labels
 from anonymizer.engine.evaluation.judge_base import JudgeResult, _BaseJudgeWorkflow
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, exception_class_label
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
-from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder
+from anonymizer.engine.row_partitioning import (
+    ROW_ORDER_COL,
+    merge_and_reorder,
+    restore_diagnostic_columns,
+)
 from anonymizer.engine.schemas import EntitiesByValueSchema
 
 logger = logging.getLogger("anonymizer.evaluation.entity_coverage_judge")
@@ -127,6 +132,7 @@ def _data_summary_block(data_summary: str | None) -> str:
 def _coverage_prompt(
     *,
     entity_labels: list[str] | None,
+    effective_entity_labels: list[str] | None = None,
     excluded_entity_labels: list[str] | None = None,
     data_summary: str | None = None,
 ) -> str:
@@ -134,6 +140,8 @@ def _coverage_prompt(
     data_context_section = f"\n\n{_data_summary_block(data_summary)}" if data_summary and data_summary.strip() else ""
 
     active_labels = entity_labels if entity_labels is not None else DEFAULT_ENTITY_LABELS
+    if entity_labels is None and effective_entity_labels is not None:
+        active_labels = effective_entity_labels
     labels_str = ", ".join(active_labels)
     if entity_labels is None:
         taxonomy_guidance = (
@@ -465,6 +473,8 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
     all labels). ``excluded_entity_labels`` removes specific labels from scope
     regardless of ``entity_labels``. Both are applied to the LLM prompt and the
     postprocess filter so excluded labels are never penalised in the coverage score.
+    ``effective_entity_labels`` supplies taxonomy guidance only; it never narrows
+    permissive evaluation when ``entity_labels`` is ``None``.
 
     Output columns:
       ``COL_ENTITY_COVERAGE`` (float|None) — covered / total unique candidate values
@@ -486,11 +496,13 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
         adapter: NddAdapter,
         *,
         entity_labels: list[str] | None = None,
+        effective_entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         data_summary: str | None = None,
     ) -> None:
         super().__init__(adapter)
         self._entity_labels = entity_labels
+        self._effective_entity_labels = effective_entity_labels
         self._excluded_entity_labels = excluded_entity_labels
         self._data_summary = data_summary
 
@@ -531,6 +543,7 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             name=self.RAW_COL,
             prompt=_coverage_prompt(
                 entity_labels=effective_labels,
+                effective_entity_labels=self._effective_entity_labels,
                 excluded_entity_labels=self._excluded_entity_labels,
                 data_summary=self._data_summary,
             ),
@@ -594,32 +607,29 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
             had_record_ids = RECORD_ID_COLUMN in dataframe.columns
             adapter = cast(NddAdapter, self._adapter)
             prepared = adapter._attach_record_ids(dataframe)
-            # Keep replacement application telemetry in the final trace, but do
-            # not serialize it into the judge's temporary Parquet seed. Its
-            # all-empty nested skipped-label mapping is not representable as a
-            # Parquet struct, and entity coverage does not consume this column.
-            workflow_input = prepared.drop(columns=[COL_REPLACEMENT_APPLICATION], errors="ignore")
             result = self.evaluate(
-                workflow_input,
+                prepared,
                 model_configs=model_configs,
                 selected_models=selected_models,
                 preview_num_records=preview_num_records,
             )
-            if RECORD_ID_COLUMN not in result.dataframe.columns:
-                raise ValueError("Entity coverage output is missing record IDs required for row alignment.")
-
             score_cols = [
                 col
                 for col in (self.RAW_COL, self.VALID_COL, self.INVALID_COL, self.N_CANDIDATES_COL)
                 if col in result.dataframe.columns
             ]
-            out = prepared.drop(columns=score_cols, errors="ignore").merge(
-                result.dataframe[[RECORD_ID_COLUMN, *score_cols]],
-                on=RECORD_ID_COLUMN,
-                how="left",
-                sort=False,
-                validate="one_to_one",
-            )
+            if not prepared[RECORD_ID_COLUMN].is_unique or (
+                RECORD_ID_COLUMN in result.dataframe.columns and not result.dataframe[RECORD_ID_COLUMN].is_unique
+            ):
+                # 0.4.0 joined scores one-to-one on record IDs; repeated rows (e.g. a caller detector's
+                # duplicates) fail that join, and every row takes the unavailable defaults below.
+                raise ValueError("Merge keys are not unique; entity coverage cannot be joined one-to-one")
+            out = restore_diagnostic_columns(
+                prepared,
+                result.dataframe,
+                dict.fromkeys(score_cols),
+                source_positions=result.source_positions,
+            ).reset_index(drop=True)
 
             if self.VALID_COL not in out.columns:
                 out[self.VALID_COL] = None
@@ -641,8 +651,11 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
                 out = out.drop(columns=[RECORD_ID_COLUMN])
             return out, result.failed_records
         except Exception as exc:
-            logger.warning("Entity coverage workflow failed; scores may be unavailable. Reason: %s", exc)
-            logger.debug("Entity coverage workflow failed.", exc_info=True)
+            logger.warning(
+                "Entity coverage workflow failed (%s); scores may be unavailable.",
+                exception_class_label(exc),
+            )
+            logger.debug("Entity coverage workflow failed.")
             out = dataframe.copy()
             out[self.VALID_COL] = None
             out[self.INVALID_COL] = [[] for _ in range(len(out))]
@@ -661,14 +674,13 @@ class EntityCoverageWorkflow(_BaseJudgeWorkflow):
         working_df = self.prepare(dataframe)
         working_df[ROW_ORDER_COL] = range(len(working_df))
         effective_preview = min(preview_num_records, len(working_df)) if preview_num_records is not None else None
-        run_result = self._adapter.run_workflow(
+        run_result, judged_df = self._run_seeded(
             working_df,
             model_configs=model_configs,
-            columns=[self.column_config(selected_models)],
-            workflow_name=self.WORKFLOW_NAME,
+            selected_models=selected_models,
             preview_num_records=effective_preview,
         )
-
-        judged_df = self.postprocess(run_result.dataframe)
+        positions = tuple(sorted(judged_df[ROW_ORDER_COL]))
+        judged_df = self.postprocess(judged_df)
         combined = merge_and_reorder(judged_df)
-        return JudgeResult(dataframe=combined, failed_records=run_result.failed_records)
+        return JudgeResult(dataframe=combined, failed_records=run_result.failed_records, source_positions=positions)

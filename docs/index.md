@@ -57,7 +57,7 @@ By default, Anonymizer runs GLiNER2 detection locally and uses OpenRouter for LL
 
 !!! info "Record length"
 
-    Records up to 2,000 tokens each work with the default model configs. Longer text will require adjustment of model providers and model configs.
+    Records up to 2,000 tokens each work with the bundled model configs. Longer text will require adjustment of model providers and model configs.
 
 ## Anonymize
 

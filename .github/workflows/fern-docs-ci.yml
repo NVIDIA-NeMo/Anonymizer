@@ -1,0 +1,59 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Fern Docs CI
+
+on:
+  # Run only when Fern content or its tooling changes.
+  pull_request:
+    paths:
+      - "docs/**"
+      - ".github/workflows/fern-docs-ci.yml"
+      - ".github/actions/setup-python-env/**"
+      - ".mise.toml"
+      - "mise.lock"
+      - ".mise/tasks/fern.toml"
+      - ".mise/tasks/docs/fern/**"
+      - "pyproject.toml"
+      - "uv.lock"
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/fern-docs-ci.yml"
+      - ".github/actions/setup-python-env/**"
+      - ".mise.toml"
+      - "mise.lock"
+      - ".mise/tasks/fern.toml"
+      - ".mise/tasks/docs/fern/**"
+      - "pyproject.toml"
+      - "uv.lock"
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fern-check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fern-check:
+    name: Fern Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Setup Python environment and pinned tools
+        uses: ./.github/actions/setup-python-env
+        with:
+          checkout: "false"
+          dependency-profile: docs
+      - name: Validate configuration and MDX
+        run: mise run docs:fern:check

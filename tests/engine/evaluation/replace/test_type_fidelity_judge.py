@@ -268,6 +268,8 @@ def test_evaluate_invokes_adapter_with_correct_alias_and_schema(
             class _Result:
                 dataframe = out
                 failed_records: list = []
+                source_positions = tuple(range(len(dataframe)))
+                observed_requests = None
 
             return _Result()
 
@@ -313,6 +315,8 @@ def test_evaluate_preserves_row_order_when_mixing_empty_and_populated_maps(
             class _Result:
                 dataframe = out
                 failed_records: list = []
+                source_positions = tuple(range(len(dataframe)))
+                observed_requests = None
 
             return _Result()
 
@@ -337,6 +341,8 @@ def test_evaluate_marks_unavailable_for_malformed_payload(
             class _Result:
                 dataframe = out
                 failed_records: list = []
+                source_positions = tuple(range(len(dataframe)))
+                observed_requests = None
 
             return _Result()
 

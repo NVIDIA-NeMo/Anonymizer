@@ -3,7 +3,7 @@
 
 # Replace
 
-Replace mode replaces each [detected entity](detection.md) with an alternative token. Anonymizer provides four strategies. 
+Replace mode replaces each [detected entity](detection.md) with an alternative token. Anonymizer provides four strategies.
 
 ---
 
@@ -22,6 +22,55 @@ Replace mode replaces each [detected entity](detection.md) with an alternative t
 
 Replaces entities with LLM-generated synthetic values that are contextually plausible. This is the only replacement strategy that requires an LLM call.
 
+Synthetic values must contain at least one non-whitespace character. Schema
+validation rejects empty strings and values made entirely of spaces, tabs,
+newlines, or Unicode whitespace. Valid one-character substitutes, such as an
+initial or a single-digit age, remain allowed. Valid values are preserved as
+generated, including any surrounding whitespace. This shared schema rule also
+applies to the replacement maps generated for rewrite mode.
+
+After schema validation and filtering, Anonymizer checks that every unique
+requested `(entity value, label)` pair has a mapping. If mappings are missing,
+it retries only the missing pairs once, retaining the accepted substitutions.
+A record whose map is complete is returned; a record still missing mappings
+after the retry is excluded from successful output and reported in
+`failed_records`. Other complete records continue normally. Repeated occurrences
+of the same pair need only one mapping, and records without entities need no
+replacement-generator call.
+
+Retry proposals then follow the same `consistency` rules as the first
+attempt's (see the parameter table below). A substitute that matches a detected
+original, ignoring case and whitespace, becomes a `[SUBSTITUTE_<LABEL>_<n>]`
+placeholder. With the default `"record"`, different entities of a record can
+still share an ordinary model-generated substitute; with `"run"`, they never
+do, and placeholders are numbered across the run.
+
+Before discarding a mapping, Substitute can reconcile a copied original that
+differs only in no-break spaces (`U+00A0`), thin spaces (`U+2009`), narrow no-break
+spaces (`U+202F`), or ASCII spaces. The label must match exactly and the comparison
+must identify exactly one pair in the original requested inventory. Exact
+mappings take precedence. The mapping's original is restored from that inventory;
+the source text, span offsets, and synthetic value stay unchanged. This comparison
+does not strip or collapse whitespace or change other characters. Ambiguous or
+unmatched entries remain missing and follow the retry/failure flow above.
+
+This completeness retry applies to schema-valid responses. DataDesigner already
+retries schema-invalid responses, validating the record's entire mapping response
+on each attempt. Its default is up to five conversation restarts after the initial
+attempt, controlled by `max_conversation_restarts` in the `RunConfig` passed as
+`Anonymizer(data_designer_run_config=...)`. These schema retries also apply to the
+missing-pair generation call. The one completeness retry therefore does not mean
+a maximum of two LLM requests. Valid entries from a schema-rejected response are
+not retained for a targeted per-entry retry.
+
+If the completeness retry fails validation after DataDesigner's recovery attempts,
+or its workflow fails, the affected records are reported as failed while complete
+records are retained. Initial generation retains the existing failure handling:
+dropped records appear in `failed_records`, but a failure of the entire initial
+workflow can raise `AnonymizerWorkflowError`. Completeness checks exact pairs;
+it does not guarantee the semantic quality of a generated substitute or validate
+span offsets.
+
 ```python
 from anonymizer import AnonymizerConfig, Substitute
 
@@ -37,6 +86,9 @@ AnonymizerConfig(replace=Substitute(
 | Field | Default | Description |
 |-------|---------|-------------|
 | `instructions` | `None` | Additional instructions for the LLM replacement generator. |
+| `consistency` | `"record"` | `"record"` gives each value (with its case and whitespace variants) one substitute within its record; two different values of a record can get the same substitute. `"run"` gives each value one substitute across the whole run, and two different values never share one. A substitute equal to a real value of the record is replaced by `[SUBSTITUTE_<LABEL>_<n>]`; in `"run"`, so is a substitute another value already uses. A mention can still get a different substitute where the shared one would clash with another value, or another value's substitute, in the same record; in `"record"` this happens only to case or whitespace variants. |
+
+Values match on label plus text, ignoring case and whitespace differences. The default `"record"` keeps each record's substitutes independent of other records. `"run"` makes records linkable across the output and preserves how often each value occurs. In `"run"` mode two different values never share a substitute. Use it only for datasets where joins across related documents are needed and unlinkability is not. Otherwise, use [Hash](#hash) for joins.
 
 !!! note "Model role"
 
@@ -69,8 +121,10 @@ AnonymizerConfig(replace=Redact(format_template="[{label}]"))
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `format_template` | `[REDACTED_{label}]` | Template with optional `{label}` placeholder. |
+| `format_template` | `[REDACTED_{label}]` | Nonempty replacement template with optional `{label}` placeholder. |
 | `normalize_label` | `True` | Uppercase and clean the label before substitution. |
+
+Empty templates and statically empty renders, such as `{label:.0}`, raise a configuration error. If a label-dependent template renders an empty string during replacement, Redact raises `ValueError` instead of silently keeping the entity. Whitespace replacements remain valid.
 
 ---
 

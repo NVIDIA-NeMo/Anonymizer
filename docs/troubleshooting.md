@@ -7,7 +7,7 @@ Symptom-first guide to common problems and how to fix them. Each entry says how 
 
 For a controlled campaign that establishes quality thresholds before testing concurrency, see [Tune quality before throughput](tuning.md).
 
-When something looks wrong, **first confirm the run completed cleanly** (no `failed_records` — these are rows that didn't make it through the pipeline at all, usually a rate-limit / infra issue). Once you know the pipeline ran, **run `preview` and inspect rows with quality issues** (`needs_human_review=True`) — the trace columns it produces are where to start.
+When something looks wrong, **first inspect `failed_records`**. Records can be excluded because of model/provider failures, invalid generated responses, or unresolved Substitute mappings. Use each record's `step` and `reason` to distinguish these cases. Once you know the pipeline ran, **run `preview` and inspect rows with quality issues** (`needs_human_review=True`) — the trace columns it produces are where to start.
 
 !!! note "This guide is written against the Python API"
 
@@ -21,7 +21,7 @@ Most fixes start with one of these.
 
 ### Did the run actually complete cleanly?
 
-Before debugging quality, confirm the run wasn't degraded by infra problems. Anonymizer logs a WARNING with the number of failed records, and every dropped record appears on `result.failed_records` with its step and reason:
+Before debugging quality, inspect workflow and substitution-validation failures. Anonymizer logs a WARNING with the number of failed records, and every reported failed record appears on `result.failed_records` with its step and reason:
 
 ```python
 for fr in result.failed_records:
@@ -36,20 +36,22 @@ Common patterns and what they mean:
 | `timed out` | Requests took longer than the alias's timeout, which is 60 seconds when `inference_parameters.timeout` is not set; large `max_tokens` budgets on reasoning models often need longer | Set `inference_parameters.timeout` for that alias in `models.yaml` (the bundled configs use 300). If the reason says local request admission timed out, the request was never sent: lower `max_parallel_requests` instead. See [Models](concepts/models.md) |
 | `no error was recorded for this row` | The row never completed and left no error of its own, while other rows failed; `most common:` names their most frequent cause | Investigate the named most-common cause first as a run-level hint; it does not establish why this particular row is missing. Only if rows still go missing, check the shutdown error rate in `data_designer_run_config` |
 | `does not match the source span` | The GLiNER server returned entity offsets that are inconsistent with the text | Restart the self-hosted GLiNER server from a current Anonymizer release (see the [self-hosting guide](concepts/self-hosting-gliner.md)); servers started from older code can return offsets that do not match the text |
+| `Replacement map incomplete after one retry` | Substitute still lacks one or more exact requested mappings after its missing-pair retry | See [Incomplete Substitute mappings](#incomplete-substitute-mappings) below; this is separate from schema validation retries |
+| `Replacement map retry failed` | The missing-pair generation workflow failed before returning a complete map | Inspect the workflow logs for schema, provider, or request errors; already-complete records are retained |
 | `Record missing from workflow output` with no other cause, at `step="entity-detection"`, `step="replace-map-generation"` or `step="rewrite-*"` | Often rate limiting (429s) exhausting the retry budget of the model pool | See [Rate limits / dropped rows](#rate-limits-dropped-rows) below |
 | `Output is missing required tracking column` | Internal; file an issue | None |
 
-If `failed_records` is non-empty, **fix that first.** Strategy/prompt knobs (`risk_tolerance`, `protect`, `gliner_threshold`) won't help: those rows didn't fail because of bad output, they failed because the workflow never produced a usable output for them.
+If `failed_records` is non-empty, **investigate those records first**. Provider failures need model/provider configuration changes; incomplete substitution maps need the [Substitute validation and retry checks](concepts/replace.md#substitute). Treat the reported step and reason as the starting point rather than assuming every failure is an infrastructure problem.
 
 ### Rate limits / dropped rows
 
-If you have rows failing with `Record missing from workflow output`, the chain is:
+For rate-limited rows failing at `step="entity-detection"`, a common chain is:
 GLiNER candidate set → chunked into validator calls → each call dispatched to a model in the validator pool → `ThrottledModelClient` does AIMD on 429s → if every alias in the pool fails on at least one chunk, the row drops.
 
 Fix in this order:
 
 1. **If failures are at `step="entity-detection"`, add aliases to the validator pool** in `models.yaml`. The validator is the only role that supports a pool — set `entity_validator` to a list of aliases and chunked validation will round-robin across them, giving you failover when one provider rate-limits. Every other role (detector, augmenter, rewriter, evaluator, etc.) is a single alias.
-2. **Lower `validation_max_entities_per_call`** (default `100`) on `Detect` if individual validator requests exceed a context or per-request token limit. This creates more calls, each of which repeats the full resolved label/example section, so it can increase total tokens and is not necessarily helpful for a tokens-per-minute limit.
+2. **Lower `validation_max_entities_per_call`** (default `100`) on `Detect` if individual validator requests exceed a context or per-request token limit. This is a batching target: an overlapping group larger than the target stays intact in one request and emits a warning. Smaller batches create more calls, each repeating the full resolved label/example section, so they can increase total tokens and may not help with a tokens-per-minute limit.
 3. **Switch the heavy alias to a different `provider`** in `providers.yaml`. If you're hammering one tenant's quota, moving to a second deployment of the same model helps more than tuning batch sizes. This is the only lever for non-validator stages (rewrite, evaluate, etc.) since they don't have pools.
 4. **Re-run on just the failed records** — filter the input dataframe to those `record_id`s and call `anonymizer.run` again. Failures are usually transient.
 
@@ -131,6 +133,10 @@ Try in order:
 
 Verify by re-running `preview` with `Annotate` and confirming the entity now appears tagged.
 
+Repeated text is handled occurrence by occurrence. A detected `John Smith` does not automatically create a separate `John` finding elsewhere, and accepting one `May` does not accept every `May`. Inspect the missed occurrence's source context rather than assuming that value propagation or name splitting will fill it in. A grounded augmenter suggestion may match more than one occurrence only when its exact surrounding context also matches.
+
+For augmentation misses, inspect `_augmentation_attempts` in `result.trace_dataframe`. Grounding failures receive one targeted correction attempt; still-ungrounded suggestions are dropped while valid suggestions and existing admitted detections are retained. Check `result.failed_records` separately for delivery or schema failures; a failed record is not a successful output with a missed entity.
+
 ### Too many false-positive entities
 
 Symptoms: detected entities include obvious common words, dates that aren't dates, etc.
@@ -139,7 +145,7 @@ Symptoms: detected entities include obvious common words, dates that aren't date
    ```python
    Detect(excluded_entity_labels=["occupation", "age"])
    ```
-2. **Raise `gliner_threshold`** to `0.5`. The augmenter will pick up real misses, so this rarely costs recall.
+2. **Raise `gliner_threshold`** to `0.5`. This can reduce false positives but also remove real detections; the augmenter may recover misses, but recovery is not guaranteed. Compare annotated previews before and after the change.
 3. **Lower `validation_excerpt_window_chars`** (default `500`) if context-driven validation is being misled by far-away sentences. Smaller per-chunk prompts trade context for precision.
 4. **Sanity-check the validator with an `Annotate` preview.** A flaky validator (or a misconfigured alias) returns "keep" on almost everything, which presents as recall going way up — easiest spotted by eyeballing the entity list on a handful of rows.
 
@@ -211,7 +217,27 @@ Symptom: every record uses all `max_repair_iterations` and still ends up flagged
 
 ### Output rows are missing (`FailedRecord`s)
 
-See [Did the run actually complete cleanly?](#did-the-run-actually-complete-cleanly) and [Rate limits / dropped rows](#rate-limits-dropped-rows). The short version: this is almost always a model/provider issue, not a strategy issue, and the fix is in `models.yaml` / `providers.yaml`.
+Start with each failed record's step and reason in [Did the run actually complete cleanly?](#did-the-run-actually-complete-cleanly). Provider errors may require changes to `models.yaml` / `providers.yaml`; incomplete Substitute maps follow the validation and retry behavior below. A workflow-wide error can instead raise `AnonymizerWorkflowError`.
+
+### Incomplete Substitute mappings
+
+Substitute compares the schema-valid, filtered map with the unique `(entity value,
+label)` pairs supplied before generation. It retains accepted substitutions and
+retries only missing pairs once. If the map is still incomplete, the record is
+excluded from successful output and reported at `step="replace-map-generation"`
+with `Replacement map incomplete after one retry` in its reason.
+
+Check the missing-label counts in the reason, the requested entities, and the
+`replacement_generator` model and `Substitute.instructions`. A copied original
+that differs only in a supported Unicode space is reconciled only when it has
+one unambiguous match under the same label. Other differences or ambiguous matches
+remain missing. See [Substitute](concepts/replace.md#substitute) for the exact rules.
+
+A replacement entry with a missing required field, an empty synthetic value, or a
+whitespace-only synthetic value fails schema validation instead. DataDesigner
+applies its existing whole-response schema retries before the map reaches the
+completeness check. Those retries are separate from the single missing-pair retry;
+this is not a per-entry recovery mechanism for a schema-rejected response.
 
 ### Replacement looks repetitive or unrealistic (Substitute)
 

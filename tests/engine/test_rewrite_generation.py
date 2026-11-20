@@ -36,7 +36,6 @@ from anonymizer.engine.rewrite.rewrite_generation import (
     _format_rewrite_disposition_block,
     _get_rewrite_prompt,
     _prepare_rewrite_tagged_text,
-    restore_empty_skipped_span_label_counts,
 )
 from anonymizer.engine.schemas import EntityReplacementMapSchema, RewriteOutputSchema
 
@@ -64,11 +63,9 @@ def stub_sensitivity_disposition() -> dict:
                 "sensitivity": "high",
                 "entity_label": "first_name",
                 "entity_value": "Alice",
-                "protection_reason": "Full name uniquely identifies the subject",
                 "protection_method_suggestion": "replace",
-                "combined_risk_level": "high",
             }
-        ]
+        ],
     }
 
 
@@ -100,13 +97,12 @@ def test_format_rewrite_disposition_block_excludes_unprotected_entities() -> Non
                 "source": "tagged",
                 "category": "quasi_identifier",
                 "sensitivity": "low",
+                "low_sensitivity_reason": "The retained detail adds no meaningful linkage in this synthetic context.",
                 "entity_label": "city",
                 "entity_value": "Portland",
-                "protection_reason": "Not identifying alone",
                 "protection_method_suggestion": "leave_as_is",
-                "combined_risk_level": "low",
             }
-        ]
+        ],
     }
     row = {COL_SENSITIVITY_DISPOSITION: disposition}
     result = _format_rewrite_disposition_block(row)
@@ -125,7 +121,6 @@ def test_format_rewrite_disposition_block_serializes_required_fields(
         "entity_value",
         "sensitivity",
         "protection_method_suggestion",
-        "protection_reason",
     }
 
 
@@ -137,13 +132,12 @@ def test_format_rewrite_disposition_block_empty_when_no_protected_entities() -> 
                 "source": "tagged",
                 "category": "quasi_identifier",
                 "sensitivity": "low",
+                "low_sensitivity_reason": "The retained detail adds no meaningful linkage in this synthetic context.",
                 "entity_label": "city",
                 "entity_value": "Portland",
-                "protection_reason": "Not identifying alone",
                 "protection_method_suggestion": "leave_as_is",
-                "combined_risk_level": "low",
             }
-        ]
+        ],
     }
     row = {COL_SENSITIVITY_DISPOSITION: disposition}
     result = _format_rewrite_disposition_block(row)
@@ -165,7 +159,6 @@ def test_filter_replacement_map_keeps_only_replace_method_entities(
             "entity_value": "Alice",
             "sensitivity": "high",
             "protection_method_suggestion": "replace",
-            "protection_reason": "Direct identifier",
         }
     ]
     row = {
@@ -184,8 +177,8 @@ def test_filter_replacement_map_empty_when_no_replace_method() -> None:
             "entity_label": "city",
             "entity_value": "Portland",
             "sensitivity": "low",
+            "low_sensitivity_reason": "The retained detail adds no meaningful linkage in this synthetic context.",
             "protection_method_suggestion": "generalize",
-            "protection_reason": "Quasi-identifier",
         }
     ]
     row = {
@@ -205,7 +198,6 @@ def test_filter_replacement_map_accepts_schema_instance(
             "entity_value": "Alice",
             "sensitivity": "high",
             "protection_method_suggestion": "replace",
-            "protection_reason": "Direct identifier",
         }
     ]
     schema = EntityReplacementMapSchema.model_validate(stub_replacement_map)
@@ -354,8 +346,8 @@ def test_prepare_rewrite_tagged_text_serializes_zero_skipped_spans_as_json_strin
 
     A dict column that is `{}` on some rows and non-empty on others gets inferred
     as incompatible Arrow types (`null` vs. `struct`) across independently-checkpointed
-    Parquet batches, so `_prepare_rewrite_tagged_text` always encodes it as a JSON
-    string -- a stable Arrow type regardless of content.
+    Parquet batches, so `ReplacementApplication.to_metrics()` always encodes it as a
+    JSON string -- a stable Arrow type regardless of content.
     """
     row = {
         COL_TEXT: "Alice",
@@ -410,56 +402,6 @@ def test_prepare_rewrite_tagged_text_serializes_non_empty_skipped_label_counts_a
     assert result[COL_REPLACEMENT_APPLICATION]["skipped_span_label_counts"] == '{"first_name": 1}'
 
 
-def test_restore_empty_skipped_span_label_counts_mixed_empty_and_non_empty() -> None:
-    df = pd.DataFrame(
-        {
-            COL_REPLACEMENT_APPLICATION: [
-                {
-                    "targeted_span_count": 1,
-                    "applied_span_count": 1,
-                    "skipped_span_count": 0,
-                    "skipped_span_label_counts": "{}",
-                },
-                {
-                    "targeted_span_count": 2,
-                    "applied_span_count": 1,
-                    "skipped_span_count": 1,
-                    "skipped_span_label_counts": '{"first_name": 1}',
-                },
-            ]
-        }
-    )
-    restore_empty_skipped_span_label_counts(df)
-    assert df[COL_REPLACEMENT_APPLICATION].iloc[0]["skipped_span_label_counts"] == {}
-    assert df[COL_REPLACEMENT_APPLICATION].iloc[1]["skipped_span_label_counts"] == {"first_name": 1}
-
-
-def test_restore_empty_skipped_span_label_counts_restores_final_trace_contract() -> None:
-    """The public `ReplacementApplication.to_metrics()` contract always returns a dict."""
-    df = pd.DataFrame(
-        {
-            COL_REPLACEMENT_APPLICATION: [
-                {
-                    "targeted_span_count": 0,
-                    "applied_span_count": 0,
-                    "skipped_span_count": 0,
-                    "skipped_span_label_counts": "{}",
-                },
-            ]
-        }
-    )
-    restore_empty_skipped_span_label_counts(df)
-    counts = df[COL_REPLACEMENT_APPLICATION].iloc[0]["skipped_span_label_counts"]
-    assert counts == {}
-    assert isinstance(counts, dict)
-
-
-def test_restore_empty_skipped_span_label_counts_noop_when_column_absent() -> None:
-    df = pd.DataFrame({"other_column": [1, 2, 3]})
-    restore_empty_skipped_span_label_counts(df)
-    assert list(df.columns) == ["other_column"]
-
-
 def test_skipped_span_label_counts_survives_multi_file_parquet_dataset(tmp_path) -> None:
     """Regression for schema drift across independently-checkpointed Parquet batches.
 
@@ -510,9 +452,8 @@ def test_skipped_span_label_counts_survives_multi_file_parquet_dataset(tmp_path)
     dataset = pyarrow_dataset.dataset(tmp_path, format="parquet")
     combined = dataset.to_table().to_pandas()
 
-    restore_empty_skipped_span_label_counts(combined)
-    assert combined[COL_REPLACEMENT_APPLICATION].iloc[0]["skipped_span_label_counts"] == {}
-    assert combined[COL_REPLACEMENT_APPLICATION].iloc[1]["skipped_span_label_counts"] == {"first_name": 1}
+    assert combined[COL_REPLACEMENT_APPLICATION].iloc[0]["skipped_span_label_counts"] == "{}"
+    assert combined[COL_REPLACEMENT_APPLICATION].iloc[1]["skipped_span_label_counts"] == '{"first_name": 1}'
 
 
 # ---------------------------------------------------------------------------

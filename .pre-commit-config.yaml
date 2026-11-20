@@ -10,6 +10,7 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
+        args: [--unsafe]  # MkDocs uses custom !ENV and Python-name tags.
       - id: check-added-large-files
       - id: check-json
       - id: check-toml
@@ -23,7 +24,7 @@ repos:
       - id: format
         name: Format
         language: system
-        entry: uv run tools/codestyle/format.sh
+        entry: uv run --locked tools/codestyle/format.sh
         types: [python]
         pass_filenames: true
 
@@ -34,18 +35,10 @@ repos:
         types_or: [python, shell]
         pass_filenames: true
 
-      - id: uv-lock
-        name: uv lock check
-        language: system
-        entry: bash -c 'uv lock && git diff --exit-code uv.lock'
-        files: pyproject.toml
-        stages: [pre-commit]
-        pass_filenames: false
-
       - id: check
         name: Check
         language: system
-        entry: make check
+        entry: mise run check
         pass_filenames: false
         stages: [pre-commit]
 

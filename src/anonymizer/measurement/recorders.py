@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from typing import Any
 
@@ -22,7 +22,7 @@ from anonymizer.measurement.session import current_collector
 
 
 @contextmanager
-def stage_timer(stage: str, **fields: Any) -> Iterator[dict[str, Any]]:
+def stage_timer(stage: str, **fields: Any) -> Generator[dict[str, Any]]:
     """Record wall time for a stage when collection is active."""
     collector = current_collector()
     if collector is None:

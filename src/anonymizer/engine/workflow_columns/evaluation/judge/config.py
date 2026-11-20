@@ -17,7 +17,7 @@ class JudgeKind(str, Enum):
 
 
 class JudgeColumnConfig(LLMTextColumnConfig):
-    column_type: Literal["anonymizer-evaluation-judge"] = "anonymizer-evaluation-judge"
+    column_type: Literal["anonymizer-evaluation-judge"] = "anonymizer-evaluation-judge"  # ty: ignore[invalid-attribute-override]
     judge_kind: JudgeKind
 
     @staticmethod

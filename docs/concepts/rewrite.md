@@ -9,15 +9,26 @@ Instead of replacing individual entities, rewrite mode transforms the entire tex
 
 ## How it works
 
-[Detection](detection.md) runs first (same as [Replace mode](replace.md), plus latent entity detection for context-inferable information). This includes identifying signals that may not be explicitly tagged but can be deduced from combinations of details (e.g., location inferred from contextual cues). The text is then classified by domain, and each entity or attribute is assigned a sensitivity disposition based on contextual risk, recognizing that quasi-identifiers can emerge from any aspect of the text. 
+[Detection](detection.md) runs first (same as [Replace mode](replace.md), plus latent entity detection for context-inferable information). This includes identifying signals that may not be explicitly tagged but can be deduced from combinations of details (e.g., location inferred from contextual cues). The text is then classified by domain, and each entity or attribute is assigned a sensitivity disposition based on contextual risk, recognizing that quasi-identifiers can emerge from any aspect of the text.
 
 The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. Any records that failed to meet standards are tagged for human review.
+
+!!! note "Replacement-map validation"
+
+    Rewrite's generated replacement maps share the [Substitute schema rules](replace.md#substitute): synthetic values must contain at least one non-whitespace character, while valid one-character values remain allowed. DataDesigner's existing whole-response schema retries apply to map generation. The single missing-pair retry and Unicode-space reconciliation described for Substitute do not apply to Rewrite; its handling of omitted mappings remains unchanged.
 
 ---
 
 ## Key concepts
 
-**Sensitivity** measures the intrinsic re-identification damage an entity causes if it appears in the output — independently of what else is retained. It is not the protection decision itself; rather, it feeds the downstream leakage scoring system.
+**Sensitivity** measures an entity’s privacy risk in the context of the document, considering the information retained alongside it. In normal mode, entities rated `low` use `leave_as_is`, while entities rated `medium` or `high` receive protection. With `strict_entity_protection=True`, every entity receives protection, including entities rated `low`; protection alone does not raise their sensitivity. Sensitivity also feeds downstream leakage scoring.
+
+If the model incorrectly selects `leave_as_is`, the decision is corrected after the entity's
+category is known. Direct identifiers become `high` / `replace`, regardless of the model's
+initial sensitivity. Other high entities use `replace`, medium entities use `generalize`,
+and low entities are retained in normal mode or generalized in strict mode.
+
+The prompt requests a `low_sensitivity_reason` for every low rating, whether the entity is protected or retained. A missing or blank reason does not fail the record or change its sensitivity or protection method. The reason explains the original information’s limited linkage or recognition risk; a planned edit does not justify a low rating.
 
 | Level | Meaning | Examples | Leakage weight |
 |-------|---------|---------|----------------|
@@ -99,6 +110,8 @@ The **repair threshold** is the leakage mass above which a record is sent for re
 > Leakage mass is a confidence-weighted sum of leaked entities, where each entity's weight reflects its sensitivity (high=1.0, medium=0.6, low=0.3).
 > A leakage mass of 1.0 roughly equals one high-sensitivity entity leaked at full confidence.
 
+Privacy questions are generated only for entities assigned a protective method. Entities assigned `leave_as_is` receive no privacy question and do not contribute to leakage mass. A protected low-sensitivity entity does receive a question: if the judge answers yes with confidence 0.8, it contributes `0.3 × 0.8 = 0.24`.
+
 ```python
 config = AnonymizerConfig(
     rewrite=Rewrite(
@@ -110,7 +123,9 @@ config = AnonymizerConfig(
 
 ### Strict entity protection
 
-By default, some entities — particularly quasi-identifiers judged to be low-risk in context — may be left unchanged. Setting `strict_entity_protection=True` overrides this: every detected entity is forced into an active protection method, and no entity can be left as-is.
+By default, some entities — particularly quasi-identifiers judged to be low-risk in context — may be left unchanged. Setting `strict_entity_protection=True` overrides this: every detected entity is forced into an active protection method, and no entity can be left as-is. Sensitivity can still be `low`, `medium`, or `high`; strict mode does not promote a low rating merely because the entity must be protected.
+
+`strict_entity_protection` controls which entities require protection. `risk_tolerance` controls repair and human-review decisions after evaluation. Enabling strict protection does not change the preset thresholds.
 
 ```python
 config = AnonymizerConfig(
@@ -152,7 +167,7 @@ Use `preview.trace_dataframe` for the full pipeline trace (domain, disposition, 
 
 ## Working with flagged records
 
-Repair and review decisions are made from named *findings* about each evaluated record: `high_leak` (a high-sensitivity entity can still be deduced), `leakage_above_repair` and `leakage_above_flag` (leakage mass above the preset's repair or review threshold), `utility_below_flag` (utility score below the preset's review floor), `replacement_unavailable` (no usable replacement map was produced), `rewrite_missing` (no rewritten text), and `unavailable_evidence` (`leakage_mass`, `utility_score`, or `any_high_leaked` is missing or NaN, so the record cannot be judged). Each `risk_tolerance` preset lists which findings send a record to repair and which flag it for human review: every preset flags all of them except `leakage_above_repair`, and every preset except `high` repairs on `high_leak` as well as `leakage_above_repair`. Unavailable evidence flags a record but does not trigger repair. The one exception is a NaN `any_high_leaked`: for compatibility it also counts as `high_leak`, so it triggers repair under every preset except `high`. A record has `needs_human_review=True` when any of its preset's flag findings holds after the repair loop. `Anonymizer.evaluate()` also sets it when the coverage judge finds entities that detection missed (`missed_entities` is non-empty). To investigate and resolve:
+Repair and review decisions are made from named *findings* about each evaluated record: `high_leak` (a high-sensitivity entity can still be deduced), `leakage_above_repair` and `leakage_above_flag` (leakage mass above the preset's repair or review threshold), `utility_below_flag` (utility score below the preset's review floor), `replacement_unavailable` (no usable replacement map was produced), `rewrite_missing` (no rewritten text), and `unavailable_evidence` (`leakage_mass`, `utility_score`, or `any_high_leaked` is missing or NaN, so the record cannot be judged). Each `risk_tolerance` preset lists which findings send a record to repair and which flag it for human review: every preset flags all of them except `leakage_above_repair`, and every preset except `high` repairs on `high_leak` as well as `leakage_above_repair`. Unavailable evidence flags a record but does not trigger repair. The one exception is a NaN `any_high_leaked`: for compatibility it also counts as `high_leak`, so it triggers repair under every preset except `high`. A record has `needs_human_review=True` when any of its preset's flag findings holds after the repair loop, except `replacement_unavailable`: the final rewritten text decides instead, and the record is flagged when it still contains a whole-word occurrence of a value the policy replaces (latent entities excepted), ignoring case and accents and with whitespace collapsed, or when the policy's disposition is unavailable. Such a record also has the outcome `not_met` (`result.outcome(row)`), because its `replacements_applied` check failed or could not be assessed, so it is not released as protected. A value of at most three characters written all in uppercase is matched with its case, so the same code in lower or mixed case in the output is not caught. A value whose first and last characters are Han, Hiragana, Katakana, Thai, Lao, Khmer or Myanmar is matched anywhere in the text when it has two or more characters and is not matched when it has one. The check does not catch a multi-word value of which only one part remains, the original of a generalized value, a value that mixes scripts with only one edge character in the listed scripts, or a Hangul name with a particle attached. `Anonymizer.evaluate()` also sets it when the coverage judge finds entities that detection missed (`missed_entities` is non-empty). To investigate and resolve:
 
 **Diagnose:** Use `trace_dataframe` to inspect the flagged record's intermediate columns — disposition, leakage breakdown, repair iterations, and judge evaluation.
 
@@ -168,23 +183,35 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()
 - Lower `risk_tolerance` (e.g. `minimal`) to trigger more aggressive repair.
 - Enable `strict_entity_protection=True` to ensure no detected entity is left unchanged in the output regardless of risk.
 
-**Last resort:** Manually edit or exclude records that resist automated repair — some text is inherently difficult to rewrite without losing utility or leaking identifiers, and requires your judgement as the expert. 
+**Last resort:** Manually edit or exclude records that resist automated repair — some text is inherently difficult to rewrite without losing utility or leaking identifiers, and requires your judgement as the expert.
 
 ---
 
 ## Model roles
 
-Rewrite uses multiple LLM roles. All default to models in the [default config](models.md):
+Rewrite uses multiple LLM roles. All default to models in the [bundled configs](models.md):
 
 | Role | Default | Purpose |
 |------|---------|---------|
 | `domain_classifier` | `gpt-oss-120b` | Classifies text domain. |
+| `entity_classifier` | Uses `disposition_analyzer` unless explicitly selected | Classifies custom explicit entity labels as direct or quasi-identifiers. Default labels are classified locally. |
 | `disposition_analyzer` | `gpt-oss-120b` | Assigns sensitivity levels. |
 | `meaning_extractor` | `gpt-oss-120b` | Extracts meaning units. |
 | `qa_generator` | `gpt-oss-120b` | Generates QA pairs for evaluation. |
 | `rewriter` | `gpt-oss-120b` | Generates the rewritten text. |
 | `evaluator` | `nemotron-30b-thinking` | Evaluates quality and leakage. |
 | `repairer` | `gpt-oss-120b` | Repairs high-leakage rewrites. |
+
+The entity-classification LLM classifies the dataset's detected custom labels together once,
+then reuses the categories across all records. Default labels are resolved locally without
+an LLM call. An explicit `disposition_analyzer` override also supplies the classifier unless
+you select `entity_classifier` explicitly; unrelated overrides preserve the bundled default.
+
+Every requested custom label must have a classification. Conflicting categories for the
+same label are rejected; identical duplicate classifications are accepted. Invalid responses
+receive one correction attempt with validation feedback. If that attempt is also invalid,
+the shared classification step fails the run instead of continuing to sensitivity disposition
+with incomplete or contradictory classifications.
 
 ---
 

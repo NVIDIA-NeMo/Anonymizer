@@ -46,15 +46,17 @@ Public-API changes (re-exports, signatures, kwargs, default values) may require 
 
 ```
 input_df
-  → EntityDetectionWorkflow.run()              # engine/detection/detection_workflow.py
-        GLiNER detection
-        → parse + tag
-        → LLM validation    (keep / drop candidates)
-        → LLM augmentation  (add entities GLiNER missed)
-        → merge + finalize  → COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES
-  → ReplacementWorkflow.run()                  # engine/replace/replace_runner.py
-        Redact / Annotate / Hash  → applied locally, no LLM
-        Substitute                → LlmReplaceWorkflow → NddAdapter
+  → one graph invocation: run_replace_pipeline()   # engine/replace/route.py
+      detect (phase-scoped step)              → mentions per row
+        EntityDetectionWorkflow.run()              # engine/detection/detection_workflow.py
+            GLiNER detection
+            → parse + tag
+            → LLM validation    (keep / drop candidates)
+            → LLM augmentation  (add entities GLiNER missed)
+            → merge + finalize  → COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES
+      substitute-map (Substitute only)             → LlmReplaceWorkflow → NddAdapter
+      replace → verify-patches (per row)           # Redact / Annotate / Hash apply locally, no LLM
+        → verify-no-original (not Annotate)        # advisory check, not required
   → output: {text_col}_replaced, {text_col}_with_spans, final_entities
 ```
 
@@ -64,8 +66,10 @@ Validation runs before augmentation, not after: GLiNER is high-recall/low-precis
 
 ```
 input_df
-  → EntityDetectionWorkflow.run()              # same as above, plus latent entity tagging
-  → RewriteWorkflow.run()                      # engine/rewrite/rewrite_workflow.py
+  → one graph invocation: RewriteWorkflow.run_with_detection()   # engine/rewrite/rewrite_workflow.py
+      detect (phase-scoped step)          # engine/detection/detect_step.py; EntityDetectionWorkflow.run(),
+                                          # same as above, plus latent entity tagging
+      rewrite (rows with entities only; the rest keep default metrics)
         LlmReplaceWorkflow.generate_map_only() # build replacement map for prompt
         → single NDD adapter call (pipeline_columns):
               DomainClassificationWorkflow    → _domain, _domain_supplement
@@ -84,7 +88,7 @@ Later, `Anonymizer.evaluate()` runs the non-critical judge steps:
                                               (only when EvaluateConfig.compute_detection_validity=True)
 ```
 
-Records with no detected entities skip all LLM sub-workflows and pass through with default metrics (utility=1.0, leakage=0.0).
+Records with no detected entities skip all LLM sub-workflows and pass through with default metrics (utility=1.0, leakage=0.0). A runner that overrides `run()` keeps the older path: the facade calls `EntityDetectionWorkflow.run()` and then that `run()` with the detection frame.
 
 ## Config Pattern
 
@@ -112,17 +116,47 @@ One pipeline-specific fact worth knowing: `COL_TEXT` is the internal name for th
 - **Don't add a domain to only one supplement map** — see `engine/rewrite/domain_classification.py` for the sync invariant
 - **Don't hardcode `gliner_threshold`** — it belongs in `Detect` config (default 0.3)
 
+## Graph SDK preview branch (PR1)
+
+These rules apply when this checkout is on `aagonzales/graph-sdk/feat/main` (draft
+[PR #319](https://github.com/NVIDIA-NeMo/Anonymizer/pull/319), formerly #302):
+
+- **Do not push to this branch.** Writes land only via the implementation campaign's reviewed
+  pipeline; work in your own branch or worktree.
+- **Do not fix problems you find under `anonymizer/engine/**`** — report them instead; an
+  uncoordinated fix will collide with in-flight work and be discarded.
+- **Never modify compat-marked tests, fixtures, or expected-output files.** They are frozen
+  oracles: a wrong oracle is a finding, not an edit.
+
+Review scope, current status, known-open items, and accepted behavior deltas live in the PR #319
+description — read it before testing or reporting. Report findings as comments on PR #319: one
+finding per comment, with the exact SHA, route/surface, smallest repro (provider-free if possible),
+and expected vs actual.
+
 ## Development
 
+During the MkDocs / Fern migration, update paired `docs/**/*.md` and `.mdx`
+pages together, using each renderer's syntax. New prose pages need both formats
+and navigation entries in `mkdocs.yml` and `docs/fern/versions/nightly.yml`.
+Keep legacy sources until cutover. Notebook Python sources remain authoritative;
+see [DEVELOPMENT.md](DEVELOPMENT.md#notebooks) for generation. Standalone
+repository Markdown does not need an MDX counterpart. `mise run check:docs:pairs`
+(part of `mise run check`) enforces the pairing. See the
+[migration status](docs/fern/FERN_MIGRATION.md) for temporary requirements.
+
 ```bash
-make test          # run all tests
-make bootstrap     # install dev dependencies
-make format        # ruff format + sort imports
-make format-check  # read-only lint check (used in CI)
-make typecheck     # blocking ty type check (warnings fail too)
-make docs-serve    # local MkDocs server at http://127.0.0.1:8000
+mise run setup         # install pinned tools, dev dependencies, and hooks
+mise run setup all     # install pinned tools, every dependency group, and hooks
+mise run test          # run all unit tests
+mise run test:all      # run unit and opt-in end-to-end tests
+mise run format        # format and safely fix Python files and notebooks
+mise run check         # run all read-only static checks
+mise run check ::: test # run static checks and unit tests before opening a PR
+mise run docs:serve    # local MkDocs server at http://127.0.0.1:8000
+mise run docs:fern:check  # Fern configuration, MDX, and internal links
+mise run docs:fern:serve  # local Fern server
 ```
 
 For contributor workflow and branch naming see [CONTRIBUTING.md](CONTRIBUTING.md). For local setup, tests, docs, and day-to-day development tasks see [DEVELOPMENT.md](DEVELOPMENT.md). For code style and naming conventions see [STYLEGUIDE.md](STYLEGUIDE.md).
 
-Reference GLiNER server for self-hosted detection: [`tools/serve_gliner.py`](tools/serve_gliner.py) — see [`docs/concepts/self-hosting-gliner.md`](docs/concepts/self-hosting-gliner.md).
+Local vLLM and native GLiNER2 services are compiled and managed through [`tools/inference_service.py`](tools/inference_service.py), and [`tools/serve_gliner.py`](tools/serve_gliner.py) runs the native GLiNER2 server directly — see [`docs/concepts/inference-services.md`](docs/concepts/inference-services.md) and [`docs/concepts/self-hosting-gliner.md`](docs/concepts/self-hosting-gliner.md).

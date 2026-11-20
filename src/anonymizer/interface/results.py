@@ -7,8 +7,10 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from anonymizer.config.anonymizer_config import DetectionScope
 from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import PrivacyGoal
+from anonymizer.engine.graph_core.execution import TargetOutcome
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.interface.display import render_record_html
 
@@ -19,6 +21,40 @@ class _DisplayMixin:
     trace_dataframe: pd.DataFrame
     resolved_text_column: str
     _display_cycle_index: int
+    _outcomes: tuple[TargetOutcome, ...] | None
+
+    def outcome(self, row: int) -> TargetOutcome:
+        """The protection outcome of output row ``row``: its ``qualification`` and the ``reasons`` behind it.
+
+        ``qualification`` is ``"met"`` when every required check passed for the row, ``"not_met"`` when the
+        row did not finish or a required check failed, could not decide (a ``could_not_assess`` reason) or gave
+        no assessment, and ``"not_assessed"`` only when no check is required.
+
+        On an ``evaluate()`` result each row is matched to its record only by a non-null record id that occurs once
+        in the evaluated result and once among the judge's rows; ids compare as text. The outcome is the evaluated
+        result's outcome for that record (``not_assessed`` and unprotected when that result carries no outcomes or no
+        single outcome with that id, for example after its ids were changed), with one advisory per judge appended, named by the judge, with status ``passed``, ``failed``, ``could_not_assess``,
+        ``scored`` or ``not_applicable``; ``cause`` says why: ``"judge_unavailable"`` when the judge gave no score,
+        ``"raised"`` when its check raised, ``"blocked"`` when an earlier judge check of the row raised so it never ran.
+        ``scored`` means the rewrite judge, which has no pass threshold, returned scores; read them in the judge
+        evaluation column. ``not_applicable`` means the rewrite judge skipped a row with no detected entities, by
+        design. A row without such an id (a custom runner dropped, nulled or repeated it) is ``not_assessed`` and
+        unprotected, and each judge reads ``could_not_assess`` with cause ``"unplaced"``. A row a custom runner gave
+        another record's id, including by retyping ids so that they compare equal as text, is reported as that record,
+        with its run outcome and its judges' verdicts. Judges never change qualification or
+        release: those still say whether the run released the row. The evaluated result is not changed.
+
+        Raises:
+            IndexError: ``row`` is not an output row, or this result carries no outcomes (a custom runner's or
+                hand-built result). An ``evaluate()`` result always carries one outcome per row, even when none of
+                its rows could be placed.
+        """
+        outcomes = getattr(self, "_outcomes", None)  # absent on results pickled before outcomes were kept
+        if outcomes is None:
+            raise IndexError("This result carries no protection outcomes.")
+        if row < 0 or row >= len(outcomes):
+            raise IndexError(f"Record index {row} is out of bounds for {len(outcomes)} records.")
+        return outcomes[row]
 
     def display_record(self, index: int | None = None) -> None:
         """Render a record with entity highlights and replacement map in a notebook.
@@ -79,6 +115,11 @@ class AnonymizerResult(_DisplayMixin):
         id_column: Record identifier column retained in ``dataframe`` for
             in-memory record input. File-backed input currently leaves this as
             ``None``.
+        effective_entity_labels: Resolved detection labels used as coverage-prompt
+            guidance, without restricting permissive evaluation.
+        detection_scope: The resolved detection scope the run used: effective
+            labels, allowed labels (``None`` when ``entity_labels`` is unset),
+            exclusions, and GLiNER threshold. ``None`` on ``evaluate()`` and hand-built results.
     """
 
     dataframe: pd.DataFrame
@@ -91,7 +132,11 @@ class AnonymizerResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
+    effective_entity_labels: list[str] | None = None
+    detection_scope: DetectionScope | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
+    _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
+    _outcome_ids: tuple[str, ...] | None = field(default=None, repr=False, compare=False)
 
     def __repr__(self) -> str:
         return (
@@ -139,6 +184,11 @@ class PreviewResult(_DisplayMixin):
         id_column: Record identifier column retained in ``dataframe`` for
             in-memory record input. File-backed input currently leaves this as
             ``None``.
+        effective_entity_labels: Resolved detection labels used as coverage-prompt
+            guidance, without restricting permissive evaluation.
+        detection_scope: The resolved detection scope the run used: effective
+            labels, allowed labels (``None`` when ``entity_labels`` is unset),
+            exclusions, and GLiNER threshold. ``None`` on ``evaluate()`` and hand-built results.
     """
 
     dataframe: pd.DataFrame
@@ -152,7 +202,11 @@ class PreviewResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
+    effective_entity_labels: list[str] | None = None
+    detection_scope: DetectionScope | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
+    _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
+    _outcome_ids: tuple[str, ...] | None = field(default=None, repr=False, compare=False)
 
     def __repr__(self) -> str:
         return (

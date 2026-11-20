@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from typing import Protocol, TypeGuard, TypeVar, cast
+from typing import Any, Protocol, TypeGuard, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -82,3 +82,44 @@ def _is_empty(raw: object) -> bool:
     if isinstance(raw, (str, dict, list)):
         return not raw
     return isinstance(raw, float) and raw != raw
+
+
+def to_python(raw: object) -> object:
+    """Recursively normalize nested model/array/scalar payloads to plain Python."""
+    if isinstance(raw, BaseModel):
+        return to_python(raw.model_dump(mode="python"))
+    if isinstance(raw, dict):
+        return {key: to_python(value) for key, value in raw.items()}
+    if isinstance(raw, (list, tuple)):
+        return [to_python(value) for value in raw]
+    if _is_list_convertible(raw):
+        return to_python(raw.tolist())
+    item = getattr(raw, "item", None)
+    if callable(item):
+        try:
+            return item()
+        except (TypeError, ValueError):
+            pass
+    return raw
+
+
+def normalize_payload(raw: Any) -> Any:
+    """Normalize values that may have been JSON-stringified by parquet round-trip."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return raw
+    return to_python(raw)
+
+
+def read_cell(model: type[T], raw: object, *, error: type[Exception] = TypeError) -> T:
+    """Read one nested cell (model, dict, JSON string or parquet-reloaded value) as *model*.
+
+    A model instance is dumped and revalidated, not passed through. Raises *error*
+    when the cell does not normalize to a dict.
+    """
+    payload = normalize_payload(raw)
+    if not isinstance(payload, dict):
+        raise error(f"Expected {model.__name__} or dict, got {type(payload).__name__}")
+    return model.model_validate(payload)

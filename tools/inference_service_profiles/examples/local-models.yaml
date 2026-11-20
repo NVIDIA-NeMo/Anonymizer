@@ -1,0 +1,134 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Example role configuration served entirely by local profiles. Pair it with
+# local-providers.yaml, which points each provider at its profile's port.
+# Names follow the profile: gemma-4-26b-a4b-it.toml serves model
+# gemma-4-26b-a4b-it through provider local-gemma-4-26b-a4b-it, and aliases
+# start with that name. The detector keeps the bundled gliner-pii-detector
+# alias and local-gliner2 provider; its model name is fixed by the server.
+# vLLM ignores OpenRouter's `reasoning` and `provider` fields; thinking is
+# switched with chat_template_kwargs.enable_thinking instead.
+
+model_configs:
+  - alias: gliner-pii-detector
+    model: fastino/gliner2-privacy-filter-PII-multi
+    provider: local-gliner2
+    inference_parameters: { max_parallel_requests: 1, timeout: 120 }
+
+  - alias: gemma-4-26b-a4b-it
+    model: gemma-4-26b-a4b-it
+    provider: local-gemma-4-26b-a4b-it
+    inference_parameters:
+      max_parallel_requests: 16
+      max_tokens: 32768
+      temperature: 1.0
+      top_p: 0.95
+      timeout: 300
+      extra_body:
+        top_k: 64
+
+  - alias: gemma-4-26b-a4b-it-entity-classification
+    model: gemma-4-26b-a4b-it
+    provider: local-gemma-4-26b-a4b-it
+    inference_parameters:
+      max_parallel_requests: 16
+      max_tokens: 2048
+      temperature: 0.0
+      top_p: 0.95
+      timeout: 300
+      extra_body:
+        top_k: 64
+        chat_template_kwargs:
+          enable_thinking: false
+
+  - alias: nemotron-3.5-lightning-disposition
+    model: nemotron-3.5-lightning
+    provider: local-nemotron-3.5-lightning
+    inference_parameters:
+      max_parallel_requests: 8
+      max_tokens: 16384
+      temperature: 0.1
+      top_p: 0.95
+      timeout: 300
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
+
+  - alias: nemotron-3.5-super-vl
+    model: nemotron-3.5-super-vl
+    provider: local-nemotron-3.5-super-vl
+    inference_parameters:
+      max_parallel_requests: 16
+      max_tokens: 32768
+      temperature: 1.0
+      top_p: 0.95
+      timeout: 300
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: true
+
+  - alias: nemotron-3.5-lightning-thinking
+    model: nemotron-3.5-lightning
+    provider: local-nemotron-3.5-lightning
+    inference_parameters:
+      max_parallel_requests: 16
+      max_tokens: 32768
+      temperature: 1.0
+      top_p: 0.95
+      timeout: 300
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: true
+
+  - alias: qwen3.8-27b
+    model: qwen3.8-27b
+    provider: local-qwen3.8-27b
+    inference_parameters:
+      max_parallel_requests: 16
+      max_tokens: 16384
+      temperature: 0.7
+      top_p: 0.80
+      timeout: 300
+      extra_body:
+        top_k: 20
+        min_p: 0.0
+        presence_penalty: 1.5
+        repetition_penalty: 1.0
+        chat_template_kwargs:
+          enable_thinking: false
+
+  - alias: gpt-oss-120b
+    model: gpt-oss-120b
+    provider: local-gpt-oss-120b
+    inference_parameters:
+      max_parallel_requests: 16
+      max_tokens: 16384
+      temperature: 0.3
+      top_p: 0.95
+      timeout: 300
+
+selected_models:
+  detection:
+    entity_detector: gliner-pii-detector
+    entity_validator: qwen3.8-27b
+    entity_augmenter: gemma-4-26b-a4b-it
+    latent_detector: nemotron-3.5-lightning-thinking
+  replace:
+    replacement_generator: gemma-4-26b-a4b-it
+  rewrite:
+    domain_classifier: gemma-4-26b-a4b-it
+    entity_classifier: gemma-4-26b-a4b-it-entity-classification
+    disposition_analyzer: nemotron-3.5-super-vl
+    meaning_extractor: gemma-4-26b-a4b-it
+    qa_generator: gemma-4-26b-a4b-it
+    rewriter: qwen3.8-27b
+    evaluator: nemotron-3.5-lightning-thinking
+    repairer: qwen3.8-27b
+  evaluate:
+    entity_coverage_judge: gemma-4-26b-a4b-it
+    detection_validity_judge: gemma-4-26b-a4b-it
+    replace_type_fidelity_judge: gemma-4-26b-a4b-it
+    replace_relational_consistency_judge: gemma-4-26b-a4b-it
+    replace_attribute_fidelity_judge: gemma-4-26b-a4b-it
+    rewrite_judge: nemotron-3.5-lightning-thinking

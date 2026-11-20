@@ -3,12 +3,17 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import Mock
 
 import pandas as pd
 import pytest
+from data_designer.errors import DataDesignerError
+from data_designer.interface.errors import DataDesignerGenerationError
 
+from anonymizer.config.anonymizer_config import Detect, resolve_effective_detection_labels
 from anonymizer.config.models import EvaluateModelSelection
+from anonymizer.config.regex import RegexRule
 from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_ENTITY_COVERAGE,
@@ -17,6 +22,7 @@ from anonymizer.engine.constants import (
     COL_MISSED_ENTITIES,
     COL_REPLACEMENT_APPLICATION,
     COL_TEXT,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.evaluation.entity_coverage_judge import (
     _FINAL_ENTITIES_FOR_COVERAGE_COL,
@@ -29,7 +35,6 @@ from anonymizer.engine.evaluation.entity_coverage_judge import (
     _parse_candidate_entities,
 )
 from anonymizer.engine.evaluation.judge_base import JudgeResult
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN
 
 
 def test_coverage_prompt_omits_data_summary_context_when_summary_absent() -> None:
@@ -41,6 +46,34 @@ def test_coverage_prompt_omits_data_summary_context_when_summary_absent() -> Non
 
     assert without_summary == with_blank_summary
     assert "<data_summary_context>" not in without_summary
+
+
+def test_custom_regex_taxonomy_keeps_coverage_permissive() -> None:
+    detect = Detect(
+        regex_rules=[
+            RegexRule(label="ticket", pattern=r"TICKET-\d+"),
+            RegexRule(label="disabled_category", pattern=r"DISABLED-\d+", enabled=False),
+        ],
+        excluded_entity_labels=["email"],
+    )
+    workflow = EntityCoverageWorkflow(
+        adapter=Mock(),
+        entity_labels=detect.entity_labels,
+        excluded_entity_labels=detect.excluded_entity_labels,
+        effective_entity_labels=resolve_effective_detection_labels(
+            detect.entity_labels,
+            regex_rules=detect.regex_rules,
+            excluded_entity_labels=detect.excluded_entity_labels,
+        ),
+    )
+    prompt = workflow.column_config(_stub_evaluate_selection()).prompt
+    taxonomy = prompt.split("<identifier_taxonomy>")[1].split("</identifier_taxonomy>")[0]
+    assert "ticket" in taxonomy
+    assert "email" not in taxonomy
+    assert "disabled_category" not in taxonomy
+    assert "This list is not exhaustive" in taxonomy
+    novel = [{"value": "ABC", "label": "novel_category"}]
+    assert _filter_out_of_scope_entities(novel, detect.entity_labels, detect.excluded_entity_labels) == novel
 
 
 def test_coverage_prompt_includes_data_summary_as_interpretive_context() -> None:
@@ -421,8 +454,6 @@ def test_run_non_critical_preserves_successful_rows_when_adapter_drops_one() -> 
         selected_models=_stub_evaluate_selection(),
     )
 
-    evaluation_input = workflow.evaluate.call_args.args[0]
-    assert COL_REPLACEMENT_APPLICATION not in evaluation_input.columns
     assert result["input_value"].tolist() == ["scored", "dropped"]
     assert result[COL_REPLACEMENT_APPLICATION].tolist() == [
         {
@@ -557,3 +588,55 @@ def test_entity_coverage_workflow_excludes_configured_labels_from_postprocess() 
     missed_labels = {e["label"] for e in missed}
     assert "clinic_name" in missed_labels
     assert "email" not in missed_labels
+
+
+def test_run_non_critical_total_failure_warning_names_exception_class_but_not_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class JudgeOutageError(Exception):
+        pass
+
+    adapter = Mock()
+    adapter._attach_record_ids.side_effect = JudgeOutageError("SENTINEL-RECORD-TEXT")
+    workflow = EntityCoverageWorkflow(adapter=adapter)
+
+    with caplog.at_level(logging.DEBUG, logger="anonymizer"):
+        result, failed_records = workflow.run_non_critical(
+            pd.DataFrame({"input_value": ["a"]}),
+            model_configs=[],
+            selected_models=_stub_evaluate_selection(),
+        )
+
+    assert failed_records == []
+    assert result[COL_ENTITY_COVERAGE].isna().all()
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("scores may be unavailable" in m and "JudgeOutageError" in m for m in warnings)
+    assert "SENTINEL-RECORD-TEXT" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("exc", "label"),
+    [
+        (DataDesignerError("SENTINEL-RECORD-TEXT"), "BackendError"),
+        (DataDesignerGenerationError("SENTINEL-RECORD-TEXT"), "GenerationError"),
+    ],
+)
+def test_run_non_critical_warning_shortens_backend_exception_class(
+    caplog: pytest.LogCaptureFixture, exc: Exception, label: str
+) -> None:
+    adapter = Mock()
+    adapter._attach_record_ids.side_effect = exc
+    workflow = EntityCoverageWorkflow(adapter=adapter)
+
+    with caplog.at_level(logging.DEBUG, logger="anonymizer"):
+        workflow.run_non_critical(
+            pd.DataFrame({"input_value": ["a"]}),
+            model_configs=[],
+            selected_models=_stub_evaluate_selection(),
+        )
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert f"Entity coverage workflow failed ({label}); scores may be unavailable." in warnings
+    for forbidden in ("Data Designer", "DataDesigner", "data_designer", "DD"):
+        assert forbidden not in caplog.text
+    assert "SENTINEL-RECORD-TEXT" not in caplog.text

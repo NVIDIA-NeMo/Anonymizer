@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from data_designer.config import SkipConfig, custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig, ModelProvider
 from data_designer.interface.data_designer import DataDesigner
@@ -22,29 +22,36 @@ from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_ENTITIES_BY_VALUE,
+    COL_ENTITY_CLASSIFICATION,
     COL_FULL_REWRITE,
     COL_LATENT_ENTITIES,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
+    COL_RAW_SENSITIVITY_DISPOSITION,
     COL_REPAIR_ITERATIONS,
     COL_REPLACEMENT_APPLICATION,
+    COL_REPLACEMENT_MAP,
+    COL_REPLACEMENT_MAP_RAW,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
     COL_REWRITTEN_TEXT_NEXT,
+    COL_SENSITIVITY_DISPOSITION,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.engine.rewrite.combined_rewrite_workflow import (
     CombinedRewriteGraph,
     CombinedRewriteWorkflow,
     EvaluationState,
     RepairState,
+    _filter_replacement_map,
 )
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.measurement import MeasurementCollector, measurement_session
@@ -55,6 +62,13 @@ _PRIVACY_GOAL = PrivacyGoal(
 )
 _REPAIRS_NEEDED = "repairs_needed"
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
+
+
+def _positional(dataframe: pd.DataFrame, failed_records: list) -> WorkflowRunResult:
+    """An adapter result that reports one source position per returned row, in input order."""
+    return WorkflowRunResult(
+        dataframe=dataframe, failed_records=failed_records, source_positions=tuple(range(len(dataframe)))
+    )
 
 
 @custom_column_generator(required_columns=[_REPAIRS_NEEDED])
@@ -186,6 +200,8 @@ def test_finalizer_selects_last_executed_iteration(
         repaired.any_high_leaked: False,
         repaired.needs_repair: False,
         skipped.needs_repair: None,
+        COL_REWRITTEN_TEXT: "forged preexisting terminal",
+        COL_UTILITY_SCORE: 0.123,
     }
     finalizer = graph.columns[-1]
     assert isinstance(finalizer, CustomColumnConfig)
@@ -270,7 +286,12 @@ def test_conditional_repairs_execute_independently_per_row(
 
     with measurement_session(collector):
         result = adapter.run_workflow(
-            pd.DataFrame({_REPAIRS_NEEDED: [0, 1, 2, 3], COL_REWRITE_REPLACEMENT_READY: replacement_ready}),
+            pd.DataFrame(
+                {
+                    _REPAIRS_NEEDED: [0, 1, 2, 3],
+                    COL_REWRITE_REPLACEMENT_READY: replacement_ready,
+                }
+            ),
             model_configs=[],
             columns=columns,
             workflow_name="rewrite-combined",
@@ -316,7 +337,7 @@ def test_run_executes_one_data_designer_workflow(
     output[COL_REPAIR_ITERATIONS] = 1
     output[COL_NEEDS_HUMAN_REVIEW] = False
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(dataframe=output, failed_records=[])
+    adapter.run_workflow.return_value = _positional(dataframe=output, failed_records=[])
 
     collector = MeasurementCollector(record_hash_key="test-key")
     with measurement_session(collector):
@@ -332,7 +353,11 @@ def test_run_executes_one_data_designer_workflow(
     adapter.run_workflow.assert_called_once()
     assert adapter.run_workflow.call_args.kwargs["workflow_name"] == "rewrite-combined"
     assert result.dataframe[COL_REWRITTEN_TEXT].tolist() == ["Maria works at a company"]
-    stage_records = [record for record in collector.records if record["record_type"] == "stage"]
+    stage_records = [
+        record
+        for record in collector.records
+        if record["record_type"] == "stage" and not record["stage"].startswith("graph_")
+    ]
     assert len(stage_records) == 1
     assert stage_records[0]["stage"] == "CombinedRewriteWorkflow.run"
     assert stage_records[0]["input_row_count"] == 1
@@ -340,16 +365,50 @@ def test_run_executes_one_data_designer_workflow(
     assert stage_records[0]["failed_record_count"] == 0
 
 
-def test_run_restores_skipped_span_label_counts_json_string_to_dict(
+def test_run_keeps_review_flag_for_unavailable_utility(
     stub_model_configs: list[ModelConfig],
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
-    """CombinedRewriteWorkflow reuses RewriteGenerationWorkflow's columns, which encode
-    ``skipped_span_label_counts`` as a JSON string for Parquet schema stability. The
-    combined-graph path must restore it to a dict in the final trace, same as the
-    legacy RewriteWorkflow path, or measurement parsing silently drops real counts to {}.
-    """
+    entities = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
+    dataframe = pd.DataFrame(
+        {COL_TEXT: ["Alice works at Acme", "Alice works at Beta"], COL_ENTITIES_BY_VALUE: [entities] * 2}
+    )
+    output = dataframe.copy()
+    output[COL_REWRITTEN_TEXT] = ["Maria works at a company", "Maria works at a firm"]
+    output[COL_UTILITY_SCORE] = [np.nan, 0.9]
+    entry = {"id": 1, "sensitivity": "high", "protection_method_suggestion": "replace", "source": "tagged"}
+    entry |= {"category": "direct_identifier", "entity_label": "first_name", "entity_value": "Alice"}
+    output[COL_SENSITIVITY_DISPOSITION] = [{"sensitivity_disposition": [entry]}] * 2
+    output[COL_LEAKAGE_MASS] = 0.1
+    output[COL_WEIGHTED_LEAKAGE_RATE] = 0.05
+    output[COL_ANY_HIGH_LEAKED] = False
+    output[COL_NEEDS_REPAIR] = False
+    output[COL_REPAIR_ITERATIONS] = 0
+    # The combined finalizer flags the row whose utility is unavailable.
+    output[COL_NEEDS_HUMAN_REVIEW] = [True, False]
+    adapter = Mock()
+    adapter.run_workflow.return_value = _positional(dataframe=output, failed_records=[])
+
+    result = CombinedRewriteWorkflow(adapter=adapter).run(
+        dataframe,
+        model_configs=stub_model_configs,
+        selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(max_repair_iterations=0),
+    )
+
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [True, False]
+
+
+def test_run_keeps_skipped_span_label_counts_json_text(
+    stub_model_configs: list[ModelConfig],
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """``skipped_span_label_counts`` is JSON text so the trace writes to Parquet; the
+    combined path passes it through unchanged."""
     dataframe = pd.DataFrame(
         {
             COL_TEXT: ["Alice works at Acme"],
@@ -374,7 +433,7 @@ def test_run_restores_skipped_span_label_counts_json_string_to_dict(
         }
     ]
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(dataframe=output, failed_records=[])
+    adapter.run_workflow.return_value = _positional(dataframe=output, failed_records=[])
 
     result = CombinedRewriteWorkflow(adapter=adapter).run(
         dataframe,
@@ -386,7 +445,7 @@ def test_run_restores_skipped_span_label_counts_json_string_to_dict(
     )
 
     counts = result.dataframe[COL_REPLACEMENT_APPLICATION].iloc[0]["skipped_span_label_counts"]
-    assert counts == {"first_name": 1}
+    assert counts == '{"first_name": 1}'
 
 
 def test_run_reports_combined_failure_and_drops_only_failed_entity_row(
@@ -474,15 +533,15 @@ def test_combined_and_legacy_paths_return_equivalent_repaired_result(
     )
     legacy_adapter = Mock()
     legacy_adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pipeline, failed_records=[]),
-        WorkflowRunResult(dataframe=evaluation_before, failed_records=[]),
-        WorkflowRunResult(dataframe=pd.DataFrame({COL_REWRITTEN_TEXT_NEXT: ["rewrite-1"]}), failed_records=[]),
-        WorkflowRunResult(dataframe=evaluation_before.copy(), failed_records=[]),
-        WorkflowRunResult(dataframe=pd.DataFrame({COL_REWRITTEN_TEXT_NEXT: ["rewrite-2"]}), failed_records=[]),
-        WorkflowRunResult(dataframe=evaluation_after, failed_records=[]),
+        _positional(dataframe=pipeline, failed_records=[]),
+        _positional(dataframe=evaluation_before, failed_records=[]),
+        _positional(dataframe=pd.DataFrame({COL_REWRITTEN_TEXT_NEXT: ["rewrite-1"]}), failed_records=[]),
+        _positional(dataframe=evaluation_before.copy(), failed_records=[]),
+        _positional(dataframe=pd.DataFrame({COL_REWRITTEN_TEXT_NEXT: ["rewrite-2"]}), failed_records=[]),
+        _positional(dataframe=evaluation_after, failed_records=[]),
     ]
     with patch(_REPLACE_PATCH) as replace_workflow:
-        replace_workflow.return_value.generate_map_only.return_value = WorkflowRunResult(
+        replace_workflow.return_value.generate_map_only.return_value = _positional(
             dataframe=dataframe.copy(),
             failed_records=[],
         )
@@ -561,7 +620,12 @@ def test_conditional_graph_handles_larger_mixed_batches(
     )
 
     result = adapter.run_workflow(
-        pd.DataFrame({_REPAIRS_NEEDED: repairs_needed, COL_REWRITE_REPLACEMENT_READY: True}),
+        pd.DataFrame(
+            {
+                _REPAIRS_NEEDED: repairs_needed,
+                COL_REWRITE_REPLACEMENT_READY: True,
+            }
+        ),
         model_configs=[],
         columns=_deterministic_columns(graph),
         workflow_name="rewrite-combined-scale-test",
@@ -600,7 +664,7 @@ def test_run_preserves_mixed_row_order_and_passthrough_defaults(
         output[COL_NEEDS_REPAIR] = False
         output[COL_REPAIR_ITERATIONS] = 0
         output[COL_NEEDS_HUMAN_REVIEW] = False
-        return WorkflowRunResult(dataframe=output, failed_records=[])
+        return _positional(dataframe=output, failed_records=[])
 
     adapter.run_workflow.side_effect = run_workflow
 
@@ -685,6 +749,7 @@ def test_graph_validates_with_data_designer(
             COL_TAGGED_TEXT: ["[[Alice|first_name]] works at Acme"],
             COL_TAG_NOTATION: ["bracket"],
             COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
+            COL_ENTITY_CLASSIFICATION: [{"first_name": "direct_identifier"}],
             COL_LATENT_ENTITIES: [{"latent_entities": []}],
         }
     )
@@ -697,3 +762,64 @@ def test_graph_validates_with_data_designer(
     )
 
     data_designer.validate(builder)
+
+
+@pytest.mark.parametrize(
+    "replacements",
+    [
+        [
+            {"original": "Alice", "label": "first_name", "synthetic": "MAYA"},
+            {"original": "Maya", "label": "first_name", "synthetic": "Lena"},
+        ],
+        [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}],
+    ],
+    ids=["mapped", "unmapped"],
+)
+def test_filter_step_folds_substitutes_against_row_originals(replacements: list[dict]) -> None:
+    row = {
+        COL_REPLACEMENT_MAP_RAW: {"replacements": replacements},
+        COL_ENTITIES_BY_VALUE: {
+            "entities_by_value": [
+                {"value": "Alice", "labels": ["first_name"]},
+                {"value": "Maya", "labels": ["first_name"]},
+            ]
+        },
+    }
+
+    replacements = _filter_replacement_map(row)[COL_REPLACEMENT_MAP]["replacements"]
+
+    assert {r["synthetic"].casefold() for r in replacements}.isdisjoint({"alice", "maya"})
+
+
+def test_filter_step_lets_two_values_of_a_row_share_a_substitute() -> None:
+    row = {
+        COL_REPLACEMENT_MAP_RAW: {
+            "replacements": [
+                {"original": "Paris", "label": "city", "synthetic": "Lyon"},
+                {"original": "Berlin", "label": "city", "synthetic": "Lyon"},
+            ]
+        },
+        COL_ENTITIES_BY_VALUE: {
+            "entities_by_value": [{"value": "Paris", "labels": ["city"]}, {"value": "Berlin", "labels": ["city"]}]
+        },
+    }
+
+    replacements = _filter_replacement_map(row)[COL_REPLACEMENT_MAP]["replacements"]
+
+    assert [r["synthetic"] for r in replacements] == ["Lyon", "Lyon"]
+
+
+def test_combined_graph_passes_summary_to_disposition(
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    graph = CombinedRewriteWorkflow(adapter=Mock()).build_graph(
+        selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(max_repair_iterations=0),
+        data_summary="Customer support conversations",
+    )
+    disposition = next(column for column in graph.columns if column.name == COL_RAW_SENSITIVITY_DISPOSITION)
+    assert isinstance(disposition, LLMStructuredColumnConfig)
+    assert "<data_summary>\nCustomer support conversations\n</data_summary>" in disposition.prompt

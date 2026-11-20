@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
@@ -21,7 +21,7 @@ _ACTIVE_COLLECTOR: ContextVar[MeasurementCollector | None] = ContextVar(
 
 
 @contextmanager
-def measurement_session(collector: MeasurementCollector | None = None) -> Iterator[MeasurementCollector]:
+def measurement_session(collector: MeasurementCollector | None = None) -> Generator[MeasurementCollector]:
     """Activate a collector for code running in this context."""
     active = collector or MeasurementCollector()
     token = _ACTIVE_COLLECTOR.set(active)
@@ -32,7 +32,7 @@ def measurement_session(collector: MeasurementCollector | None = None) -> Iterat
 
 
 @contextmanager
-def configured_measurement_session(config: MeasurementConfig | None) -> Iterator[MeasurementCollector | None]:
+def configured_measurement_session(config: MeasurementConfig | None) -> Generator[MeasurementCollector | None]:
     """Activate and persist a collector when a measurement config is provided."""
     if config is None:
         yield None

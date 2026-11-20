@@ -1,0 +1,8 @@
+schema_version = "inference-service.spec/v3"
+port = 8001
+startup_timeout_seconds = 600
+shutdown_timeout_seconds = 30
+
+[backend]
+kind = "gliner2"
+device = "auto"
