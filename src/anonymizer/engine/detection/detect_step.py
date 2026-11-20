@@ -123,14 +123,20 @@ def detect_step(
             pairs = _listed_pairs(listed)
             values = spanned + [value for value, _ in pairs]
             added: list[EntitySchema] = []
+            absorbed: list[EntitySchema] = []  # kept spans an added span contains
             if repeats == "protect" and sound:
                 added = _repeat_spans(datum.text, entities, values, _first_labels(returned, pairs))
                 if added:  # an added span that contains a kept span is the outer span: collapse again
                     merged = EntitiesSchema(entities=[*entities.entities, *added])
                     inner = covered_spans(datum, merged)
+                    absorbed = [e for i, e in enumerate(merged.entities) if i in inner and e.source != "repeat"]
                     entities = EntitiesSchema(entities=[e for i, e in enumerate(merged.entities) if i not in inner])
                     appended[row] = list(entities.entities)
-            extras[row] = _extra_pairs(datum.text, entities, listed, raw)
+            # A kept span that an added span absorbed keeps its value in the view, so the Substitute map is still asked
+            # for it: a model that maps only the inner value (a card's last four digits) can then complete the map.
+            extras[row] = _extra_pairs(datum.text, entities, listed, raw) + tuple(
+                (e.value, (e.label,)) for e in absorbed
+            )
             state.rows[datum] = RowDetections(record_ids[row], entities, tuple(added), extras[row])
             if repeats != "release" and sound and values_outside_spans(datum.text, entities, values):
                 unspanned.add(datum)
