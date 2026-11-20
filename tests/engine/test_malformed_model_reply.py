@@ -56,6 +56,7 @@ from anonymizer.engine.constants import (
     COL_REWRITE_TAGGED_TEXT,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
+    COL_REWRITTEN_TEXT_NEXT,
     COL_SENSITIVITY_DISPOSITION,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
@@ -1064,3 +1065,21 @@ def test_quality_evaluation_without_a_response_in_an_earlier_round_is_counted(
         f"Rows kept without a usable model response after their retries, by step: quality evaluation={per_row}. "
         "If most rows are listed, check that step's model."
     ]
+
+
+@pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])
+def test_trace_of_a_repair_withheld_for_its_privacy_response(
+    tmp_path: Path, repairer: tuple[dict[str, list[str]], dict[str, int]], workflow: type[RewriteWorkflow]
+) -> None:
+    """Pins what the docs say each mode's trace keeps: staged keeps the repair candidate, combined does not."""
+    script, _ = repairer
+    script["privacy"] = [_LEAK, *[_UNPARSED] * _RETRIES]
+    script["repair"] = [json.dumps({"rewritten_text": _REPAIRED_TEXT})]
+
+    frame = _repair_run(tmp_path, workflow, max_repair_iterations=3).dataframe
+
+    assert pd.isna(frame.iloc[0][COL_REWRITTEN_TEXT])
+    if workflow is _StagedLoop:
+        assert frame.iloc[0][COL_REWRITTEN_TEXT_NEXT] == _REPAIRED_TEXT
+    else:
+        assert COL_REWRITTEN_TEXT_NEXT not in frame.columns
