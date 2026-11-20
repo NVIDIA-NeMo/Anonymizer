@@ -427,9 +427,10 @@ def _fold_replacement_maps(
     With a stable Session's ``view`` (``"run"`` mode only), a key the run has not mapped yet takes the Session's
     assignment, re-cased against its normalized original. A substitute also collides when the view's
     ``assigned_to_other_value`` finds it assigned to another subject or normalized value, or to a fallback entry; the
-    key's own slot and the same normalized value under any other label do not count, so a value under two labels keeps
-    one substitute. A record-local fallback also collides when the view's ``assigned_elsewhere`` finds it assigned to
-    any other slot, the same value's other labels included, since the Session then holds it as a fallback too. Unless
+    key's own slot and the same normalized value under any other label do not count, so a value under two labels can
+    keep one substitute. A record-local fallback also collides when the view's ``assigned_elsewhere`` finds it
+    assigned to any other slot, the same value's other labels included, since the Session then holds it as a fallback
+    too. Unless
     it is the key's own held substitute, it also collides when it is a value the Session holds.
     A placeholder is never one the Session assigns to another key. ``decisions`` then gets one tuple per map: a
     decision for each key first used in that map, holding the key's run-wide substitute, and one for each record-local

@@ -203,8 +203,9 @@ saved = session.snapshot().to_bytes()  # to continue later, or in another proces
 session = Session.restore(SessionSnapshot.from_bytes(saved))
 ```
 
-- Under a stable Session, Substitute works as `consistency="run"` across every call that uses the Session. Every
-  detected label shares by value, so the outputs of those calls are linkable. Limit linkage by how widely you use one
+- Under a stable Session, Substitute works as `consistency="run"` across every call that uses the Session. A value
+  keeps one substitute per label across calls; one value under two labels can get two substitutes. The outputs of those
+  calls are linkable. Limit linkage by how widely you use one
   Session. Each call logs its changes to the Session as counts at INFO, and the result carries them as
   `result.session_changes`: `added`, `reused`, `revised` and `ignored` assignments, new record-local `fallbacks`,
   and the placeholders the call created, by cause (`placeholders_protected`: the model proposed a value from the
