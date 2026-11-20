@@ -281,6 +281,22 @@ instead of dropping it, and the run ends with one warning counting such records 
 - What to do: read the warning; a step listed for most records points at that step's model. Expect null rewritten
   text for repaired records that still leak, and treat null text as "not released".
 
+### #432: detector span contract
+
+**Custom detector spans: some overlaps collapse, and other breaks fail the record with a named reason.** This
+corrects the Detection entry "Detector spans are checked against the text", which says every overlap fails.
+- Spans with identical bounds collapse into the first labelled one, keeping its label, and a span contained in a
+  labelled span gives way to the outer span. Later steps and `final_entities` see the collapsed spans.
+- Any other overlap fails the record at `detect` with `overlapping_output_ownership`. A span that is out of range or
+  zero-width fails with `mention_out_of_range`, a span whose text does not match fails with `mention_slice_mismatch`,
+  and an unlabelled span that no labelled span covers fails with `mention_unlabelled`.
+- In Rewrite, a `final_entities` payload that does not parse fails the record with `invalid_output`. Replace still
+  rejects it at `replace`.
+- Each row's `_entities_by_value` view is derived from its kept spans. A view the detector returns is not used, and
+  the column may be left out.
+- These rules apply when the detector reports source positions or unique record ids and leaves the text unchanged.
+- What to do: match the new failure reasons, and stop building `_entities_by_value` in a custom detector.
+
 ### #407: frozen config and one options object
 
 **Config fields cannot be reassigned.** `AnonymizerConfig`, `Detect`, `Rewrite`, `PrivacyGoal`, the replace
