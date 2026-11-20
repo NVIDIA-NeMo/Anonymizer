@@ -62,9 +62,15 @@ that breaks the contract, fails its record at the `detect` step with the reason 
 `mention_out_of_range` (a zero-width span counts as out of range), `mention_slice_mismatch` or `mention_unlabelled`;
 in Rewrite, a `final_entities` payload that does not parse (for example a `null` label or a non-integer offset)
 fails it with `invalid_output`, and Replace rejects such a record at its `replace` step. The record is listed in
-`result.failed_records` and left out of the output, and the rest of the run continues. These checks, and the rebuild of
-a missing or stale `_entities_by_value` view, apply only when the detector returns its rows' source positions or unique
-record ids. Without them, a contract break may stop the run, and a record may be released with its spans unprotected.
+`result.failed_records` and left out of the output, and the rest of the run continues.
+
+Custom workflows (`detection_workflow`, `replace_runner`, `rewrite_runner`) are an advanced and testing seam. Every row
+a custom detector or runner returns must name the input row it answers, by its source positions or by keeping that
+row's unique `_anonymizer_record_id`; the rows a runner's `evaluate()` returns are matched by record id only. Anonymizer
+never matches rows by order or text. The checks above, and the rebuild of a missing or stale `_entities_by_value` view,
+apply only to a detector result whose rows are named and whose text is unchanged. Any other detector result is replaced
+or rewritten as returned, without these checks or per-record outcomes, and a record in it may be released with its spans
+unprotected.
 
 ### Example: standard vs. latent entities
 
