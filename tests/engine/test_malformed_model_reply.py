@@ -1107,6 +1107,21 @@ def test_trace_keeps_the_candidate_of_an_exhausted_repair(
     assert frame.iloc[0][COL_REWRITTEN_TEXT_NEXT] == _REPAIRED_TEXT
 
 
+@pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])
+def test_trace_keeps_no_candidate_after_a_later_repair_cannot_be_parsed(
+    tmp_path: Path, repairer: tuple[dict[str, list[str]], dict[str, int]], workflow: type[RewriteWorkflow]
+) -> None:
+    """An earlier round's candidate is not the latest one: both modes leave the column null."""
+    script, _ = repairer
+    script["privacy"] = [_LEAK]
+    script["repair"] = [json.dumps({"rewritten_text": _REPAIRED_TEXT}), "I cannot rewrite that."]
+
+    frame = _anonymizer_run(tmp_path, workflow, max_repair_iterations=3).trace_dataframe
+
+    assert pd.isna(frame.iloc[0]["text_rewritten"])
+    assert pd.isna(frame.iloc[0][COL_REWRITTEN_TEXT_NEXT])
+
+
 # --- Repair: a repair that still fails privacy after its last round is withheld, as an unparsed one is ---
 
 

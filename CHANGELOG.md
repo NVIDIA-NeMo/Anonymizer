@@ -283,8 +283,8 @@ instead of dropping it, and the run ends with one warning counting such records 
 - `result.leftovers(row)` raises `ValueError` for a Rewrite row whose rewritten text is null (withheld or never
   produced). It counted no leftovers for such a row before, even when the row's saved `replacements_applied` cause
   counted a value in the withheld candidate. `result.outcome(row)` keeps that cause.
-- `display_record` shows "not available" for a missing Utility, Leakage or Weighted Leakage Rate. It showed a blank
-  for a null metric and `nan` for NaN.
+- `display_record` shows "not available" for a null Utility, Leakage or Weighted Leakage Rate (`None`, NA or NaN). It
+  showed a blank for NA, `nan` for NaN, and omitted the metric for `None`.
 - Withheld or missing Rewrite text is `None` in both modes. The combined mode (`Rewrite(use_combined_graph=True)`)
   gave `pd.NA`.
 

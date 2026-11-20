@@ -845,7 +845,7 @@ def _make_rewrite_preview(metrics: dict[str, list[object]]) -> PreviewResult:
     )
 
 
-@pytest.mark.parametrize("missing", [pd.NA, float("nan")], ids=["na", "nan"])
+@pytest.mark.parametrize("missing", [pd.NA, float("nan"), None], ids=["na", "nan", "none"])
 def test_display_record_says_not_available_for_a_missing_metric(missing: object) -> None:
     """A kept row with no usable evaluation response has null metrics; they are named, not left blank or ``nan``."""
     preview = _make_rewrite_preview(

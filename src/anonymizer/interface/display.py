@@ -433,7 +433,7 @@ def _normalize_replacement_map(raw: str | dict | object) -> list[dict[str, str]]
 
 def _metric_text(value: Any) -> str:
     """Format a metric to two decimals; a null metric (NaN or NA) reads "not available", as in the repair prompt."""
-    return "not available" if pd.isna(value) else f"{value:.2f}"
+    return "not available" if value is None or pd.isna(value) else f"{value:.2f}"
 
 
 def _render_scores_section(row: pd.Series, *, is_rewrite: bool = False) -> str:
@@ -448,12 +448,12 @@ def _render_scores_section(row: pd.Series, *, is_rewrite: bool = False) -> str:
     weighted_leakage_rate = row.get(COL_WEIGHTED_LEAKAGE_RATE)
     needs_review = row.get(COL_NEEDS_HUMAN_REVIEW)
 
-    for name, value in (
-        ("Utility", utility),
-        ("Leakage", leakage),
-        ("Weighted Leakage Rate", weighted_leakage_rate),
+    for name, column, value in (
+        ("Utility", COL_UTILITY_SCORE, utility),
+        ("Leakage", COL_LEAKAGE_MASS, leakage),
+        ("Weighted Leakage Rate", COL_WEIGHTED_LEAKAGE_RATE, weighted_leakage_rate),
     ):
-        if value is not None:
+        if column in row.index:
             metric_parts.append(
                 f"<span style='margin-right:16px'><strong>{name}:</strong> {_metric_text(value)}</span>"
             )
