@@ -291,7 +291,13 @@ def run_replace_pipeline(
     )
     outcomes = tuple(result.outcome(d) for d in targets)
     return ReplacementResult(
-        output_df, failures, detected[0], elapsed[0], outcomes, result.session_changes, dict(placeholders)
+        dataframe=output_df,
+        failed_records=failures,
+        detection=detected[0],
+        detection_elapsed=elapsed[0],
+        outcomes=outcomes,
+        session_changes=result.session_changes,
+        placeholder_counts=dict(placeholders),
     )
 
 

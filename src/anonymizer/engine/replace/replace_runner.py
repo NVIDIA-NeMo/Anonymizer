@@ -139,7 +139,10 @@ class ReplacementWorkflow:
                 raise ValueError(f"Unsupported replace method: {type(replace_method).__name__}")
 
             result = ReplacementResult(
-                local_df, failed_records, session_changes=changes, placeholder_counts=placeholders
+                dataframe=local_df,
+                failed_records=failed_records,
+                session_changes=changes,
+                placeholder_counts=placeholders,
             )
             measurement.update(
                 output_row_count=len(result.dataframe),
