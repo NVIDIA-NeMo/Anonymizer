@@ -31,13 +31,32 @@ from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
 
 
 def test_hash_is_deterministic() -> None:
-    strategy = Hash()
+    strategy = Hash(key="s3cr3t")
     value = strategy.replace(text="alice@example.com", label="email")
     assert value == strategy.replace(text="alice@example.com", label="email")
 
 
-def test_unkeyed_hash_output_is_unchanged() -> None:
-    assert Hash().replace(text="Alice", label="first_name") == "<HASH_FIRST_NAME_3bc51062973c>"
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: Hash(),  # ty: ignore[missing-argument]
+        lambda: Hash(key=None),
+        lambda: AnonymizerConfig.model_validate({"replace": {"kind": "hash"}}),
+        lambda: AnonymizerConfig.model_validate({"replace": {"kind": "hash", "key": None}}),
+    ],
+    ids=["no-key", "key-none", "dict-no-key", "dict-key-none"],
+)
+def test_hash_without_key_fails_and_names_the_fix(build: Any) -> None:
+    with pytest.raises(ValidationError, match=r"Hash requires a secret key: pass Hash\(key=\.\.\.\)") as exc_info:
+        build()
+    assert "ANONYMIZER_HASH_KEY" in str(exc_info.value)
+
+
+def test_hash_copy_without_key_cannot_hash() -> None:
+    stripped = Hash(key="s3cr3t").without_key()
+    assert stripped.key is None
+    with pytest.raises(ValueError, match="Hash requires a secret key"):
+        stripped.replace(text="Alice", label="first_name")
 
 
 def test_keyed_hash_folds_case_and_whitespace_and_depends_on_key() -> None:
@@ -45,7 +64,6 @@ def test_keyed_hash_folds_case_and_whitespace_and_depends_on_key() -> None:
     token = keyed.replace(text="Acme  Corp", label="company_name")
     assert token == keyed.replace(text="ACME\u202fcorp", label="company_name")
     assert token != Hash(key="other").replace(text="Acme  Corp", label="company_name")
-    assert token != Hash().replace(text="acme corp", label="company_name")
     assert "s3cr3t" not in repr(keyed)
 
 
@@ -923,7 +941,8 @@ def test_builtin_regex_rejects_unknown_label() -> None:
     [("annotate", Annotate), ("redact", Redact), ("hash", Hash), ("substitute", Substitute)],
 )
 def test_replace_dict_resolves_by_kind(kind: str, expected_type: type) -> None:
-    config = AnonymizerConfig.model_validate({"replace": {"kind": kind}})
+    extra = {"key": "s3cr3t"} if kind == "hash" else {}
+    config = AnonymizerConfig.model_validate({"replace": {"kind": kind, **extra}})
     assert type(config.replace) is expected_type
 
 
@@ -933,7 +952,7 @@ def test_replace_dict_kind_is_case_insensitive() -> None:
 
 
 def test_replace_instance_needs_no_explicit_kind() -> None:
-    config = AnonymizerConfig(replace=Hash(digest_length=8))
+    config = AnonymizerConfig(replace=Hash(key="s3cr3t", digest_length=8))
     assert isinstance(config.replace, Hash)
     assert config.replace.kind == "hash"
 
@@ -949,8 +968,9 @@ def test_replace_instance_kind_cannot_be_overridden() -> None:
         Redact.model_validate({"kind": "hash"})
 
 
-@pytest.mark.parametrize("replace", [Annotate(), Redact(), Hash(), Substitute(instructions="Keep it short.")])
-def test_replace_config_round_trips_through_json(replace: Annotate | Redact | Hash | Substitute) -> None:
+# A keyed Hash does not round-trip: its key is masked (see the masked-placeholder test).
+@pytest.mark.parametrize("replace", [Annotate(), Redact(), Substitute(instructions="Keep it short.")])
+def test_replace_config_round_trips_through_json(replace: Annotate | Redact | Substitute) -> None:
     config = AnonymizerConfig(replace=replace)
     assert AnonymizerConfig.model_validate_json(config.model_dump_json()) == config
 

@@ -141,9 +141,11 @@ If you are working with another language, we encourage you to experiment on a sm
 | **Substitute** | `Maya` | `instructions` |
 | **Redact** | `[REDACTED_FIRST_NAME]` | `format_template` |
 | **Annotate** | `<Alice, first_name>` | `format_template` |
-| **Hash** | `<HASH_FIRST_NAME_3bc51062973c>` | `format_template`, `algorithm`, `digest_length` |
+| **Hash** | `<HASH_FIRST_NAME_3bc51062973c>` | `key` (required), `format_template`, `digest_length` |
 
 ```python
+import os
+
 from anonymizer import Redact, Annotate, Hash, Substitute
 
 # LLM-generated contextual replacements
@@ -155,8 +157,8 @@ AnonymizerConfig(replace=Redact(format_template="****"))
 # Annotation with entities tagging
 AnonymizerConfig(replace=Annotate(format_template="<{text}-|-{label}>"))
 
-# Deterministic hash with short digest
-AnonymizerConfig(replace=Hash(algorithm="sha256", digest_length=8))
+# Keyed hash (HMAC-SHA256) with short digest; the key is required
+AnonymizerConfig(replace=Hash(key=os.environ["ANONYMIZER_HASH_KEY"], digest_length=8))
 ```
 
 ---

@@ -51,12 +51,19 @@ def test_parse_redact_defaults() -> None:
     assert config.rewrite is None
 
 
-def test_parse_hash_custom_params() -> None:
-    """Hash with algorithm=md5 and digest_length=8."""
-    strategy = _build_replace_strategy(CliOpts(replace="hash", algorithm="md5", digest_length=8))
+def test_parse_hash_reads_key_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hash takes its key from ANONYMIZER_HASH_KEY and keeps digest_length."""
+    monkeypatch.setenv("ANONYMIZER_HASH_KEY", "s3cr3t")
+    strategy = _build_replace_strategy(CliOpts(replace="hash", digest_length=8))
     assert isinstance(strategy, Hash)
-    assert strategy.algorithm == "md5"
+    assert strategy.key.get_secret_value() == "s3cr3t"
     assert strategy.digest_length == 8
+
+
+def test_parse_hash_without_key_names_the_variable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ANONYMIZER_HASH_KEY", raising=False)
+    with pytest.raises(ValueError, match="ANONYMIZER_HASH_KEY"):
+        _build_replace_strategy(CliOpts(replace="hash"))
 
 
 def test_parse_annotate_template() -> None:

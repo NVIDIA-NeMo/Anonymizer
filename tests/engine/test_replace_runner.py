@@ -579,12 +579,12 @@ def test_hash_strategy_executes(
     )
     result = runner.run(
         input_df,
-        replace_method=Hash(),
+        replace_method=Hash(key="s3cr3t"),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
     )
     assert result.failed_records == []
-    assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == "<HASH_FIRST_NAME_3bc51062973c>"
+    assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == Hash(key="s3cr3t").replace(text="Alice", label="first_name")
 
 
 def test_redact_none_replaces_all(

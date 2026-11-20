@@ -154,33 +154,30 @@ AnonymizerConfig(replace=Annotate(format_template="[{label}: {text}]"))
 
 ## Hash
 
-Replaces entities with a deterministic hash digest. The same entity text always produces the same hash, enabling consistent de-identification across records.
+Replaces entities with a keyed hash digest: HMAC-SHA256 of the entity text with a secret `key` you supply. With the same key, the same entity text always produces the same token, enabling consistent de-identification across records and runs.
 
 ```python
 import os
 
 from anonymizer import AnonymizerConfig, Hash
 
-# Default: <HASH_FIRST_NAME_3bc51062973c>
-AnonymizerConfig(replace=Hash())
-
-# Short digest with SHA-1
-AnonymizerConfig(replace=Hash(algorithm="sha1", digest_length=8))
-
-# Keyed: HMAC-SHA256, not reversible without the key
+# Key from the environment; the CLI reads the same variable for --replace hash
 AnonymizerConfig(replace=Hash(key=os.environ["ANONYMIZER_HASH_KEY"]))
+
+# Short digest, label left out of the token
+AnonymizerConfig(replace=Hash(key=os.environ["ANONYMIZER_HASH_KEY"], digest_length=8, format_template="<HASH_{digest}>"))
 ```
 
-!!! warning "Unkeyed hashes of low-entropy values are reversible"
+!!! warning "Hash requires a secret key"
 
-    Without a `key`, anyone with the output can recover dates of birth, phone numbers, ZIP codes and similar values by hashing candidates ([#348](https://github.com/NVIDIA-NeMo/Anonymizer/issues/348)). Set `key` when the hashed values must not be recoverable. With a key, the digest is HMAC-SHA256 of the text with case and whitespace folded, so "Acme Corp" and "ACME  corp" get the same token; the same key gives the same tokens across runs. Keep the key secret; without one, output is unchanged from earlier releases. An empty or whitespace-only key is rejected. Serialized configs mask the key, so a keyed config loaded back from JSON fails validation until you pass the key again.
+    The key is required. Without one, anyone with the output could recover dates of birth, phone numbers, ZIP codes and similar low-entropy values by hashing candidates ([#348](https://github.com/NVIDIA-NeMo/Anonymizer/issues/348)), so `Hash()` without a key raises an error that says how to pass one. Keep the key secret, and reuse it when tokens must match across runs; a new key gives new tokens. Before hashing, the text is casefolded and runs of whitespace become one space, the same fold Substitute uses to match variants of a value, so "Acme Corp" and "ACME  corp" get the same token. An empty or whitespace-only key is rejected. Serialized configs mask the key, so a config loaded back from JSON fails validation until you pass the key again. Results keep the strategy without its key, so a saved or pickled result holds no key material.
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `algorithm` | `sha256` | Hash algorithm (`sha256`, `sha1`, or `md5`). |
+| `key` | required | Secret key, not empty. The digest is HMAC-SHA256 of the case- and whitespace-folded text. |
+| `algorithm` | `sha256` | Only `sha256` is accepted. |
 | `digest_length` | `12` | Number of hex characters to keep (6--64). |
 | `format_template` | `<HASH_{label}_{digest}>` | Template with `{digest}` required; `{label}` optional. |
-| `key` | `None` | Secret key, not empty. When set, the digest is HMAC-SHA256 of the case- and whitespace-folded text, and `algorithm` must stay `sha256`. |
 
 ---
 

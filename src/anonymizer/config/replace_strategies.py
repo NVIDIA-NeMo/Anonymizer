@@ -143,31 +143,44 @@ class Annotate(ReplaceMethodBase):
         )
 
 
+_MISSING_KEY_MESSAGE = (
+    'Hash requires a secret key: pass Hash(key=...), for example Hash(key=os.environ["ANONYMIZER_HASH_KEY"]) '
+    "(the CLI reads ANONYMIZER_HASH_KEY). Unkeyed hashes of low-entropy values are reversible, so there is no "
+    "unkeyed mode; use the same key across runs to get the same tokens."
+)
+
+
 class Hash(ReplaceMethodBase):
-    """Replace each entity with a deterministic hash token."""
+    """Replace each entity with a keyed hash token (HMAC-SHA256 of the case- and whitespace-folded text)."""
 
     # Validation errors would otherwise echo the plaintext key.
     model_config = ConfigDict(hide_input_in_errors=True)
 
     kind: Literal["hash"] = "hash"
-    algorithm: Literal["sha256", "sha1", "md5"] = Field(default="sha256", description="Hash algorithm.")
+    algorithm: Literal["sha256", "sha1", "md5"] = Field(
+        default="sha256", description="Hash algorithm. Only 'sha256' is accepted: the digest is always HMAC-SHA256."
+    )
     digest_length: int = Field(
         default=12, ge=6, le=64, description="Number of hex characters to keep from the hash digest."
     )
     format_template: str = Field(
         default="<HASH_{label}_{digest}>", description="Template with {digest} required and optional {label}."
     )
-    key: SecretStr | None = Field(
-        default=None,
-        description="Secret key. When set, the digest is HMAC-SHA256 of the case- and whitespace-folded text "
-        "and `algorithm` must stay `sha256`; without a key, unkeyed digests of low-entropy values are reversible.",
+    key: SecretStr = Field(
+        description="Required secret key. The digest is HMAC-SHA256 of the case- and whitespace-folded text; "
+        "unkeyed digests of low-entropy values are reversible, so there is no unkeyed mode.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_key(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("key") is None:
+            raise ValueError(_MISSING_KEY_MESSAGE)
+        return data
 
     @field_validator("key")
     @classmethod
-    def validate_key(cls, value: SecretStr | None) -> SecretStr | None:
-        if value is None:
-            return value
+    def validate_key(cls, value: SecretStr) -> SecretStr:
         secret = value.get_secret_value()
         if not secret.strip():
             raise ValueError("key must not be empty or whitespace")
@@ -179,7 +192,7 @@ class Hash(ReplaceMethodBase):
 
     @model_validator(mode="after")
     def validate_keyed_algorithm(self) -> Hash:
-        if self.key is not None and self.algorithm != "sha256":
+        if self.algorithm != "sha256":
             raise ValueError("a keyed Hash always uses HMAC-SHA256; leave algorithm at its default 'sha256'")
         return self
 
@@ -201,17 +214,23 @@ class Hash(ReplaceMethodBase):
             label: Entity label (e.g. ``"first_name"``).
         """
         if self.key is None:
-            digest = hashlib.new(self.algorithm, text.encode("utf-8")).hexdigest()[: self.digest_length]
-        else:
-            folded = " ".join(text.casefold().split()).encode("utf-8")
-            key = self.key.get_secret_value().encode("utf-8")
-            digest = hmac.new(key, folded, hashlib.sha256).hexdigest()[: self.digest_length]
+            # Only a result's stored copy has no key (see ``without_key``); it never hashes.
+            raise ValueError(_MISSING_KEY_MESSAGE)
+        # Same fold as Substitute's value matching ("casefold-whitespace"): casefold, then collapse whitespace.
+        # Changing it changes every token, so keep the two in step.
+        folded = " ".join(text.casefold().split()).encode("utf-8")
+        key = self.key.get_secret_value().encode("utf-8")
+        digest = hmac.new(key, folded, hashlib.sha256).hexdigest()[: self.digest_length]
         return self._render_template(
             template=self.format_template,
             text=text,
             label=label.upper(),
             digest=digest,
         )
+
+    def without_key(self) -> Hash:
+        """A copy with the key removed, for results that keep the strategy. It cannot hash."""
+        return self.model_copy(update={"key": None})
 
 
 ReplaceMethod = Annotated[

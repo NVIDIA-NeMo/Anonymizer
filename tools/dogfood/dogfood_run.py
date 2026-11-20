@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import time
 import traceback
@@ -179,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
             strategy_kwargs["algorithm"] = args.hash_algorithm
         if args.digest_length is not None:
             strategy_kwargs["digest_length"] = args.digest_length
-        strategy = Hash(**strategy_kwargs)
+        strategy = Hash(**strategy_kwargs, key=os.environ.get("ANONYMIZER_HASH_KEY"))
     else:
         strategy = None
 
