@@ -493,6 +493,16 @@ def _withhold_failed_repairs(frame: pd.DataFrame, result: ProtectionResult, targ
         frame.loc[withheld, COL_REWRITTEN_TEXT] = None
 
 
+def _none_for_missing_text(frame: pd.DataFrame) -> None:
+    """Give a withheld or missing rewritten text as ``None`` in both modes.
+
+    Combined mode's column has a string dtype, which stores ``None`` as ``pd.NA``; an object column keeps ``None``.
+    """
+    column = frame[COL_REWRITTEN_TEXT]
+    if column.isna().any():
+        frame[COL_REWRITTEN_TEXT] = column.astype(object).where(column.notna(), None)
+
+
 def _repaired(iterations: Any) -> bool:
     return not pd.isna(iterations) and int(iterations) > 0
 
@@ -534,6 +544,7 @@ def _rewrite_lowered(
     warn_kept_without_response(frame)
     _withhold_unassessed(frame)
     _withhold_failed_repairs(frame, result, target_of)
+    _none_for_missing_text(frame)
     _apply_passthrough_defaults(passthrough_rows)
     return RewriteResult(
         dataframe=merge_and_reorder(frame, passthrough_rows),
@@ -700,6 +711,7 @@ class RewriteWorkflow:
             warn_kept_without_response(frame)
             _withhold_unassessed(frame)
             _withhold_failed_repairs(frame, result, target_of)
+            _none_for_missing_text(frame)
             output = merge_and_reorder(frame, passthrough_rows)
         record_stage(
             stage,

@@ -1129,7 +1129,7 @@ def test_repair_that_still_leaks_after_its_last_round_is_withheld_and_flagged(
     assert calls["repair"] == rounds  # every repair parsed; the loop ran out of rounds
     assert result.failed_records == []
     row, clean = result.dataframe.iloc[0], result.dataframe.iloc[1]
-    assert pd.isna(row["text_rewritten"])  # the failing repair candidate is not released
+    assert row["text_rewritten"] is None  # the failing repair candidate is not released, as None in both modes
     assert row[COL_NEEDS_HUMAN_REVIEW]
     outcome = result.outcome(0)
     assert outcome.qualification == "not_met"

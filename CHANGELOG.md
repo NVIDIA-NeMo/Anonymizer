@@ -285,6 +285,8 @@ instead of dropping it, and the run ends with one warning counting such records 
   counted a value in the withheld candidate. `result.outcome(row)` keeps that cause.
 - `display_record` shows "not available" for a missing Utility, Leakage or Weighted Leakage Rate. It showed a blank
   for a null metric and `nan` for NaN.
+- Withheld or missing Rewrite text is `None` in both modes. The combined mode (`Rewrite(use_combined_graph=True)`)
+  gave `pd.NA`.
 
 ### #407: frozen config and one options object
 
