@@ -515,10 +515,12 @@ class Anonymizer:
                 payload that does not parse fails with ``invalid_output`` (Replace
                 rejects it at ``replace``). Each row's ``_entities_by_value`` view
                 is derived from its kept ``final_entities`` spans; a view the
-                detector returns is not used. These checks and the rebuild
+                detector returns is not used. These checks and the derived view
                 apply only when the detector returns source positions or unique
-                record ids; without them a contract break may stop the run and a
-                record may be released with its spans unprotected.
+                record ids (ids exist only with ``TextRecordsInput``) and leaves
+                each row's text unchanged; otherwise the result is used as
+                returned, may stop the run, and a record may be released with its
+                spans unprotected.
             replace_runner: Custom replacement workflow (advanced/testing). Its ``evaluate()`` must keep each row's
                 record id: ``evaluate()`` matches judge rows to records only by id, reports a row without one
                 unassessed, and reports a row given another record's id as that record.

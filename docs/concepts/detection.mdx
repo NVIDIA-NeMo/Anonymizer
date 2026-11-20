@@ -69,12 +69,13 @@ fails it with `invalid_output`, and Replace rejects such a record at its `replac
 `result.failed_records` and left out of the output, and the rest of the run continues.
 
 Custom workflows (`detection_workflow`, `replace_runner`, `rewrite_runner`) are an advanced and testing seam. Every row
-a custom detector or runner returns must name the input row it answers, by its source positions or by keeping that
-row's unique `_anonymizer_record_id`; the rows a runner's `evaluate()` returns are matched by record id only. Anonymizer
-never matches rows by order or text. The checks above, and the rebuild of a missing or stale `_entities_by_value` view,
-apply only to a detector result whose rows are named and whose text is unchanged. Any other detector result is replaced
-or rewritten as returned, without these checks or per-record outcomes, and a record in it may be released with its spans
-unprotected.
+a custom detector or runner returns must name the input row it answers, by its source positions or, for
+`TextRecordsInput`, by keeping that row's unique `_anonymizer_record_id` (with `AnonymizerInput` the detector is given
+only the text column, so it must report positions); the rows a runner's `evaluate()` returns are matched by record id
+only. Anonymizer never matches rows by order or text. The checks above, and the derived `_entities_by_value` view,
+apply only to a detector result whose rows are named and whose text is unchanged. Any other detector result is used as
+returned, without these checks or per-record outcomes: it may stop the run (for example when it has no
+`_entities_by_value` column), and a record in it may be released with its spans unprotected.
 
 ### Example: standard vs. latent entities
 
