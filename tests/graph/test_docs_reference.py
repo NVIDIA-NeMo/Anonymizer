@@ -41,6 +41,15 @@ def _documented(page: Path) -> set[str]:
     return set(re.findall(r"`([A-Za-z_]\w*)`", page.read_text()))
 
 
+def _code_tables(page: Path) -> set[str]:
+    """Codes in the first column of the Reason table and the rejection tables, the only places a code is defined."""
+    text = page.read_text()
+    reasons = text[text.index("**`Reason(") : text.index("**`Advisory(")]
+    rejections = text[text.index("## Rejection codes") :]
+    rows = (line for part in (reasons, rejections) for line in part.splitlines() if line.startswith("| `"))
+    return {code for row in rows for code in re.findall(r"`(\w+)`", row.split(" | ")[0])}
+
+
 def test_the_scan_finds_codes_from_every_site() -> None:
     codes = _kernel_codes()
     for code in ("datum_not_text", "mention_out_of_range", "raised", "binding_failed", "withheld", "annotation"):
@@ -54,7 +63,8 @@ def test_reference_names_every_public_name(page: Path) -> None:
 
 @pytest.mark.parametrize("page", [REFERENCE, REFERENCE.with_suffix(".mdx")], ids=["md", "mdx"])
 def test_reference_names_every_rejection_and_reason_code(page: Path) -> None:
-    assert _kernel_codes() - _documented(page) == set()
+    assert _kernel_codes() - {"unknown"} - _code_tables(page) == set()
+    assert {"cancelled", "blocked"} <= _code_tables(page)
 
 
 def test_repository_links_on_the_graph_pages_name_files_that_exist() -> None:

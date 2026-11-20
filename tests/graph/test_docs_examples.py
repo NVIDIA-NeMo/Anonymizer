@@ -15,6 +15,18 @@ import pytest
 DOCS = Path(__file__).resolve().parents[2] / "docs" / "concepts"
 PAGES = sorted([DOCS / "graph-sdk.md", *(DOCS / "graph-sdk").glob("*.md")])
 FENCE = re.compile(r"^```(\w*)\n(.*?)^```\n", re.S | re.M)
+# Blank lines, optionally around one lead-in line such as "It prints:", between a block and its shown output.
+LEAD_IN = re.compile(r"\n*(?:[^\n`][^\n]*:\n\n*)?")
+# Every function a page passes to Operation must accept keyword arguments named after its input ports.
+PRELUDE = """\
+import inspect
+from anonymizer.graph import Operation
+_post_init = Operation.__post_init__
+def _check_ports(self):
+    _post_init(self)
+    inspect.signature(self.fn).bind(**dict.fromkeys(self.inputs))
+Operation.__post_init__ = _check_ports
+"""
 
 
 def _blocks(page: Path) -> list[tuple[str, str]]:
@@ -28,8 +40,8 @@ def _examples(page: Path) -> list[tuple[str, str | None]]:
     for m in FENCE.finditer(text):
         if m.group(1) != "python":
             continue
-        gap = len(text[m.end() :]) - len(text[m.end() :].lstrip("\n"))
-        after = FENCE.match(text, m.end() + gap)
+        gap = LEAD_IN.match(text, m.end())
+        after = FENCE.match(text, gap.end()) if gap else None
         found.append((m.group(2), after.group(2) if after and after.group(1) == "text" else None))
     return found
 
@@ -50,7 +62,7 @@ def test_example_runs_and_prints_what_the_page_shows(
     page: Path, index: int, code: str, shown: str | None, tmp_path: Path
 ) -> None:
     done = subprocess.run(
-        [sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True, timeout=120, check=False
+        [sys.executable, "-c", PRELUDE + code], cwd=tmp_path, capture_output=True, text=True, timeout=120, check=False
     )
     assert done.returncode == 0, f"{page.name} example {index} failed:\n{done.stderr}"
     if shown is not None:
