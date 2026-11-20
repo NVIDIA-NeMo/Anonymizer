@@ -45,7 +45,7 @@ class SessionCallChanges:
 @dataclass(frozen=True)
 class Replacement:
     """One replacement map entry. ``placeholder`` is a token-shape check tied to the entry's label: it is true when
-    ``synthetic`` has the form of a placeholder Anonymizer can mint for ``label``, such as ``[SUBSTITUTE_FIRST_NAME_1]``
+    ``synthetic`` has the shape of a placeholder for ``label``, such as ``[SUBSTITUTE_FIRST_NAME_1]``
     for ``first_name``, in any letter case; a token shaped for another label reads false. It does not say who
     produced it: Anonymizer may have minted it in this call, the Session may have held it
     from an earlier call, or the model may have proposed it. The result's ``session_changes`` counts only the

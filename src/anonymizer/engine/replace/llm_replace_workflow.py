@@ -703,8 +703,9 @@ def _placeholder_prefix(label: str) -> str:
 
 
 def is_placeholder(label: str, synthetic: str) -> bool:
-    """Whether ``synthetic`` is a placeholder ``_collision_safe_synthetic`` builds for ``label``, in any case (the fold
-    re-cases a substitute to each variant of its original)."""
+    """Whether ``synthetic`` has the shape of a placeholder for ``label`` (``[SUBSTITUTE_<LABEL>_<digits>]``), in any
+    case (the fold re-cases a substitute to each variant of its original). The shape is looser than what
+    ``_collision_safe_synthetic`` mints: any ``str.isdigit`` digits are accepted, including a leading zero."""
     prefix, folded = _placeholder_prefix(label).casefold(), synthetic.casefold()
     return folded.startswith(prefix) and folded.endswith("]") and folded[len(prefix) : -1].isdigit()
 
