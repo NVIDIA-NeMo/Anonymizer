@@ -29,6 +29,7 @@ from anonymizer.engine.detection.detection_workflow import (
     _build_entities_by_value,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
@@ -141,3 +142,32 @@ def test_a_valid_id_returned_twice_places_neither_row(mode: str) -> None:
     result = anonymizer.run(config=config, data=DATA)
     assert result.failed_records == [FailedRecord("a", mode, "unplaced_output")]
     assert list(result.dataframe["text"]) == ["Alice b.", "Alice c."]
+
+
+@pytest.mark.parametrize("runner", ["forwarding-run", "built-in"])
+def test_a_forwarding_run_override_flags_a_kept_placeholder_like_the_built_in_runner(runner: str) -> None:
+    """A custom runner whose ``run()`` forwards to ``super().run()`` takes the Substitute route without detection;
+    it must set ``placeholder_in_text`` as the built-in runner does."""
+
+    class Forwarding(ReplacementWorkflow):
+        def run(self, dataframe: pd.DataFrame, **kwargs: Any) -> ReplacementResult:
+            return super().run(dataframe, **kwargs)
+
+    def run_workflow(self: NddAdapter, df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
+        out = df.copy().reset_index(drop=True)
+        synthetic = "[SUBSTITUTE_FIRST_NAME_1]"
+        out[COL_REPLACEMENT_MAP] = [
+            {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": synthetic}]}
+        ] * len(out)
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
+
+    kwargs: dict[str, Any] = {}
+    if runner == "forwarding-run":
+        kwargs["replace_runner"] = Forwarding(llm_workflow=LlmReplaceWorkflow(adapter=NddAdapter(Mock())))
+    data = TextRecordsInput(records=[TextRecord(id="r", text="Alice wrote.")])
+    with patch.object(NddAdapter, "run_workflow", run_workflow):
+        result = Anonymizer(detection_workflow=builtin_stub(_alice), **kwargs).run(
+            config=AnonymizerConfig(replace=Substitute()), data=data
+        )
+    assert result.failed_records == []
+    assert list(result.dataframe["placeholder_in_text"]) == [True]

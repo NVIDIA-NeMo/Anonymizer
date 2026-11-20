@@ -63,7 +63,7 @@ from anonymizer.engine.ndd.backend import (
     register_plain_kind,
     run_invocation,
 )
-from anonymizer.engine.protection_policy import assess, placeholder_in_text, repeat_handling
+from anonymizer.engine.protection_policy import assess_any, placeholder_in_text, repeat_handling
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
     LlmReplaceWorkflow,
@@ -135,9 +135,20 @@ def run_substitute_route(
     output_df[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
     output_df[COL_REPLACED_TEXT] = [result.value(d) for d in targets]
     output_df[COL_REPLACEMENT_APPLICATION] = [result.value(d, "application") for d in targets]
+    _flag_placeholders(output_df)
     return ReplacementResult(
         output_df, failures, session_changes=result.session_changes, placeholder_counts=dict(placeholders)
     )
+
+
+def _flag_placeholders(output_df: pd.DataFrame) -> None:
+    """Set ``placeholder_in_text`` on every Substitute output row: whether its replaced text keeps a placeholder of its
+    own map, when the policy flags that situation. Every Substitute route calls it once."""
+    flags = assess_any("placeholder_in_text", mode="replace").action == "flag"
+    output_df[COL_PLACEHOLDER_IN_TEXT] = [
+        flags and placeholder_in_text(str(text), rmap)
+        for text, rmap in zip(output_df[COL_REPLACED_TEXT], output_df[COL_REPLACEMENT_MAP])
+    ]
 
 
 def _substitute_map_step(
@@ -279,12 +290,8 @@ def run_replace_pipeline(
     # A row whose detected text is missing keeps the detection frame's own stringification (``<NA>`` for ``pd.NA``).
     output_df[COL_REPLACED_TEXT] = [str(text) if missing(text) else result.value(d) for d, text in zip(targets, shown)]
     output_df[COL_REPLACEMENT_APPLICATION] = [result.value(d, "application") for d in targets]
-    if map_step:  # only Substitute mints placeholders; the policy decides whether one flags the row
-        flags = assess("placeholder_in_text", "replace", detector).action == "flag"
-        output_df[COL_PLACEHOLDER_IN_TEXT] = [
-            flags and placeholder_in_text(str(text), rmap)
-            for text, rmap in zip(output_df[COL_REPLACED_TEXT], output_df[COL_REPLACEMENT_MAP])
-        ]
+    if map_step:  # only Substitute mints placeholders
+        _flag_placeholders(output_df)
     tracker.log_final()
     record_stage(
         "ReplacementWorkflow.run",
