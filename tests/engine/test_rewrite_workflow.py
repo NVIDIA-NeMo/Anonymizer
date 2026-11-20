@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -28,6 +29,8 @@ from anonymizer.engine.constants import (
     COL_DOMAIN,
     COL_ENTITIES_BY_VALUE,
     COL_ENTITY_CLASSIFICATION,
+    COL_FINAL_ENTITIES,
+    COL_FULL_REWRITE,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
     COL_LEAKED_PRIVACY_ITEMS,
@@ -40,6 +43,7 @@ from anonymizer.engine.constants import (
     COL_RAW_SENSITIVITY_DISPOSITION,
     COL_REPAIR_ITERATIONS,
     COL_REPLACEMENT_APPLICATION,
+    COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
@@ -54,15 +58,20 @@ from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.replace.llm_replace_workflow import _fold_replacement_maps
 from anonymizer.engine.rewrite.repair import RepairWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import (
     RewriteWorkflow,
     _detection_valid_fraction,
     _join_new_columns,
-    _no_original_value,
+    _leftover_metrics,
+    _no_placeholder,
 )
+from anonymizer.engine.spans import Span
+from anonymizer.engine.value_matching import format_cause
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import AnonymizerWorkflowError
+from anonymizer.interface.results import AnonymizerResult
 
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
 
@@ -748,6 +757,8 @@ class _ScriptedAdapter:
             output[COL_REWRITE_REPLACEMENT_READY] = True
             # The map omits the policy's values unless a test supplies one: the final text decides regardless.
             output[COL_REPLACEMENT_MAP_FOR_PROMPT] = [self.replacement_map for _ in record_ids]
+            if self.replacement_map is not None:
+                output[COL_REPLACEMENT_MAP] = [self.replacement_map for _ in record_ids]
             if self.policy is not None:
                 output[COL_SENSITIVITY_DISPOSITION] = [self.policy for _ in record_ids]
             output[COL_PRIVACY_QA] = [dict(_PRIVACY_QA) for _ in record_ids]
@@ -994,7 +1005,11 @@ def test_repair_loop_through_run_returns_each_rows_last_repair(
 
     out = result.dataframe
     assert result.failed_records == []
-    assert _by_id(out, COL_REWRITTEN_TEXT) == {"twice": "twice-2", "exhausted": "exhausted-3"}
+    # The exhausted row still leaks after its last repair, so its text is withheld; the trace keeps the candidate.
+    texts = _by_id(out, COL_REWRITTEN_TEXT)
+    assert texts["twice"] == "twice-2"
+    assert pd.isna(texts["exhausted"])
+    assert _by_id(out, COL_REWRITTEN_TEXT_NEXT)["exhausted"] == "exhausted-3"
     assert _by_id(out, COL_REPAIR_ITERATIONS) == {"twice": 2, "exhausted": 3}
     assert _by_id(out, COL_LEAKAGE_MASS) == {"twice": 0.0, "exhausted": 3.0}
     assert {k: bool(v) for k, v in _by_id(out, COL_NEEDS_HUMAN_REVIEW).items()} == {"twice": False, "exhausted": True}
@@ -1870,9 +1885,7 @@ def test_combined_runner_overriding_build_graph_with_release_signature_runs(
         state.any_high_leaked: False,
         state.needs_repair: False,
     }
-    assert builtin_finalizer.generator_function(dict(row), builtin_finalizer.generator_params) == (
-        override_finalizer.generator_function(dict(row), override_finalizer.generator_params)
-    )
+    assert builtin_finalizer.generator_function(dict(row)) == override_finalizer.generator_function(dict(row))
 
 
 def test_run_reports_each_rows_protection_outcome(tmp_path: Path) -> None:
@@ -1904,30 +1917,106 @@ def test_run_reports_each_rows_protection_outcome(tmp_path: Path) -> None:
     assert [reason.check for reason in result.outcome(1).reasons] == ["leakage_within_threshold"]
 
 
-def _run_outcome(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
-    """Run one ``Alice`` row through ``Anonymizer.run()`` with ``adapter`` and return its outcome."""
-    entities = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
+def _run_one(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
+    """Run one ``Alice`` row through ``Anonymizer.run()`` with ``adapter`` and return the result."""
+    return _run_result(adapter, tmp_path)
+
+
+def _span(text: str, value: str, start: int = 0, label: str = "first_name") -> dict:
+    begin = text.index(value, start)
+    return {"value": value, "label": label, "start_position": begin, "end_position": begin + len(value)}
+
+
+def _run_result(
+    adapter: _ScriptedAdapter, tmp_path: Path, text: str = "Alice works at Acme", spans: list[dict] | None = None
+) -> Any:
+    """Run one row through ``Anonymizer.run()`` with ``adapter``; ``spans`` default to ``Alice`` at the start, and an
+    empty list leaves ``final_entities`` out."""
+    spans = [_span(text, "Alice")] if spans is None else spans
+    values = sorted({span["value"] for span in spans} or {"Alice"})
+    entities = {"entities_by_value": [{"value": value, "labels": ["first_name"]} for value in values]}
+    columns: dict[str, list[object]] = {RECORD_ID_COLUMN: ["rec"], COL_ENTITIES_BY_VALUE: [entities]}
+    if spans:
+        columns[COL_FINAL_ENTITIES] = [{"entities": spans}]
     detector = Mock(spec=EntityDetectionWorkflow)
     detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
-        dataframe=frame.assign(**{RECORD_ID_COLUMN: ["rec"], COL_ENTITIES_BY_VALUE: [entities]}),
-        failed_records=[],
-        source_positions=(0,),
+        dataframe=frame.assign(**columns), failed_records=[], source_positions=(0,)
     )
     csv_path = tmp_path / "input.csv"
-    pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(csv_path, index=False)
+    pd.DataFrame({"text": [text]}).to_csv(csv_path, index=False)
     anonymizer = Anonymizer(detection_workflow=detector, rewrite_runner=RewriteWorkflow(adapter=Mock(wraps=adapter)))
     with patch(_REPLACE_PATCH) as mock_replace_cls:
         mock_replace_cls.return_value.generate_map_only.side_effect = lambda frame, **_: Mock(
             dataframe=frame, failed_records=[], source_positions=tuple(range(len(frame)))
         )
-        result = anonymizer.run(
+        return anonymizer.run(
             config=AnonymizerConfig(
                 rewrite=Rewrite(privacy_goal=_PRIVACY_GOAL, risk_tolerance="minimal", max_repair_iterations=1),
                 emit_telemetry=False,
             ),
             data=AnonymizerInput(source=str(csv_path), text_column="text"),
         )
-    return result.outcome(0)
+
+
+def _run_outcome(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
+    """Run one ``Alice`` row through ``Anonymizer.run()`` with ``adapter`` and return its outcome."""
+    return _run_result(adapter, tmp_path).outcome(0)
+
+
+@pytest.mark.parametrize(
+    ("replacements", "requested", "text"),
+    [
+        pytest.param(
+            [
+                {"original": "Elena", "label": "first_name", "synthetic": "Clara"},
+                {"original": "Maya", "label": "first_name", "synthetic": "Elena"},
+            ],
+            {"Elena", "Maya"},
+            "[SUBSTITUTE_FIRST_NAME_1] studied with Clara.",
+            id="proposal-is-another-name",
+        ),
+        pytest.param(
+            [{"original": "North Carolina", "label": "state", "synthetic": "North Carolina"}],
+            {"North Carolina"},
+            "She moved to [SUBSTITUTE_STATE_1] in 2019.",
+            id="proposal-is-itself",
+        ),
+        pytest.param(
+            [
+                {"original": "Elena", "label": "first_name", "synthetic": "Clara"},
+                {"original": "MAYA", "label": "first_name", "synthetic": "ELENA"},
+                {"original": "Maya", "label": "first_name", "synthetic": "Elena"},
+            ],
+            {"Elena", "MAYA", "Maya"},
+            "[Substitute_First_Name_1] studied with Clara.",
+            id="re-cased-for-a-variant",
+        ),
+    ],
+)
+def test_placeholder_in_released_text_fails_a_final_check(
+    replacements: list[dict[str, str]], requested: set[str], text: str, tmp_path: Path
+) -> None:
+    """A substitute that folds to a value in its record becomes a placeholder; text that keeps it is not released."""
+    (folded,) = _fold_replacement_maps([{"replacements": replacements}], "record", [requested])
+    assert any(entry["synthetic"] in text for entry in folded["replacements"])
+
+    result = _run_result(_ScriptedAdapter({"rec": 0}, initial=text, replacement_map=folded), tmp_path)
+
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [("failed", "placeholders_absent", "")]
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [True]
+
+
+def test_substitute_shaped_like_a_placeholder_for_another_label_passes() -> None:
+    """Only a placeholder built for the entry's own label counts; ordinary substitutes never do."""
+    text = "[SUBSTITUTE_CITY_1] and Clara"
+    assert _no_placeholder(text, {"replacements": [{"label": "first_name", "synthetic": "[SUBSTITUTE_CITY_1]"}]})
+    assert _no_placeholder(text, {"replacements": [{"label": "first_name", "synthetic": "Clara"}]})
+    assert not _no_placeholder(
+        text, json.dumps({"replacements": [{"label": "city", "synthetic": "[SUBSTITUTE_CITY_1]"}]})
+    )
+    assert _no_placeholder(text, None)
 
 
 @pytest.mark.parametrize(
@@ -1935,12 +2024,12 @@ def _run_outcome(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
     [
         pytest.param(
             _ScriptedAdapter({"rec": 0}, initial="ALICE  works there"),
-            [("failed", "replacements_applied", "")],
+            [("failed", "replacements_applied", "e0:N1,D1,O1")],
             id="kept-by-generation",
         ),
         pytest.param(
             _ScriptedAdapter({"rec": 1}, repaired="Alice is back ({})"),
-            [("failed", "replacements_applied", "")],
+            [("failed", "replacements_applied", "e0:N1,D1,O1")],
             id="reintroduced-by-repair",
         ),
         pytest.param(
@@ -1951,7 +2040,7 @@ def _run_outcome(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
         pytest.param(_ScriptedAdapter({"rec": 0}), [], id="gone-without-map"),
         pytest.param(
             _ScriptedAdapter({"rec": 0}, initial="Alice stays", replacement_map={"replacements": []}),
-            [("failed", "replacements_applied", "")],
+            [("failed", "replacements_applied", "e0:N1,D1,O1")],
             id="kept-with-empty-map",
         ),
     ],
@@ -1965,6 +2054,70 @@ def test_replacements_applied_assesses_the_final_text(
     assert outcome.qualification == ("not_met" if reasons else "met")
     assert [(r.code, r.check, r.cause) for r in outcome.reasons] == reasons
     assert outcome.advisories == ()
+
+
+def test_a_value_the_source_also_holds_outside_the_detected_spans_is_met_and_flagged(tmp_path: Path) -> None:
+    """The source's text and detected spans reach the final checks: an undetected homograph is allowed once."""
+    text = "May loves the month of May."
+    adapter = _ScriptedAdapter(
+        {"rec": 0}, initial="Jane loves the month of May.", policy=_disposition(("May", "replace", "tagged"))
+    )
+    result = _run_result(adapter, tmp_path, text, [_span(text, "May")])
+    outcome = result.outcome(0)
+
+    assert (outcome.qualification, outcome.reasons, outcome.advisories) == ("met", (), ())
+    assert result.dataframe["needs_human_review"].tolist() == [True]
+
+
+def test_an_undetected_occurrence_the_rewrite_drops_is_met_and_not_flagged(tmp_path: Path) -> None:
+    """Detection missed one ``Alice``, but the rewritten text holds none: nothing is kept, so nothing is flagged."""
+    text = "Call Alice. Alice will answer."
+    adapter = _ScriptedAdapter(
+        {"rec": 0}, initial="Call Sara. Sara will answer.", policy=_disposition(("Alice", "replace", "tagged"))
+    )
+    result = _run_result(adapter, tmp_path, text, [_span(text, "Alice")])
+    outcome = result.outcome(0)
+
+    assert (outcome.qualification, outcome.reasons, outcome.advisories) == ("met", (), ())
+    assert result.dataframe["needs_human_review"].tolist() == [False]
+    assert [(x.in_source, x.detected, x.in_output, x.undetected_kept) for x in result.leftovers(0)] == [
+        (2, 1, 0, False)
+    ]
+
+
+def test_a_value_copied_beyond_its_source_count_is_not_met(tmp_path: Path) -> None:
+    text = "Alice met Bob."
+    policy = _disposition(("Alice", "replace", "tagged"), ("Bob", "replace", "tagged"))
+    adapter = _ScriptedAdapter({"rec": 0}, initial="Sara met Tom; Bob agreed.", policy=policy)
+    result = _run_result(adapter, tmp_path, text, [_span(text, "Alice"), _span(text, "Bob")])
+    outcome = result.outcome(0)
+
+    assert outcome.qualification == "not_met"
+    assert format_cause(x for x in result.leftovers(0) if x.over_bound) == outcome.reasons[0].cause
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [("failed", "replacements_applied", "e1:N1,D1,O1")]
+
+
+def test_without_detected_spans_any_occurrence_fails(tmp_path: Path) -> None:
+    """No ``final_entities``: every source occurrence counts as detected, so the presence rule applies."""
+    adapter = _ScriptedAdapter({"rec": 0}, initial="Sara called; Alice answered.")
+    outcome = _run_result(adapter, tmp_path, "Alice called; Alice answered.", []).outcome(0)
+
+    assert outcome.qualification == "not_met"
+
+
+def _leftover(
+    text: str, policy: object, source: str = "", spans: list[tuple[int, int]] | None = None
+) -> dict[str, bool | str | None]:
+    entities = [
+        {"value": source[a:b], "label": "first_name", "start_position": a, "end_position": b} for a, b in spans or []
+    ]
+    row = {
+        COL_REWRITTEN_TEXT: text,
+        COL_TEXT: source,
+        COL_FINAL_ENTITIES: {"entities": entities},
+        COL_SENSITIVITY_DISPOSITION: policy,
+    }
+    return _leftover_metrics(row)
 
 
 @pytest.mark.parametrize(
@@ -1990,26 +2143,245 @@ def test_replacements_applied_assesses_the_final_text(
         ("김철수 씨가 왔다", "김철수", False),
     ],
 )
-def test_no_original_value_matching(text: str, original: str, expected: bool) -> None:
+def test_leftover_metrics_matching(text: str, original: str, expected: bool) -> None:
+    """Without detected spans the rule is presence, matched as before."""
     policy = _disposition((original, "replace", "tagged"))
-    assert _no_original_value(text, policy) is expected
+    assert _leftover(text, policy, original)["replacements_applied"] is expected
 
 
-def test_no_original_value_reads_the_policy_not_the_map() -> None:
+def test_leftover_metrics_read_the_policy_not_the_map() -> None:
     """Values come from the policy's replace entries; kept values are not checked; no map is involved."""
     policy = _disposition(("Bob", "replace", "tagged"), ("Acme", "generalize", "tagged"))
-    assert _no_original_value("Maria met Bob at Acme", policy) is False
-    assert _no_original_value("Maria met Ana at Acme", policy) is True
+    assert _leftover("Maria met Bob at Acme", policy)["replacements_applied"] is False
+    assert _leftover("Maria met Ana at Acme", policy)["replacements_applied"] is True
 
 
-def test_no_original_value_unavailable_policy() -> None:
-    assert _no_original_value("text", None) is None
-    assert _no_original_value("text", {"sensitivity_disposition": [{"entity_value": "x"}]}) is None
-    assert _no_original_value("text", ["not a dict"]) is None
+def test_leftover_metrics_unavailable_policy() -> None:
+    assert _leftover("text", None)["replacements_applied"] is None
+    assert _leftover("text", {"sensitivity_disposition": [{"entity_value": "x"}]})["replacements_applied"] is None
+    assert _leftover("text", ["not a dict"])["replacements_applied"] is None
 
 
-def test_no_original_value_skips_latent_entities() -> None:
+def test_leftover_metrics_skip_latent_entities() -> None:
     """A latent value the policy replaces is not checked; an explicit one still is."""
     latent = _disposition(("Maria", "replace", "tagged"), ("a company", "replace", "latent"))
-    assert _no_original_value("Ana works at a company", latent) is True
-    assert _no_original_value("Maria works at a company", latent) is False
+    assert _leftover("Ana works at a company", latent)["replacements_applied"] is True
+    assert _leftover("Maria works at a company", latent)["replacements_applied"] is False
+
+
+def test_leftover_metrics_count_against_the_detected_spans() -> None:
+    policy = _disposition(("Alice", "replace", "tagged"))
+    source = "Call Alice. Alice will answer."
+    assert _leftover("Call Sara. Alice will answer.", policy, source, [(5, 10)]) == {
+        "replacements_applied": True,
+        "replacements_applied_cause": "",
+        "undetected_value_kept": True,
+    }
+    assert _leftover("Alice and Alice.", policy, source, [(5, 10)])["replacements_applied"] is False
+    assert _leftover("Alice.", policy, source, [(5, 10), (12, 17)]) == {
+        "replacements_applied": False,
+        "replacements_applied_cause": "e0:N2,D2,O1",
+        "undetected_value_kept": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("rewritten", "kept"),
+    [
+        ("Call Sara. Sara will answer.", False),  # the undetected occurrence is dropped
+        ("Call Sara. Alice will answer.", True),  # kept, within the bound
+        ("Call Alice. Sara will answer.", True),  # kept at the detected place, within the bound
+        ("Alice and Alice.", True),  # over the bound
+        ("Call Sara; alice will answer.", True),  # case-folded
+    ],
+)
+def test_leftover_metrics_fail_or_flag_exactly_when_a_value_is_kept(rewritten: str, kept: bool) -> None:
+    """Failed or flagged exactly when the rewritten text holds a replaced value at all; the bound decides which."""
+    policy = _disposition(("Alice", "replace", "tagged"))
+    metrics = _leftover(rewritten, policy, "Call Alice. Alice will answer.", [(5, 10)])
+    assert (metrics["replacements_applied"] is False or metrics["undetected_value_kept"]) is kept
+
+
+def test_leftover_metrics_name_a_value_by_its_own_span() -> None:
+    policy = _disposition(("John Smith", "replace", "tagged"), ("John", "replace", "tagged"))
+    source, spans = "John Smith called. John said hi.", [(0, 10), (19, 23)]
+    metrics = _leftover("[A] called. [B] said hi.", policy, source, spans)
+    assert (metrics["replacements_applied"], metrics["undetected_value_kept"]) == (True, False)
+    assert _leftover("[A] called. John said hi.", policy, source, spans)["replacements_applied"] is False
+
+
+@pytest.mark.parametrize(
+    ("text", "values", "rewritten", "cause"),
+    [
+        pytest.param(
+            "May loves the month of May.", ["May"], "Jane loves the month of May.", "e0:N2,D1,O1", id="homograph"
+        ),
+        pytest.param(
+            "Emma Kovacs wrote; user emma_kovacs_9839 logged in.",
+            ["Emma", "Kovacs"],
+            "Anna Novak wrote; user emma_kovacs_9839 logged in.",
+            "e0:N2,D1,O1;e1:N2,D1,O1",
+            id="handle",
+        ),
+        pytest.param(
+            "Call Alice. Alice will answer.", ["Alice"], "Call Sara. Alice will answer.", "e0:N2,D1,O1", id="repeat"
+        ),
+    ],
+)
+def test_leftovers_explain_a_flagged_row(
+    text: str, values: list[str], rewritten: str, cause: str, tmp_path: Path
+) -> None:
+    """A met row flagged for review: its leftovers name each kept undetected value, with the spans that explain it."""
+    policy = _disposition(*((value, "replace", "tagged") for value in values))
+    adapter = _ScriptedAdapter({"rec": 0}, initial=rewritten, policy=policy)
+    result = _run_result(adapter, tmp_path, text, [_span(text, value) for value in values])
+
+    assert (result.outcome(0).qualification, result.dataframe["needs_human_review"].tolist()) == ("met", [True])
+    leftovers = result.leftovers(0)
+    assert format_cause(leftovers) == cause
+    assert all(x.undetected_kept and not x.over_bound for x in leftovers)
+    first = leftovers[0]
+    assert (first.value, first.label, first.span) == (
+        values[0],
+        "first_name",
+        Span(text.index(values[0]), text.index(values[0]) + len(values[0])),
+    )
+    assert [rewritten[s.slice].casefold() for s in first.output_spans] == [values[0].casefold()] * first.in_output
+    assert [text[s.slice].casefold() for s in first.undetected_spans] == [values[0].casefold()] * (
+        first.in_source - first.detected
+    )
+
+
+def test_leftovers_reject_a_result_without_the_trace() -> None:
+    result = AnonymizerResult(
+        dataframe=pd.DataFrame(),
+        trace_dataframe=pd.DataFrame({"text": ["x"]}),
+        resolved_text_column="text",
+        failed_records=[],
+    )
+    with pytest.raises(ValueError, match="no leftover trace"):
+        result.leftovers(0)
+
+
+def test_a_name_with_marks_out_of_canonical_order_copied_verbatim_is_not_met(tmp_path: Path) -> None:
+    """The value and both texts are matched in one normalized form, so marks NFKD reorders still match."""
+    name = "Mira\U0001d157\U0001d16d\U0001d16e"
+    text = f"{name} called."
+    adapter = _ScriptedAdapter({"rec": 0}, initial=text, policy=_disposition((name, "replace", "tagged")))
+    result = _run_result(adapter, tmp_path, text, [_span(text, name)])
+    outcome = result.outcome(0)
+
+    assert outcome.qualification == "not_met"
+    assert result.dataframe["needs_human_review"].tolist() == [True]
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [("failed", "replacements_applied", "e0:N1,D1,O1")]
+    assert format_cause(x for x in result.leftovers(0) if x.over_bound) == outcome.reasons[0].cause
+
+
+def test_a_name_whose_marks_reorder_after_a_dropped_mark_is_counted(tmp_path: Path) -> None:
+    """Normalizing this name twice reorders its marks; it is normalized once, so the run completes and counts it."""
+    name = "Mira\U0001d16d\u093a\u1b44"
+    text = f"{name} called."
+    adapter = _ScriptedAdapter({"rec": 0}, initial=text, policy=_disposition((name, "replace", "tagged")))
+    result = _run_result(adapter, tmp_path, text, [_span(text, name)])
+
+    assert [(r.code, r.check, r.cause) for r in result.outcome(0).reasons] == [
+        ("failed", "replacements_applied", "e0:N1,D1,O1")
+    ]
+    assert format_cause(result.leftovers(0)) == "e0:N1,D1,O1"
+
+
+class _NoPrivacyResponseAdapter(_ScriptedAdapter):
+    """Evaluation has no privacy response: the response and its metrics are missing, typed as DataDesigner returns them."""
+
+    def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **kwargs: object) -> WorkflowRunResult:
+        result = super().run_workflow(seed, workflow_name=workflow_name, **kwargs)
+        if workflow_name.startswith("rewrite-evaluate-"):
+            frame, missing = result.dataframe, [None] * len(result.dataframe)
+            frame[COL_PRIVACY_QA_REANSWER] = None
+            for column in (COL_LEAKAGE_MASS, COL_WEIGHTED_LEAKAGE_RATE):
+                frame[column] = pd.array(missing, dtype="double[pyarrow]")
+            frame[COL_ANY_HIGH_LEAKED] = pd.array(missing, dtype="bool[pyarrow]")
+            frame[COL_NEEDS_REPAIR] = pd.array([False] * len(frame), dtype="bool[pyarrow]")
+        return result
+
+
+def test_row_without_a_privacy_response_is_kept_withheld_and_flagged(tmp_path: Path) -> None:
+    result = _run_one(_NoPrivacyResponseAdapter({"rec": 0}), tmp_path)
+
+    assert result.failed_records == []
+    assert len(result.dataframe) == 1
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row["text_rewritten"])
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [
+        ("could_not_assess", "high_leak", "metric_unavailable"),
+        ("could_not_assess", "leakage_within_threshold", "metric_unavailable"),
+    ]
+
+
+class _NoRewriteResponseAdapter(_NoPrivacyResponseAdapter):
+    """The rewrite response never parsed: no rewritten text, so evaluation asks nothing and every metric is missing."""
+
+    def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **kwargs: object) -> WorkflowRunResult:
+        result = super().run_workflow(seed, workflow_name=workflow_name, **kwargs)
+        if workflow_name == "rewrite-pipeline":
+            result.dataframe[COL_REWRITTEN_TEXT] = None
+            result.dataframe[COL_FULL_REWRITE] = None
+        elif workflow_name.startswith("rewrite-evaluate-"):
+            result.dataframe[COL_UTILITY_SCORE] = pd.array([None] * len(result.dataframe), dtype="double[pyarrow]")
+        return result
+
+
+def test_row_without_a_rewrite_response_is_kept_without_text_and_flagged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.responses"):
+        result = _run_one(_NoRewriteResponseAdapter({"rec": 0}), tmp_path)
+
+    assert result.failed_records == []
+    assert len(result.dataframe) == 1
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row["text_rewritten"])
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert not outcome.available
+    assert not outcome.protected
+    assert [record.getMessage() for record in caplog.records if record.name == "anonymizer.rewrite.responses"] == [
+        "Rows kept without a usable model response after their retries, by step: rewrite=1. "
+        "If most rows are listed, check that step's model."
+    ]
+
+
+class _NoDispositionResponseAdapter(_NoRewriteResponseAdapter):
+    """No disposition response had the right entry count: no disposition, so neither the rewrite nor evaluation asks."""
+
+    def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **kwargs: object) -> WorkflowRunResult:
+        result = super().run_workflow(seed, workflow_name=workflow_name, **kwargs)
+        if workflow_name == "rewrite-pipeline":
+            result.dataframe[COL_SENSITIVITY_DISPOSITION] = None
+        return result
+
+
+def test_row_without_a_disposition_response_is_kept_without_text_and_flagged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.responses"):
+        result = _run_one(_NoDispositionResponseAdapter({"rec": 0}), tmp_path)
+
+    assert result.failed_records == []
+    assert len(result.dataframe) == 1
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row["text_rewritten"])
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert not outcome.available
+    assert not outcome.protected
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [("raised", "", "")]
+    assert [record.getMessage() for record in caplog.records if record.name == "anonymizer.rewrite.responses"] == [
+        "Rows kept without a usable model response after their retries, by step: sensitivity disposition=1. "
+        "If most rows are listed, check that step's model."
+    ]

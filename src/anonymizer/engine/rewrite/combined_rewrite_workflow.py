@@ -23,6 +23,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_FOR_REPLACE,
     COL_ENTITIES_FOR_REPLACE_JSON,
     COL_ENTITY_EXAMPLES,
+    COL_EVALUATION_UNAVAILABLE,
     COL_LEAKAGE_MASS,
     COL_LEAKED_PRIVACY_ITEMS,
     COL_NEEDS_HUMAN_REVIEW,
@@ -57,10 +58,10 @@ from anonymizer.engine.replace.llm_replace_workflow import (
 )
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
-from anonymizer.engine.rewrite.findings import needs_human_review
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
+from anonymizer.engine.rewrite.response_summary import evaluation_unavailable
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
 )
@@ -318,10 +319,7 @@ def _repair_columns(
     ]
 
 
-def _finalization_column(
-    states: list[EvaluationState],
-    evaluation: EvaluationCriteria,
-) -> CustomColumnConfig:
+def _finalization_column(states: list[EvaluationState]) -> CustomColumnConfig:
     required_columns = list(
         dict.fromkeys(
             column
@@ -341,6 +339,7 @@ def _finalization_column(
     )
     required_columns.append(COL_REWRITE_REPLACEMENT_READY)
     side_effect_columns = [
+        COL_EVALUATION_UNAVAILABLE,
         COL_QUALITY_QA_REANSWER,
         COL_PRIVACY_QA_REANSWER,
         COL_QUALITY_QA_COMPARE,
@@ -357,11 +356,23 @@ def _finalization_column(
         required_columns=required_columns,
         side_effect_columns=side_effect_columns,
     )
-    def finalize(row: dict[str, Any], generator_params: EvaluationCriteria) -> dict[str, Any]:
+    def finalize(row: dict[str, Any]) -> dict[str, Any]:
         state = next(
             (candidate for candidate in reversed(states) if row.get(candidate.needs_repair) is not None),
             states[0],
         )
+        # The rounds before the chosen one are dropped with the internal columns: keep which steps had no response.
+        # ``_quality_qa`` is not required: the evaluation columns already wait for it, and a graph may lack it.
+        unavailable = 0
+        for earlier in states[: states.index(state) + 1]:
+            unavailable |= evaluation_unavailable(
+                row,
+                rewritten_text=earlier.rewritten_text,
+                quality_reanswer=earlier.quality_reanswer,
+                quality_compare=earlier.quality_compare,
+                privacy_reanswer=earlier.privacy_reanswer,
+            )
+        row[COL_EVALUATION_UNAVAILABLE] = unavailable
         row[COL_REWRITTEN_TEXT] = row.get(state.rewritten_text)
         row[COL_QUALITY_QA_REANSWER] = normalize_payload(row.get(state.quality_reanswer))
         row[COL_PRIVACY_QA_REANSWER] = normalize_payload(row.get(state.privacy_reanswer))
@@ -372,13 +383,13 @@ def _finalization_column(
         row[COL_ANY_HIGH_LEAKED] = row.get(state.any_high_leaked)
         row[COL_NEEDS_REPAIR] = row.get(state.needs_repair)
         row[COL_REPAIR_ITERATIONS] = state.iteration
-        row[COL_NEEDS_HUMAN_REVIEW] = needs_human_review(row, generator_params)
+        # A placeholder that keeps the column's place and type: ``_flag_review`` assigns the flag after the final checks.
+        row[COL_NEEDS_HUMAN_REVIEW] = False
         return row
 
     return CustomColumnConfig(
         name=COL_REWRITTEN_TEXT,
         generator_function=finalize,
-        generator_params=evaluation,
         propagate_skip=False,
     )
 
@@ -460,7 +471,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 )
             )
 
-        columns.append(_finalization_column(evaluation_states, evaluation))
+        columns.append(_finalization_column(evaluation_states))
         internal_columns = [
             COL_ENTITY_EXAMPLES,
             COL_ENTITIES_FOR_REPLACE,

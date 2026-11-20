@@ -23,6 +23,12 @@ warnings.filterwarnings(
 ROW_ORDER_COL = "_anonymizer_row_order"
 
 
+def cell_text(cell: object) -> str:
+    """A source cell as the Replace check reads it: ``str(cell)``, as 0.4.0 (a number, a boolean or a blank cell
+    becomes its string form)."""
+    return str(cell)
+
+
 def split_rows(
     df: pd.DataFrame,
     *,

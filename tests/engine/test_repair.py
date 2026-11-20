@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from unittest.mock import Mock
 
+import pandas as pd
+import pytest
 from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.models import ModelConfig
 
@@ -135,6 +137,25 @@ class TestRenderRepairPrompt:
         params = RepairParams(privacy_goal_str=_STUB_PRIVACY_GOAL.to_prompt_string(), max_privacy_leak=1.0)
         result = _render_repair_prompt(row, params)
         assert "WARNING" not in result
+
+    @pytest.mark.parametrize("utility", [None, float("nan"), pd.NA], ids=["combined-none", "staged-nan", "staged-na"])
+    def test_missing_utility_is_rendered_as_not_available(self, utility: object) -> None:
+        row = {
+            COL_TEXT: "Alice lives in Seattle.",
+            COL_REWRITTEN_TEXT: "Alice lives in a city.",
+            COL_LEAKAGE_MASS: 1.0,
+            COL_ANY_HIGH_LEAKED: True,
+            COL_UTILITY_SCORE: utility,
+            "_leaked_privacy_items": '- [HIGH] first_name: "Alice"',
+        }
+        params = RepairParams(privacy_goal_str=_STUB_PRIVACY_GOAL.to_prompt_string(), max_privacy_leak=1.0)
+
+        result = _render_repair_prompt(row, params)
+
+        assert "(utility score: not available)" in result
+        assert "utility score: nan" not in result
+        assert "utility score: None" not in result
+        assert "utility score: <NA>" not in result
 
 
 # ---------------------------------------------------------------------------

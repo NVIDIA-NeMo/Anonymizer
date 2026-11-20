@@ -16,6 +16,7 @@ from anonymizer.engine.detection.postprocess import (
     normalize_label,
     normalize_labels,
 )
+from anonymizer.engine.spans import Span
 
 
 @pytest.mark.parametrize(
@@ -33,10 +34,7 @@ from anonymizer.engine.detection.postprocess import (
 def test_group_overlapping_spans_uses_only_source_bounds(
     spans: list[tuple[int, int]], expected: list[tuple[tuple[int, int], ...]]
 ) -> None:
-    assert (
-        group_overlapping_spans(spans, start_position=lambda span: span[0], end_position=lambda span: span[1])
-        == expected
-    )
+    assert group_overlapping_spans(spans, span=lambda bounds: Span(*bounds)) == expected
 
 
 def test_normalize_label_strips_and_casefolds() -> None:

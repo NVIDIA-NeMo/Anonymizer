@@ -7,7 +7,7 @@ import logging
 from typing import Any
 
 from data_designer.config import custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 
 from anonymizer.config.models import RewriteModelSelection
@@ -31,6 +31,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.postprocess import EntitySpan, build_tagged_text
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.ndd.model_response import no_response
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.replace.strategies import (
     ReplacementEntry,
@@ -43,6 +44,7 @@ from anonymizer.engine.schemas import (
     EntitySchema,
     RewriteOutputSchema,
 )
+from anonymizer.engine.workflow_columns.response.config import ResponseColumnConfig
 
 logger = logging.getLogger("anonymizer.rewrite.generation")
 
@@ -141,6 +143,9 @@ Rules:
 @custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION])
 def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
     """Pre-filter and serialize protected entities (protection_method_suggestion != "leave_as_is") for the rewrite prompt."""
+    if no_response(row.get(COL_SENSITIVITY_DISPOSITION)):
+        row[COL_REWRITE_DISPOSITION_BLOCK] = None  # no disposition: the rewrite is not asked for
+        return row
     disposition = parse_sensitivity_disposition(row[COL_SENSITIVITY_DISPOSITION])
     block = []
     for e in disposition.sensitivity_disposition:
@@ -162,7 +167,7 @@ def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
 @custom_column_generator(required_columns=[COL_REPLACEMENT_MAP, COL_REWRITE_DISPOSITION_BLOCK])
 def _filter_replacement_map_for_prompt(row: dict[str, Any]) -> dict[str, Any]:
     """Keep only replacement entries for entities with protection_method_suggestion='replace'."""
-    disposition_block: list[dict] = row.get(COL_REWRITE_DISPOSITION_BLOCK, [])
+    disposition_block: list[dict] = row.get(COL_REWRITE_DISPOSITION_BLOCK) or []
     replace_pairs = {
         (str(e.get("entity_value", "")), str(e.get("entity_label", "")))
         for e in disposition_block
@@ -281,12 +286,15 @@ def _unique_replacements(replacements: list[ReplacementEntry]) -> dict[tuple[str
 def _extract_rewritten_text(row: dict[str, Any]) -> dict[str, Any]:
     """Extract rewritten_text from the LLM structured output.
 
-    Sets ``COL_REWRITTEN_TEXT`` to ``None`` on failure or blank output so
-    downstream steps (repair, judge, human-review flagging) can distinguish
-    a failed rewrite from a valid one.
+    Sets ``COL_REWRITTEN_TEXT`` to ``None`` on failure or blank output, so the
+    run's evaluation, repair and human-review flagging treat the rewrite as
+    missing. ``Anonymizer.evaluate()``'s final judge still renders it as text.
     """
     if not row.get(COL_REWRITE_REPLACEMENT_READY, True):
         logger.warning("Required rewrite replacement was unavailable; retaining generated rewrite for evaluation.")
+    if no_response(row.get(COL_FULL_REWRITE)):
+        row[COL_REWRITTEN_TEXT] = None  # the response column has already logged why
+        return row
     try:
         full_rewrite = row[COL_FULL_REWRITE]
         if hasattr(full_rewrite, "model_dump"):
@@ -338,11 +346,13 @@ class RewriteGenerationWorkflow:
                 name=COL_REWRITE_TAGGED_TEXT,
                 generator_function=_prepare_rewrite_tagged_text,
             ),
-            LLMStructuredColumnConfig(
+            # A rewrite response that never parses keeps the row with no rewritten text, which is never released.
+            ResponseColumnConfig(
                 name=COL_FULL_REWRITE,
                 prompt=_get_rewrite_prompt(privacy_goal, data_summary),
                 model_alias=rewriter_alias,
                 output_format=RewriteOutputSchema,
+                ask_only_if=[COL_REWRITE_DISPOSITION_BLOCK],
             ),
             CustomColumnConfig(
                 name=COL_REWRITTEN_TEXT,

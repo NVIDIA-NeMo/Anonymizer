@@ -56,6 +56,7 @@ def program() -> list[dict[str, str]]:
     # E22.4 a Rewrite row whose leakage is NaN could not be assessed and is flagged for review.
     def rewrite(target: tuple) -> list[Any]:
         metrics = {"any_high_leaked": False, "replacements_applied": True, "leakage_mass": float("nan")}
+        metrics["placeholders_absent"] = True
         return [{"text": "r", "metrics": metrics} for _ in target]
 
     evaluation: Any = type("E", (), {"flag_leakage_above": 0.5})()
@@ -73,7 +74,7 @@ def program() -> list[dict[str, str]]:
     )
     r5 = _protect_rows(graph5, "replace", lambda i, rows: {}, False)
     o5 = r5.outcome(graph5.targets[0])
-    want5 = (Reason("failed", "replacements_applied", "verify-patches"),)
+    want5 = (Reason("failed", "replacements_applied", "verify-patches", "unpatched_mention"),)
     c.check("E22.5", o5.qualification == "not_met" and o5.reasons == want5, f"reasons={o5.reasons}")
 
     # E22.6 a verdict that is neither True nor None fails its check (a numpy false is not a pass).

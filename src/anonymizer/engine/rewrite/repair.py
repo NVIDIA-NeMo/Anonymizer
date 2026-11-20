@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from data_designer.config import custom_column_generator
 from data_designer.config.column_configs import CustomColumnConfig
@@ -28,6 +28,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.ndd.model_response import RetryBudget, ask, no_response
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import (
     parse_privacy_answers,
@@ -41,6 +42,8 @@ from anonymizer.engine.schemas.rewrite import (
 )
 
 logger = logging.getLogger("anonymizer.rewrite.repair")
+
+REPAIR_BUDGET = RetryBudget(corrections=3, restarts=0)
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +172,7 @@ Provide ONLY the rewritten text.
     baseline = row.get(COL_REWRITE_BASELINE_TEXT)
     if baseline is None:
         baseline = row.get(COL_TEXT, "")
+    utility = row.get(COL_UTILITY_SCORE, 0.0)
     replacements = {
         "<<PRIVACY_GOAL>>": params.privacy_goal_str,
         "<<MAX_PRIVACY_LEAK>>": str(params.max_privacy_leak),
@@ -179,7 +183,7 @@ Provide ONLY the rewritten text.
         if bool(row.get(COL_ANY_HIGH_LEAKED, False))
         else "",
         "<<LEAKED_ITEMS>>": str(row.get(COL_LEAKED_PRIVACY_ITEMS, "")),
-        "<<UTILITY_SCORE>>": str(row.get(COL_UTILITY_SCORE, 0.0)),
+        "<<UTILITY_SCORE>>": "not available" if no_response(utility) else str(utility),
     }
     return substitute_placeholders(prompt, replacements)
 
@@ -216,8 +220,22 @@ def _make_repair_column(repairer_alias: str) -> Any:
     async def _repair_column(row: dict[str, Any], generator_params: RepairParams, models: dict) -> dict[str, Any]:
         recipe = PydanticResponseRecipe(data_type=RewriteOutputSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_repair_prompt(row, generator_params))
-        result, _ = await models[repairer_alias].agenerate(prompt=prompt, parser=recipe.parse, max_correction_steps=3)
-        row[COL_REWRITTEN_TEXT_NEXT] = result.rewritten_text
+
+        def parse(text: str) -> tuple[RewriteOutputSchema, bool]:
+            return cast(RewriteOutputSchema, recipe.parse(text)), False
+
+        response = await ask(models[repairer_alias], prompt, parse, REPAIR_BUDGET)
+        if response.value is None:
+            # Keep the row with no next text: it is withheld and flagged, never released as the failing candidate.
+            logger.warning(
+                "%s unavailable after %d responses (%s); keeping the row and withholding its rewrite.",
+                COL_REWRITTEN_TEXT_NEXT,
+                response.requests,
+                response.cause,
+            )
+            row[COL_REWRITTEN_TEXT_NEXT] = None
+            return row
+        row[COL_REWRITTEN_TEXT_NEXT] = response.value.rewritten_text
         return row
 
     return _repair_column

@@ -6,10 +6,11 @@ from __future__ import annotations
 import json
 import logging
 import unicodedata
+from functools import partial
 from typing import Any
 
 from data_designer.config import custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from pydantic import BaseModel
 
@@ -28,6 +29,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.ndd.model_response import no_response
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.schemas import (
@@ -41,6 +43,7 @@ from anonymizer.engine.schemas.rewrite import (
     StrictRawSensitivityDispositionSchema,
     StrictSensitivityDispositionSchema,
 )
+from anonymizer.engine.workflow_columns.response.config import ResponseColumnConfig
 
 logger = logging.getLogger("anonymizer.rewrite.sensitivity_disposition")
 
@@ -388,6 +391,24 @@ def verify_disposition_coverage(
             )
 
 
+def _check_disposition_response(response: object, row: dict[str, Any], *, strict: bool) -> None:
+    """Reject a response whose entry count differs from the supplied entities, so the model is asked again.
+
+    The schema cannot know the row's entity count. Surplus entries are not trimmed: after a per-occurrence listing,
+    entry k need not be entity k, so a decision could attach to the wrong entity.
+    """
+    schema = StrictRawSensitivityDispositionSchema if strict else RawSensitivityDispositionSchema
+    returned = len(schema.model_validate(normalize_payload(response)).sensitivity_disposition)
+    supplied = len(_parse_numbered_lines(row.get(COL_DISPOSITION_EXPLICIT_ENTITIES))) + len(
+        _parse_numbered_lines(row.get(COL_DISPOSITION_LATENT_ENTITIES))
+    )
+    if returned != supplied:
+        raise ValueError(
+            f"The response has {returned} entries but {supplied} entities were supplied: "
+            f"return exactly {supplied} entries, with ids 1..{supplied}, one per supplied entity."
+        )
+
+
 class DispositionCoverageParams(BaseModel):
     strict_entity_protection: bool = False
 
@@ -404,6 +425,11 @@ class DispositionCoverageParams(BaseModel):
 def _verify_disposition_coverage(
     row: dict[str, Any], generator_params: DispositionCoverageParams | None = None
 ) -> dict[str, Any]:
+    if no_response(row.get(COL_RAW_SENSITIVITY_DISPOSITION)):
+        # No response passed the checks: the row is kept with no disposition, so nothing is rewritten or released.
+        row[COL_SENSITIVITY_DISPOSITION] = None
+        row[COL_DISPOSITION_COVERAGE] = False
+        return row
     explicit = _parse_numbered_lines(row.get(COL_DISPOSITION_EXPLICIT_ENTITIES))
     expected = explicit + _parse_numbered_lines(row.get(COL_DISPOSITION_LATENT_ENTITIES))
     classifications = normalize_payload(row.get(COL_ENTITY_CLASSIFICATION)) or {}
@@ -475,7 +501,8 @@ class SensitivityDispositionWorkflow:
                 name=COL_DISPOSITION_EXPLICIT_ENTITIES,
                 generator_function=_number_disposition_entities,
             ),
-            LLMStructuredColumnConfig(
+            # A response with the wrong entry count is re-asked; when none passes, the row is kept with no disposition.
+            ResponseColumnConfig(
                 name=COL_RAW_SENSITIVITY_DISPOSITION,
                 prompt=_get_sensitivity_disposition_prompt(
                     privacy_goal,
@@ -484,6 +511,7 @@ class SensitivityDispositionWorkflow:
                 ),
                 model_alias=disposition_alias,
                 output_format=output_schema,
+                response_check=partial(_check_disposition_response, strict=strict_entity_protection),
             ),
             CustomColumnConfig(
                 name=COL_SENSITIVITY_DISPOSITION,
