@@ -141,7 +141,7 @@ def _detection_valid_fraction(row: pd.Series) -> float | None:
 def _has_entities(entities_by_value: object) -> bool:
     """Return True if this record has at least one detected entity."""
     entities_by_value = normalize_payload(entities_by_value)
-    if not entities_by_value or not isinstance(entities_by_value, dict):
+    if entities_by_value is pd.NA or not entities_by_value or not isinstance(entities_by_value, dict):
         return False
     items = entities_by_value.get("entities_by_value")
     if not isinstance(items, list):

@@ -784,3 +784,30 @@ def test_the_trace_of_a_rebuilt_by_value_cell_writes_to_parquet(mode: str, tmp_p
 
     result.trace_dataframe.to_parquet(tmp_path / "trace.parquet")
     assert all(isinstance(cell, str) for cell in result.trace_dataframe[COL_ENTITIES_BY_VALUE])
+
+
+@pytest.mark.parametrize("mode", ["rewrite", "combined"])
+def test_a_missing_by_value_cell_on_a_malformed_row_fails_only_that_row(mode: str, tmp_path: Path) -> None:
+    class NaByValueDetector(_Detector):
+        def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+            result = super().run(dataframe)
+            result.dataframe[COL_ENTITIES_BY_VALUE] = pd.Series(
+                [pd.NA, *result.dataframe[COL_ENTITIES_BY_VALUE].iloc[1:]], index=result.dataframe.index, dtype=object
+            )
+            return result
+
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": [TEXT, CONTROL]}).to_csv(source, index=False)
+    frames: list[pd.DataFrame] = []
+    anonymizer = Anonymizer(
+        detection_workflow=cast(EntityDetectionWorkflow, NaByValueDetector(NULL_LABEL)),
+        rewrite_runner=_capturing(RewriteWorkflow(Mock()), frames),
+        combined_rewrite_runner=cast(CombinedRewriteWorkflow, _capturing(CombinedRewriteWorkflow(Mock()), frames)),
+    )
+    result = anonymizer.run(
+        config=AnonymizerConfig(rewrite=Rewrite(use_combined_graph=mode == "combined")),
+        data=AnonymizerInput(source=str(source)),
+    )
+
+    assert result.failed_records == [FailedRecord("0", "detect", "invalid_output")]
+    assert list(result.dataframe["text_rewritten"]) == ["rewritten"]
