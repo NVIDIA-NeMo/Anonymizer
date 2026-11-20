@@ -54,7 +54,7 @@ of your function; an output port is a value it returns. Each port has a **kind**
 ```python
 from anonymizer import graph as g
 
-step = g.Operation("lowercase", str.lower, inputs={"text": "text"}, outputs={"text": "text"})
+step = g.Operation("lowercase", lambda text: text.lower(), inputs={"text": "text"}, outputs={"text": "text"})
 print(step.inputs, step.outputs, step.scope)
 ```
 

@@ -147,7 +147,7 @@ def protect_document(document: str, ranges: list[tuple[int, int]]) -> str:
     target = whole.datum(assembled)
     final = g.protect(g.prepare(g.ProtectionGraph(whole, (target,)), checked("document", ())))
     if not final.outcome(target).protected:
-        return f"not released: {[r.code for r in final.outcome(target).reasons]} in {assembled!r}"
+        return f"not released: {[r.code for r in final.outcome(target).reasons]}"
     return final.protected[target]
 
 
@@ -177,7 +177,7 @@ Intro: [NAME] joined in May.
 Body: [NAME] moved to Oakland.
 not assembled: 28 characters outside every section
 ['Notes from Da', 'na Lee about ', 'the May launc', 'h.']
-not released: ['failed'] in 'Notes from Dana Lee about the May launch.'
+not released: ['failed']
 ```
 
 The first document is split by line, every section passes, and the assembled document passes the whole-document
@@ -188,7 +188,7 @@ The third document is split into chunks of 13 characters, and a chunk boundary f
 ends with `Da` and the next starts with `na`. Neither chunk contains `Dana`, so both local checks pass and both
 sections are released. Only the check on the assembled document finds the name. A check that runs on each section
 alone cannot see a value that crosses a section boundary, so when your policy covers the whole document, check the
-whole document.
+whole document. When that check fails, the program reports only the reason codes, never the rejected text.
 
 ## Joining in your own order
 

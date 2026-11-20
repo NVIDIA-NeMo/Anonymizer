@@ -18,18 +18,33 @@ The graph SDK is provisional. Names, signatures and default values may change in
 
 An operation calls your function with keyword arguments, one per input port, so the parameter names must match the
 port names. The default ports are one input and one output, both named `text`, so a function from string to string
-needs nothing else:
+with a parameter named `text` needs nothing else:
 
 ```python
 from anonymizer import graph as g
 
-step = g.Operation("strip", str.strip)
+
+def strip(text: str) -> str:
+    return text.strip()
+
+
+step = g.Operation("strip", strip)
 print(dict(step.inputs), dict(step.outputs))
+
+scope = g.GraphScope()
+target = scope.datum("  Hello World  ")
+result = g.protect(g.prepare(g.ProtectionGraph(scope, (target,)), g.Workflow("w", (step,))))
+print(result.outcome(target).terminal, repr(result.value(target)))
 ```
 
 ```text
 {'text': 'text'} {'text': 'text'}
+success 'Hello World'
 ```
+
+A method such as `str.strip` cannot be passed directly: its parameter is not named `text`, so the call fails and the
+target's reason is `raised`. Wrap it in a function, or a `lambda text: text.strip()`, whose parameter has the port's
+name.
 
 To read other values, declare them in `inputs` as `{port name: kind}`. Any input port that no earlier step
 outputs is filled from a seed: `text` (current candidate), `source` (original text), `mentions`, `context`,
