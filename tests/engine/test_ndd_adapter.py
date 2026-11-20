@@ -426,9 +426,21 @@ def test_run_workflow_on_no_rows_returns_the_declared_columns_without_running() 
     assert result.failed_records == []
 
 
-def test_run_workflow_lists_rows_not_run_after_a_step_stopped_early(caplog: pytest.LogCaptureFixture) -> None:
+_REFUSED = "Generator failed for column '_domain' during cell generation: stopped_early: _domain"
+_BUG = "Custom generator function failed for column '_later': TypeError: bug in a later column"
+
+
+def _trace(row: int, column: str, error: str, status: str = "error") -> SimpleNamespace:
+    return SimpleNamespace(status=status, row_group=0, row_index=row, column=column, error=error)
+
+
+def test_run_workflow_lists_rows_not_run_after_a_step_stopped_early(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """DataDesigner's own shutdown raises when no row finished; after a stop that is not an error."""
     caplog.set_level(logging.WARNING, logger="anonymizer.ndd")
+    refusals = [_trace(0, "_domain", _REFUSED), _trace(1, "_domain", _REFUSED)]
+    monkeypatch.setattr(ndd_adapter, "_builder_traces", lambda builders: refusals)
     mock_dd = Mock(spec=DataDesigner)
 
     def stop_then_shut_down(*args: object, **kwargs: object) -> None:
@@ -502,3 +514,51 @@ def test_run_workflow_raises_an_error_the_stop_did_not_cause(create: object) -> 
             columns=_make_columns(),
             workflow_name="rewrite-pipeline",
         )
+
+
+def _shutdown_after_stop(monkeypatch: pytest.MonkeyPatch, traces: list[SimpleNamespace] | None) -> None:
+    """Run a stop that ends in DataDesigner's shutdown, with ``traces`` as the builder's task traces."""
+    monkeypatch.setattr(ndd_adapter, "_builder_traces", lambda builders: list(traces or []))
+    mock_dd = Mock(spec=DataDesigner)
+    mock_dd.create.side_effect = _raise_after_stop(DataDesignerEarlyShutdownError("early shutdown"))
+    NddAdapter(data_designer=mock_dd).run_workflow(
+        pd.DataFrame({"text": ["row-1", "row-2"]}),
+        model_configs=[_make_model_config()],
+        columns=_make_columns(),
+        workflow_name="rewrite-pipeline",
+    )
+
+
+@pytest.mark.parametrize(
+    "traces",
+    [
+        pytest.param(
+            [_trace(0, "_domain", _REFUSED), _trace(0, "_later", _BUG), _trace(1, "_domain", _REFUSED)],
+            id="refusal-then-bug",
+        ),
+        pytest.param(
+            [_trace(0, "_later", _BUG), _trace(0, "_domain", _REFUSED), _trace(1, "_domain", _REFUSED)],
+            id="bug-then-refusal",
+        ),
+    ],
+)
+def test_run_workflow_raises_a_shutdown_when_any_row_also_failed_for_another_reason(
+    monkeypatch: pytest.MonkeyPatch, traces: list[SimpleNamespace]
+) -> None:
+    with pytest.raises(AnonymizerWorkflowError):
+        _shutdown_after_stop(monkeypatch, traces)
+
+
+@pytest.mark.parametrize(
+    "traces",
+    [
+        pytest.param(None, id="no-builder"),
+        pytest.param([], id="no-traces"),
+        pytest.param([_trace(0, "_domain", "", "ok"), _trace(1, "_domain", "", "ok")], id="no-refusal"),
+    ],
+)
+def test_run_workflow_raises_a_shutdown_with_no_refusal_on_record(
+    monkeypatch: pytest.MonkeyPatch, traces: list[SimpleNamespace] | None
+) -> None:
+    with pytest.raises(AnonymizerWorkflowError):
+        _shutdown_after_stop(monkeypatch, traces)

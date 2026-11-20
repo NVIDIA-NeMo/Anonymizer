@@ -728,7 +728,8 @@ def _ended_by_stop(
     exc: BaseException, stop: RunStop, task_traces: list[_TaskTrace], record_count: int, buffer_size: int | None
 ) -> bool:
     """Whether ``exc`` only reports what an early stop did: a step stopped, DataDesigner shut down (or a refusal
-    surfaced), and no row failed for any other cause."""
+    surfaced), the task traces record at least one refusal, and no failed column of any row failed for another
+    cause."""
     if not stop.stopped:
         return False
     chain: list[BaseException] = []
@@ -738,10 +739,13 @@ def _ended_by_stop(
         current = current.__cause__ or current.__context__
     if not isinstance(exc, DataDesignerEarlyShutdownError) and not any(isinstance(e, StoppedEarly) for e in chain):
         return False
-    reasons = _failure_reasons_by_position(
+    errors = _unrecovered_errors(
         record_count=record_count, task_traces=task_traces, buffer_size=buffer_size or record_count
     )
-    return all(reason.startswith(f"{STOPPED_EARLY} (") for reason in reasons.values())
+    # Every failed column of every row must be a refusal, and there must be at least one: a shutdown with no
+    # refusal on record (no builder, no traces) is not known to be the stop's.
+    reasons = [_failure_reason(trace) for by_column in errors.values() for trace in by_column.values()]
+    return bool(reasons) and all(reason.startswith(f"{STOPPED_EARLY} (") for reason in reasons)
 
 
 def _no_rows(frame: pd.DataFrame, columns: list[ColumnConfigT]) -> pd.DataFrame:
@@ -804,6 +808,18 @@ def _failure_reasons_by_position(
     buffer_size: int,
 ) -> dict[int, str]:
     """Map each row position to the reason of its earliest failed column, leaving out columns that later recovered."""
+    errors = _unrecovered_errors(record_count=record_count, task_traces=task_traces, buffer_size=buffer_size)
+    return {position: _failure_reason(next(iter(by_column.values()))) for position, by_column in errors.items()}
+
+
+def _unrecovered_errors(
+    *,
+    record_count: int,
+    task_traces: list[_TaskTrace],
+    buffer_size: int,
+) -> dict[int, dict[object, _TaskTrace]]:
+    """Each row position's failed columns, in order of failure, with their traces; a column that later recovered is
+    left out."""
     errors: dict[int, dict[object, _TaskTrace]] = {}
     for trace in task_traces:
         status = _trace_attr(trace, "status")
@@ -819,11 +835,7 @@ def _failure_reasons_by_position(
                 errors.setdefault(position, {})[column] = trace
             else:
                 errors.get(position, {}).pop(column, None)
-    return {
-        position: _failure_reason(next(iter(by_column.values())))
-        for position, by_column in errors.items()
-        if by_column and position < record_count
-    }
+    return {position: by_column for position, by_column in errors.items() if by_column and position < record_count}
 
 
 def _failure_reason(trace: _TaskTrace) -> str:
