@@ -21,7 +21,7 @@ from unittest.mock import Mock, patch
 import pandas as pd
 import pytest
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite, TextRecord, TextRecordsInput
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, ReplaceMethod, Substitute
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
@@ -42,7 +42,7 @@ from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
     _build_entities_by_value,
 )
-from anonymizer.engine.detection.result import DetectorResult
+from anonymizer.engine.detection.result import DetectorResult, DetectorRow
 from anonymizer.engine.graph_core.session import FALLBACK, Session, SessionChanges, SessionView, normalize
 from anonymizer.engine.ndd.adapter import NddAdapter, WorkflowRunResult
 from anonymizer.engine.replace.llm_replace_workflow import (
@@ -457,24 +457,42 @@ def test_an_overriding_rewrite_runner_runs_as_before_with_an_off_session(tmp_pat
     assert with_session.session_changes is None
 
 
-class _Unresolved(_Detector):
-    """Returns a frame (no ``DetectorResult``): reversed, first row dropped, with no positions and no record ids."""
+class _Unplaceable(_Detector):
+    """A result that cannot be placed: a frame (the old contract), an unknown record id, or a record answered twice."""
+
+    def __init__(self, shape: str) -> None:
+        self.shape = shape
 
     def run(self, dataframe: pd.DataFrame, **_: object) -> Any:
-        returned = dataframe.drop(columns=[c for c in dataframe.columns if c != COL_TEXT]).iloc[:0:-1]
-        return EntityDetectionResult(self.frame(returned.reset_index(drop=True)).dataframe, [], ())
+        placed = super().run(dataframe)
+        if self.shape == "frame":
+            return self.frame(dataframe)
+        if self.shape == "unknown-id":
+            return DetectorResult(rows=(*placed.rows, DetectorRow(record_id="not-an-input-id")))
+        return DetectorResult(rows=(*placed.rows, placed.rows[0]))
 
 
-def test_a_result_that_cannot_be_placed_raises_and_leaves_the_session_untouched(tmp_path: Path) -> None:
-    """The route no longer reroutes over a detector's frame as returned: it raises before any model call, so a stable
-    Session gains nothing."""
+@pytest.mark.parametrize("shape", ["frame", "unknown-id", "duplicate-id"])
+def test_a_result_that_cannot_be_placed_raises_and_leaves_the_session_untouched(tmp_path: Path, shape: str) -> None:
+    """The route no longer reroutes over a detector's frame as returned: an unplaceable result raises before any model
+    call, and a stable Session that already holds entries keeps exactly those."""
     session = Session(stable_replacements=True)
+    _protect(tmp_path, ["Alice lives in Paris."], {"Alice": "Bob", "Paris": "Lyon"}, session)
+    size, snapshot = session.size, session.snapshot().to_bytes()
+    assert size > 0
     texts = ["Carol is here.", "Alice lives in Paris."]
-    with pytest.raises(InvalidDetectorResultError):
-        _protect(
-            tmp_path, texts, {"Alice": "Bob", "Paris": "Lyon", "Carol": "Dana"}, session, [], detector=_Unresolved()
+    with (
+        patch.object(NddAdapter, "run_workflow") as model,
+        pytest.raises(InvalidDetectorResultError),
+    ):
+        Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, _Unplaceable(shape))).run(
+            config=AnonymizerConfig(replace=Substitute()),
+            data=TextRecordsInput(records=[TextRecord(id=f"r{i}", text=t) for i, t in enumerate(texts)]),
+            session=session,
         )
-    assert session.size == 0
+    assert model.call_count == 0
+    assert session.size == size
+    assert session.snapshot().to_bytes() == snapshot
 
 
 class _OldSignature(ReplacementWorkflow):

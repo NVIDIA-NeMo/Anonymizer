@@ -120,11 +120,12 @@ overlapped an earlier span, and left any of its text that no earlier span covere
 - In Rewrite, a built-in detector's `final_entities` payload that does not parse fails the record at `detect` with
   `invalid_output`; Replace fails it at step `replace` (see Replace). A custom detector returns typed spans in a
   `DetectorResult` instead, and a malformed one raises `InvalidDetectorResultError` (see "Detection contract").
-- A custom detector no longer returns `_entities_by_value`; the engine builds it. For a row with spans, it is built from the kept spans plus every value the
-  detector listed, and the value of every collapsed span, that still occurs in the text outside the kept spans. A value
-  occurs as a whole word, ignoring case and accents (a value of up to three uppercase characters matches with its case,
-  and a value of two or more characters in Han, Thai or a similar script matches anywhere); a one-character value in an
-  unspaced script, such as 王, counts wherever it appears. A row without spans keeps the detector's view.
+- A custom detector no longer returns `_entities_by_value`; the engine builds it. For a row with spans, it is built
+  from the kept spans plus every value the detector listed, and the value of every collapsed span, that still occurs
+  in the text outside the kept spans. A value occurs as a whole word, ignoring case and accents (a value of up to three
+  uppercase characters matches with its case, and a value of two or more characters in Han, Thai or a similar script
+  matches anywhere); a one-character value in an unspaced script, such as 王, counts wherever it appears. A row
+  without spans keeps the detector's view.
 - The built-in detector does not produce such spans.
 - What to do: a custom detector must report non-overlapping code-point offsets into the text it was given, and a
   label for every span. These checks run on every custom detector's result: it names its input rows by record id and
@@ -547,9 +548,10 @@ session and its snapshots are provisional.
   to give the second label a placeholder; for such a value, record-mode (default) output is unchanged from v0.5.0.
 - What to do: in run mode, if you relied on a placeholder for the second label, read `result.replacement_map(row)`,
   whose entries carry each label and its substitute.
-- Without a stable session, including `Session()`, a custom replace runner's `run_with_detection()` and its map
-  workflow's `generate_validated_maps()` are called as before `session` existed, so overrides with the older
-  signatures keep working.
+- Without a stable session, including `Session()`, a custom replace runner's `run()` and its map workflow's
+  `generate_validated_maps()` are called as before `session` existed, so overrides with the older signatures keep
+  working. A `run_with_detection()` override must also accept `detector` (or `**kwargs`); one that does not raises
+  `InvalidConfigError` before detection (see "Detection contract").
 - Under a stable session, a custom replace runner is also rejected before detection when it overrides
   `run_with_detection()` or its map workflow's `generate_validated_maps()`, even when the override forwards
   `**kwargs` or `session`, and when the stock method is bound to another object.
