@@ -22,7 +22,9 @@ from anonymizer.engine.rewrite.parsers import normalize_payload
 
 Mode = Literal["replace", "rewrite"]
 Detector = Literal["builtin", "custom"]
-Action = Literal["fail", "protect", "release", "flag", "withhold", "pass"]
+# ``n/a`` marks a row no code reads: the situation cannot arise in that mode or for that detector kind. It keeps the
+# table total, so a reader can tell an unread row from a live one.
+Action = Literal["fail", "protect", "release", "flag", "withhold", "unassessed", "n/a"]
 Situation = Literal[
     # A reported value occurs in the text outside every kept span.
     "missed_repeat",
@@ -38,8 +40,8 @@ Situation = Literal[
     "dropped_record",
     # An override runner's output row cannot be placed against its input (no id, an unknown or a repeated id).
     "unplaced_output",
-    # A step stopped early after too many rows without a usable model response.
-    "stopped_early",
+    # A result row reported by ``evaluate()`` cannot be placed in the run's source rows.
+    "unplaced_result_row",
 ]
 
 
@@ -61,8 +63,7 @@ def _all(verdict: Verdict) -> dict[tuple[Mode, Detector], Verdict]:
 
 POLICY: dict[tuple[str, str, str], Verdict] = {
     # Replace replaces spans only: a custom detector must span every occurrence (fail); the built-in detector's
-    # missed repeat gets a span (protect, ruled 432/repeat-variant V2). Rewrite passes it to the rewriter in its
-    # replacement view, as before (ruled contract/open-rows).
+    # missed repeat gets a span (protect). Rewrite passes it to the rewriter in its replacement view, as before.
     **_rows(
         "missed_repeat",
         {
@@ -77,20 +78,20 @@ POLICY: dict[tuple[str, str, str], Verdict] = {
     **_rows(
         "undetected_value_kept",
         {
-            ("replace", "custom"): Verdict("pass"),
-            ("replace", "builtin"): Verdict("pass"),
+            ("replace", "custom"): Verdict("n/a"),
+            ("replace", "builtin"): Verdict("n/a"),
             ("rewrite", "custom"): Verdict("flag"),
             ("rewrite", "builtin"): Verdict("flag"),
         },
     ),
     # A placeholder leaks nothing but needs a reader: both modes flag the row, and it stays met.
     **_rows("placeholder_in_text", _all(Verdict("flag"))),
-    # A failing final candidate is withheld, repaired or not (#431 R1). Replace has no such candidate.
+    # A failing final candidate is withheld, repaired or not. Replace has no such candidate.
     **_rows(
         "privacy_check_failed",
         {
-            ("replace", "custom"): Verdict("pass"),
-            ("replace", "builtin"): Verdict("pass"),
+            ("replace", "custom"): Verdict("n/a"),
+            ("replace", "builtin"): Verdict("n/a"),
             ("rewrite", "custom"): Verdict("withhold"),
             ("rewrite", "builtin"): Verdict("withhold"),
         },
@@ -98,22 +99,44 @@ POLICY: dict[tuple[str, str, str], Verdict] = {
     **_rows(
         "privacy_unassessed",
         {
-            ("replace", "custom"): Verdict("pass"),
-            ("replace", "builtin"): Verdict("pass"),
+            ("replace", "custom"): Verdict("n/a"),
+            ("replace", "builtin"): Verdict("n/a"),
             ("rewrite", "custom"): Verdict("withhold"),
             ("rewrite", "builtin"): Verdict("withhold"),
         },
     ),
-    **_rows("dropped_record", _all(Verdict("fail", "dropped_output"))),
+    # Only a custom detector returns a result that can leave a record out; the built-in frame is placed as returned.
+    **_rows(
+        "dropped_record",
+        {
+            ("replace", "custom"): Verdict("fail", "dropped_output"),
+            ("replace", "builtin"): Verdict("n/a"),
+            ("rewrite", "custom"): Verdict("fail", "dropped_output"),
+            ("rewrite", "builtin"): Verdict("n/a"),
+        },
+    ),
     **_rows("unplaced_output", _all(Verdict("fail", "unplaced_output"))),
-    # #431's early stop: each row not run is listed with ``stopped_early (<step>)``; this is its reason code.
-    **_rows("stopped_early", _all(Verdict("fail", "stopped_early"))),
+    # The row is reported unassessed and unprotected; each verifier reads ``could_not_assess`` with this cause.
+    **_rows("unplaced_result_row", _all(Verdict("unassessed", "unplaced"))),
 }
 
 
 def assess(situation: Situation, mode: Mode, detector: Detector) -> Verdict:
     """The table's verdict for ``situation`` in ``mode`` with a ``detector`` of that kind."""
     return POLICY[(situation, mode, detector)]
+
+
+def assess_any(situation: Situation, *, detector: Detector | None = None) -> Verdict:
+    """The one verdict ``situation`` has in every mode (and every detector kind, unless ``detector`` is given), for a
+    site that knows neither; ``n/a`` rows are skipped. Raises ``ValueError`` when the live rows disagree."""
+    verdicts = {
+        v
+        for (s, _, d), v in POLICY.items()
+        if s == situation and v.action != "n/a" and (detector is None or d == detector)
+    }
+    if len(verdicts) != 1:
+        raise ValueError(f"{situation} has no single verdict across modes: {sorted(map(repr, verdicts))}")
+    return verdicts.pop()
 
 
 def repeat_handling(mode: Mode, detector: Detector) -> Literal["fail", "protect", "release"]:

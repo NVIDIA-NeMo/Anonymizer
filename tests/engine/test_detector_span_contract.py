@@ -1211,7 +1211,7 @@ def test_an_override_that_takes_the_detector_keyword_receives_the_detector_kind(
 
 
 def test_a_rewrite_runner_override_receives_no_detector_keyword(tmp_path: Path) -> None:
-    """J3: Rewrite names failures from the carried record ids, so its runner gets no detector keyword."""
+    """Rewrite names failures from the carried record ids, so its runner gets no detector keyword."""
     seen: list[set[str]] = []
 
     class Runner(RewriteWorkflow):

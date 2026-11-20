@@ -285,7 +285,7 @@ def test_a_record_left_out_of_a_reordered_partial_result_fails_once_as_dropped_o
     assert sorted(result.dataframe["text"]) == ["A text", "C text"]
 
 
-# --- identity: every row and failure carries its input record id (B1) ------------------------------------------------
+# --- identity: every row and failure carries its input record id ---------------------------------------------------
 
 
 def _frame_without_ids(frame: pd.DataFrame, **_: object) -> EntityDetectionResult:
@@ -294,7 +294,7 @@ def _frame_without_ids(frame: pd.DataFrame, **_: object) -> EntityDetectionResul
 
 @pytest.mark.parametrize("mode", ["replace", "rewrite"])
 def test_a_built_in_frame_without_ids_gets_the_input_id_at_each_placed_row(mode: str) -> None:
-    """H6: the released row carries the id of the input row it answers, not a generated or missing one."""
+    """The released row carries the id of the input row it answers, not a generated or missing one."""
 
     class Stub(RewriteWorkflow):
         def _produce(self, rows: Any, **options: Any) -> Any:
@@ -329,7 +329,7 @@ def test_the_substitute_map_step_needs_the_record_id_column() -> None:
         )
 
 
-# --- values: a built-in detector's missed repeat in Replace (B2, V2) -------------------------------------------------
+# --- values: a built-in detector's missed repeat in Replace -------------------------------------------------------
 
 
 def _builtin_first_only(frame: pd.DataFrame, **_: object) -> EntityDetectionResult:
@@ -382,7 +382,7 @@ def test_a_built_in_substitute_run_replaces_every_repeat_with_one_map_entry() ->
 
 
 def test_the_built_in_rewrite_view_is_the_view_of_its_final_entities() -> None:
-    """I5: Rewrite releases a missed repeat to the rewriter as before, and the view it reads is exactly the view
+    """Rewrite releases a missed repeat to the rewriter as before, and the view it reads is exactly the view
     derived from the row's final entities."""
     seen: list[pd.DataFrame] = []
 

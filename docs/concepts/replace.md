@@ -45,6 +45,10 @@ placeholder. With the default `"record"`, different entities of a record can
 still share an ordinary model-generated substitute; with `"run"`, they never
 do, and placeholders are numbered across the run.
 
+Substitute results have a `placeholder_in_text` column. It is `True` when a row's replaced text keeps one of the
+`[SUBSTITUTE_<LABEL>_<n>]` placeholders of that row's own replacement map, so the row needs a reader. It is not a
+failure: the row is released and its outcome stays `met`. Redact, Hash and Annotate results have no such column.
+
 Before discarding a mapping, Substitute can reconcile a copied original that
 differs only in no-break spaces (`U+00A0`), thin spaces (`U+2009`), narrow no-break
 spaces (`U+202F`), or ASCII spaces. The label must match exactly and the comparison

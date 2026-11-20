@@ -95,8 +95,11 @@ label of the first detected span of the same value, so `final_entities` can hold
 `#` in `order #W3916020`, is replaced with it. Rewrite passes a missed repeat to the rewriter in its replacement view,
 as before.
 
-Custom runners (`replace_runner`, `rewrite_runner`) are an advanced and testing seam. The rows a runner's `evaluate()`
-returns are matched by record id only; Anonymizer never matches rows by order or text.
+Custom runners (`replace_runner`, `rewrite_runner`) are an advanced and testing seam. A runner that overrides `run()`
+must keep `_anonymizer_record_id` on every row it returns. A row with no id, an id that is not an input id, or an id
+returned twice is not released, and each input record that no released row answers fails at the runner's step with
+`unplaced_output`. The rows a runner's `evaluate()` returns are matched by record id only; Anonymizer never matches
+rows by order or text.
 
 ### Example: standard vs. latent entities
 

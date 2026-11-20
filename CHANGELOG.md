@@ -472,6 +472,19 @@ class itself, including its subclasses and `Mock(spec=EntityDetectionWorkflow)`.
   detector-supplied text column, `tagged_text` or `source_positions` is no longer read.
 - Failures from a custom `detection_workflow` are named by the input record's id (the `TextRecord` id, or a
   generated id for file input), not by the returned row's index.
+- What to do: build one `DetectorRow` per input row from `dataframe["_anonymizer_record_id"]`, move each span from
+  the `final_entities` dict into `DetectedSpan(start, end, label, value)`, and move any value listed only in
+  `_entities_by_value` into `extra_values`. See "Custom detection workflows".
+
+**A custom runner's `run()` must keep `_anonymizer_record_id` on every row it returns.** This applies to a
+`replace_runner` or `rewrite_runner` that overrides `run()`.
+- A returned row with no record id, an id that is not an input id, or an id returned twice is not released, and each
+  input record that no released row answers fails at that runner's step with `unplaced_output`. Such rows were
+  released before.
+- What to do: keep the `_anonymizer_record_id` column of the frame the runner receives, unchanged, on every row it
+  returns, and return at most one row per record.
+
+**Other detection and Replace changes.**
 - The "Detection complete — N entities found" log line counts the final (kept) entities for every detector, the
   built-in one included. Before, it counted the built-in detector's validated entities before label filtering, and 0
   for a custom detector.
@@ -486,14 +499,6 @@ class itself, including its subclasses and `Mock(spec=EntityDetectionWorkflow)`.
 - Substitute rows gain a `placeholder_in_text` column, `True` when the replaced text keeps a placeholder substitute
   (`[SUBSTITUTE_<LABEL>_<n>]`) of the row's own replacement map. The row is not failed and stays `met`, as in Rewrite,
   where the same situation flags the row for review.
-- With a custom `replace_runner` or `rewrite_runner` that overrides `run()`, an output row that cannot be placed (no
-  record id, an unknown id or a repeated id) is not released, and each input record no placed row answers fails at
-  that runner's step with `unplaced_output`. Such rows were released before.
-- One release-policy table decides these outcomes for both modes and both detector kinds; the failure reasons the
-  failure-count log names are derived from it.
-- What to do: build one `DetectorRow` per input row from `dataframe["_anonymizer_record_id"]`, move each span from
-  the `final_entities` dict into `DetectedSpan(start, end, label, value)`, and move any value listed only in
-  `_entities_by_value` into `extra_values`. See "Custom detection workflows".
 
 ### #407: frozen config and one options object
 

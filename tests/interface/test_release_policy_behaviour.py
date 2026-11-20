@@ -41,7 +41,7 @@ def builtin_stub(run: Any) -> EntityDetectionWorkflow:
     return detector
 
 
-# --- the Replace placeholder flag (lipika, #426) ----------------------------------------------------------------------
+# --- the Replace placeholder flag ----------------------------------------------------------------------------------------
 
 
 def _alice(frame: pd.DataFrame, **_: object) -> EntityDetectionResult:
@@ -114,3 +114,30 @@ def test_an_override_runners_unplaceable_rows_fail_their_records(mode: str) -> N
     result = anonymizer.run(config=config, data=DATA)
     assert result.failed_records == [FailedRecord(i, mode, "unplaced_output") for i in ("b", "c")]
     assert list(result.dataframe["text"]) == ["Alice a."]
+
+
+@pytest.mark.parametrize("mode", ["replace", "rewrite"])
+def test_a_valid_id_returned_twice_places_neither_row(mode: str) -> None:
+    """Two rows with the same input id cannot be placed: neither is released and the record fails once."""
+
+    def output(frame: pd.DataFrame) -> pd.DataFrame:
+        out = frame.copy().reset_index(drop=True)
+        out[COL_REPLACED_TEXT] = "x"
+        out[COL_REWRITTEN_TEXT] = "x"
+        return pd.concat([out, out.iloc[[0]]], ignore_index=True)
+
+    class Replace(ReplacementWorkflow):
+        def run(self, dataframe: pd.DataFrame, **_: object) -> ReplacementResult:
+            return ReplacementResult(output(dataframe), [])
+
+    class Rewriter(RewriteWorkflow):
+        def run(self, dataframe: pd.DataFrame, **_: object) -> RewriteResult:
+            return RewriteResult(output(dataframe), [])
+
+    anonymizer = Anonymizer(
+        detection_workflow=builtin_stub(_alice), replace_runner=Replace(), rewrite_runner=Rewriter(Mock())
+    )
+    config = AnonymizerConfig(replace=Redact()) if mode == "replace" else AnonymizerConfig(rewrite=Rewrite())
+    result = anonymizer.run(config=config, data=DATA)
+    assert result.failed_records == [FailedRecord("a", mode, "unplaced_output")]
+    assert list(result.dataframe["text"]) == ["Alice b.", "Alice c."]

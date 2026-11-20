@@ -100,7 +100,7 @@ from anonymizer.engine.ndd.model_loader import (
     validate_model_alias_references,
     validate_model_configs_reference_providers,
 )
-from anonymizer.engine.protection_policy import assess, fail_reasons
+from anonymizer.engine.protection_policy import assess, assess_any, fail_reasons
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
@@ -263,7 +263,7 @@ def _placed_output(
     mode: Literal["replace", "rewrite"],
     detector: Literal["builtin", "custom"],
 ) -> tuple[pd.DataFrame, list[FailedRecord]]:
-    """An override runner's ``output``, checked at the seam (I1): only rows placed by a unique input record id are
+    """An override runner's ``output``, checked at the seam: only rows placed by a unique input record id are
     released, and each ``source`` record that no placed row answers and no failure names fails at ``step`` with the
     policy's ``unplaced_output`` reason. Returns the released rows and ``runner_failures`` plus those failures."""
     positions = _source_positions(source, output)
@@ -359,7 +359,8 @@ def _reported_outcomes(
 
     def reported(p: int | None) -> TargetOutcome:
         if p is None:
-            unplaced = (Advisory(names[i], names[i], "could_not_assess", "unplaced") for i in verifiers)
+            cause = assess_any("unplaced_result_row").reason
+            unplaced = (Advisory(names[i], names[i], "could_not_assess", cause) for i in verifiers)
             return replace(unassessed, advisories=tuple(unplaced))
         base = by_id.get(source_ids[p], unassessed)
         kept = (a for a in base.advisories if a.verifier not in judges)  # an earlier evaluation's judges
@@ -1363,6 +1364,7 @@ class Anonymizer:
                     "rewrite",
                     self._detector_kind,
                 )
+                final_df = placed_df
                 replacement_elapsed = time.perf_counter() - t0
                 outcomes = None
             else:
@@ -1378,11 +1380,7 @@ class Anonymizer:
                 replacement_elapsed = time.perf_counter() - t0 - detection_elapsed
                 post_detection_failures = rewrite_result.failed_records[len(detection_failures) :]
                 outcomes = rewrite_result.outcomes
-            final_df = (
-                placed_df
-                if rewrite_runner.__class__.run not in (RewriteWorkflow.run, CombinedRewriteWorkflow.run)
-                else rewrite_result.dataframe
-            )
+                final_df = rewrite_result.dataframe
         entity_count = _count_entities(detected_df)
         # Rows the graph rejects at its ``detect`` step come back with the later steps' failures; count them here.
         rejected_at_detect = sum(f.step == "detect" for f in post_detection_failures)
@@ -1707,6 +1705,7 @@ def _build_user_dataframe(
     """Filter trace dataframe to the public column set for the active mode.
 
     Replace:     {text_col}, {text_col}_replaced, {text_col}_with_spans, final_entities,
+                 placeholder_in_text (Substitute only),
                  entity_coverage, missed_entities (always after evaluate()),
                  detection_valid, detection_invalid_entities (only when compute_detection_validity=True)
     Rewrite:     {text_col}, {text_col}_rewritten, utility_score, leakage_mass, weighted_leakage_rate,

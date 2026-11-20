@@ -300,6 +300,9 @@ is the verifier's stated reason for `failed` and `could_not_assess`, and empty o
 | `invalid_output` | A step returned a value of the wrong kind or port names, or a detector returned an entry that is not a `Mention`. |
 | `mention_not_on_target`, `mention_out_of_range`, `mention_slice_mismatch`, `mention_unlabelled`, `overlapping_output_ownership` | Mentions a step returned broke a mention rule. |
 | `over_limit` | Mentions returned in one call passed `Limits.max_mentions`. |
+| `unspanned_value` | Replace with a custom detector: a value the detector reported occurs in the text outside every kept span. |
+| `dropped_output` | A custom detector's result neither answered nor failed this input record. |
+| `unplaced_output` | A custom runner's `run()` returned no row that can be placed for this input record (no id, an unknown id or a repeated id). |
 | `binding_failed` | A context source this target reads did not return usable items. |
 | `cancelled` | The run was cancelled before this target finished. |
 | `blocked` | The target did not finish and no step of it failed, for example because it was never dispatched. |
