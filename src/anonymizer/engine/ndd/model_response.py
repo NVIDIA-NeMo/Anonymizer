@@ -28,10 +28,6 @@ STOPPED_EARLY = "stopped_early"
 logger = logging.getLogger("anonymizer.ndd.response")
 
 
-class StoppedEarly(RuntimeError):
-    """Raised in place of a request to a step its run has stopped; the adapter lists the row as ``stopped_early``."""
-
-
 class ResponseCheckError(ValueError):
     """A response check's rejection that can say why in a log: ``cause`` holds a fixed code and counts only."""
 
@@ -45,31 +41,49 @@ class RunStop:
     """One workflow run's early stop, per step.
 
     A step stops when, over its last ``window`` responses, the share that gave no usable response reaches ``rate``
-    (the run config's ``shutdown_error_window`` and ``shutdown_error_rate``); from then on its requests raise
-    ``StoppedEarly``. Other steps keep running. Nothing stops when ``enabled`` is off (``disable_early_shutdown``).
+    (the run config's ``shutdown_error_window`` and ``shutdown_error_rate``). From then on its requests are refused
+    without a request: the refused row is kept with the step's unavailable cell, every later request for that row is
+    refused too, and ``refused`` maps the row's ``row_key`` value to that first step, so the adapter lists the row once
+    as ``stopped_early (<step>)``. Rows already past the step keep running and are returned. A refusal is not a task
+    failure, so DataDesigner's own early shutdown never sees it. Nothing stops when ``enabled`` is off
+    (``disable_early_shutdown``).
     """
 
     window: int = 10
     rate: float = 0.5
     enabled: bool = True
+    row_key: str | None = None
     stopped: list[str] = field(default_factory=list)
+    refused: dict[str, str] = field(default_factory=dict)
     _recent: dict[str, deque[bool]] = field(default_factory=dict, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @classmethod
-    def from_run_config(cls, run_config: Any) -> RunStop:
+    def from_run_config(cls, run_config: Any, *, row_key: str | None = None) -> RunStop:
         if not isinstance(run_config, RunConfig):  # e.g. a stand-in designer without a run config
-            return cls()
+            return cls(row_key=row_key)
         return cls(
             window=run_config.shutdown_error_window,
             rate=run_config.shutdown_error_rate,
             enabled=not run_config.disable_early_shutdown,
+            row_key=row_key,
         )
 
-    def check(self, step: str) -> None:
-        """Raise ``StoppedEarly`` when ``step`` has stopped."""
-        if step in self.stopped:
-            raise StoppedEarly(f"{STOPPED_EARLY}: {step}")
+    def refuses(self, step: str, row: Mapping[str, Any] | None) -> bool:
+        """Whether to refuse ``step``'s request for ``row``: ``step`` has stopped, or a stopped step already refused
+        the row. Records the first refusing step per row; raises ``RuntimeError`` for a refusal with no row key."""
+        with self._lock:
+            if not self.stopped:
+                return False
+            key = None if row is None or self.row_key is None else row.get(self.row_key)
+            if key is None:
+                if step in self.stopped:
+                    raise RuntimeError(f"{STOPPED_EARLY}: {step} refused a request with no row key")
+                return False
+            if step not in self.stopped and key not in self.refused:
+                return False
+            self.refused.setdefault(key, step)
+            return True
 
     def record(self, step: str, unusable: bool) -> None:
         """Count one response of ``step``; stop the step, with one WARNING, when its window reaches the rate."""
@@ -158,16 +172,19 @@ async def ask(
     budget: RetryBudget,
     *,
     step: str,
+    row: Mapping[str, Any] | None = None,
 ) -> ModelResponse[T]:
     """Ask ``model`` through its facade's ``agenerate``; ``parser`` returns the value and whether it filled defaults.
 
     A response that still does not parse once the budget is spent is ``unavailable``. Any other error, such as a
-    provider failure, propagates. ``step`` names the step for the run's early stop.
+    provider failure, propagates. ``step`` names the step for the run's early stop, and ``row`` (the generator's row)
+    identifies the row it refuses.
     """
     response, _ = await ask_with_trace(
         model,
         parser,
         step=step,
+        row=row,
         prompt=prompt,
         max_correction_steps=budget.corrections,
         max_conversation_restarts=budget.restarts,
@@ -180,16 +197,18 @@ async def ask_with_trace(
     parser: Callable[[str], tuple[T, bool]],
     *,
     step: str,
+    row: Mapping[str, Any] | None = None,
     **request: Any,
 ) -> tuple[ModelResponse[T], list[Any]]:
     """``ask`` with the facade's request arguments passed as given, returning the conversation trace too.
 
-    The trace is empty when the response is unavailable. When the run has stopped ``step``, raises ``StoppedEarly``
-    without a request; otherwise the response counts toward the step's stop.
+    The trace is empty when the response is unavailable. When the run's stop refuses ``row`` (``step`` has stopped,
+    or a stopped step refused the row before), returns an ``unavailable`` response with the cause ``stopped_early``
+    without a request, and it does not count; otherwise the response counts toward the step's stop.
     """
     stop, step = _RUN_STOP.get(), _STEP_NAMES.get().get(step, step)
-    if stop is not None:
-        stop.check(step)
+    if stop is not None and stop.refuses(step, row):
+        return ModelResponse("unavailable", None, STOPPED_EARLY, 0), []
     requests = 0
 
     def counted(response: str) -> tuple[T, bool]:

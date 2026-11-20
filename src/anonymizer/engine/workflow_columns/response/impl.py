@@ -15,7 +15,7 @@ from data_designer.engine.models.parsers.errors import ParserException
 from data_designer.engine.models.recipes.response_recipes import StructuredResponseRecipe
 from data_designer.engine.processing.utils import deserialize_json_values
 
-from anonymizer.engine.ndd.model_response import ResponseCheckError, ask_with_trace, no_response
+from anonymizer.engine.ndd.model_response import STOPPED_EARLY, ResponseCheckError, ask_with_trace, no_response
 from anonymizer.engine.workflow_columns.response.config import ResponseColumnConfig
 
 logger = logging.getLogger("anonymizer.ndd.response")
@@ -56,7 +56,10 @@ class ResponseColumnGenerator(ColumnGeneratorWithModelChatCompletion[ResponseCol
                     raise ParserException(str(exc), source=response) from None
             return value, False
 
-        response, trace = await ask_with_trace(self.model, checked, step=self.config.name, **kwargs)
+        response, trace = await ask_with_trace(self.model, checked, step=self.config.name, row=data, **kwargs)
+        if response.cause == STOPPED_EARLY:
+            logger.debug("%s not asked: the run stopped early.", self.config.name)
+            return self._unavailable(data)
         if response.state == "unavailable":
             logger.warning(
                 "%s unavailable after %d responses (%s); keeping the row.",

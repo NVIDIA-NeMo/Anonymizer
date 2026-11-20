@@ -82,66 +82,75 @@ _REQUESTS_PER_ROW = 6  # a first request and the corrections and restarts the de
 Failing = Callable[[int, int], bool]
 
 
-@dataclass
-class _Hold:
-    """Keeps a failing alias's prose answers back until ``until`` says the rows that should finish have finished.
+_STOP_WARNING = "Stopped model requests for step _domain"
+_REWRITE_ROLES = [role for role, (group, _) in _ROLES.items() if group == "rewrite" and role != "domain"]
 
-    DataDesigner shuts the whole run down once enough rows fail, and drops every row still part-way through its
-    columns. Which rows were part-way then depends on how the event loop interleaved the requests, so a test that
-    needs particular rows to come back holds the failures until those rows have their last answer, plus ``settle``
-    seconds for DataDesigner to record them as complete. ``timeout`` only stops a mistake from hanging the suite.
+
+@dataclass
+class _Traffic:
+    """Request timing and who reached the domain step, shared by every scripted client.
+
+    ``latency`` adds seconds before a role's answer. A role in ``gated`` answers only once the domain step has
+    stopped (``released``), so the healthy rows are still part-way through their later steps when the stop fires,
+    the order a slow production model gives. ``timeout`` only stops a mistake from hanging the suite. ``asked``
+    holds the record numbers whose domain request reached the model, ``answered`` those it gave a usable answer.
     """
 
-    until: Callable[[Counter[str]], bool]
-    settle: float = 0.2
+    latency: dict[str, float] = field(default_factory=dict)
+    gated: set[str] = field(default_factory=set)
+    released: threading.Event = field(default_factory=threading.Event)
     timeout: float = 30.0
-    _deadline: float = field(default=0.0, repr=False)
-    _released_at: float | None = field(default=None, repr=False)
+    asked: set[int] = field(default_factory=set)
+    answered: set[int] = field(default_factory=set)
 
-    def _remaining(self, answered: Counter[str]) -> float:
-        """Seconds still to wait; 0 once released, or once the timeout has passed."""
-        now = time.monotonic()
-        if not self._deadline:
-            self._deadline = now + self.timeout
-        if self._released_at is None and self.until(answered):
-            self._released_at = now
-        if self._released_at is None:
-            return 0.0 if now > self._deadline else 0.005
-        return max(0.0, self._released_at + self.settle - now)
+    def delay_blocking(self, role: str) -> None:
+        if role in self.gated:
+            self.released.wait(self.timeout)
+        time.sleep(self.latency.get(role, 0.0))
 
-    async def wait(self, answered: Counter[str]) -> None:
-        while delay := self._remaining(answered):
-            await asyncio.sleep(delay)
+    async def delay(self, role: str) -> None:
+        if role in self.gated:
+            deadline = time.monotonic() + self.timeout
+            while not self.released.is_set() and time.monotonic() < deadline:
+                await asyncio.sleep(0.005)
+        await asyncio.sleep(self.latency.get(role, 0.0))
 
-    def wait_blocking(self, answered: Counter[str]) -> None:
-        while delay := self._remaining(answered):
-            time.sleep(delay)
+
+class _Release(logging.Handler):
+    """Sets ``event`` on the domain step's stop WARNING."""
+
+    def __init__(self, event: threading.Event) -> None:
+        super().__init__(logging.WARNING)
+        self._event = event
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.getMessage().startswith(_STOP_WARNING):
+            self._event.set()
 
 
 class _Client:
     """Responds per alias; the failing alias answers prose whenever ``failing`` says so."""
 
     def __init__(
-        self,
-        role: str,
-        failing: dict[str, Failing],
-        calls: Counter[str],
-        lock: threading.Lock,
-        holds: dict[str, _Hold],
-        answered: Counter[str],
+        self, role: str, failing: dict[str, Failing], calls: Counter[str], lock: threading.Lock, traffic: _Traffic
     ) -> None:
-        self._role, self._failing, self._calls, self._lock = role, failing, calls, lock
-        self._hold, self._answered = holds.get(role), answered
+        self._role, self._failing, self._calls, self._lock, self._traffic = role, failing, calls, lock, traffic
 
     def _plan(self, request: ChatCompletionRequest) -> tuple[str, bool]:
         """The request's prompt, and whether it gets prose."""
         prompt = json.dumps(request.messages, default=str)
+        match = re.search(r"Record (\d+):", prompt)
+        record = int(match.group(1)) if match else -1
+        failing = self._failing.get(self._role)
         with self._lock:
             n = self._calls[self._role]
             self._calls[self._role] += 1
-        match = re.search(r"Record (\d+):", prompt)
-        failing = self._failing.get(self._role)
-        return prompt, failing is not None and failing(n, int(match.group(1)) if match else -1)
+            prose = failing is not None and failing(n, record)
+            if self._role == "domain":
+                self._traffic.asked.add(record)
+                if not prose:
+                    self._traffic.answered.add(record)
+        return prompt, prose
 
     def _response(self, prompt: str, prose: bool) -> ChatCompletionResponse:
         if prose:
@@ -151,20 +160,16 @@ class _Client:
             content = _EVALUATOR[kind]
         else:
             content = _GOOD[self._role]
-        with self._lock:
-            self._answered[self._role] += 1
         return ChatCompletionResponse(message=AssistantMessage(content=content))
 
     def completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
         prompt, prose = self._plan(request)
-        if prose and self._hold is not None:
-            self._hold.wait_blocking(self._answered)
+        self._traffic.delay_blocking(self._role)
         return self._response(prompt, prose)
 
     async def acompletion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
         prompt, prose = self._plan(request)
-        if prose and self._hold is not None:
-            await self._hold.wait(self._answered)
+        await self._traffic.delay(self._role)
         return self._response(prompt, prose)
 
     def supports_chat_completion(self) -> bool:
@@ -178,19 +183,25 @@ class _Client:
 
 
 @pytest.fixture
-def holds() -> dict[str, _Hold]:
-    return {}
+def traffic() -> Generator[_Traffic]:
+    traffic = _Traffic()
+    handler = _Release(traffic.released)
+    response_logger = logging.getLogger("anonymizer.ndd.response")
+    response_logger.addHandler(handler)
+    try:
+        yield traffic
+    finally:
+        response_logger.removeHandler(handler)
 
 
 @pytest.fixture
-def scripted(monkeypatch: pytest.MonkeyPatch, holds: dict[str, _Hold]) -> tuple[dict[str, Failing], Counter[str]]:
+def scripted(monkeypatch: pytest.MonkeyPatch, traffic: _Traffic) -> tuple[dict[str, Failing], Counter[str]]:
     failing: dict[str, Failing] = {}
     calls: Counter[str] = Counter()
-    answered: Counter[str] = Counter()  # usable answers returned, per alias
     lock = threading.Lock()
 
     def create(model_config: Any, *args: Any, **kwargs: Any) -> _Client:
-        return _Client(model_config.alias.removeprefix("scripted-"), failing, calls, lock, holds, answered)
+        return _Client(model_config.alias.removeprefix("scripted-"), failing, calls, lock, traffic)
 
     monkeypatch.setattr(client_factory, "create_model_client", create)
     return failing, calls
@@ -250,6 +261,20 @@ def _assert_partitioned(result: Any, rows: int, reason: str) -> None:
     assert {record.reason for record in result.failed_records} <= {reason}
 
 
+def _returned_records(result: Any) -> set[int]:
+    return {int(text.removeprefix("Record ").split(":")[0]) for text in result.dataframe["text"]}
+
+
+def _assert_returns_the_rows_asked(result: Any, traffic: _Traffic, rows: int) -> None:
+    """The rows whose domain step was asked come back, those it answered among them; every other row is listed once
+    as refused by the stopped domain step."""
+    assert traffic.answered
+    assert traffic.answered <= traffic.asked
+    assert _returned_records(result) == traffic.asked
+    assert len(result.failed_records) == rows - len(traffic.asked)
+    _assert_partitioned(result, rows, "stopped_early (_domain)")
+
+
 _MODES = pytest.mark.parametrize("combined", [False, True], ids=["staged", "combined"])
 
 
@@ -257,6 +282,7 @@ _MODES = pytest.mark.parametrize("combined", [False, True], ids=["staged", "comb
 def test_a_step_that_never_responds_stops_and_lists_the_rows_not_run(
     tmp_path: Path,
     scripted: tuple[dict[str, Failing], Counter[str]],
+    traffic: _Traffic,
     caplog: pytest.LogCaptureFixture,
     combined: bool,
 ) -> None:
@@ -270,6 +296,8 @@ def test_a_step_that_never_responds_stops_and_lists_the_rows_not_run(
     # Without the stop every row spends its requests: 180. The stop allows about one window of rows.
     assert calls["domain"] < rows * _REQUESTS_PER_ROW
     assert result.failed_records  # the rows after the stop are listed, not dropped
+    # The rows asked before the stop are kept with the domain's fallback, like any row whose response never parsed.
+    assert _returned_records(result) == traffic.asked
     _assert_partitioned(result, rows, "stopped_early (_domain)")
     assert _stop_warnings(caplog) == [
         "Stopped model requests for step _domain: 10 of its last 10 rows had no usable response, a rate of 1.00 "
@@ -281,21 +309,36 @@ def test_a_step_that_never_responds_stops_and_lists_the_rows_not_run(
 
 @_MODES
 def test_a_step_that_stops_responding_returns_the_rows_that_finished(
-    tmp_path: Path, scripted: tuple[dict[str, Failing], Counter[str]], holds: dict[str, _Hold], combined: bool
+    tmp_path: Path, scripted: tuple[dict[str, Failing], Counter[str]], traffic: _Traffic, combined: bool
 ) -> None:
+    """The later steps answer only after the domain step stops, so every healthy row is part-way when it does."""
     failing, calls = scripted
-    healthy, rows = 15, 30
-    failing["domain"] = lambda n, record: record >= healthy  # records 0-14 answer; the rest never do
-    # The stop shuts the run down and drops rows still part-way through their columns, so the failures wait until the
-    # healthy rows have their last answer: the rewrite, or in combined mode the last of the 3 evaluations per row.
-    last, per_row = ("evaluator", 3) if combined else ("rewriter", 1)
-    holds["domain"] = _Hold(until=lambda answered: answered[last] >= healthy * per_row)
+    healthy, rows = 20, 60
+    failing["domain"] = lambda n, record: record >= healthy  # records 0-19 answer; the rest never do
+    traffic.gated.update(_REWRITE_ROLES)
+    traffic.latency.update(dict.fromkeys(_REWRITE_ROLES, 0.05))
 
     result = _run(tmp_path, rows, combined=combined)
 
-    assert healthy <= len(result.dataframe) < rows  # the rows that finished come back
-    _assert_partitioned(result, rows, "stopped_early (_domain)")
+    assert traffic.released.is_set()
+    _assert_returns_the_rows_asked(result, traffic, rows)
     assert calls["domain"] < healthy + (rows - healthy) * _REQUESTS_PER_ROW
+
+
+@_MODES
+def test_a_stop_keeps_the_rows_past_it_at_scale(
+    tmp_path: Path, scripted: tuple[dict[str, Failing], Counter[str]], traffic: _Traffic, combined: bool
+) -> None:
+    """Half the rows never get a domain answer while every other model is slow."""
+    failing, _ = scripted
+    healthy, rows = 50, 100
+    failing["domain"] = lambda n, record: record >= healthy
+    traffic.latency.update({role: 0.05 for role in _ROLES if role != "domain"})
+
+    result = _run(tmp_path, rows, combined=combined)
+
+    assert traffic.released.is_set()
+    _assert_returns_the_rows_asked(result, traffic, rows)
 
 
 @_MODES
@@ -392,11 +435,8 @@ def test_evaluation_stops_by_step_not_by_model(
     assert {step.split("__iteration_")[0] for step in stopped} <= steps
     assert len(stopped) == len(set(stopped))  # one WARNING per stopped step
     assert result.failed_records
-    # A refused row names the step its own request was refused by; a row with no trace names every stopped step.
-    for record in result.failed_records:
-        assert record.reason.startswith("stopped_early (")
-        assert set(record.reason.removeprefix("stopped_early (").removesuffix(")").split(", ")) <= set(stopped)
-    assert any(record.reason in {f"stopped_early ({step})" for step in stopped} for record in result.failed_records)
+    # Each listed row names the one stopped step that refused it.
+    assert {record.reason for record in result.failed_records} <= {f"stopped_early ({step})" for step in stopped}
 
 
 @_MODES
