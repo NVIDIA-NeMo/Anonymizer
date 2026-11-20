@@ -717,7 +717,7 @@ def test_evaluation_of_a_missing_rewrite_asks_nothing_and_leaves_every_metric_un
     assert result.dataframe.iloc[1][COL_UTILITY_SCORE] == pytest.approx(0.8)
 
 
-def test_combined_evaluation_of_a_missing_rewrite_keeps_the_row_withheld_and_flagged(
+def test_combined_evaluation_of_a_missing_rewrite_keeps_the_row_withheld(
     tmp_path: Path, evaluator: tuple[dict[str, list[str]], dict[str, int]]
 ) -> None:
     script, calls = evaluator
@@ -829,7 +829,7 @@ def _scripted_models() -> dict[str, Any]:
     return {"model_configs": [_model(_EVALUATOR), _model(_REPAIRER)], "selected_models": selection}
 
 
-def _seeded_rows() -> pd.DataFrame:
+def _seeded_rows(rewritten_text: str | None = _EVAL_TEXT) -> pd.DataFrame:
     """The record under test and a clean record, each with a rewrite and the columns its evaluation reads."""
     other_quality = {"items": [{**_EVAL_QUALITY_QA["items"][0], "reference_answer": _OTHER_TEXT}]}
     entities = {"entities_by_value": [{"value": "7312", "labels": ["card_last_four"]}]}
@@ -837,7 +837,7 @@ def _seeded_rows() -> pd.DataFrame:
         {
             COL_TEXT: [_TEXT, _OTHER_TEXT],
             COL_ENTITIES_BY_VALUE: [entities, entities],
-            COL_REWRITTEN_TEXT: [_EVAL_TEXT, _OTHER_TEXT],
+            COL_REWRITTEN_TEXT: [rewritten_text, _OTHER_TEXT],
             COL_REWRITE_BASELINE_TEXT: [_EVAL_TEXT, _OTHER_TEXT],
             COL_QUALITY_QA: [_EVAL_QUALITY_QA, other_quality],
             COL_PRIVACY_QA: [_EVAL_PRIVACY_QA, _EVAL_PRIVACY_QA],
@@ -860,9 +860,11 @@ def _repair_run(tmp_path: Path, workflow: type[RewriteWorkflow], max_repair_iter
     )
 
 
-def _anonymizer_run(tmp_path: Path, workflow: type[RewriteWorkflow], max_repair_iterations: int) -> Any:
+def _anonymizer_run(
+    tmp_path: Path, workflow: type[RewriteWorkflow], max_repair_iterations: int, rewritten_text: str | None = _EVAL_TEXT
+) -> Any:
     """Run both records through ``Anonymizer.run()``: detection returns the seeded rows, and the loop evaluates."""
-    seeded = _seeded_rows().drop(columns=[COL_TEXT])
+    seeded = _seeded_rows(rewritten_text).drop(columns=[COL_TEXT])
     detector = Mock(spec=EntityDetectionWorkflow)
     detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
         dataframe=frame.assign(**{column: seeded[column].tolist() for column in seeded.columns}),
@@ -1091,6 +1093,17 @@ def test_trace_of_a_repair_withheld_for_its_privacy_response(
         assert frame.iloc[0][COL_REWRITTEN_TEXT_NEXT] == _REPAIRED_TEXT
     else:
         assert COL_REWRITTEN_TEXT_NEXT not in frame.columns
+        # The production graph drops every round's repair candidate with its internal columns, as the harness does.
+        graph = CombinedRewriteWorkflow(adapter=Mock()).build_graph(
+            selected_models=load_default_model_selection().rewrite,
+            replace_model_selection=load_default_model_selection().replace,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=3).evaluation,
+        )
+        produced = {column.name for column in graph.columns}
+        candidates = {c for c in produced if c.startswith(COL_REWRITTEN_TEXT_NEXT)}
+        assert len(candidates) == 3
+        assert candidates <= set(graph.internal_columns)
 
 
 # --- Repair: a repair that still fails privacy after its last round is withheld, as an unparsed one is ---
@@ -1123,3 +1136,17 @@ def test_repair_that_still_leaks_after_its_last_round_is_withheld_and_flagged(
     assert clean["text_rewritten"] == _OTHER_TEXT
     assert result.outcome(1).qualification == "met"
     assert _summaries(caplog) == []  # every response parsed, so no step is counted
+
+
+@pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])
+def test_missing_rewrite_is_withheld_and_flagged_through_run(
+    tmp_path: Path, repairer: tuple[dict[str, list[str]], dict[str, int]], workflow: type[RewriteWorkflow]
+) -> None:
+    """The review flag is assigned after the final checks, so it is asserted on the run's output."""
+    result = _anonymizer_run(tmp_path, workflow, max_repair_iterations=0, rewritten_text=None)
+
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row["text_rewritten"])
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    assert result.outcome(0).qualification == "not_met"
+    assert not result.dataframe.iloc[1][COL_NEEDS_HUMAN_REVIEW]
