@@ -1,0 +1,54 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# Graph SDK glossary
+
+Each term used in the graph SDK pages, defined once. Code names are given where a term has one.
+
+!!! warning "Provisional"
+
+    The graph SDK is provisional. Names, signatures and default values may change in a later release.
+
+| Term | Meaning |
+|---|---|
+| Advisory (`Advisory`) | The verdict of a verifier of the final candidate on a check the workflow does not require. Reported on the outcome; never changes qualification or release. |
+| Annotation workflow | A workflow with `release="annotation"`. It runs and checks like any other but never releases output. |
+| Assessment (`Assessment`) | What a verifier returns for one target: `satisfied` (`True`, `False`, or `None` for "could not decide"), the `target` it is about, and an optional `reason` string. |
+| Attempt | One step called for one target (a phase-scoped call records one attempt per target), recorded on `result.attempts`. |
+| Blocked | A step that never ran for a target because an earlier step for that target failed. Also a terminal value. |
+| Candidate | A text a step produced for a target. Each step with a `text` output makes a new candidate. |
+| Check | A name, such as `"names_removed"`, that a verifier declares its assessment answers. |
+| Context | Text, or a value of a registered kind, that a step may read while processing a target. Context is never released. |
+| Context item | One piece of context delivered to a step, with fields `source`, `index`, `text` and `kind`. |
+| Context source (`ContextSource`) | A named provider of context items that you supply, with item and byte bounds, called once per run. |
+| Datum (`Datum`) | One text plus an identity, made by `GraphScope.datum`. Equality uses the identity, not the text. |
+| Dependency (`Dependency`) | A relation: withhold the dependent target if the target it depends on is withheld. |
+| Final candidate | The candidate made by the last step that outputs `text`. It is what the SDK releases. |
+| Kind | A registered type name for port values, such as `"text"`, `"datum"` or `"mentions"`. Add your own with `register_kind`. |
+| Limits (`Limits`) | Upper bounds on the size of one run: targets, operations, mentions, context items and optional byte ceilings. |
+| Mention (`Mention`) | A half-open span `[start, end)` of a target's original text, with a non-empty label. |
+| Operation (`Operation`) | One step: a name, your function, its input and output ports, and its declared requests. |
+| Output group (`OutputGroup`) | A set of targets released all together or not at all. |
+| Phase-scoped operation | An operation called once for all targets that reached it, receiving a tuple of values per input port. Built with `Operation.phase_scoped`. |
+| Planned requests | The number of external requests the workflow declares it will make, computed by `prepare` from each step's `Requests`. |
+| Port | A named input or output of an operation. An input port is a parameter of your function. |
+| Prepare (`prepare`) | Validate a graph and workflow before anything runs. Returns a `PreparedProtection` or raises `GraphRejection`. |
+| Protect (`protect`) | Run a prepared workflow and return a `ProtectionResult`. |
+| Protected | Released. `outcome.protected` is `True` when the target's final candidate may be used. |
+| Protection graph (`ProtectionGraph`) | The targets of one run and the relations among them. |
+| Qualification | Whether the required checks passed on the final candidate: `met`, `not_met` or `not_assessed`. |
+| Reason (`Reason`) | One cause of a target not qualifying or not being released, as a code plus the check and verifier it concerns. |
+| Record (`Record`) | A group of targets that belong together, such as the fields of one row. Does not change release. |
+| Rejection (`GraphRejection`) | The error raised when a declaration or workflow is invalid. Carries a `code` and a `detail`. |
+| Release | Making a target's final candidate available as protected output. |
+| Requests (`Requests`) | A step's declaration of how many external requests it makes per call: none, exact, at most, unknown or opaque. |
+| Required check | A check named in a workflow's `requires`. A target qualifies only if every required check passed. |
+| Retrieval | One call of a context source, recorded on `result.retrievals` with its status. |
+| Scope (`GraphScope`) | The namespace that datums and records are made from. A graph accepts only its own scope's datums. |
+| Seed | A value the SDK supplies for each target to any input port that no earlier step fills: `text`, `source`, `mentions`, `context`, `target`, `record`. |
+| Subject | The input ports a verifier's assessment is about, such as `subject=("text",)`. |
+| Target | A datum the workflow processes and may release. |
+| Terminal | Whether a target's steps ran: `success`, `failed`, `cancelled` or `blocked`. |
+| Verifier | An operation whose function returns an `Assessment`. Built with `Operation.verifier`. |
+| Withheld | Not released. A target is withheld when it is not met, or when a dependency or group member is withheld. |
+| Workflow (`Workflow`) | An ordered sequence of operations and nested workflows, with the checks it requires. |

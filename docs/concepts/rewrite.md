@@ -218,3 +218,25 @@ with incomplete or contradictory classifications.
 ## Evaluating rewrite output
 
 After running rewrite, you can score detection recall and the holistic rewrite quality using LLM-as-judge evaluation. See [Evaluation](evaluation.md) for details on the always-on entity coverage judge, the three rewrite quality rubrics (privacy, quality, style), the opt-in detection judge, and how to call `Anonymizer.evaluate()`.
+
+---
+
+## Reading each row's outcome
+
+`run()` and `preview()` return one outcome per output row: `result.outcome(row)` is a `TargetOutcome`, the type the
+[graph SDK](graph-sdk.md) uses. Three of its fields answer separate questions:
+
+| Field | Question | Values |
+|---|---|---|
+| `terminal` | Did every step run for the row? | `success`, `failed`, `cancelled`, `blocked` |
+| `qualification` | Did every required check pass on the final text? | `met`, `not_met`, `not_assessed` |
+| `protected` | May the row's output be released? | `True`, `False` |
+
+A row that is not released stays in the output frame, so read its outcome before you use the row. `reasons` says
+why a row is `not_met`, and `advisories` holds checks that are reported but never change release. A row index
+outside the result raises `IndexError`, as does a result from a custom `replace_runner` or `rewrite_runner`, which
+carries no outcomes.
+
+In Rewrite mode, `not_met` means a final check on the rewritten text failed or could not be assessed, such as the
+`replacements_applied` check. [Working with flagged records](#working-with-flagged-records) lists those checks and
+how a failed check's `cause` names the values involved without record text. Rewrite rows carry no advisory.
