@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""A Rewrite record whose only finding is latent, through ``Anonymizer.run()``.
+"""A Rewrite record whose only finding is latent, through ``Anonymizer.run()`` and ``evaluate()``.
 
 DataDesigner runs for real; only the HTTP model client is scripted, answering by the step its prompt belongs to.
 """
@@ -21,9 +21,11 @@ from data_designer.engine.models.clients import factory as client_factory
 from data_designer.engine.models.clients.types import AssistantMessage, ChatCompletionRequest, ChatCompletionResponse
 
 from anonymizer import Anonymizer
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, EvaluateConfig, Rewrite
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
+    COL_DETECTION_INVALID_ENTITIES,
+    COL_DETECTION_VALID,
     COL_PRIVACY_QA,
     COL_SENSITIVITY_DISPOSITION,
     RECORD_ID_COLUMN,
@@ -262,3 +264,32 @@ def test_a_record_whose_latent_detection_fails_is_neither_rewritten_nor_released
     assert result.dataframe["text_rewritten"].tolist() == [_PLAIN_TEXT]
     assert calls["latent"] > 1  # asked again, then given up
     assert calls["disposition"] == calls["rewriter"] == 0
+
+
+@_MODES
+def test_evaluate_judges_a_latent_only_record(tmp_path: Path, models: Any, mode: str) -> None:
+    _, calls, _ = models
+    anonymizer = _anonymizer(tmp_path)
+    result = _run(anonymizer, tmp_path, mode)
+
+    evaluated = anonymizer.evaluate(result, config=EvaluateConfig(compute_detection_validity=True))
+
+    assert calls["judge"] == 1
+    trace = evaluated.trace_dataframe.iloc[0]
+    assert trace[COL_DETECTION_VALID] == 1.0  # the detection judge reads explicit entities only; none to judge
+    assert trace[COL_DETECTION_INVALID_ENTITIES] == []
+    advisories = {a.verifier: a.status for a in evaluated.outcome(0).advisories}
+    assert advisories.get("rewrite-judge") == "scored"
+
+
+@_MODES
+def test_a_failed_judge_on_a_latent_only_record_reads_unavailable(tmp_path: Path, models: Any, mode: str) -> None:
+    replies, _, _ = models
+    anonymizer = _anonymizer(tmp_path)
+    result = _run(anonymizer, tmp_path, mode)
+    replies["judge@first"] = "I cannot answer that."
+
+    evaluated = anonymizer.evaluate(result)
+
+    advisories = {a.verifier: (a.status, a.cause) for a in evaluated.outcome(0).advisories}
+    assert advisories.get("rewrite-judge") == ("could_not_assess", "judge_unavailable")

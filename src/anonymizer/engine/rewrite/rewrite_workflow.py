@@ -976,7 +976,7 @@ class RewriteWorkflow:
         COL_NEEDS_HUMAN_REVIEW is not modified — it was set during run() based on
         objective metrics and judge scores do not influence it.
         """
-        entity_rows, passthrough_rows = split_rows(df, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
+        entity_rows, passthrough_rows = _split_rewrite_rows(df)
 
         passthrough_rows = passthrough_rows.copy()
         if compute_detection_validity:
@@ -997,15 +997,24 @@ class RewriteWorkflow:
 
         # --- Detection validity judge (opt-in) ---
         def detection_judge() -> None:
+            # The judge reads explicit entities only: a latent-only row has none to judge and is trivially valid.
+            explicit = rows.frame[COL_ENTITIES_BY_VALUE].map(_has_entities).astype(bool)
+            latent_only = rows.frame[~explicit].copy()
+            latent_only[COL_DETECTION_VALID] = 1.0
+            latent_only[COL_DETECTION_INVALID_ENTITIES] = [[] for _ in range(len(latent_only))]
+            judged = rows.frame[explicit]
+            if judged.empty:
+                rows.frame = latent_only
+                return
             try:
                 detection_result = self._detection_judge_wf.evaluate(
-                    rows.frame,
+                    judged,
                     model_configs=model_configs,
                     selected_models=selected_models,
                     preview_num_records=preview_num_records,
                 )
-                rows.frame = _join_preserving(
-                    rows.frame,
+                judged = _join_preserving(
+                    judged,
                     detection_result.dataframe,
                     defaults={COL_DETECTION_VALID: None, COL_DETECTION_INVALID_ENTITIES: None},
                     source_positions=detection_result.source_positions,
@@ -1013,15 +1022,19 @@ class RewriteWorkflow:
                 rows.failed.extend(detection_result.failed_records)
                 # Convert bool all_valid → 0–1 fraction so detection validity sits on the
                 # same scale as utility_score and leakage_mass in the rewrite scores section.
-                rows.frame[COL_DETECTION_VALID] = rows.frame.apply(_detection_valid_fraction, axis=1)
+                judged[COL_DETECTION_VALID] = judged.apply(_detection_valid_fraction, axis=1)
             except Exception as exc:
                 logger.warning(
                     "Detection validity judge failed (%s); detection_valid is unavailable for %d row(s).",
                     type(exc).__name__,
-                    len(rows.frame),
+                    len(judged),
                 )
-                rows.frame[COL_DETECTION_VALID] = None
-                rows.frame[COL_DETECTION_INVALID_ENTITIES] = None
+                judged = judged.copy()
+                judged[COL_DETECTION_VALID] = None
+                judged[COL_DETECTION_INVALID_ENTITIES] = None
+            if not latent_only.empty:
+                judged = pd.concat([judged, latent_only]).sort_values(ROW_ORDER_COL).reset_index(drop=True)
+            rows.frame = judged
 
         # --- Holistic judge (privacy / quality / style) ---
         def final_judge() -> None:
