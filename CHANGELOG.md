@@ -405,3 +405,14 @@ substitute.
 
 **#419: detector facts are checked privately.** No user-visible change. The detector declaration fields removed from
 `Detect` in #418 were never released.
+
+### Reserved input columns
+
+**An input column named like an internal column is rejected.** `run()`, `preview()` and `export_detection_config()`
+raise `InvalidInputError`, naming each such column, when the input has a column the pipeline uses as its own, such as
+`_rewritten_text` or `_anonymizer_record_id`. v0.5.0 read such a column as pipeline data: in Rewrite mode an input
+`_rewritten_text` was released as the rewritten text. Result columns, such as `final_entities` and the evaluation
+columns `judge_evaluation` and `detection_valid`, are renamed with an `__input` suffix, so an input value is no longer
+read as the pipeline's own result. Your own text column is unaffected. A column named `_anonymizer_record_id` is
+rejected even when it is the `id_column`.
+- What to do: rename or drop the column before running.
