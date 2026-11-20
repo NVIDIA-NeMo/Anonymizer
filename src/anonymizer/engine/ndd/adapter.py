@@ -30,13 +30,14 @@ from data_designer.config.seed import SamplingStrategy
 from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
+from data_designer.interface.errors import DataDesignerEarlyShutdownError
 
 from anonymizer.config.regex import REGEX_WALL_CEILING_FACTOR
 from anonymizer.engine.constants import COL_REGEX_ENTITIES, RECORD_ID_COLUMN
 from anonymizer.engine.graph_core.observe import report_requests
 from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame, designer_hook
 from anonymizer.engine.ndd.failed_record import FailedRecord as FailedRecord
-from anonymizer.engine.ndd.model_response import STOPPED_EARLY, RunStop, run_stop
+from anonymizer.engine.ndd.model_response import STOPPED_EARLY, RunStop, StoppedEarly, run_stop
 from anonymizer.engine.ndd.storage import prepare_json_storage_column, prepare_json_storage_seed
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
@@ -457,6 +458,7 @@ class NddAdapter:
             if preview_num_records is not None
             else len(workflow_input_df)
         )
+        buffer_size = record_count if preview_num_records is not None else _run_buffer_size(self._data_designer)
         started = time.perf_counter()
         collector = current_collector()
         trace_plan = _DDMessageTracePlan.from_columns(
@@ -493,27 +495,39 @@ class NddAdapter:
                     usage_probe,
                     _temporary_dd_task_trace(self._data_designer, collector=collector),
                     source_frame.bind_generators(self._data_designer),
+                    _captured_builders(self._data_designer) as builders,
                     run_stop(stop),
                 ):
-                    if preview_num_records is None:
-                        run_results = self._data_designer.create(
-                            config_builder,
-                            num_records=len(workflow_input_df),
-                            dataset_name=workflow_name,
-                        )
-                        task_traces = _task_traces_from_result(run_results)
-                        output_df = run_results.load_dataset()
-                    else:
-                        preview_results = self._data_designer.preview(
-                            config_builder,
-                            num_records=record_count,
-                        )
-                        task_traces = _task_traces_from_result(preview_results)
-                        if preview_results.dataset is None:
-                            output_df = workflow_input_df.iloc[0:0].copy()
+                    run_results, preview_results = None, None
+                    try:
+                        if preview_num_records is None:
+                            run_results = self._data_designer.create(
+                                config_builder,
+                                num_records=len(workflow_input_df),
+                                dataset_name=workflow_name,
+                            )
                         else:
-                            output_df = preview_results.dataset
-                    output_df, source_positions = source_frame.project(output_df, requested=record_count)
+                            preview_results = self._data_designer.preview(config_builder, num_records=record_count)
+                    except Exception as exc:
+                        task_traces = _builder_traces(builders)
+                        if not _ended_by_stop(exc, stop, task_traces, record_count, buffer_size):
+                            raise
+                        logger.warning(
+                            "The run ended with %s after a step stopped early; no row finished, and every row is "
+                            "listed in failed_records.",
+                            exception_class_label(exc),
+                        )
+                    else:
+                        if run_results is not None:
+                            task_traces = _task_traces_from_result(run_results)
+                            output_df = run_results.load_dataset()
+                        elif preview_results is not None:
+                            task_traces = _task_traces_from_result(preview_results)
+                            if preview_results.dataset is None:
+                                output_df = workflow_input_df.iloc[0:0].copy()
+                            else:
+                                output_df = preview_results.dataset
+                        output_df, source_positions = source_frame.project(output_df, requested=record_count)
             except Exception as exc:
                 logger.warning(
                     "Workflow failed for %d input record(s): %s.",
@@ -567,7 +581,7 @@ class NddAdapter:
             record_ids=workflow_input_df[RECORD_ID_COLUMN].astype(str).tolist()[:record_count],
             surviving_positions=set(source_positions),
             task_traces=task_traces,
-            buffer_size=record_count if preview_num_records is not None else _run_buffer_size(self._data_designer),
+            buffer_size=buffer_size,
             stopped=tuple(stop.stopped),
         )
         _success_model_usage = usage_probe.model_usage()
@@ -686,6 +700,50 @@ class NddAdapter:
         return uuid.uuid5(uuid.NAMESPACE_URL, serialized).hex
 
 
+_STOPPED_STEP = re.compile(rf"{STOPPED_EARLY}: ([A-Za-z0-9_]+)")
+
+
+@contextmanager
+def _captured_builders(designer: Any) -> Generator[list[Any]]:
+    """The dataset builders ``designer`` creates in this context, whose task traces outlive a run that raised."""
+    builders: list[Any] = []
+    if not callable(getattr(designer, "_create_dataset_builder", None)):
+        yield builders
+        return
+
+    def capture(original: Any, *args: Any, **kwargs: Any) -> Any:
+        builder = original(*args, **kwargs)
+        builders.append(builder)
+        return builder
+
+    with designer_hook(designer, "_create_dataset_builder", capture):
+        yield builders
+
+
+def _builder_traces(builders: list[Any]) -> list[_TaskTrace]:
+    return [trace for builder in builders for trace in _task_traces_from_result(builder)]
+
+
+def _ended_by_stop(
+    exc: BaseException, stop: RunStop, task_traces: list[_TaskTrace], record_count: int, buffer_size: int | None
+) -> bool:
+    """Whether ``exc`` only reports what an early stop did: a step stopped, DataDesigner shut down (or a refusal
+    surfaced), and no row failed for any other cause."""
+    if not stop.stopped:
+        return False
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and current not in chain:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    if not isinstance(exc, DataDesignerEarlyShutdownError) and not any(isinstance(e, StoppedEarly) for e in chain):
+        return False
+    reasons = _failure_reasons_by_position(
+        record_count=record_count, task_traces=task_traces, buffer_size=buffer_size or record_count
+    )
+    return all(reason.startswith(f"{STOPPED_EARLY} (") for reason in reasons.values())
+
+
 def _no_rows(frame: pd.DataFrame, columns: list[ColumnConfigT]) -> pd.DataFrame:
     """No rows, with the columns a run would have added, so a later stage still finds the columns it reads."""
     declared = [name for c in columns for name in (c.name, *getattr(c, "side_effect_columns", []))]
@@ -703,14 +761,12 @@ def _missing_records(
 ) -> list[FailedRecord]:
     """Fail each input row absent from the output, with the cause its own task traces recorded.
 
-    After a step stopped early (``stopped``), a row with no other recorded cause was not run: it is listed as
-    ``stopped_early (<step>)``, whether DataDesigner cancelled it or the step refused its request.
+    A row a stopped step refused is listed as ``stopped_early (<step>)`` from its own trace. After a stop, a row with
+    no recorded cause was cancelled before it ran: it is listed with every stopped step, ``stopped_early (<a>, <b>)``.
     """
     reasons = _failure_reasons_by_position(
         record_count=len(record_ids), task_traces=task_traces, buffer_size=buffer_size or len(record_ids)
     )
-    if stopped:
-        reasons = {position: reason for position, reason in reasons.items() if reason != STOPPED_EARLY}
     missing = [position for position in range(len(record_ids)) if position not in surviving_positions]
     untraced = [position for position in missing if position not in reasons]
     if untraced and reasons and not stopped:
@@ -796,8 +852,9 @@ def _failure_reason(trace: _TaskTrace) -> str:
             "No partial regex result was returned."
         )
     error = str(_trace_attr(trace, "error") or "")
-    if f"{STOPPED_EARLY}: " in error:  # a request the run's early stop refused; the caller names the step
-        return STOPPED_EARLY
+    refused = _STOPPED_STEP.search(error)
+    if refused is not None:  # a request the run's early stop refused, naming the step (a column name)
+        return f"{STOPPED_EARLY} ({refused.group(1)})"
     cause_match = _CAUSE_LINE.search(error)
     if cause_match is None:
         known = _KNOWN_FAILURE.search(error)

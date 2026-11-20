@@ -294,7 +294,8 @@ instead of dropping it, and the run ends with one warning counting such records 
   `shutdown_error_window` rows without a usable response reaches `shutdown_error_rate` (by default 5 of 10), that step
   sends no further requests and logs one warning naming the step, the rate, the window and the threshold. Rows that
   finished are returned; each row not run is listed in `failed_records` with the reason `stopped_early (<step>)`, and
-  the run does not raise. Before, DataDesigner's own shutdown stopped the run, which raised `AnonymizerWorkflowError`
+  the stop does not raise. Each repair round counts on its own, in both modes. An error the stop did not cause still
+  fails the run. Before, DataDesigner's own shutdown stopped the run, which raised `AnonymizerWorkflowError`
   when no row had finished. A dataset smaller than the window never stops.
 - What to do: check the named step's model; set `RunConfig(disable_early_shutdown=True)` to run every row anyway.
 - The per-row warning for a disposition with the wrong number of entries now gives both counts, as in

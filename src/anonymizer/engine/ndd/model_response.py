@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections import deque
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -99,20 +99,26 @@ class RunStop:
 
 
 _RUN_STOP: ContextVar[RunStop | None] = ContextVar("anonymizer_run_stop", default=None)
+_STEP_NAMES: ContextVar[Mapping[str, str]] = ContextVar("anonymizer_step_names", default={})
+
+
+@contextmanager
+def step_names(names: Mapping[str, str]) -> Generator[None]:
+    """Count the requests made in this context under ``names[step]``: a graph that runs a step once per round names
+    each round's column, so each round has its own window, as when each round is its own run."""
+    token = _STEP_NAMES.set(names)
+    try:
+        yield
+    finally:
+        _STEP_NAMES.reset(token)
 
 
 @contextmanager
 def run_stop(stop: RunStop) -> Generator[RunStop]:
-    """Make ``stop`` the stop of the requests made in this context (DataDesigner's tasks inherit it).
-
-    An error raised after a step stopped is absorbed: the rows it kept from finishing are listed as not run.
-    """
+    """Make ``stop`` the stop of the requests made in this context (DataDesigner's tasks inherit it)."""
     token = _RUN_STOP.set(stop)
     try:
         yield stop
-    except Exception:
-        if not stop.stopped:
-            raise
     finally:
         _RUN_STOP.reset(token)
 
@@ -181,7 +187,7 @@ async def ask_with_trace(
     The trace is empty when the response is unavailable. When the run has stopped ``step``, raises ``StoppedEarly``
     without a request; otherwise the response counts toward the step's stop.
     """
-    stop = _RUN_STOP.get()
+    stop, step = _RUN_STOP.get(), _STEP_NAMES.get().get(step, step)
     if stop is not None:
         stop.check(step)
     requests = 0

@@ -426,8 +426,9 @@ def test_run_workflow_on_no_rows_returns_the_declared_columns_without_running() 
     assert result.failed_records == []
 
 
-def test_run_workflow_lists_rows_not_run_after_a_step_stopped_early() -> None:
+def test_run_workflow_lists_rows_not_run_after_a_step_stopped_early(caplog: pytest.LogCaptureFixture) -> None:
     """DataDesigner's own shutdown raises when no row finished; after a stop that is not an error."""
+    caplog.set_level(logging.WARNING, logger="anonymizer.ndd")
     mock_dd = Mock(spec=DataDesigner)
 
     def stop_then_shut_down(*args: object, **kwargs: object) -> None:
@@ -451,3 +452,53 @@ def test_run_workflow_lists_rows_not_run_after_a_step_stopped_early() -> None:
     assert "output" in result.dataframe.columns
     assert [(r.step, r.reason) for r in result.failed_records] == [("rewrite-pipeline", "stopped_early (_domain)")] * 2
     assert _RUN_STOP.get() is None  # the stop belongs to that run only
+    warnings = _unique_records(caplog, level=logging.WARNING, message_contains="after a step stopped early")
+    assert [r.getMessage() for r in warnings] == [
+        "The run ended with EarlyShutdownError after a step stopped early; no row finished, and every "
+        "row is listed in failed_records."
+    ]
+
+
+def _trip() -> None:
+    stop = _RUN_STOP.get()
+    assert stop is not None
+    for _ in range(stop.window):
+        stop.record("_domain", True)
+
+
+def _raise_after_stop(error: Exception) -> object:
+    def create(*args: object, **kwargs: object) -> None:
+        _trip()
+        raise error
+
+    return create
+
+
+def _load_fails_after_stop(*args: object, **kwargs: object) -> object:
+    _trip()
+    results = Mock()
+    results.load_dataset.side_effect = KeyError("adapter-side bug")
+    results.task_traces = []
+    return results
+
+
+@pytest.mark.parametrize(
+    "create",
+    [
+        pytest.param(_raise_after_stop(ValueError("bug in a later column")), id="value-error"),
+        pytest.param(_raise_after_stop(DataDesignerProfilingError("profiling failed")), id="profiling-error"),
+        pytest.param(_load_fails_after_stop, id="load-dataset-key-error"),
+    ],
+)
+def test_run_workflow_raises_an_error_the_stop_did_not_cause(create: object) -> None:
+    mock_dd = Mock(spec=DataDesigner)
+    mock_dd.create.side_effect = create
+    adapter = NddAdapter(data_designer=mock_dd)
+
+    with pytest.raises(AnonymizerWorkflowError):
+        adapter.run_workflow(
+            pd.DataFrame({"text": ["row-1", "row-2"]}),
+            model_configs=[_make_model_config()],
+            columns=_make_columns(),
+            workflow_name="rewrite-pipeline",
+        )

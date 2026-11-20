@@ -46,6 +46,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.ndd.model_response import step_names
 from anonymizer.engine.ndd.workflow_utils import run_columns
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
@@ -229,7 +230,8 @@ def _remap_custom_column(
             model_aliases=model_aliases,
         )
         async def remapped_generator(row: dict[str, Any], generator_params: Any, models: dict) -> dict[str, Any]:
-            generated = await generator(_canonical_row(row, mapping), generator_params, models)
+            with step_names(mapping):  # each round's requests count in that round's window
+                generated = await generator(_canonical_row(row, mapping), generator_params, models)
             return _copy_remapped_outputs(row, generated, outputs, mapping)
 
     elif column.generator_params is not None:

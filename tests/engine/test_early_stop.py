@@ -27,7 +27,9 @@ from data_designer.engine.models.clients.types import AssistantMessage, ChatComp
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
 from anonymizer.config.rewrite import PrivacyGoal
+from anonymizer.engine.rewrite import evaluate
 from anonymizer.interface.anonymizer import Anonymizer
+from anonymizer.interface.errors import AnonymizerWorkflowError
 
 _ROLES = {
     "detector": ("detection", "entity_detector"),
@@ -313,10 +315,61 @@ def test_evaluation_stops_by_step_not_by_model(
 
     stopped = [m.removeprefix("Stopped model requests for step ").split(":")[0] for m in _stop_warnings(caplog)]
     assert stopped
-    assert set(stopped) <= {"_privacy_qa_reanswer", "_quality_qa_reanswer", "_quality_qa_compare"}
+    steps = {"_privacy_qa_reanswer", "_quality_qa_reanswer", "_quality_qa_compare"}
+    # Combined mode runs every round in one graph and names each round's step by its column.
+    assert {step.split("__iteration_")[0] for step in stopped} <= steps
     assert len(stopped) == len(set(stopped))  # one WARNING per stopped step
     assert result.failed_records
-    assert all(record.reason.startswith("stopped_early (_") for record in result.failed_records)
+    # A refused row names the step its own request was refused by; a row with no trace names every stopped step.
+    for record in result.failed_records:
+        assert record.reason.startswith("stopped_early (")
+        assert set(record.reason.removeprefix("stopped_early (").removesuffix(")").split(", ")) <= set(stopped)
+    assert any(record.reason in {f"stopped_early ({step})" for step in stopped} for record in result.failed_records)
+
+
+@_MODES
+def test_a_dataset_smaller_than_the_window_never_stops_across_repair_rounds(
+    tmp_path: Path,
+    scripted: tuple[dict[str, Failing], Counter[str]],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    combined: bool,
+) -> None:
+    """Every row leaks on its first evaluation, so it is repaired, and every re-evaluation is prose. Combined mode
+    runs both rounds in one graph; each round still counts on its own, as each staged round is its own run."""
+    failing, _ = scripted
+    leaked = '{"answers": [{"id": 1, "answer": "yes", "confidence": 0.9, "reason": "Present.", "evidence": []}]}'
+    monkeypatch.setitem(_EVALUATOR, "privacy", leaked)
+    failing["evaluator"] = lambda n, record: n >= 24  # the first evaluation of 8 rows (3 requests each) is usable
+    rows = 8
+
+    with _captured(caplog):
+        result = _run(tmp_path, rows, combined=combined)
+
+    assert len(result.dataframe) == rows
+    assert result.failed_records == []
+    assert _stop_warnings(caplog) == []
+
+
+@_MODES
+def test_a_row_that_fails_for_another_reason_after_a_stop_is_not_stopped_early(
+    tmp_path: Path,
+    scripted: tuple[dict[str, Failing], Counter[str]],
+    monkeypatch: pytest.MonkeyPatch,
+    combined: bool,
+) -> None:
+    """The domain step stops partway, and a later column fails for every row that reaches it. Without the stop the run
+    raises because no row finishes; with it, it still raises rather than listing those rows as stopped early."""
+    failing, _ = scripted
+    failing["domain"] = lambda n, record: n >= 30
+
+    def broken_prompt(row: Any) -> str:
+        raise TypeError("a bug in a later column")
+
+    monkeypatch.setattr(evaluate, "_render_privacy_reanswer_prompt", broken_prompt)
+
+    with pytest.raises(AnonymizerWorkflowError):
+        _run(tmp_path, 60, combined=combined)
 
 
 def test_a_disposition_with_the_wrong_entry_count_logs_both_counts(
