@@ -209,7 +209,7 @@ Symptom: every record uses all `max_repair_iterations` and still ends up flagged
 
 1. The leakage threshold for your `risk_tolerance` may be unreachable for your data. Look at the *floor* of `leakage_mass` across repair iterations — if it plateaus above the threshold, the data has more sensitive content than the threshold permits given current detection coverage.
 2. Loosen `risk_tolerance` one step, **only after** confirming detection has caught everything you can see. Loosening before detection is solid just hides the leak.
-3. Set `max_repair_iterations=0` for an audit pass. You'll get the metrics without paying for repair attempts that won't succeed, which makes it easy to see how far off you are.
+3. Set `max_repair_iterations=0` for an audit pass. You'll get the metrics without paying for repair attempts that won't succeed, which makes it easy to see how far off you are. Records that fail a privacy check have their rewritten text withheld (null); `trace_dataframe` keeps it in `_full_rewrite`.
 
 ---
 

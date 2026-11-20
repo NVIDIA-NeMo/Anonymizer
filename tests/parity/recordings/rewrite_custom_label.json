@@ -100,7 +100,7 @@
    {"record_id": "c", "step": "rewrite-evaluate-0", "reason": "Record missing"}
   ],
   "outcomes": [
-   {"terminal": "success", "qualification": "not_met", "available": true, "protected": false, "reasons": [{"code": "failed", "check": "high_leak", "verifier": "assess-high_leak", "cause": ""}], "advisories": []},
+   {"terminal": "success", "qualification": "not_met", "available": false, "protected": false, "reasons": [{"code": "failed", "check": "high_leak", "verifier": "assess-high_leak", "cause": ""}], "advisories": []},
    {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": []},
    {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": []},
    {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": []}
@@ -260,7 +260,7 @@
    {"record_id": "c", "step": "rewrite-evaluate-0", "reason": "Record missing"}
   ],
   "outcomes": [
-   {"terminal": "success", "qualification": "not_met", "available": true, "protected": false, "reasons": [{"code": "failed", "check": "high_leak", "verifier": "assess-high_leak", "cause": ""}], "advisories": []},
+   {"terminal": "success", "qualification": "not_met", "available": false, "protected": false, "reasons": [{"code": "failed", "check": "high_leak", "verifier": "assess-high_leak", "cause": ""}], "advisories": []},
    {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": []},
    {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": []}
   ],
@@ -426,7 +426,7 @@
   },
   "failed_records": [],
   "outcomes": [
-   {"terminal": "success", "qualification": "not_met", "available": true, "protected": false, "reasons": [{"code": "failed", "check": "high_leak", "verifier": "assess-high_leak", "cause": ""}], "advisories": [{"check": "coverage", "verifier": "coverage", "status": "passed", "cause": ""}, {"check": "rewrite-judge", "verifier": "rewrite-judge", "status": "scored", "cause": ""}]},
+   {"terminal": "success", "qualification": "not_met", "available": false, "protected": false, "reasons": [{"code": "failed", "check": "high_leak", "verifier": "assess-high_leak", "cause": ""}], "advisories": [{"check": "coverage", "verifier": "coverage", "status": "passed", "cause": ""}, {"check": "rewrite-judge", "verifier": "rewrite-judge", "status": "scored", "cause": ""}]},
    {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "coverage", "verifier": "coverage", "status": "passed", "cause": ""}, {"check": "rewrite-judge", "verifier": "rewrite-judge", "status": "not_applicable", "cause": ""}]},
    {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "coverage", "verifier": "coverage", "status": "passed", "cause": ""}, {"check": "rewrite-judge", "verifier": "rewrite-judge", "status": "scored", "cause": ""}]},
    {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "coverage", "verifier": "coverage", "status": "passed", "cause": ""}, {"check": "rewrite-judge", "verifier": "rewrite-judge", "status": "scored", "cause": ""}]}

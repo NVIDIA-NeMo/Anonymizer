@@ -472,17 +472,14 @@ _PRIVACY_CHECKS = frozenset({"high_leak", "leakage_within_threshold"})
 
 
 def _withhold_failed_repairs(frame: pd.DataFrame, result: ProtectionResult, target_of: Mapping[int, Datum]) -> None:
-    """Null the rewritten text of repaired rows whose final candidate still fails a privacy check.
+    """Null the rewritten text of rows whose final candidate fails a privacy check, repaired or not.
 
-    The repair loop has no round left for them, and their outcome is already ``not_met`` and flagged; the failing
-    candidate is not released, as for a repair response that cannot be parsed. Call it after the summary, which
-    counts a repaired row without text as an unparsed repair.
+    Their outcome is already ``not_met`` and flagged; the failing candidate is not released, whether the repair loop
+    ran out of rounds, the preset does not send the row to repair, or ``max_repair_iterations`` is 0. Call it after
+    the summary, which counts a repaired row without text as an unparsed repair.
     """
-    if COL_REPAIR_ITERATIONS not in frame.columns:
-        return
     failed = [
-        _repaired(record.get(COL_REPAIR_ITERATIONS))
-        and any(
+        any(
             reason.code == "failed" and reason.check in _PRIVACY_CHECKS
             for reason in result.outcome(target_of[record[ROW_ORDER_COL]]).reasons
         )
@@ -503,8 +500,9 @@ def _none_for_missing_text(frame: pd.DataFrame) -> None:
         frame[COL_REWRITTEN_TEXT] = column.astype(object).where(column.notna(), None)
 
 
-def _repaired(iterations: Any) -> bool:
-    return not pd.isna(iterations) and int(iterations) > 0
+def _unavailable_if(outcome: TargetOutcome, withheld: bool) -> TargetOutcome:
+    """``outcome`` with ``available`` False when the row's rewritten text was withheld after the final checks."""
+    return replace(outcome, available=False) if withheld and outcome.available else outcome
 
 
 def _needs_review(result: ProtectionResult, target: Datum) -> bool:
@@ -723,7 +721,8 @@ class RewriteWorkflow:
             failed_record_count=len(rows.failed),
         )
         positions = tuple(sorted([*frame[ROW_ORDER_COL], *passthrough_rows[ROW_ORDER_COL]]))
-        outcomes = tuple(result.outcome(state.owners[order]) for order in positions)
+        withheld = set() if entity_rows.empty else set(frame.loc[frame[COL_REWRITTEN_TEXT].isna(), ROW_ORDER_COL])
+        outcomes = tuple(_unavailable_if(result.outcome(state.owners[order]), order in withheld) for order in positions)
         failed = [*state.failures, *rows.failed]
         return RewriteResult(output, failed, positions, detection, detection_elapsed, outcomes)
 

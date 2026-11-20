@@ -861,7 +861,11 @@ def _repair_run(tmp_path: Path, workflow: type[RewriteWorkflow], max_repair_iter
 
 
 def _anonymizer_run(
-    tmp_path: Path, workflow: type[RewriteWorkflow], max_repair_iterations: int, rewritten_text: str | None = _EVAL_TEXT
+    tmp_path: Path,
+    workflow: type[RewriteWorkflow],
+    max_repair_iterations: int,
+    rewritten_text: str | None = _EVAL_TEXT,
+    risk_tolerance: str | None = None,
 ) -> Any:
     """Run both records through ``Anonymizer.run()``: detection returns the seeded rows, and the loop evaluates."""
     seeded = _seeded_rows(rewritten_text).drop(columns=[COL_TEXT])
@@ -881,7 +885,10 @@ def _anonymizer_run(
         else Anonymizer(detection_workflow=detector, rewrite_runner=runner)
     )
     rewrite = Rewrite(
-        privacy_goal=_PRIVACY_GOAL, max_repair_iterations=max_repair_iterations, use_combined_graph=combined_graph
+        privacy_goal=_PRIVACY_GOAL,
+        max_repair_iterations=max_repair_iterations,
+        use_combined_graph=combined_graph,
+        **({} if risk_tolerance is None else {"risk_tolerance": risk_tolerance}),
     )
     return anonymizer.run(
         config=AnonymizerConfig(rewrite=rewrite, emit_telemetry=False),
@@ -1149,9 +1156,48 @@ def test_repair_that_still_leaks_after_its_last_round_is_withheld_and_flagged(
     outcome = result.outcome(0)
     assert outcome.qualification == "not_met"
     assert ("failed", "high_leak") in [(r.code, r.check) for r in outcome.reasons]
+    assert not outcome.available
     assert clean["text_rewritten"] == _OTHER_TEXT
     assert result.outcome(1).qualification == "met"
+    assert result.outcome(1).available
     assert _summaries(caplog) == []  # every response parsed, so no step is counted
+
+
+@pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])
+@pytest.mark.parametrize(
+    ("risk_tolerance", "rounds"),
+    [
+        ("high", 2),  # a high leak at or under the preset's repair threshold is final, not sent to repair
+        ("low", 0),  # no repair round at all: the first rewrite is the final candidate
+    ],
+    ids=["high-not-sent-to-repair", "zero-rounds"],
+)
+def test_never_repaired_row_that_fails_privacy_is_withheld_and_flagged(
+    tmp_path: Path,
+    repairer: tuple[dict[str, list[str]], dict[str, int]],
+    workflow: type[RewriteWorkflow],
+    risk_tolerance: str,
+    rounds: int,
+) -> None:
+    script, calls = repairer
+    script["privacy"] = [_LEAK]
+    script["repair"] = [json.dumps({"rewritten_text": _REPAIRED_TEXT})]
+
+    result = _anonymizer_run(tmp_path, workflow, max_repair_iterations=rounds, risk_tolerance=risk_tolerance)
+
+    assert calls["repair"] == 0  # the row was never repaired
+    assert result.failed_records == []
+    row, clean = result.dataframe.iloc[0], result.dataframe.iloc[1]
+    assert row["text_rewritten"] is None  # the failing first rewrite is not released
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert ("failed", "high_leak") in [(r.code, r.check) for r in outcome.reasons]
+    assert not outcome.available
+    assert not outcome.protected
+    assert clean["text_rewritten"] == _OTHER_TEXT
+    assert result.outcome(1).qualification == "met"
+    assert result.outcome(1).available
 
 
 @pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])

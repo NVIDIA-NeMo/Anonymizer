@@ -275,11 +275,14 @@ quality questions, rewrite and repair responses that still cannot be parsed afte
 instead of dropping it, and the run ends with one warning counting such records per step.
 - The count for an evaluation step includes a record whose response was missing in an earlier repair round, not only
   in the last one.
-- A repaired record whose last candidate still fails a privacy check (`high_leak` or `leakage_within_threshold`) now
-  has its rewritten text withheld (null), as a record whose repair response cannot be parsed does. It was released
-  before, flagged and `not_met`; it is still flagged and `not_met`.
-- What to do: read the warning; a step listed for most records points at that step's model. Expect null rewritten
-  text for repaired records that still leak, and treat null text as "not released".
+- A record whose final candidate fails a privacy check (`high_leak` or `leakage_within_threshold`) now has its
+  rewritten text withheld (null), whether or not it was repaired, as a record whose repair response cannot be parsed
+  does, and its outcome reads `available=False`. It was released before, flagged and `not_met`; it is still flagged
+  and `not_met`. This includes every failing record under `max_repair_iterations=0`, and a record whose high leak the
+  `high` preset does not send to repair.
+- What to do: read the warning; a step listed for most records points at that step's model. Treat null rewritten text
+  as "not released"; an audit pass with `max_repair_iterations=0` finds the withheld first rewrite in
+  `trace_dataframe`'s `_full_rewrite`.
 - `result.leftovers(row)` raises `ValueError` for a Rewrite row whose rewritten text is null (withheld or never
   produced). It counted no leftovers for such a row before, even when the row's saved `replacements_applied` cause
   counted a value in the withheld candidate. `result.outcome(row)` keeps that cause.
