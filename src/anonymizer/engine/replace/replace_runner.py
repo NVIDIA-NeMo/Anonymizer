@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Literal, cast
 
 import pandas as pd
 from data_designer.config.models import ModelConfig
@@ -160,12 +160,14 @@ class ReplacementWorkflow:
         selected_models: ReplaceModelSelection,
         preview_num_records: int | None = None,
         session: Session | None = None,
-        unspanned_check: bool = False,
+        detector: Literal["builtin", "custom"] = "builtin",
     ) -> ReplacementResult:
         """Detect entities with ``detect`` and apply the replacement strategy as one graph invocation; ``session``
         goes to that invocation and to ``run`` when detection output must be rerouted.
 
-        With ``unspanned_check``, a row whose reported value occurs outside every kept span fails at ``detect``."""
+        ``detector`` names the kind of detector behind ``detect``. A reported value that occurs outside every kept
+        span fails its row at ``detect`` for a ``"custom"`` detector; for the ``"builtin"`` one a span is added there.
+        An override of this method must accept ``detector`` (or ``**kwargs``)."""
         from anonymizer.engine.replace.route import run_replace_pipeline
 
         return run_replace_pipeline(
@@ -177,7 +179,7 @@ class ReplacementWorkflow:
                 model_configs=model_configs, selected_models=selected_models, preview_num_records=preview_num_records
             ),
             session=session,
-            unspanned_check=unspanned_check,
+            detector=detector,
         )
 
     def evaluate(

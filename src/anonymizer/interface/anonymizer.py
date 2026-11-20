@@ -238,6 +238,20 @@ def _evaluate_on_graph(
     return current, failures, result
 
 
+def _require_detector_keyword(runner: object) -> None:
+    """Raise ``InvalidConfigError`` before detection when ``runner`` overrides ``run_with_detection`` without the
+    ``detector`` keyword (or ``**kwargs``): the facade passes it on every call."""
+    method = getattr(type(runner), "run_with_detection", None)
+    if method is None or method is ReplacementWorkflow.run_with_detection:
+        return
+    if not _accepts_keyword(method, "detector"):
+        raise InvalidConfigError(
+            f"{type(runner).__name__}.run_with_detection does not accept the detector keyword. Add "
+            '`detector: Literal["builtin", "custom"] = "builtin"` (or **kwargs) to the override and pass it on to '
+            "super().run_with_detection; it replaces unspanned_check."
+        )
+
+
 def _with_record_ids(frame: pd.DataFrame) -> pd.DataFrame:
     """``frame`` with an ``_anonymizer_record_id`` per row: its own column when present (``TextRecordsInput`` ids),
     else the adapter's uuid5 of the row, so detection, every later stage and every failure name the same record."""
@@ -1130,6 +1144,8 @@ class Anonymizer:
         preview_num_records: int | None,
         session: Session | None = None,
     ) -> AnonymizerResult:
+        if config.replace is not None:
+            _require_detector_keyword(self._replace_runner)
         input_df = _with_record_ids(context.dataframe)
         num_records = len(input_df)
         if preview_num_records is not None and preview_num_records != num_records:
@@ -1250,9 +1266,6 @@ class Anonymizer:
             replacement_elapsed = time.perf_counter() - t0
             outcomes = None
         elif config.replace is not None:
-            # Passed only when set: a caller's run_with_detection override may predate the keyword.
-            custom = self._detector_kind == "custom"
-            unspanned = {"unspanned_check": True} if custom else {}
             # Only a stable Session is passed: without one, an override with the signature before ``session`` is
             # called exactly as before.
             stable: dict[str, Any] = (
@@ -1266,7 +1279,7 @@ class Anonymizer:
                 selected_models=self._selected_models.replace,
                 preview_num_records=preview_num_records,
                 **stable,
-                **unspanned,
+                detector=self._detector_kind,
             )
             assert replace_result.detection is not None
             detected_df, detection_failures = (

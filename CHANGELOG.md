@@ -476,6 +476,10 @@ class itself, including its subclasses and `Mock(spec=EntityDetectionWorkflow)`.
   span, a span with the first detected span's label is added (`"source": "repeat"` in `final_entities`), and the
   occurrence is replaced like the others. It was released unreplaced before. The added span covers the whole matched
   word, so `order #W3916020` becomes `order [REDACTED_ORDER_ID]`. Rewrite is unchanged.
+- A `replace_runner` whose `run_with_detection` override does not accept the `detector` keyword (or `**kwargs`) now
+  raises `InvalidConfigError` before detection, naming the keyword. The facade passes
+  `detector="builtin" | "custom"` on every call. With a custom detector such an override raised `TypeError` on an
+  `unspanned_check` keyword, which `detector` replaces. A `rewrite_runner` override receives no new keyword.
 - What to do: build one `DetectorRow` per input row from `dataframe["_anonymizer_record_id"]`, move each span from
   the `final_entities` dict into `DetectedSpan(start, end, label, value)`, and move any value listed only in
   `_entities_by_value` into `extra_values`. See "Custom detection workflows".

@@ -24,7 +24,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Sequence
 from itertools import repeat
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 
@@ -201,7 +201,7 @@ def run_replace_pipeline(
     llm_workflow: LlmReplaceWorkflow | None,
     map_arguments: dict[str, Any],
     session: Session | None = None,
-    unspanned_check: bool = False,
+    detector: Literal["builtin", "custom"] = "builtin",
 ) -> ReplacementResult:
     """Run ``detect``, the Substitute map step and the per-target replace and verify as one invocation.
 
@@ -226,7 +226,7 @@ def run_replace_pipeline(
         positions = result.source_positions and tuple(result.source_positions[i] for i in kept.index)
         return dataclasses.replace(result, dataframe=kept.reset_index(drop=True), source_positions=positions)
 
-    detect_op = detect_step(dataframe, detect_replaceable, state, repeats="fail" if unspanned_check else "protect")
+    detect_op = detect_step(dataframe, detect_replaceable, state, repeats="fail" if detector == "custom" else "protect")
     tracker = ProgressTracker(total=len(graph.targets), label="Replacement")
     map_step = build_map = None
     if isinstance(replace_method, Substitute):

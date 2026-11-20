@@ -52,6 +52,7 @@ from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.engine.value_matching import count_values, entity_spans
 from anonymizer.interface.anonymizer import Anonymizer
+from anonymizer.interface.errors import InvalidConfigError
 from tests.detector_results import as_detector_result, builtin_stub, input_record_ids
 
 TEXT = "Alice Smith lives in Paris."  # Alice 0-5, Smith 6-11, Alice Smith 0-11, Paris 21-26
@@ -1161,38 +1162,77 @@ def test_a_one_character_unspaced_value_is_kept_or_fails_the_row(mode: str, tmp_
         assert _seed_values(frames) == {"李明", "王"}
 
 
-def test_a_replace_runner_override_without_the_unspanned_keyword_still_runs(tmp_path: Path) -> None:
-    """The keyword is passed only when the check is on, so an override written before it keeps working."""
-    calls: list[str] = []
+class _OldRunner(ReplacementWorkflow):
+    """An override written for the earlier signature: no ``detector`` keyword and no ``**kwargs``."""
 
-    class OldRunner(ReplacementWorkflow):
-        def run_with_detection(  # ty: ignore[invalid-method-override]
-            self,
-            dataframe: pd.DataFrame,
-            *,
-            detect: Any,
-            replace_method: Any,
-            model_configs: Any,
-            selected_models: Any,
-            preview_num_records: int | None = None,
-        ) -> Any:
-            calls.append("old")
-            return super().run_with_detection(
-                dataframe,
-                detect=detect,
-                replace_method=replace_method,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                preview_num_records=preview_num_records,
-            )
+    def run_with_detection(  # ty: ignore[invalid-method-override]
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        detect: Any,
+        replace_method: Any,
+        model_configs: Any,
+        selected_models: Any,
+        preview_num_records: int | None = None,
+    ) -> Any:
+        raise AssertionError("not reached: the facade rejects the override before detection")
+
+
+@pytest.mark.parametrize("custom", [False, True], ids=["builtin", "custom"])
+def test_an_old_signature_run_with_detection_override_fails_early_naming_the_keyword(
+    custom: bool, tmp_path: Path
+) -> None:
+    """With a custom detector the facade passed ``unspanned_check=True`` and the override raised ``TypeError``
+    (#319 review 4644413727); the built-in leg ran. Both now fail before detection with an error that names
+    ``detector`` and how to update the override."""
+    text = "Bob met Ann."
+    spans = [_at(text, "Bob", "first_name"), _at(text, "Ann", "first_name")]
+    with pytest.raises(InvalidConfigError, match=r"_OldRunner\.run_with_detection does not accept the detector"):
+        _one_row_run(
+            tmp_path, text, spans, None, "redact", custom=custom, replace_runner=_OldRunner(llm_workflow=Mock())
+        )
+
+
+def test_an_override_that_takes_the_detector_keyword_receives_the_detector_kind(tmp_path: Path) -> None:
+    kinds: list[str] = []
+
+    class NewRunner(ReplacementWorkflow):
+        def run_with_detection(self, dataframe: pd.DataFrame, **kwargs: Any) -> Any:
+            kinds.append(kwargs["detector"])
+            return super().run_with_detection(dataframe, **kwargs)
 
     text = "Bob met Ann."
     spans = [_at(text, "Bob", "first_name"), _at(text, "Ann", "first_name")]
-    runner = OldRunner(llm_workflow=Mock())
-    result, _ = _one_row_run(tmp_path, text, spans, None, "redact", custom=False, replace_runner=runner)
+    for custom in (False, True):
+        _one_row_run(
+            tmp_path, text, spans, None, "redact", custom=custom, replace_runner=NewRunner(llm_workflow=Mock())
+        )
+    assert kinds == ["builtin", "custom"]
 
-    assert calls == ["old"]
-    assert result.failed_records == []
+
+def test_a_rewrite_runner_override_receives_no_detector_keyword(tmp_path: Path) -> None:
+    """J3: Rewrite names failures from the carried record ids, so its runner gets no detector keyword."""
+    seen: list[set[str]] = []
+
+    class Runner(RewriteWorkflow):
+        def run_with_detection(self, dataframe: pd.DataFrame, **kwargs: Any) -> Any:
+            seen.append(set(kwargs))
+            return super().run_with_detection(dataframe, **kwargs)
+
+    text = "Bob met Ann."
+    frames: list[pd.DataFrame] = []
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": [text]}).to_csv(source, index=False)
+    anonymizer = Anonymizer(
+        detection_workflow=builtin_stub(
+            lambda df, **_: EntityDetectionResult(
+                df.assign(**{COL_FINAL_ENTITIES: [{"entities": []}] * len(df)}), [], tuple(range(len(df)))
+            )
+        ),
+        rewrite_runner=_capturing(Runner(Mock()), frames),
+    )
+    anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=AnonymizerInput(source=str(source)))
+    assert seen and "detector" not in seen[0]
 
 
 @pytest.mark.parametrize("view", ["absent", "outer_only"])
