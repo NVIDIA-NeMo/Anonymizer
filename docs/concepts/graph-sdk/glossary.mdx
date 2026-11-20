@@ -49,7 +49,7 @@ The graph SDK is provisional. Names, signatures and default values may change in
 | Required check | A check named in a workflow's `requires`. A target qualifies only if every required check passed. |
 | Retrieval | One call of a context source, recorded on `result.retrievals` with its status. |
 | Scope (`GraphScope`) | The namespace that datums and records are made from. A graph accepts only its own scope's datums. |
-| Seed | A value the SDK supplies for each target to any input port that no earlier step fills: `text`, `source`, `mentions`, `context`, `target`, `record`. |
+| Seed | A value the SDK supplies for each target to any input port that no earlier step fills: `text`, `source`, `mentions`, `context`, `target`, `session`, `identities`, `record`. |
 | Subject | The input ports a verifier's assessment is about, such as `subject=("text",)`. |
 | Target | A datum the workflow processes and may release. |
 | Terminal | Whether a target's steps ran: `success`, `failed`, `cancelled` or `blocked`. |

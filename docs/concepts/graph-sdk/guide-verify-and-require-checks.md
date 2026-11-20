@@ -128,7 +128,8 @@ The `detail` names the checks with no verifier of the final text. The same code 
 declares a required check, for example after a typo in `requires`.
 
 `prepare` decides what a verifier looked at from its declared `subject` alone. It traces each port back to the
-text it came from: the seeds `text`, `source`, `mentions` and `target` come from the original text; each step with
+text it came from: the seeds `text`, `source`, `mentions` and `target` come from the original text, and `context`,
+`session`, `identities` and `record` from no text; each step with
 a `text` output makes a new candidate; and every output of that step counts as being about that new candidate.
 `prepare` does not read your function, so it cannot tell if a verifier that declares `text` actually judges
 something else. Keep the declaration honest.
