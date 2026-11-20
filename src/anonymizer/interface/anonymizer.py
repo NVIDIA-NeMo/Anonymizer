@@ -14,6 +14,7 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, ParamSpec, Protocol, TypedDict, TypeGuard, TypeVar, cast
 
@@ -59,6 +60,7 @@ from anonymizer.engine.constants import (
     COL_TYPE_FIDELITY_VALID,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
@@ -78,11 +80,18 @@ from anonymizer.engine.graph_core.authoring import (
     Requests,
     Workflow,
 )
-from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
-from anonymizer.engine.graph_core.kernel import register_kind
+from anonymizer.engine.graph_core.execution import (
+    Advisory,
+    AdvisoryStatus,
+    ProtectionResult,
+    TargetOutcome,
+    prepare,
+    protect,
+)
+from anonymizer.engine.graph_core.kernel import Status, register_kind
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.backend import call_on_empty_input, per_target, raise_if_cancelled
+from anonymizer.engine.ndd.backend import call_on_empty_input, raise_if_cancelled
 from anonymizer.engine.ndd.model_loader import (
     parse_model_configs,
     parse_model_providers,
@@ -94,7 +103,6 @@ from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
-from anonymizer.engine.row_partitioning import try_resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
@@ -141,24 +149,31 @@ _ASSESSMENTS = {
 
 
 class _Judge(NamedTuple):
-    """One judge body: the runner call over the whole frame, its output port and the verdict columns it returns."""
+    """One judge body: the runner call over the whole frame, its output port, the verdict columns it returns and
+    the ``context`` columns its port also carries for the verifiers, which judge nothing themselves."""
 
     name: str
     port: str
     kind: str
     columns: tuple[str, ...]
     run: Callable[[pd.DataFrame], tuple[pd.DataFrame, list[FailedRecord]]]
+    context: tuple[str, ...] = ()
 
 
-def _verdict(port: str, column: str, reason: str, *, graded: bool = True) -> Callable[..., Assessment]:
+def _verdict(
+    port: str, column: str, reason: str, *, graded: bool = True, applies: Callable[[dict], bool] | None = None
+) -> Callable[..., Assessment]:
     """A model-free verifier over ``port``'s per-row metrics: ``None`` or NaN is unavailable, else ``== 1.0``.
 
     ``True == 1.0``, so one comparison serves boolean verdicts and fractions; ``graded=False`` records availability.
+    An unavailable verdict on a row ``applies`` rejects is ``not_applicable``: the judge skips such rows by design.
     """
 
     def verify(target: Any, **ports: Any) -> Assessment:
         value = ports[port].get(column)
         if value is None or value is pd.NA or (isinstance(value, float) and value != value):
+            if applies is not None and not applies(ports[port]):
+                return Assessment(None, target, "not_applicable")
             return Assessment(None, target, "judge_unavailable")
         satisfied = not graded or bool(value == 1.0)
         return Assessment(satisfied, target, "" if satisfied else reason)
@@ -171,8 +186,9 @@ def _evaluate_on_graph(
 ) -> tuple[pd.DataFrame, list[FailedRecord], ProtectionResult]:
     """Run each judge body over the whole frame as one invocation, then the model-free verifiers per row.
 
-    A row is a target whose datum is its candidate text; nothing reads it. Each body fans its returned frame out by
-    position, so a row a judge dropped or could not score carries ``None`` verdicts, never a failed target. The
+    A row is a target whose datum is its candidate text; nothing reads it. Each body places its returned rows on
+    their targets by record id (``_source_positions``), so a row a judge dropped, could not score or returned
+    without a unique id carries ``None`` verdicts, never a failed target. The
     workflow requires no checks, so the verifiers report and qualify nothing. The output frame is the last body's, unfiltered; a body's own error is
     raised as 0.4.0 raised it.
     """
@@ -187,15 +203,14 @@ def _evaluate_on_graph(
             nonlocal current
             current, failed = judge.run(current)
             failures.extend(failed)
-            present = [c for c in judge.columns if c in current.columns]
+            present = [c for c in (*judge.columns, *judge.context) if c in current.columns]
             rows = current[present].to_dict("records") if present else [{} for _ in range(len(current))]
-            if len(rows) == len(target):
-                return rows
-            # A judge dropped rows: map the survivors back to their targets; an unmatched target reads as unavailable.
-            positions = try_resolve_source_positions(frame, current, None)
-            if positions is None:
-                return [{} for _ in target]
-            return [row or {} for row in per_target(rows, positions, len(target))]
+            # Place each returned row on its own target by record id; a target no row was placed on is unavailable.
+            placed: list[dict[str, Any]] = [{} for _ in target]
+            for row, p in zip(rows, _source_positions(frame, current)):
+                if p is not None:
+                    placed[p] = row or {}
+            return placed
 
         return judge_rows
 
@@ -211,7 +226,11 @@ def _evaluate_on_graph(
                 verifiers.insert(0, Operation.verifier("coverage", verify, {"text": TEXT, **inputs}))
             else:
                 name, reason = _ASSESSMENTS[column]
-                verify = _verdict(judge.port, column, reason, graded=column != COL_JUDGE_EVALUATION)
+                verify = (
+                    _verdict(judge.port, column, reason, graded=False, applies=_judged_by_rewrite_judge)
+                    if column == COL_JUDGE_EVALUATION
+                    else _verdict(judge.port, column, reason)
+                )
                 verifiers.append(Operation.verifier(name, verify, inputs))
     operations = (*bodies, *verifiers)
     workflow = Workflow("evaluate", operations)
@@ -225,9 +244,94 @@ def _evaluate_on_graph(
     return current, failures, result
 
 
+def _record_ids(frame: pd.DataFrame) -> tuple[str, ...] | None:
+    """The record id of each row, ``None`` when the frame carries none."""
+    if RECORD_ID_COLUMN not in frame.columns:
+        return None
+    return tuple(str(i) for i in frame[RECORD_ID_COLUMN])
+
+
+def _source_positions(source: pd.DataFrame, returned: pd.DataFrame) -> tuple[int | None, ...]:
+    """The ``source`` position of each ``returned`` row, ``None`` for a row that cannot be placed.
+
+    A row is placed only by its record id, and only when that id occurs exactly once in ``source`` and once in
+    ``returned``. Row order and text are never read: records may share their text, and a judge may reorder rows.
+    A row without an id (missing column or a null), with an unknown id or with a repeated id cannot be placed. Ids
+    compare as text, so a judge that retypes an id onto another record's text (``"1"`` and ``1.0`` as ``"1.0"``)
+    relabels the row, which the id contract trusts."""
+    if RECORD_ID_COLUMN not in source.columns or RECORD_ID_COLUMN not in returned.columns:
+        return (None,) * len(returned)
+    source_ids, ids = (tuple(None if pd.isna(i) else str(i) for i in f[RECORD_ID_COLUMN]) for f in (source, returned))
+    in_source, in_returned = Counter(source_ids), Counter(ids)
+    where = {i: p for p, i in enumerate(source_ids) if i is not None and in_source[i] == 1}
+    return tuple(where.get(i) if i is not None and in_returned[i] == 1 else None for i in ids)
+
+
+def _reported_outcomes(
+    result: ProtectionResult,
+    source: pd.DataFrame,
+    output: pd.DataFrame,
+    ran: Sequence[TargetOutcome] | None,
+    ran_ids: Sequence[str] | None,
+) -> tuple[TargetOutcome, ...]:
+    """Each ``output`` row's outcome, one per row, even when no row can be placed in ``source``.
+
+    Each row is placed in ``source`` only by its unique record id (``_source_positions``), as ``_evaluate_on_graph``
+    placed every judge's rows. A placed row's outcome is the evaluated result's outcome (``ran``) of the record with
+    that id (``ran_ids``), or an unassessed outcome when the result carries no outcomes or no single row with that
+    id, with each verifier appended as an advisory naming it, in verifier order, in place of any advisory an earlier
+    evaluation of the result gave the same verifier; a row whose text was edited under a kept id keeps the run's
+    verdict on the run's own text. A row that cannot be placed (no id, a null, an unknown or a repeated one) is unassessed
+    and unprotected, and each verifier reads ``could_not_assess`` with cause ``unplaced``. A verifier that gave no
+    assessment is ``could_not_assess`` with its execution code (``raised``, or ``blocked`` when an earlier verifier
+    of the row failed) as the cause. The ungraded rewrite judge reports ``scored`` when it returned scores and
+    ``not_applicable`` on a row it skips by design."""
+    codes: dict[bool | None, AdvisoryStatus] = {True: "passed", False: "failed", None: "could_not_assess"}
+    ungraded = _ASSESSMENTS[COL_JUDGE_EVALUATION][0]
+    names = result.prepared.names
+    positions = _source_positions(source, output)
+    verifiers = [i for i, (_, op) in enumerate(result.prepared.workflow.flatten()) if op.is_verifier]
+    errors = {(e.unit, e.node): e.reason for e in result.state.entries if e.status == Status.FAILED}
+    ledger = result.ledger()  # target-major; a verifier that never ran is ``blocked``
+    unassessed = TargetOutcome("success", "not_assessed", False, False)
+    by_id: dict[str, TargetOutcome] = {}
+    if ran is not None and ran_ids is not None and len(ran) == len(ran_ids):
+        counts = Counter(ran_ids)
+        by_id = {i: outcome for i, outcome in zip(ran_ids, ran) if counts[i] == 1}
+    source_ids = _record_ids(source) or ()
+
+    def advisory(p: int, i: int) -> Advisory:
+        row = result.state.rows[p]
+        a = row.outputs.get(i, {}).get("assessment")
+        if not isinstance(a, Assessment):
+            cause = errors.get((p, i), ledger[p * len(names) + i][2])
+            return Advisory(names[i], names[i], "could_not_assess", cause)
+        if a.satisfied is None and a.reason == "not_applicable":
+            return Advisory(names[i], names[i], "not_applicable")
+        status = "scored" if a.satisfied and names[i] == ungraded else codes[a.satisfied]
+        return Advisory(names[i], names[i], status, a.reason)
+
+    judges = {names[i] for i in verifiers}
+
+    def reported(p: int | None) -> TargetOutcome:
+        if p is None:
+            unplaced = (Advisory(names[i], names[i], "could_not_assess", "unplaced") for i in verifiers)
+            return replace(unassessed, advisories=tuple(unplaced))
+        base = by_id.get(source_ids[p], unassessed)
+        kept = (a for a in base.advisories if a.verifier not in judges)  # an earlier evaluation's judges
+        return replace(base, advisories=(*kept, *(advisory(p, i) for i in verifiers)))
+
+    return tuple(reported(p) for p in positions)
+
+
 def _has_entities_for_evaluation(raw: object) -> bool:
     """Return whether a row should receive entity-dependent evaluation scores."""
     return bool(EntitiesByValueSchema.from_raw(raw).entities_by_value)
+
+
+def _judged_by_rewrite_judge(metrics: dict) -> bool:
+    """Whether the rewrite judge scores the row: it skips rows with no entities; unknown when the column is absent."""
+    return COL_ENTITIES_BY_VALUE not in metrics or _has_entities_for_evaluation(metrics[COL_ENTITIES_BY_VALUE])
 
 
 def _flag_missed_entities(df: pd.DataFrame) -> pd.DataFrame:
@@ -399,8 +503,11 @@ class Anonymizer:
                 support and otherwise raise ``InvalidConfigError``. Methods without
                 ``entity_label_examples`` remain supported when no examples are configured;
                 configuring unsupported examples raises ``InvalidConfigError`` too.
-            replace_runner: Custom replacement workflow (advanced/testing).
-            rewrite_runner: Custom rewrite workflow (advanced/testing).
+            replace_runner: Custom replacement workflow (advanced/testing). Its ``evaluate()`` must keep each row's
+                record id: ``evaluate()`` matches judge rows to records only by id, reports a row without one
+                unassessed, and reports a row given another record's id as that record.
+            rewrite_runner: Custom rewrite workflow (advanced/testing). Its ``evaluate()`` must keep each row's record
+                id, as for ``replace_runner``.
             combined_rewrite_runner: Custom combined rewrite workflow (advanced/testing).
         """
         _initialize_logging()
@@ -616,6 +723,7 @@ class Anonymizer:
                 detection_scope=result.detection_scope,
                 data_summary=result.data_summary,
                 _outcomes=result._outcomes,
+                _outcome_ids=result._outcome_ids,
             )
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
@@ -792,11 +900,18 @@ class Anonymizer:
                 COL_JUDGE_EVALUATION,
                 *((COL_DETECTION_VALID,) if evaluate_config.compute_detection_validity else ()),
             )
-            judged_df, all_failed, _ = _evaluate_on_graph(
+            judged_df, all_failed, evaluation = _evaluate_on_graph(
                 internal_df,
                 COL_REWRITTEN_TEXT,
                 [
-                    _Judge("rewrite-judges", "rewrite_metrics", REWRITE_METRICS, rewrite_columns, run_rewrite_judges),
+                    _Judge(
+                        "rewrite-judges",
+                        "rewrite_metrics",
+                        REWRITE_METRICS,
+                        rewrite_columns,
+                        run_rewrite_judges,
+                        context=(COL_ENTITIES_BY_VALUE,),
+                    ),
                     _Judge(
                         "coverage-judge", "coverage_metrics", COVERAGE_METRICS, (COL_ENTITY_COVERAGE,), run_coverage
                     ),
@@ -843,7 +958,7 @@ class Anonymizer:
                         ("attribute fidelity", COL_ATTRIBUTE_FIDELITY_VALID, None),
                     ]
                 )
-            judged_df, all_failed, _ = _evaluate_on_graph(
+            judged_df, all_failed, evaluation = _evaluate_on_graph(
                 internal_df,
                 COL_REPLACED_TEXT,
                 [
@@ -857,6 +972,13 @@ class Anonymizer:
                 ],
             )
         renamed_trace = _rename_output_columns(judged_df, resolved_text_column=text_column)
+        outcomes = _reported_outcomes(
+            evaluation,
+            internal_df,
+            judged_df,
+            getattr(output, "_outcomes", None),  # absent on results pickled before outcomes were kept
+            getattr(output, "_outcome_ids", None),
+        )
         result = AnonymizerResult(
             dataframe=_build_user_dataframe(
                 renamed_trace,
@@ -874,6 +996,8 @@ class Anonymizer:
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
+            _outcomes=outcomes,
+            _outcome_ids=_record_ids(judged_df),
         )
         if result.failed_records:
             logger.debug("%d evaluation failed record(s).", len(result.failed_records))
@@ -1168,6 +1292,7 @@ class Anonymizer:
             ),
             data_summary=data.data_summary,
             _outcomes=outcomes,
+            _outcome_ids=None if outcomes is None else _record_ids(final_df),
             effective_entity_labels=effective_labels,
         )
 
