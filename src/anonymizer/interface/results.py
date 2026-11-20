@@ -14,6 +14,7 @@ from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_SENSITIVITY_DISP
 from anonymizer.engine.graph_core.execution import TargetOutcome
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.rewrite.rewrite_workflow import rewrite_leftovers
+from anonymizer.engine.row_partitioning import cell_text
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.engine.value_matching import Leftover, count_values, entity_spans
 from anonymizer.interface.display import render_record_html
@@ -65,26 +66,36 @@ class _DisplayMixin:
         advisory ``no_detected_value_added``, or Rewrite's ``replacements_applied`` and its review flag. Holds record
         text, for auditing your own result.
 
+        The check is the one of the saved strategy (``rewrite_config`` or ``replace_method``), and the source cell is
+        read as that check reads it. A result with neither saved is read as Rewrite when it has the rewritten column.
+
         Raises:
             IndexError: ``row`` is not a row of ``trace_dataframe``.
             ValueError: an Annotate result, or one without the source, output or ``final_entities`` columns.
         """
-        if isinstance(getattr(self, "replace_method", None), Annotate):
+        replace_method = getattr(self, "replace_method", None)
+        if isinstance(replace_method, Annotate):
             raise ValueError("Annotate results have no leftover check.")
         frame, text = self.trace_dataframe, self.resolved_text_column
         rewritten = f"{text}_rewritten"
-        output = rewritten if rewritten in frame.columns else f"{text}_replaced"
+        if getattr(self, "rewrite_config", None) is not None:
+            is_rewrite = True
+        elif replace_method is not None:
+            is_rewrite = False
+        else:
+            is_rewrite = rewritten in frame.columns
+        output = rewritten if is_rewrite else f"{text}_replaced"
         if not {text, output, COL_FINAL_ENTITIES} <= set(frame.columns):
             raise ValueError("This result has no leftover trace (source, output and final_entities columns).")
         if row < 0 or row >= len(frame):
             raise IndexError(f"Record index {row} is out of bounds for {len(frame)} records.")
         record = frame.iloc[row].to_dict()
-        source = record[text] if isinstance(record[text], str) else ""
-        if output == rewritten:
+        if is_rewrite:
             disposition = record.get(COL_SENSITIVITY_DISPOSITION)
-            return rewrite_leftovers(source, record[COL_FINAL_ENTITIES], record[output], disposition) or ()
+            return rewrite_leftovers(record[text], record[COL_FINAL_ENTITIES], record[output], disposition) or ()
         # The Replace verifier counts the row's mentions; the graph admits only exact, non-overlapping mentions of
         # these entities, so converting final_entities here gives the same spans.
+        source = cell_text(record[text])
         entities = EntitiesSchema.from_raw(record[COL_FINAL_ENTITIES]).entities
         return count_values(source, entity_spans(source, entities), str(record[output]))
 

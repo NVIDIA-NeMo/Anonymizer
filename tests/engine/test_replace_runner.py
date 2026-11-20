@@ -48,6 +48,7 @@ from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult, Llm
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.engine.spans import Span, Spans
+from anonymizer.engine.value_matching import format_cause
 from anonymizer.interface.anonymizer import Anonymizer
 
 
@@ -971,6 +972,71 @@ def test_a_redact_template_that_brings_back_a_name_with_reordered_marks_fails_th
     (advisory,) = result.outcome(0).advisories
     assert (advisory.status, advisory.cause) == ("failed", "e0:N1,D1,O1")
     _agrees(result, 0, advisory.cause)
+
+
+@pytest.mark.parametrize(
+    ("columns", "entities", "method", "preview"),
+    [
+        pytest.param(
+            {"text": ["Alice met Bob"]}, [[_ent("Alice", 0)]], Redact(format_template="Alice"), False, id="str"
+        ),
+        pytest.param(
+            {"text": ["Alice met Bob"], "_rewritten_text": ["note"]},
+            [[_ent("Alice", 0)]],
+            Redact(format_template="Alice"),
+            False,
+            id="metadata-column-named-like-the-rewrite-output",
+        ),
+        pytest.param(
+            {"text": ["Alice met Bob"], "_rewritten_text": ["note"]},
+            [[_ent("Alice", 0)]],
+            Redact(format_template="Alice"),
+            True,
+            id="metadata-column-preview",
+        ),
+        pytest.param(
+            {"text": [123456]}, [[_ent("123456", 0)]], Redact(format_template="123456 archived"), False, id="int"
+        ),
+        pytest.param(
+            {"text": [123456, None]},
+            [[_ent("123456", 0)], []],
+            Redact(format_template="123456 archived"),
+            False,
+            id="float-with-a-blank-row",
+        ),
+        pytest.param({"text": [True]}, [[_ent("True", 0)]], Redact(format_template="True"), False, id="bool"),
+        pytest.param({"text": [123456]}, [[_ent("123456", 0)]], Hash(), False, id="int-hash-passes"),
+    ],
+)
+def test_leftovers_are_what_the_replace_advisory_counted(
+    tmp_path: Path, columns: dict[str, list[object]], entities: list[list[dict]], method: Any, preview: bool
+) -> None:
+    """For every row, passing ones included, the audit holds one entry per detected value and its over-bound entries
+    are the advisory's cause, whatever the source cell's type and whatever the other columns are named."""
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": e} for e in entities]}),
+        failed_records=[],
+        source_positions=tuple(range(len(entities))),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame(columns).to_csv(csv_path, index=False)
+    anonymizer = Anonymizer(detection_workflow=detector)
+    config = AnonymizerConfig(replace=method, emit_telemetry=False)
+    data = AnonymizerInput(source=str(csv_path), text_column="text")
+    result = (
+        anonymizer.preview(config=config, data=data, num_records=len(entities))
+        if preview
+        else anonymizer.run(config=config, data=data)
+    )
+
+    for row, row_entities in enumerate(entities):
+        (advisory,) = result.outcome(row).advisories
+        leftovers = result.leftovers(row)
+        assert format_cause(x for x in leftovers if x.over_bound) == advisory.cause
+        assert [x.in_source for x in leftovers] == [1] * len(row_entities)
+    first = result.outcome(0).advisories[0]
+    assert first.status == ("passed" if isinstance(method, Hash) else "failed")
 
 
 def test_leftovers_name_a_value_by_its_own_span(tmp_path: Path) -> None:

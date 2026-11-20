@@ -67,7 +67,7 @@ from anonymizer.engine.replace.strategies import (
     _parse_replacements,
     apply_replacements_to_spans,
 )
-from anonymizer.engine.row_partitioning import resolve_source_positions
+from anonymizer.engine.row_partitioning import cell_text, resolve_source_positions
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
 from anonymizer.engine.spans import Span
 from anonymizer.engine.value_matching import count_values, format_cause
@@ -177,7 +177,7 @@ def run_replace_pipeline(
     text, fails every target at ``detect``, and ``reroute`` replaces over the detection frame as returned.
     """
     scope = GraphScope()
-    graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in dataframe[COL_TEXT]))
+    graph = ProtectionGraph(scope, tuple(scope.datum(cell_text(text)) for text in dataframe[COL_TEXT]))
     state = DetectState()
     failures, detected, owners, elapsed = state.failures, state.detected, state.owners, state.elapsed
     malformed: list[FailedRecord] = []
@@ -268,7 +268,7 @@ def _ready_rows(
 
 
 def _lower(dataframe: pd.DataFrame, text_column: str, entities_column: str) -> ProtectionGraph:
-    """One target per row (``str(text)``, as 0.4.0) with its accepted entity spans as mentions."""
+    """One target per row (``cell_text(text)``) with its accepted entity spans as mentions."""
     n = len(dataframe)
     texts = dataframe[text_column] if text_column in dataframe.columns else repeat("", n)
     raw_entities = dataframe[entities_column] if entities_column in dataframe.columns else repeat({}, n)
@@ -276,7 +276,7 @@ def _lower(dataframe: pd.DataFrame, text_column: str, entities_column: str) -> P
     targets: list[Datum] = []
     mentions: list[Mention] = []
     for text, raw in zip(texts, raw_entities):
-        targets.append(datum := scope.datum(str(text)))
+        targets.append(datum := scope.datum(cell_text(text)))
         mentions.extend(accepted_mentions(datum, EntitiesSchema.from_raw(raw, strict=True)))
     return ProtectionGraph(scope, tuple(targets), tuple(mentions))
 
