@@ -91,7 +91,8 @@ def detect_step(
                 continue
             if entities.entities:
                 rebuilt.setdefault(row, set())
-        if rebuilt:
+        # Later steps read the by-value column for every returned row, so it is added even when no row is rebuilt.
+        if rebuilt or COL_ENTITIES_BY_VALUE not in result.dataframe.columns:
             state.detected[-1] = dataclasses.replace(result, dataframe=_with_entities(result.dataframe, rebuilt))
         # A non-mention entry fails the record with ``invalid_output``.
         mentions: list[tuple[object, ...]] = [
@@ -148,13 +149,15 @@ def covered_spans(datum: Datum, entities: EntitiesSchema) -> set[int]:
 
 def _with_entities(frame: pd.DataFrame, covered: dict[int, set[int]]) -> pd.DataFrame:
     """A copy of ``frame`` whose rows at the positions in ``covered`` lose those entities, with their by-value view
-    rebuilt (the column is added when the detector returned none). Each rewritten cell keeps its own row's encoding
+    rebuilt (the column is added, with a missing cell for every other row, when the detector returned none). Each rewritten cell keeps its own row's encoding
     (a JSON string stays a string) and its own keys; later stages encode every seed cell on its own, so a column may
     mix encodings."""
     frame = frame.copy()
-    given = list(frame[COL_FINAL_ENTITIES])
+    has_entities = COL_FINAL_ENTITIES in frame.columns
+    given = list(frame[COL_FINAL_ENTITIES]) if has_entities else [None] * len(frame)
     final = [_without(raw, covered[row]) if covered.get(row) else raw for row, raw in enumerate(given)]
-    frame[COL_FINAL_ENTITIES] = final
+    if has_entities:
+        frame[COL_FINAL_ENTITIES] = final
     by_value = frame[COL_ENTITIES_BY_VALUE] if COL_ENTITIES_BY_VALUE in frame.columns else repeat(None)
     frame[COL_ENTITIES_BY_VALUE] = [
         # A rebuilt cell takes the encoding of its own stale cell, or, when that is missing, of its entities cell.

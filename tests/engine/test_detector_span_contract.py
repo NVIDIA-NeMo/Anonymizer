@@ -641,3 +641,77 @@ def test_every_kept_row_reaches_the_rewrite_seed_whatever_the_encoding_mix(
 
 def _spans_with_values(raw: object) -> list[tuple[int, int, str, str]]:
     return [(e.start_position, e.end_position, e.label or "", e.value) for e in EntitiesSchema.from_raw(raw).entities]
+
+
+MALFORMED_REASON = "malformed entities: payload failed schema validation"
+# shape -> entities per text, or how the detector leaves its frame; no shape returns a by-value column
+NO_BY_VALUE_SHAPES: dict[str, Any] = {
+    "no_spans": {TEXT: [], CONTROL: []},
+    "all_malformed": {TEXT: NULL_LABEL, CONTROL: [{**CONTROL_ENTITIES[1], "start_position": "x"}]},
+    "no_spans_plus_malformed": {TEXT: NULL_LABEL, CONTROL: []},
+    "no_entities_column": "no_entities_column",
+    "every_row_failed": "every_row_failed",
+}
+
+
+class _ShapeWithoutByValueDetector:
+    def __init__(self, shape: str) -> None:
+        self.shape = NO_BY_VALUE_SHAPES[shape]
+
+    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+        frame = dataframe.copy()
+        if self.shape == "every_row_failed":
+            failed = [FailedRecord(str(i), "entity-detection", "detector_error") for i in range(len(frame))]
+            return EntityDetectionResult(frame.iloc[0:0], failed, ())
+        if self.shape != "no_entities_column":
+            frame[COL_FINAL_ENTITIES] = pd.Series(
+                [{"entities": self.shape[str(t)]} for t in frame[COL_TEXT]], index=frame.index, dtype=object
+            )
+        return EntityDetectionResult(frame, [], tuple(range(len(frame))))
+
+
+def _expected_without_by_value(shape: str, mode: str) -> tuple[list[str], list[FailedRecord]]:
+    """The output texts and failed records: unparsable rows fail at ``replace`` in Replace, at ``detect`` in Rewrite."""
+    malformed = {"all_malformed": ["0", "1"], "no_spans_plus_malformed": ["0"]}.get(shape, [])
+    if shape == "every_row_failed":
+        return [], [FailedRecord(i, "entity-detection", "detector_error") for i in ("0", "1")]
+    replace = mode in ("redact", "substitute")
+    failed = [
+        FailedRecord(i, "replace", MALFORMED_REASON) if replace else FailedRecord(i, "detect", "invalid_output")
+        for i in malformed
+    ]
+    return [t for i, t in enumerate([TEXT, CONTROL]) if str(i) not in malformed], failed
+
+
+@pytest.mark.parametrize("mode", ["redact", "substitute", "rewrite", "combined"])
+@pytest.mark.parametrize("shape", list(NO_BY_VALUE_SHAPES))
+def test_a_detector_without_a_by_value_column_completes_whatever_its_rows(
+    shape: str, mode: str, tmp_path: Path
+) -> None:
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": [TEXT, CONTROL]}).to_csv(source, index=False)
+    frames: list[pd.DataFrame] = []
+
+    def run_workflow(self: NddAdapter, df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
+        out = df.copy().reset_index(drop=True)
+        out[COL_REPLACEMENT_MAP] = _substitute_map(out)
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
+
+    anonymizer = Anonymizer(
+        detection_workflow=cast(EntityDetectionWorkflow, _ShapeWithoutByValueDetector(shape)),
+        rewrite_runner=_capturing(RewriteWorkflow(Mock()), frames),
+        combined_rewrite_runner=cast(CombinedRewriteWorkflow, _capturing(CombinedRewriteWorkflow(Mock()), frames)),
+    )
+    config = {
+        "redact": AnonymizerConfig(replace=Redact()),
+        "substitute": AnonymizerConfig(replace=Substitute()),
+        "rewrite": AnonymizerConfig(rewrite=Rewrite()),
+        "combined": AnonymizerConfig(rewrite=Rewrite(use_combined_graph=True)),
+    }[mode]
+    with patch.object(NddAdapter, "run_workflow", run_workflow):
+        result = anonymizer.run(config=config, data=AnonymizerInput(source=str(source)))
+
+    texts, failed = _expected_without_by_value(shape, mode)
+    assert result.failed_records == failed
+    column = "text_replaced" if mode in ("redact", "substitute") else "text_rewritten"
+    assert (list(result.dataframe[column]) if column in result.dataframe.columns else []) == texts
