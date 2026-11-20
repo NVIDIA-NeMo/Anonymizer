@@ -56,7 +56,7 @@ def test_parse_hash_reads_key_from_environment(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("ANONYMIZER_HASH_KEY", "s3cr3t")
     strategy = _build_replace_strategy(CliOpts(replace="hash", digest_length=8))
     assert isinstance(strategy, Hash)
-    assert strategy.key.get_secret_value() == "s3cr3t"
+    assert strategy.key is not None and strategy.key.get_secret_value() == "s3cr3t"
     assert strategy.digest_length == 8
 
 

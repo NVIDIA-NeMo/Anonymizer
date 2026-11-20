@@ -143,11 +143,19 @@ class Annotate(ReplaceMethodBase):
         )
 
 
-_MISSING_KEY_MESSAGE = (
+HASH_KEY_REQUIRED_MESSAGE = (
     'Hash requires a secret key: pass Hash(key=...), for example Hash(key=os.environ["ANONYMIZER_HASH_KEY"]) '
     "(the CLI reads ANONYMIZER_HASH_KEY). Unkeyed hashes of low-entropy values are reversible, so there is no "
     "unkeyed mode; use the same key across runs to get the same tokens."
 )
+
+
+class _UnencodableKey:
+    def __repr__(self) -> str:
+        return "<key not encodable as UTF-8>"
+
+
+_UNENCODABLE_KEY = _UnencodableKey()
 
 
 class Hash(ReplaceMethodBase):
@@ -166,21 +174,44 @@ class Hash(ReplaceMethodBase):
     format_template: str = Field(
         default="<HASH_{label}_{digest}>", description="Template with {digest} required and optional {label}."
     )
-    key: SecretStr = Field(
+    # Required (no default). ``None`` only on a copy made by ``without_key``, which cannot hash.
+    key: SecretStr | None = Field(
         description="Required secret key. The digest is HMAC-SHA256 of the case- and whitespace-folded text; "
         "unkeyed digests of low-entropy values are reversible, so there is no unkeyed mode.",
     )
 
+    # Every check below is field-level, or sees input without the key: ``hide_input_in_errors`` hides input only
+    # from ``str(error)``, and a model-level error would carry the whole input, key included, in ``errors()``.
+
     @model_validator(mode="before")
     @classmethod
     def require_key(cls, data: Any) -> Any:
-        if isinstance(data, dict) and data.get("key") is None:
-            raise ValueError(_MISSING_KEY_MESSAGE)
+        if not isinstance(data, dict):
+            return data
+        key = data.get("key")
+        if key is None:
+            raise ValueError(HASH_KEY_REQUIRED_MESSAGE)
+        secret = key.get_secret_value() if isinstance(key, SecretStr) else key
+        if isinstance(secret, str):
+            try:
+                secret.encode("utf-8")
+            except UnicodeEncodeError:
+                # Swap the key for a marker so the error raised for it carries no key material.
+                return {**data, "key": _UNENCODABLE_KEY}
         return data
+
+    @field_validator("key", mode="before")
+    @classmethod
+    def reject_unencodable_key(cls, value: Any) -> Any:
+        if value is _UNENCODABLE_KEY:
+            raise ValueError("key must be text that encodes as UTF-8")
+        return value
 
     @field_validator("key")
     @classmethod
-    def validate_key(cls, value: SecretStr) -> SecretStr:
+    def validate_key(cls, value: SecretStr | None) -> SecretStr:
+        if value is None:
+            raise ValueError(HASH_KEY_REQUIRED_MESSAGE)
         secret = value.get_secret_value()
         if not secret.strip():
             raise ValueError("key must not be empty or whitespace")
@@ -190,11 +221,12 @@ class Hash(ReplaceMethodBase):
             )
         return value
 
-    @model_validator(mode="after")
-    def validate_keyed_algorithm(self) -> Hash:
-        if self.algorithm != "sha256":
+    @field_validator("algorithm")
+    @classmethod
+    def validate_algorithm(cls, value: str) -> str:
+        if value != "sha256":
             raise ValueError("a keyed Hash always uses HMAC-SHA256; leave algorithm at its default 'sha256'")
-        return self
+        return value
 
     @field_validator("format_template")
     @classmethod
@@ -215,7 +247,7 @@ class Hash(ReplaceMethodBase):
         """
         if self.key is None:
             # Only a result's stored copy has no key (see ``without_key``); it never hashes.
-            raise ValueError(_MISSING_KEY_MESSAGE)
+            raise ValueError(HASH_KEY_REQUIRED_MESSAGE)
         # Same fold as Substitute's value matching ("casefold-whitespace"): casefold, then collapse whitespace.
         # Changing it changes every token, so keep the two in step.
         folded = " ".join(text.casefold().split()).encode("utf-8")

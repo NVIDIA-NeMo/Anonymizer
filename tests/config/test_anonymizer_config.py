@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import pickle
 from pathlib import Path
 from typing import Any, Literal
 
@@ -57,6 +58,63 @@ def test_hash_copy_without_key_cannot_hash() -> None:
     assert stripped.key is None
     with pytest.raises(ValueError, match="Hash requires a secret key"):
         stripped.replace(text="Alice", label="first_name")
+
+
+_KEY = "s3cr3t-key-material"
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: Hash(key=_KEY, algorithm="md5"),
+        lambda: Hash(key=_KEY, digest_length=3),
+        lambda: Hash(key=_KEY, format_template="<HASH>"),
+        lambda: Hash.model_validate({"key": _KEY, "kind": "redact"}),
+        lambda: AnonymizerConfig(replace=Hash(key=_KEY), rewrite=Rewrite()),
+        lambda: AnonymizerConfig.model_validate({"replace": {"kind": "hash", "key": _KEY}, "rewrite": {}}),
+        lambda: AnonymizerConfig.model_validate_json(
+            f'{{"replace": {{"kind": "hash", "key": "{_KEY}"}}, "rewrite": {{}}}}'
+        ),
+        lambda: AnonymizerConfig.model_validate({"replace": {"kind": "hash", "key": _KEY, "algorithm": "sha1"}}),
+        lambda: AnonymizerConfig.model_validate(
+            {"replace": {"kind": "hash", "key": _KEY}, "detect": {"gliner_threshold": 5}}
+        ),
+        lambda: AnonymizerConfig.model_validate({"replace": {"kind": "hash", "key": _KEY}, "emit_telemetry": "maybe"}),
+    ],
+    ids=[
+        "algorithm",
+        "digest-length",
+        "template",
+        "kind",
+        "both-modes-instance",
+        "both-modes-dict",
+        "both-modes-json",
+        "config-algorithm",
+        "config-detect",
+        "config-telemetry",
+    ],
+)
+def test_validation_errors_carry_no_key(build: Any) -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        build()
+    error = exc_info.value
+    assert _KEY not in str(error)
+    assert _KEY not in repr(error.errors())
+    assert _KEY not in error.json()
+    assert _KEY.encode() not in pickle.dumps(error)
+
+
+def test_hash_rejects_a_key_that_is_not_utf8_without_echoing_it() -> None:
+    key = "s3cr3t-key-material-\udcff"
+    with pytest.raises(ValidationError, match="encodes as UTF-8") as exc_info:
+        Hash(key=key)
+    error = exc_info.value
+    assert _KEY not in str(error) and _KEY not in repr(error.errors()) and _KEY not in error.json()
+
+
+def test_config_refuses_a_hash_copied_from_a_result() -> None:
+    with pytest.raises(ValidationError, match="Hash requires a secret key"):
+        AnonymizerConfig(replace=Hash(key=_KEY).without_key())
 
 
 def test_keyed_hash_folds_case_and_whitespace_and_depends_on_key() -> None:

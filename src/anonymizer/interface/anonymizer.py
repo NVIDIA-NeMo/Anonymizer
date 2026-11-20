@@ -34,7 +34,7 @@ from anonymizer.config.anonymizer_config import (
     resolve_effective_detection_labels,
 )
 from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
-from anonymizer.config.replace_strategies import ReplaceMethod, Substitute
+from anonymizer.config.replace_strategies import HASH_KEY_REQUIRED_MESSAGE, Hash, ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
@@ -1300,6 +1300,9 @@ class Anonymizer:
         """Run semantic preflight checks shared by validate, run, and preview."""
         if config.rewrite is not None and config.rewrite.privacy_goal is None:
             raise InvalidConfigError("rewrite.privacy_goal must not be None")
+        # A result keeps its Hash without the key; a config copied from one is refused here, before detection.
+        if isinstance(config.replace, Hash) and config.replace.key is None:
+            raise InvalidConfigError(HASH_KEY_REQUIRED_MESSAGE)
         try:
             validate_model_alias_references(
                 self._model_configs,
