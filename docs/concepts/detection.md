@@ -53,7 +53,8 @@ another, and one that is not identical to or inside a labelled span fails its re
 is optional. For a row with spans, it is the view of the kept spans plus every pair of the detector's view whose value
 occurs in the row's text outside those spans; a row without spans keeps the detector's view. "Occurs" follows the
 leftover check's rule: whole words, with case and accents folded, so "Ann" does not occur in "Annual" and "Jose"
-occurs in "José". The rule keeps one invariant: every value the detector reports for a row, from a span or a by-value
+occurs in "José". A one-character value in an unspaced script, such as 王, which that rule
+does not match, counts wherever it appears. The rule keeps one invariant: every value the detector reports for a row, from a span or a by-value
 pair, that occurs in the row's text is either in the replacement view or fails the row, so released text never holds
 such a value unflagged. The Replace modes (Redact, Hash, Annotate, Substitute) replace spans only, so with a custom
 detector a row whose view, after that derivation, holds a value that occurs in its text outside every kept span fails

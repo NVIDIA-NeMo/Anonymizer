@@ -44,6 +44,7 @@ from anonymizer.engine.detection.detection_workflow import (
 from anonymizer.engine.graph_core.authoring import GraphScope
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.engine.ndd.workflow_utils import select_seed_cols
+from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_generation import _prepare_rewrite_tagged_text
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
@@ -901,7 +902,14 @@ def test_replace_fails_a_row_whose_reported_value_has_no_span(shape: str, strate
 
 
 def _one_row_run(
-    tmp_path: Path, text: str, spans: list[dict[str, Any]] | None, view: object, mode: str, *, custom: bool = True
+    tmp_path: Path,
+    text: str,
+    spans: list[dict[str, Any]] | None,
+    view: object,
+    mode: str,
+    *,
+    custom: bool = True,
+    replace_runner: Any = None,
 ) -> tuple[Any, list[pd.DataFrame]]:
     """``text`` through ``Anonymizer.run`` with a detector that returns ``spans`` (``None``: no entities column) and
     the by-value cell ``view``; Rewrite captures the rows its generation step is given."""
@@ -925,6 +933,8 @@ def _one_row_run(
     anonymizer = Anonymizer(
         detection_workflow=cast(EntityDetectionWorkflow, Detector()),
         rewrite_runner=_capturing(RewriteWorkflow(Mock()), frames),
+        combined_rewrite_runner=cast(CombinedRewriteWorkflow, _capturing(CombinedRewriteWorkflow(Mock()), frames)),
+        **({"replace_runner": replace_runner} if replace_runner is not None else {}),
     )
     if not custom:  # the built-in detection path, with this detector standing in for the built-in workflow
         anonymizer._custom_detection = False
@@ -934,6 +944,7 @@ def _one_row_run(
         "annotate": AnonymizerConfig(replace=Annotate()),
         "substitute": AnonymizerConfig(replace=Substitute()),
         "rewrite": AnonymizerConfig(rewrite=Rewrite()),
+        "combined": AnonymizerConfig(rewrite=Rewrite(use_combined_graph=True)),
     }[mode]
     with patch.object(NddAdapter, "run_workflow", run_workflow):
         return anonymizer.run(config=config, data=AnonymizerInput(source=str(source))), frames
@@ -1013,8 +1024,33 @@ def test_the_replace_check_scope(custom: bool, builtin_checked: bool, tmp_path: 
 
 
 # Tokens that collide: a value inside a longer word, repeats, a case and an accent variant, adjacent values.
-_TOKENS = ["Ann", "Annual", "Bob", "Bobsled", "34", "$340", "Paris", "ROME", "José", "Paris/Rome", "met", "in", "the"]
-_LABELS = {"Ann": "first_name", "Bob": "first_name", "34": "age", "Paris": "city", "ROME": "city", "José": "first_name"}
+_TOKENS = [
+    "Ann",
+    "Annual",
+    "Bob",
+    "Bobsled",
+    "34",
+    "$340",
+    "Paris",
+    "ROME",
+    "José",
+    "Paris/Rome",
+    "met",
+    "in",
+    "the",
+    "王",
+    "李明",
+]
+_LABELS = {
+    "Ann": "first_name",
+    "Bob": "first_name",
+    "34": "age",
+    "Paris": "city",
+    "ROME": "city",
+    "José": "first_name",
+    "王": "last_name",
+    "李明": "full_name",
+}
 _EXTRA_PAIRS = [("rome", "city"), ("Jose", "first_name"), ("Lee", "first_name"), ("Rome", "city"), ("Paris", "city")]
 
 
@@ -1048,14 +1084,74 @@ def test_every_reported_value_is_protected_or_fails_its_row(mode: str, tmp_path:
         listed = [v for v, _ in _requested_pairs(view)] if view is not None else []
         reported = [e["value"] for e in spans or []] + listed
         kept = EntitiesSchema.from_raw({"entities": spans or []})
-        outside = {
-            value
-            for value in reported
-            if any(lo.undetected_spans for lo in count_values(text, entity_spans(text, kept.entities), "", [value]))
-        }
+        outside = {value for value in reported if _occurs_outside(text, kept, value)}
         if result.failed_records:
             assert [f.step for f in result.failed_records] == ["detect"], (text, spans, view)
         elif mode == "rewrite":
             assert outside <= (_seed_values(frames) if frames else set()), (text, spans, view)
         else:
             assert not outside, (text, spans, view)
+
+
+def _occurs_outside(text: str, kept: EntitiesSchema, value: str) -> bool:
+    """The test's oracle: the leftover check's rule, or, for a value it builds no matcher for, any plain occurrence
+    that no kept span contains."""
+    leftovers = count_values(text, entity_spans(text, kept.entities), "", [value])
+    if leftovers:
+        return any(lo.undetected_spans for lo in leftovers)
+    spans = [(e.start_position, e.end_position) for e in kept.entities]
+    start = text.find(value)
+    while value and start >= 0:
+        if not any(a <= start and start + len(value) <= b for a, b in spans):
+            return True
+        start = text.find(value, start + 1)
+    return False
+
+
+@pytest.mark.parametrize("mode", ["redact", "rewrite", "combined"])
+def test_a_one_character_unspaced_value_is_kept_or_fails_the_row(mode: str, tmp_path: Path) -> None:
+    """The leftover check's rule builds no matcher for a one-character value in an unspaced script (王); such a value
+    fails closed: it stays in the Rewrite view, and Replace fails the row."""
+    text = "Qj 王 met 李明."
+    view = _view(("李明", "full_name"), ("王", "last_name"))
+    result, frames = _one_row_run(tmp_path, text, [_at(text, "李明", "full_name")], view, mode)
+
+    if mode == "redact":
+        assert result.failed_records == [FailedRecord("0", "detect", "unspanned_value")]
+    else:
+        assert result.failed_records == []
+        assert _seed_values(frames) == {"李明", "王"}
+
+
+def test_a_replace_runner_override_without_the_unspanned_keyword_still_runs(tmp_path: Path) -> None:
+    """The keyword is passed only when the check is on, so an override written before it keeps working."""
+    calls: list[str] = []
+
+    class OldRunner(ReplacementWorkflow):
+        def run_with_detection(  # ty: ignore[invalid-method-override]
+            self,
+            dataframe: pd.DataFrame,
+            *,
+            detect: Any,
+            replace_method: Any,
+            model_configs: Any,
+            selected_models: Any,
+            preview_num_records: int | None = None,
+        ) -> Any:
+            calls.append("old")
+            return super().run_with_detection(
+                dataframe,
+                detect=detect,
+                replace_method=replace_method,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                preview_num_records=preview_num_records,
+            )
+
+    text = "Bob met Ann."
+    spans = [_at(text, "Bob", "first_name"), _at(text, "Ann", "first_name")]
+    runner = OldRunner(llm_workflow=Mock())
+    result, _ = _one_row_run(tmp_path, text, spans, None, "redact", custom=False, replace_runner=runner)
+
+    assert calls == ["old"]
+    assert result.failed_records == []

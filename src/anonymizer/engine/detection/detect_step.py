@@ -36,7 +36,7 @@ from anonymizer.engine.ndd.backend import per_target
 from anonymizer.engine.row_partitioning import cell_text, try_resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.schemas.shared import to_python
-from anonymizer.engine.value_matching import count_values, entity_spans
+from anonymizer.engine.value_matching import _normalized, count_values, entity_spans
 
 # Whether Replace fails a built-in detection row whose detected value occurs outside every kept span. Custom detectors
 # are always checked. Off until it is ruled: a built-in span model that misses a repeat would then fail the row.
@@ -233,13 +233,31 @@ def unspanned_pairs(listed: object, text: str, entities: EntitiesSchema) -> list
 
 def values_outside_spans(text: str, entities: EntitiesSchema, values: Iterable[str]) -> set[str]:
     """The ``values`` with a match in ``text`` that no kept span contains, under the leftover check's own matching
-    rule (``count_values``: whole words, case and accents folded). A match that crosses two spans is outside both."""
+    rule (``count_values``: whole words, case and accents folded). A match that crosses two spans is outside both.
+
+    A value that rule cannot judge (it builds no matcher for a one-character key in an unspaced script, such as 王)
+    fails closed: it is outside when a plain search finds it anywhere no kept span contains."""
+    distinct = list(dict.fromkeys(values))
     spans = entity_spans(text, entities.entities)
-    return {
-        value
-        for value in dict.fromkeys(values)
-        if any(leftover.undetected_spans for leftover in count_values(text, spans, "", [value]))
-    }
+    judged = {_normalized(leftover.value): leftover for leftover in count_values(text, spans, "", distinct)}
+    kept = [(span.start, span.end) for span, _ in spans if span is not None]
+    outside = set()
+    for value in distinct:
+        leftover = judged.get(_normalized(value))
+        if leftover is not None and leftover.undetected_spans:
+            outside.add(value)
+        elif leftover is None and value and _found_outside(value, text, kept):
+            outside.add(value)
+    return outside
+
+
+def _found_outside(value: str, text: str, kept: list[tuple[int, int]]) -> bool:
+    start = text.find(value)
+    while start >= 0:
+        if not any(s <= start and start + len(value) <= e for s, e in kept):
+            return True
+        start = text.find(value, start + 1)
+    return False
 
 
 def _listed_pairs(listed: object) -> list[tuple[str, list[str]]]:

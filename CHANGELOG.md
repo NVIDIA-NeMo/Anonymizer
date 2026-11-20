@@ -293,8 +293,9 @@ corrects the Detection entry "Detector spans are checked against the text", whic
 - In Rewrite, a `final_entities` payload that does not parse fails the record with `invalid_output`. Replace still
   rejects it at `replace`.
 - For a row with spans, the `_entities_by_value` view is that of its kept spans plus every pair of the
-  detector's view whose value occurs in the row's text outside them, by the leftover check's matching rule; a row
-  without spans keeps the detector's view. The column may be left out.
+  detector's view whose value occurs in the row's text outside them, by the leftover check's matching rule (whole
+  words, case and accents folded; a one-character value in an unspaced script, such as 王, counts wherever it
+  appears); a row without spans keeps the detector's view. The column may be left out.
 - These rules apply when the detector reports source positions or unique record ids and leaves the text unchanged.
 - With a custom detector, the Replace modes (Redact, Hash, Annotate, Substitute) fail a row at `detect` with
   `unspanned_value` when its view holds a value that occurs in the text outside every kept span, including a span's

@@ -1201,6 +1201,8 @@ class Anonymizer:
             replacement_elapsed = time.perf_counter() - t0
             outcomes = None
         elif config.replace is not None:
+            # Passed only when set: a caller's run_with_detection override may predate the keyword.
+            unspanned = {"unspanned_check": True} if self._custom_detection or UNSPANNED_CHECK_BUILTIN else {}
             replace_result = self._replace_runner.run_with_detection(
                 input_df,
                 detect=detect_then_announce,
@@ -1208,7 +1210,7 @@ class Anonymizer:
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.replace,
                 preview_num_records=preview_num_records,
-                unspanned_check=self._custom_detection or UNSPANNED_CHECK_BUILTIN,
+                **unspanned,
             )
             assert replace_result.detection is not None
             detected_df, detection_failures = (
