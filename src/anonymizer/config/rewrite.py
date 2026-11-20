@@ -46,8 +46,9 @@ class Finding(str, Enum):
     """Named conditions on an evaluated rewrite row.
 
     Only a ``RepairFinding`` can send a row to repair. No finding decides ``needs_human_review``: the
-    rewrite's final checks, the ``undetected_value_kept`` metric and the utility score do. What each
-    finding means is written once, in ``present_findings`` (``anonymizer.engine.rewrite.findings``).
+    rewrite's final checks, the ``undetected_value_kept`` and ``placeholder_in_text`` metrics and the utility
+    score do. What each finding means is written once, in ``present_findings``
+    (``anonymizer.engine.rewrite.findings``).
     """
 
     rewrite_missing = "rewrite_missing"

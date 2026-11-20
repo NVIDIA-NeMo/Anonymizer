@@ -304,7 +304,7 @@ def _placeholder_in_text(text: str, replacement_map: object) -> bool:
         return False
     folded = text.casefold()
     return any(
-        _placeholder_pattern(entry["label"], entry["synthetic"]).search(folded)
+        _placeholder_pattern(entry["synthetic"]).search(folded)
         for entry in entries
         if isinstance(entry, dict)
         and isinstance(entry.get("label"), str)
@@ -313,15 +313,14 @@ def _placeholder_in_text(text: str, replacement_map: object) -> bool:
     )
 
 
-def _placeholder_pattern(label: str, placeholder: str) -> re.Pattern[str]:
-    """The loose casefolded pattern of ``placeholder``, an ``is_placeholder`` substitute for ``label``."""
-    number = placeholder[placeholder.rindex("_") + 1 : -1]
-    words = ["substitute", *"".join(c.casefold() if c.isalnum() else " " for c in label).split()]
-    if len(words) == 1:
-        words.append("value")
+def _placeholder_pattern(placeholder: str) -> re.Pattern[str]:
+    """The loose casefolded pattern of ``placeholder``, an ``is_placeholder`` substitute. Its words are the minted
+    token's own, split at each ``_`` with empty items kept, so a label's punctuation runs match as minted."""
+    token, number = placeholder.casefold()[1:-1].rsplit("_", 1)
+    number = f"0*{int(number)}" if number.isascii() and number.isdecimal() else re.escape(number)
     separator = r"[_\- ]"
-    body = separator.join(re.escape(word) for word in words)
-    return re.compile(rf"(?<![^\W_]){body}{separator}?{int(number)}(?!\d)")
+    body = separator.join(re.escape(word) for word in token.split("_"))
+    return re.compile(rf"(?<![^\W_]){body}{separator}?{number}(?!\d)")
 
 
 def _leftover_metrics(row: Mapping[str, object]) -> dict[str, bool | str | None]:
@@ -450,7 +449,8 @@ def _flag_review(
     frame: pd.DataFrame, result: ProtectionResult, target_of: Mapping[int, Datum], evaluation: EvaluationCriteria
 ) -> None:
     """Assign ``needs_human_review``: the row's target outcome is not qualified, its rewritten text keeps a replaced
-    value that the source also holds outside the detected spans, or its utility is unavailable or below the flag."""
+    value that the source also holds outside the detected spans (``undetected_value_kept``) or a placeholder of its
+    replacement map (``placeholder_in_text``), or its utility is unavailable or below the flag."""
     floor = evaluation.flag_utility_below
     review = [
         _needs_review(result, target_of[record[ROW_ORDER_COL]])

@@ -2021,9 +2021,9 @@ _NOT_PLACEHOLDER_FORMS = [
 ]
 
 
-def _combined_run_result(text: str, tmp_path: Path) -> Any:
+def _combined_run_result(text: str, tmp_path: Path, replacement_map: dict = _PLACEHOLDER_MAP) -> Any:
     """Run one ``Alice`` row through ``Anonymizer.run()`` on the combined route, whose adapter returns ``text`` as the
-    rewrite with ``_PLACEHOLDER_MAP`` as the replacement map."""
+    rewrite with ``replacement_map``."""
     from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 
     source = "Alice works at Acme"
@@ -2034,7 +2034,7 @@ def _combined_run_result(text: str, tmp_path: Path) -> Any:
 
     def run_workflow(seed: pd.DataFrame, **_: object) -> WorkflowRunResult:
         out = seed.copy()
-        out[COL_REPLACEMENT_MAP] = [_PLACEHOLDER_MAP] * len(out)
+        out[COL_REPLACEMENT_MAP] = [replacement_map] * len(out)
         out[COL_REWRITTEN_TEXT] = text
         out[COL_SENSITIVITY_DISPOSITION] = [{"sensitivity_disposition": policy}] * len(out)
         out[COL_UTILITY_SCORE] = 0.9
@@ -2077,10 +2077,11 @@ def _combined_run_result(text: str, tmp_path: Path) -> Any:
         )
 
 
-def _staged_or_combined(route: str, text: str, tmp_path: Path) -> Any:
+def _staged_or_combined(route: str, text: str, tmp_path: Path, replacement_map: dict | None = None) -> Any:
+    replacement_map = _PLACEHOLDER_MAP if replacement_map is None else replacement_map
     if route == "combined":
-        return _combined_run_result(text, tmp_path)
-    return _run_result(_ScriptedAdapter({"rec": 0}, initial=text, replacement_map=_PLACEHOLDER_MAP), tmp_path)
+        return _combined_run_result(text, tmp_path, replacement_map)
+    return _run_result(_ScriptedAdapter({"rec": 0}, initial=text, replacement_map=replacement_map), tmp_path)
 
 
 @pytest.mark.parametrize("route", ["staged", "combined"])
@@ -2102,6 +2103,38 @@ def test_text_that_is_not_the_rows_placeholder_is_not_flagged(route: str, text: 
 
     outcome = result.outcome(0)
     assert (outcome.qualification, outcome.protected) == ("met", True)
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False]
+
+
+@pytest.mark.parametrize("route", ["staged", "combined"])
+@pytest.mark.parametrize(
+    ("label", "placeholder"),
+    [
+        pytest.param("name, surname", "[SUBSTITUTE_NAME__SURNAME_1]", id="punctuation-run"),
+        pytest.param("kimlik numarası", "[SUBSTITUTE_KIMLIK_NUMARASI_1]", id="dotless-i"),
+        pytest.param("first_name", "[SUBSTITUTE_FIRST_NAME_01]", id="leading-zero"),
+    ],
+)
+def test_exact_placeholder_of_any_label_flags_a_met_row(
+    route: str, label: str, placeholder: str, tmp_path: Path
+) -> None:
+    """The exact placeholder is matched from its minted token, whatever punctuation or casing its label has."""
+    replacement_map = {"replacements": [{"original": "Alice", "label": label, "synthetic": placeholder}]}
+    result = _staged_or_combined(route, f"{placeholder} studied here.", tmp_path, replacement_map)
+
+    outcome = result.outcome(0)
+    assert (outcome.qualification, outcome.protected, outcome.reasons) == ("met", True, ())
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [True]
+
+
+@pytest.mark.parametrize("route", ["staged", "combined"])
+def test_placeholder_with_a_non_ascii_digit_does_not_raise(route: str, tmp_path: Path) -> None:
+    """A placeholder whose number is not ASCII decimal is matched as written, not parsed."""
+    placeholder = "[SUBSTITUTE_FIRST_NAME_\u00b2]"
+    replacement_map = {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": placeholder}]}
+    result = _staged_or_combined(route, "Maria studied here.", tmp_path, replacement_map)
+
+    assert result.outcome(0).qualification == "met"
     assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False]
 
 
