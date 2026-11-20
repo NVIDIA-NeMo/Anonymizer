@@ -164,6 +164,18 @@ COL_WEIGHTED_LEAKAGE_RATE = "weighted_leakage_rate"
 COL_ANY_HIGH_LEAKED = "any_high_leaked"
 COL_NEEDS_HUMAN_REVIEW = "needs_human_review"
 
+# Names the pipeline treats as its own columns, so an input column may not carry them: the record id and every
+# internal ``COL_*`` (they start with an underscore, except ``tagged_text``). The user-facing result columns
+# (``final_entities``, ``utility_score``, ...) are not listed; the reader renames an input column that has one.
+RESERVED_INPUT_COLUMNS: frozenset[str] = frozenset(
+    {RECORD_ID_COLUMN, COL_TAGGED_TEXT}
+    | {
+        value
+        for name, value in tuple(globals().items())
+        if name.startswith("COL_") and isinstance(value, str) and value.startswith("_")
+    }
+)
+
 # ---------------------------------------------------------------------------
 # Entity labels and examples
 #
