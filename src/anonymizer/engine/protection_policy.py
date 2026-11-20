@@ -116,7 +116,8 @@ POLICY: dict[tuple[str, str, str], Verdict] = {
         },
     ),
     **_rows("unplaced_output", _all(Verdict("fail", "unplaced_output"))),
-    # The row is reported unassessed and unprotected; each verifier reads ``could_not_assess`` with this cause.
+    # The row is reported unassessed and unprotected; each verifier reads ``could_not_assess`` with this cause. Only
+    # the reason is read: the action is descriptive.
     **_rows("unplaced_result_row", _all(Verdict("unassessed", "unplaced"))),
 }
 
@@ -126,13 +127,14 @@ def assess(situation: Situation, mode: Mode, detector: Detector) -> Verdict:
     return POLICY[(situation, mode, detector)]
 
 
-def assess_any(situation: Situation, *, detector: Detector | None = None) -> Verdict:
-    """The one verdict ``situation`` has in every mode (and every detector kind, unless ``detector`` is given), for a
-    site that knows neither; ``n/a`` rows are skipped. Raises ``ValueError`` when the live rows disagree."""
+def assess_any(situation: Situation, *, mode: Mode | None = None, detector: Detector | None = None) -> Verdict:
+    """The one verdict ``situation`` has across the rows a site cannot tell apart: every mode unless ``mode`` is given,
+    and every detector kind unless ``detector`` is given; ``n/a`` rows are skipped. Raises ``ValueError`` when the live
+    rows disagree."""
     verdicts = {
         v
-        for (s, _, d), v in POLICY.items()
-        if s == situation and v.action != "n/a" and (detector is None or d == detector)
+        for (s, m, d), v in POLICY.items()
+        if s == situation and v.action != "n/a" and mode in (None, m) and detector in (None, d)
     }
     if len(verdicts) != 1:
         raise ValueError(f"{situation} has no single verdict across modes: {sorted(map(repr, verdicts))}")

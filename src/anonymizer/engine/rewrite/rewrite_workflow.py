@@ -433,7 +433,10 @@ def _withhold_unassessed(frame: pd.DataFrame) -> None:
     The final checks have already run on the text and could not assess it; without a privacy verdict it is not
     released. Rows whose text is already null are left alone (see ``_withhold_rewritten_text`` on null columns).
     """
-    if COL_PRIVACY_QA_REANSWER not in frame.columns or assess_any("privacy_unassessed").action != "withhold":
+    if (
+        COL_PRIVACY_QA_REANSWER not in frame.columns
+        or assess_any("privacy_unassessed", mode="rewrite").action != "withhold"
+    ):
         return
     unassessed = frame[COL_PRIVACY_QA_REANSWER].map(no_response).astype(bool) & frame[COL_REWRITTEN_TEXT].notna()
     if unassessed.any():
@@ -452,7 +455,7 @@ def _withhold_failed_repairs(frame: pd.DataFrame, result: ProtectionResult, targ
     ran out of rounds, the preset does not send the row to repair, or ``max_repair_iterations`` is 0. Call it after
     the summary, which counts a repaired row without text as an unparsed repair.
     """
-    if assess_any("privacy_check_failed").action != "withhold":
+    if assess_any("privacy_check_failed", mode="rewrite").action != "withhold":
         return
     failed = [
         any(
@@ -484,7 +487,7 @@ def _unavailable_if(outcome: TargetOutcome, withheld: bool) -> TargetOutcome:
 def _needs_review(result: ProtectionResult, target: Datum) -> bool:
     metrics = result.value(target, "metrics") or {}
     flagged = (
-        bool(metrics.get(situation)) and assess_any(situation).action == "flag"
+        bool(metrics.get(situation)) and assess_any(situation, mode="rewrite").action == "flag"
         for situation in ("undetected_value_kept", "placeholder_in_text")
     )
     return result.outcome(target).qualification != "met" or any(flagged)
