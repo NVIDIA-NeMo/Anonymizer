@@ -266,8 +266,7 @@ def _make_privacy_answer_parser(
     def parser(response: str) -> tuple[PrivacyAnswersSchema, bool]:
         obj = recipe.parse(response)
         payload = obj.model_dump() if hasattr(obj, "model_dump") else obj
-        # An explicit null answer leaves the question as unanswered as an omitted id: both count as defaulted.
-        defaulted = _omits(payload.get("answers"), expected_ids) or _null_answer(payload.get("answers"))
+        omitted = _omits(payload.get("answers"), expected_ids)
         payload["answers"] = _normalize_answer_items(
             payload.get("answers"),
             expected_ids=expected_ids,
@@ -280,6 +279,9 @@ def _make_privacy_answer_parser(
                 "evidence": [],
             },
         )
+        # An explicit null answer leaves the question as unanswered as an omitted id: both count as defaulted. Only the
+        # kept items count: normalization drops ids nobody asked about and every copy of a duplicate id but the first.
+        defaulted = omitted or _null_answer(payload["answers"])
         return PrivacyAnswersSchema.model_validate(payload, context={"expected_ids": expected_ids}), defaulted
 
     return parser
@@ -315,7 +317,8 @@ def _omits(raw_items: Any, expected_ids: list[int]) -> bool:
 
 
 def _null_answer(items: Any) -> bool:
-    """Whether a parsed privacy response holds an item whose explicit null ``answer`` the schema defaulted."""
+    """Whether the normalized items of a privacy response hold one whose explicit null ``answer`` the schema
+    defaulted."""
     return isinstance(items, list) and any(
         isinstance(item, dict) and item.get("reason") == NULL_PRIVACY_ANSWER_REASON for item in items
     )

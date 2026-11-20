@@ -1347,8 +1347,8 @@ def test_privacy_item_omitted_before_a_complete_repair_does_not_count_against_it
 ) -> None:
     """C3: the first candidate leaks and omits; the repaired one answers every question cleanly, so it is met.
 
-    In combined mode this pins that each round has its own omission marker: a shared one would carry the first
-    round's omission onto the repaired candidate."""
+    In combined mode this pins that ``finalize`` takes the chosen round's omission marker: reading an earlier round's
+    would carry the first round's omission onto the repaired candidate."""
     script, _ = repairer
     script["privacy"] = [_privacy_answers({1: "yes"}), _privacy_answers({1: "no", 2: "no"})]
     script["repair"] = [json.dumps({"rewritten_text": _REPAIRED_TEXT})]
@@ -1390,4 +1390,36 @@ def test_privacy_items_omitted_under_the_minimal_preset_also_fail_the_threshold(
     assert ("failed", "leakage_within_threshold") in [(code, check) for code, check, _, _ in reasons]
     assert result.dataframe.iloc[0]["text_rewritten"] is None
     assert not outcome.available
+    _assert_clean_row_met(result)
+
+
+_ANSWER = {"confidence": 0.9, "reason": "R.", "evidence": []}
+
+
+@pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])
+@pytest.mark.parametrize(
+    "extra",
+    [{"id": 3, "answer": None}, {"id": 2, "answer": None}],
+    ids=["null-for-an-id-not-asked", "null-in-a-duplicate"],
+)
+def test_null_answer_outside_the_questions_asked_does_not_withhold_the_row(
+    tmp_path: Path,
+    repairer: tuple[dict[str, list[str]], dict[str, int]],
+    workflow: type[RewriteWorkflow],
+    extra: dict[str, Any],
+) -> None:
+    """Every question asked was answered: a null for an id nobody asked about, or in a later copy of an answered
+    id, is dropped with that item and leaves the row met."""
+    script, _ = repairer
+    answers = [{"id": 1, "answer": "no", **_ANSWER}, {"id": 2, "answer": "no", **_ANSWER}, {**_ANSWER, **extra}]
+    script["privacy"] = [json.dumps({"answers": answers})]
+
+    result = _anonymizer_run(
+        tmp_path, workflow, 0, risk_tolerance="moderate", privacy_qa=_coverage_qa("high", "medium")
+    )
+
+    outcome = result.outcome(0)
+    assert outcome.qualification == "met"
+    assert outcome.reasons == ()
+    assert result.dataframe.iloc[0]["text_rewritten"] == _EVAL_TEXT
     _assert_clean_row_met(result)

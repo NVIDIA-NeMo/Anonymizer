@@ -304,8 +304,10 @@ def _marker(monkeypatch: pytest.MonkeyPatch, reply: str | None, text: str | None
         ([_answer(1), _answer(2)], False),
         ([_answer(1)], True),  # item 2 omitted
         ([_answer(1), _answer(2, None)], True),  # an explicit null answer counts as omitted
+        ([_answer(1), _answer(2), _answer(3, None)], False),  # a null for an id not asked is dropped
+        ([_answer(1), _answer(2), _answer(2, None)], False),  # a null in a duplicate is dropped with it
     ],
-    ids=["complete", "omitted", "null-answer"],
+    ids=["complete", "omitted", "null-answer", "null-for-an-id-not-asked", "null-in-a-duplicate"],
 )
 def test_privacy_column_marks_a_response_that_leaves_a_question_unanswered(
     monkeypatch: pytest.MonkeyPatch, answers: list[dict[str, Any]], marker: bool

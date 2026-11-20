@@ -281,7 +281,7 @@ def _evaluation_columns(
         COL_REWRITTEN_TEXT: state.rewritten_text,
         COL_QUALITY_QA_REANSWER: state.quality_reanswer,
         COL_PRIVACY_QA_REANSWER: state.privacy_reanswer,
-        COL_PRIVACY_ITEMS_OMITTED: state.privacy_omitted,  # unmapped, every round would share one marker
+        COL_PRIVACY_ITEMS_OMITTED: state.privacy_omitted,  # one marker per round; ``finalize`` reads the chosen one
         COL_QUALITY_QA_COMPARE: state.quality_compare,
         COL_UTILITY_SCORE: state.utility_score,
         COL_LEAKAGE_MASS: state.leakage_mass,
