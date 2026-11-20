@@ -148,22 +148,20 @@ def covered_spans(datum: Datum, entities: EntitiesSchema) -> set[int]:
 
 def _with_entities(frame: pd.DataFrame, covered: dict[int, set[int]]) -> pd.DataFrame:
     """A copy of ``frame`` whose rows at the positions in ``covered`` lose those entities, with their by-value view
-    rebuilt (the column is added when the detector returned none). Each rewritten cell keeps the detector's encoding
-    (a JSON string stays a string) and its own keys: later stages sample one cell to decide how to store the whole
-    column."""
+    rebuilt (the column is added when the detector returned none). Each rewritten cell keeps its own row's encoding
+    (a JSON string stays a string) and its own keys; later stages encode every seed cell on its own, so a column may
+    mix encodings."""
     frame = frame.copy()
     given = list(frame[COL_FINAL_ENTITIES])
     final = [_without(raw, covered[row]) if covered.get(row) else raw for row, raw in enumerate(given)]
     frame[COL_FINAL_ENTITIES] = final
-    by_value = list(frame[COL_ENTITIES_BY_VALUE]) if COL_ENTITIES_BY_VALUE in frame.columns else [None] * len(given)
-    # A rebuilt cell takes the encoding of the column's first present cell, the one a seed samples for the whole
-    # column; with none present, that of the row's own entities cell.
-    sample = next((cell for cell in by_value if not _absent(cell)), None)
+    by_value = frame[COL_ENTITIES_BY_VALUE] if COL_ENTITIES_BY_VALUE in frame.columns else repeat(None)
     frame[COL_ENTITIES_BY_VALUE] = [
-        _encoded_like(given[row] if sample is None else sample, _build_entities_by_value(final[row]))
+        # A rebuilt cell takes the encoding of its own stale cell, or, when that is missing, of its entities cell.
+        _encoded_like(given[row] if _absent(raw) else raw, _build_entities_by_value(final[row]))
         if row in covered
         else raw
-        for row, raw in enumerate(by_value)
+        for row, raw in zip(range(len(given)), by_value)
     ]
     return frame
 

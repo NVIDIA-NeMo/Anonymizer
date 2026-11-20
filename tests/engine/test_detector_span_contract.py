@@ -544,7 +544,7 @@ class _MixedByValueDetector(_Detector):
 
 @pytest.mark.parametrize("mode", ["rewrite", "combined"])
 @pytest.mark.parametrize("missing", [0, 1], ids=["missing_first", "missing_second"])
-def test_a_rebuilt_by_value_cell_keeps_the_columns_encoding(missing: int, mode: str, tmp_path: Path) -> None:
+def test_a_rebuilt_by_value_cell_reaches_the_seed_in_either_order(missing: int, mode: str, tmp_path: Path) -> None:
     source = tmp_path / "in.csv"
     pd.DataFrame({"text": [TEXT, CONTROL]}).to_csv(source, index=False)
     frames: list[pd.DataFrame] = []
@@ -565,3 +565,79 @@ def test_a_rebuilt_by_value_cell_keeps_the_columns_encoding(missing: int, mode: 
         KEPT_PAIRS,
         {("Bob Jones", "full_name"), ("Rome", "city")},
     ]
+
+
+THIRD = "Carol White moved to Oslo."
+THIRD_ENTITIES = [_e("Carol White", "full_name", 0, 11), _e("Oslo", "city", 21, 25)]
+PAIRS_BY_TEXT = {
+    TEXT: KEPT_PAIRS,
+    CONTROL: {("Bob Jones", "full_name"), ("Rome", "city")},
+    THIRD: {("Carol White", "full_name"), ("Oslo", "city")},
+}
+CROSSING = SHAPES["partial_overlap"][0]
+NULL_LABEL = [NAME, {**CITY, "label": None}]
+
+# case -> (first row's entities, entities cell encodings, by-value cell encodings), rows [TEXT, CONTROL, THIRD]
+MIXED: dict[str, tuple[list[dict[str, Any]], list[str], list[str]]] = {
+    "rejected_first": (CROSSING, ["dict"] * 3, ["dict", "none", "str"]),
+    "malformed_first": (NULL_LABEL, ["dict"] * 3, ["dict", "none", "str"]),
+    "detector_mixed": ([NAME, CITY], ["dict"] * 3, ["dict", "str", "str"]),
+    "no_by_value_mixed_entities": ([NAME, CITY], ["dict", "str", "str"], ["none"] * 3),
+    "mixed_entities_only": ([NAME, CITY], ["dict", "str", "str"], ["str"] * 3),
+}
+
+
+def _encoded(payload: dict[str, Any], kind: str) -> object:
+    return {"dict": payload, "str": json.dumps(payload), "none": None}[kind]
+
+
+class _MixedEncodingDetector(_Detector):
+    def __init__(self, case: str) -> None:
+        first, self.entity_kinds, self.by_value_kinds = MIXED[case]
+        super().__init__(first)
+        self.by_text[THIRD] = THIRD_ENTITIES
+
+    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+        frame = dataframe.copy()
+        entities = [{"entities": self.by_text[str(text)]} for text in frame[COL_TEXT]]
+        frame[COL_FINAL_ENTITIES] = pd.Series(
+            [_encoded(e, k) for e, k in zip(entities, self.entity_kinds)], index=frame.index, dtype=object
+        )
+        frame[COL_ENTITIES_BY_VALUE] = pd.Series(
+            [_encoded(_build_entities_by_value(e), k) for e, k in zip(entities, self.by_value_kinds)],
+            index=frame.index,
+            dtype=object,
+        )
+        return EntityDetectionResult(frame, [], tuple(range(len(frame))))
+
+
+@pytest.mark.parametrize("mode", ["rewrite", "combined"])
+@pytest.mark.parametrize("case", list(MIXED))
+def test_every_kept_row_reaches_the_rewrite_seed_whatever_the_encoding_mix(
+    case: str, mode: str, tmp_path: Path
+) -> None:
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": [TEXT, CONTROL, THIRD]}).to_csv(source, index=False)
+    frames: list[pd.DataFrame] = []
+    anonymizer = Anonymizer(
+        detection_workflow=cast(EntityDetectionWorkflow, _MixedEncodingDetector(case)),
+        rewrite_runner=_capturing(RewriteWorkflow(Mock()), frames),
+        combined_rewrite_runner=cast(CombinedRewriteWorkflow, _capturing(CombinedRewriteWorkflow(Mock()), frames)),
+    )
+    result = anonymizer.run(
+        config=AnonymizerConfig(rewrite=Rewrite(use_combined_graph=mode == "combined")),
+        data=AnonymizerInput(source=str(source)),
+    )
+
+    assert all(f.step == "detect" for f in result.failed_records)
+    kept = list(frames[0][COL_TEXT])
+    assert kept == ([CONTROL, THIRD] if case in ("rejected_first", "malformed_first") else [TEXT, CONTROL, THIRD])
+    seed = select_seed_cols(frames[0], [COL_FINAL_ENTITIES, COL_ENTITIES_BY_VALUE])
+    assert [_requested_pairs(cell) for cell in seed[COL_ENTITIES_BY_VALUE]] == [PAIRS_BY_TEXT[t] for t in kept]
+    assert [{(v, label) for _, _, label, v in _spans_with_values(cell)} for cell in seed[COL_FINAL_ENTITIES]] == [
+        PAIRS_BY_TEXT[t] for t in kept
+    ]
+
+
+def _spans_with_values(raw: object) -> list[tuple[int, int, str, str]]:
+    return [(e.start_position, e.end_position, e.label or "", e.value) for e in EntitiesSchema.from_raw(raw).entities]

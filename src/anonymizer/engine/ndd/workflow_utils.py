@@ -43,19 +43,23 @@ def derive_seed_columns(
 def select_seed_cols(df: pd.DataFrame, seed_cols: list[str]) -> pd.DataFrame:
     """Select *seed_cols* from *df* for an adapter call.
 
-    Non-string object cells are converted to plain Python, then JSON-encoded: numpy
-    arrays (as in a frame reloaded from parquet) become lists and models their fields.
+    Each object cell is encoded on its own: a string stays as it is, a missing cell stays missing, and any other cell
+    is converted to plain Python and JSON-encoded (numpy arrays, as in a frame reloaded from parquet, become lists and
+    models their fields). A column that mixes JSON strings with dicts, as a custom detector may return, therefore
+    never encodes a string a second time, whatever cell comes first.
     """
     present = [c for c in seed_cols if c in df.columns]
     seed = df[present].copy()
     for col in seed.columns:
-        if seed[col].dtype == "object" and seed[col].notna().any():
-            sample = seed[col].dropna().iloc[0]
-            if not isinstance(sample, str):
-                seed[col] = seed[col].apply(
-                    lambda v: json.dumps(to_python(v), default=str, ensure_ascii=False) if v is not None else v
-                )
+        if seed[col].dtype == "object":
+            seed[col] = seed[col].map(_seed_cell)
     return seed
+
+
+def _seed_cell(value: object) -> object:
+    if isinstance(value, str) or value is None or value is pd.NA or (isinstance(value, float) and value != value):
+        return value
+    return json.dumps(to_python(value), default=str, ensure_ascii=False)
 
 
 def run_columns(
