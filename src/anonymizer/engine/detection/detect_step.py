@@ -33,7 +33,7 @@ from anonymizer.engine.graph_core.authoring import (
 )
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.backend import per_target
-from anonymizer.engine.row_partitioning import cell_text, try_resolve_source_positions
+from anonymizer.engine.row_partitioning import cell_text, resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.schemas.shared import to_python
 from anonymizer.engine.value_matching import _normalized, count_values, entity_spans
@@ -49,7 +49,6 @@ class DetectState:
 
     detected: list[EntityDetectionResult] = field(default_factory=list)
     owners: list[Datum] = field(default_factory=list)
-    unresolved: list[bool] = field(default_factory=list)
     elapsed: list[float] = field(default_factory=list)
     rows: dict[Datum, EntitiesSchema] = field(default_factory=dict)
     failures: list[FailedRecord] = field(default_factory=list)
@@ -64,8 +63,7 @@ def detect_step(
 ) -> Operation:
     """The ``detect`` operation over ``dataframe``: one ``detect`` call, its outcome recorded in ``state``.
 
-    A result that is not verifiably one input row per returned row (see ``resolve_positions``), or that returns a row
-    whose text differs from its input row's, fails every target; the caller then works over the returned frame.
+    The seam has already placed every returned row at one distinct input position (``resolve_positions``).
 
     With ``spans_only`` (Replace, which replaces spans and nothing else), a row whose by-value view lists a value that
     occurs in its text outside every kept span fails with ``unspanned_value``: no step would protect that value.
@@ -77,19 +75,6 @@ def detect_step(
         state.elapsed.append(time.perf_counter() - started)
         state.failures.extend(result.failed_records)
         positions = resolve_positions(dataframe, result)
-        returned = result.dataframe.get(COL_TEXT)
-        if positions is not None and returned is not None:
-            # The detector's offsets are for the text it returned: a changed text cannot be protected as the input.
-            # A cell missing on both sides is unchanged, however each side spells the missing value.
-            given = dataframe[COL_TEXT]
-            changed = any(
-                not (missing(t) and missing(given.iloc[p])) and str(t) != target[p].text
-                for t, p in zip(returned, positions)
-            )
-            positions = None if changed else positions
-        if positions is None:
-            state.unresolved.append(True)
-            return [None] * len(target)
         surviving = [target[position] for position in positions]
         state.owners.extend(surviving)
         raw_entities = result.dataframe.get(COL_FINAL_ENTITIES, repeat({}, len(positions)))
@@ -142,10 +127,10 @@ def missing(text: object) -> bool:
     return not isinstance(text, str) and bool(pd.isna(text))
 
 
-def resolve_positions(dataframe: pd.DataFrame, result: EntityDetectionResult) -> tuple[int, ...] | None:
-    """One distinct input position per returned row, or ``None``: the detector's reported positions, else unique
-    record IDs; positions it did not report (the default ``()``) are not inferred from equal text or row counts."""
-    return try_resolve_source_positions(dataframe, result.dataframe, result.source_positions or None)
+def resolve_positions(dataframe: pd.DataFrame, result: EntityDetectionResult) -> tuple[int, ...]:
+    """One distinct input position per returned row: the reported positions, else unique record ids; a result that
+    cannot be placed raises ``AnonymizerWorkflowError``."""
+    return resolve_source_positions(dataframe, result.dataframe, result.source_positions or None)
 
 
 def accepted_mentions(datum: Datum, entities: EntitiesSchema) -> list[Mention]:

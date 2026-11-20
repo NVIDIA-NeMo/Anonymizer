@@ -32,7 +32,6 @@ from anonymizer.engine.graph_core.authoring import (
     Workflow,
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
-from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.engine.replace.route import run_replace_pipeline
 from anonymizer.engine.schemas import AugmentedEntitiesSchema, DetectionResult
 from tests.spec_programs._builder import Checks
@@ -86,7 +85,6 @@ def _redact(texts: list[str], entities: list[list[dict]]):
         replace_method=Redact(),
         llm_workflow=None,
         map_arguments={},
-        reroute=lambda df: ReplacementResult(df, []),
     )
 
 

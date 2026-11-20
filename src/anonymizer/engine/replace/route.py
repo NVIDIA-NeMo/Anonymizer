@@ -201,7 +201,6 @@ def run_replace_pipeline(
     replace_method: LocalReplaceMethod | Substitute,
     llm_workflow: LlmReplaceWorkflow | None,
     map_arguments: dict[str, Any],
-    reroute: Callable[[pd.DataFrame], ReplacementResult],
     session: Session | None = None,
     unspanned_check: bool = False,
 ) -> ReplacementResult:
@@ -209,9 +208,7 @@ def run_replace_pipeline(
 
     A row the detector drops fails at ``detect`` and blocks the later steps. Output rows are the detection frame's
     rows for the targets that reached the end; a row that fails at a step for any reason other than missing output
-    (which that step's workflow already reports) is returned as a failed record naming the step and the reason. A
-    result that is not verifiably one input row per returned row (see ``resolve_positions``), or that changed a row's
-    text, fails every target at ``detect``, and ``reroute`` replaces over the detection frame as returned.
+    (which that step's workflow already reports) is returned as a failed record naming the step and the reason.
     """
     scope = GraphScope()
     graph = ProtectionGraph(scope, tuple(scope.datum(cell_text(text)) for text in dataframe[COL_TEXT]))
@@ -263,10 +260,6 @@ def run_replace_pipeline(
     replace_elapsed = time.perf_counter() - started - sum(elapsed)  # detection records its own stage
     failures.extend(malformed)
     call_on_empty_input(graph, detect_op)
-    if state.unresolved:
-        rerouted = reroute(detected[0].dataframe)
-        failed = [*failures, *rerouted.failed_records]
-        return dataclasses.replace(rerouted, failed_records=failed, detection=detected[0], detection_elapsed=elapsed[0])
     targets = [d for d in graph.targets if result.outcome(d).available]
     available = set(targets)
     row_of = {datum: row for row, datum in enumerate(owners)}

@@ -869,11 +869,14 @@ def _anonymizer_run(
 ) -> Any:
     """Run both records through ``Anonymizer.run()``: detection returns the seeded rows, and the loop evaluates."""
     seeded = _seeded_rows(rewritten_text).drop(columns=[COL_TEXT])
-    detector = Mock(spec=EntityDetectionWorkflow)
-    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
-        dataframe=frame.assign(**{column: seeded[column].tolist() for column in seeded.columns}),
-        failed_records=[],
-        source_positions=tuple(range(len(frame))),
+    # The built-in detector, stubbed: its frame carries the seeded stage columns into the rewrite.
+    detector = EntityDetectionWorkflow(adapter=Mock())
+    detector.run = Mock(
+        side_effect=lambda frame, **_: EntityDetectionResult(
+            dataframe=frame.assign(**{column: seeded[column].tolist() for column in seeded.columns}),
+            failed_records=[],
+            source_positions=tuple(range(len(frame))),
+        )
     )
     csv_path = tmp_path / "input.csv"
     pd.DataFrame({"text": [_TEXT, _OTHER_TEXT]}).to_csv(csv_path, index=False)

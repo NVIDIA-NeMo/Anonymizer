@@ -454,6 +454,28 @@ These are additions and break nothing.
 
 These are not on the #319 branch yet. Each lands with its change.
 
+### Detection contract
+
+**A custom `detection_workflow` returns a `DetectorResult`.** This replaces the frame with `final_entities` and
+`_entities_by_value` columns, and it applies to every detector other than the built-in `EntityDetectionWorkflow`
+class itself, including its subclasses and `Mock(spec=EntityDetectionWorkflow)`.
+- A `DetectorResult` holds one `DetectorRow(record_id, spans, extra_values, latent)` per answered input record, named
+  by its `_anonymizer_record_id`, and the records the detector failed. `DetectedSpan`, `DetectorRow`,
+  `DetectorResult` and `InvalidDetectorResultError` are exported from `anonymizer`.
+- A result that cannot be placed against the input raises `InvalidDetectorResultError` before any model call: any
+  other return type, an id that is not an input id, or an id answered or failed twice. It failed every record with
+  `uncorrelated_output`, or was used as returned, before.
+- A record the result neither answers nor fails fails at `detect` with `dropped_output`.
+- The engine renders `final_entities`, `_entities_by_value`, `tagged_text` and `_latent_entities` from the result. A
+  detector-supplied text column, `tagged_text` or `source_positions` is no longer read.
+- Failures from a custom `detection_workflow` are named by the input record's id (the `TextRecord` id, or a
+  generated id for file input), not by the returned row's index.
+- The "Detection complete — N entities found" log line counts the final entities, so a custom detector's spans are
+  counted. It counted the built-in detector's candidates before, and 0 for a custom detector.
+- What to do: build one `DetectorRow` per input row from `dataframe["_anonymizer_record_id"]`, move each span from
+  the `final_entities` dict into `DetectedSpan(start, end, label, value)`, and move any value listed only in
+  `_entities_by_value` into `extra_values`. See "Custom detection workflows".
+
 ### #407: frozen config and one options object
 
 **Config fields cannot be reassigned.** `AnonymizerConfig`, `Detect`, `Rewrite`, `PrivacyGoal`, the replace

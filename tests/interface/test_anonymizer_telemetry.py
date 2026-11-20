@@ -12,7 +12,7 @@ from unittest.mock import Mock
 import pandas as pd
 import pytest
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite, TextRecord, TextRecordsInput
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_REWRITTEN_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
@@ -27,6 +27,7 @@ from anonymizer.telemetry import (
     TaskStatusEnum,
 )
 from tests.conftest import stub_run_with_detection
+from tests.detector_results import returns_detector_result
 
 
 @pytest.fixture
@@ -41,7 +42,7 @@ def _make_anonymizer(
     replace_return: ReplacementResult | None = None,
     rewrite_return: RewriteResult | None = None,
 ) -> tuple[Anonymizer, Mock, Mock, Mock]:
-    detection_workflow = Mock(spec=EntityDetectionWorkflow)
+    detection_workflow = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
     detection_workflow.run.return_value = detection_return or EntityDetectionResult(
         dataframe=pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
         failed_records=[],
@@ -366,16 +367,18 @@ class TestFailureAggregation:
         captured_events: list[AnonymizerEvent],
         stub_input: AnonymizerInput,
     ) -> None:
+        # A detector failure names an input record, so two failures need two records.
         detection_failures = [
             FailedRecord(record_id="r1", step="entity-detection", reason="x"),
             FailedRecord(record_id="r2", step="entity-detection", reason="y"),
         ]
         detection_return = EntityDetectionResult(
-            dataframe=pd.DataFrame({COL_TEXT: ["a"], COL_FINAL_ENTITIES: [{"entities": []}]}),
+            dataframe=pd.DataFrame({COL_TEXT: [], COL_FINAL_ENTITIES: []}),
             failed_records=detection_failures,
         )
         anonymizer, *_ = _make_anonymizer(detection_return=detection_return)
-        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+        two = TextRecordsInput(records=[TextRecord(id="r1", text="a"), TextRecord(id="r2", text="b")])
+        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=two)
 
         event = captured_events[0]
         assert event.entity_detection_failure_count == 2

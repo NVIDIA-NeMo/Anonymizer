@@ -650,9 +650,7 @@ class RewriteWorkflow:
 
         ``rewrite`` splits the detection frame on its entities: rows with none take the passthrough defaults and the
         rest go through ``_produce``, the stages ``run`` uses. A row the detector drops, or whose mentions the graph
-        rejects, fails at ``detect`` and is absent from the output. A result that is not verifiably one input row per
-        returned row, or that changed a row's text, fails every target at ``detect``, and ``run`` rewrites the
-        detection frame as returned. ``stage`` names the measurement.
+        rejects, fails at ``detect`` and is absent from the output. ``stage`` names the measurement.
         """
         started = time.perf_counter()
         evaluation = options["evaluation"]
@@ -691,10 +689,6 @@ class RewriteWorkflow:
         result = _protect_rewrite(graph, rewrite, evaluation, detect_op)
         call_on_empty_input(graph, detect_op)
         detection, detection_elapsed = state.detected[0], state.elapsed[0]
-        if state.unresolved:
-            rerouted = self.run(detection.dataframe, **options)
-            failed = [*state.failures, *rerouted.failed_records]
-            return RewriteResult(rerouted.dataframe, failed, rerouted.source_positions, detection, detection_elapsed)
         entity_rows, passthrough_rows = split(set())  # empty only if ``rewrite`` never ran
         rejected = {a.target: a.reason for a in result.attempts if a.operation == "detect" and a.status == "failed"}
         frame = detection.dataframe

@@ -18,7 +18,7 @@ from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.models import ModelConfig
 from data_designer.interface.data_designer import DataDesigner
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
+from anonymizer.config.anonymizer_config import AnonymizerConfig, Rewrite, TextRecord, TextRecordsInput
 from anonymizer.config.models import EvaluateModelSelection, ReplaceModelSelection, RewriteModelSelection
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 from anonymizer.engine.constants import (
@@ -72,6 +72,7 @@ from anonymizer.engine.value_matching import format_cause
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.interface.results import AnonymizerResult
+from tests.detector_results import as_detector_result, returns_detector_result
 
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
 
@@ -1891,11 +1892,14 @@ def test_combined_runner_overriding_build_graph_with_release_signature_runs(
 def test_run_reports_each_rows_protection_outcome(tmp_path: Path) -> None:
     """Through ``Anonymizer.run()``, a row that passes its final checks is ``met`` and one still leaking is not."""
     entities = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
-    detector = Mock(spec=EntityDetectionWorkflow)
-    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
-        dataframe=frame.assign(**{RECORD_ID_COLUMN: ["clean", "leaky"], COL_ENTITIES_BY_VALUE: [entities] * 2}),
-        failed_records=[],
-        source_positions=(0, 1),
+    detector = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
+    detector.run.side_effect = lambda frame, **_: as_detector_result(
+        frame,
+        EntityDetectionResult(
+            dataframe=frame.assign(**{RECORD_ID_COLUMN: ["clean", "leaky"], COL_ENTITIES_BY_VALUE: [entities] * 2}),
+            failed_records=[],
+            source_positions=(0, 1),
+        ),
     )
     csv_path = tmp_path / "input.csv"
     pd.DataFrame({"text": ["Alice works at Acme", "Alice works at Beta"]}).to_csv(csv_path, index=False)
@@ -1910,7 +1914,12 @@ def test_run_reports_each_rows_protection_outcome(tmp_path: Path) -> None:
             config=AnonymizerConfig(
                 rewrite=Rewrite(privacy_goal=_PRIVACY_GOAL, risk_tolerance="minimal"), emit_telemetry=False
             ),
-            data=AnonymizerInput(source=str(csv_path), text_column="text"),
+            data=TextRecordsInput(
+                records=[
+                    TextRecord(id=i, text=t)
+                    for i, t in zip(["clean", "leaky"], ["Alice works at Acme", "Alice works at Beta"])
+                ]
+            ),
         )
 
     assert [result.outcome(row).qualification for row in range(2)] == ["met", "not_met"]
@@ -1938,9 +1947,9 @@ def _run_result(
     columns: dict[str, list[object]] = {RECORD_ID_COLUMN: ["rec"], COL_ENTITIES_BY_VALUE: [entities]}
     if spans:
         columns[COL_FINAL_ENTITIES] = [{"entities": spans}]
-    detector = Mock(spec=EntityDetectionWorkflow)
-    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
-        dataframe=frame.assign(**columns), failed_records=[], source_positions=(0,)
+    detector = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
+    detector.run.side_effect = lambda frame, **_: as_detector_result(
+        frame, EntityDetectionResult(dataframe=frame.assign(**columns), failed_records=[], source_positions=(0,))
     )
     csv_path = tmp_path / "input.csv"
     pd.DataFrame({"text": [text]}).to_csv(csv_path, index=False)
@@ -1954,7 +1963,7 @@ def _run_result(
                 rewrite=Rewrite(privacy_goal=_PRIVACY_GOAL, risk_tolerance="minimal", max_repair_iterations=1),
                 emit_telemetry=False,
             ),
-            data=AnonymizerInput(source=str(csv_path), text_column="text"),
+            data=TextRecordsInput(records=[TextRecord(id=i, text=t) for i, t in zip(["rec"], [text])]),
         )
 
 
@@ -2064,9 +2073,9 @@ def _combined_run_result(text: str, tmp_path: Path, replacement_map: dict = _PLA
         COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
         COL_FINAL_ENTITIES: [{"entities": [_span(source, "Alice")]}],
     }
-    detector = Mock(spec=EntityDetectionWorkflow)
-    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
-        dataframe=frame.assign(**columns), failed_records=[], source_positions=(0,)
+    detector = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
+    detector.run.side_effect = lambda frame, **_: as_detector_result(
+        frame, EntityDetectionResult(dataframe=frame.assign(**columns), failed_records=[], source_positions=(0,))
     )
     csv_path = tmp_path / "input.csv"
     pd.DataFrame({"text": [source]}).to_csv(csv_path, index=False)
@@ -2084,7 +2093,7 @@ def _combined_run_result(text: str, tmp_path: Path, replacement_map: dict = _PLA
                 ),
                 emit_telemetry=False,
             ),
-            data=AnonymizerInput(source=str(csv_path), text_column="text"),
+            data=TextRecordsInput(records=[TextRecord(id=i, text=t) for i, t in zip(["rec"], [source])]),
         )
 
 

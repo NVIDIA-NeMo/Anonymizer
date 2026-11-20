@@ -35,6 +35,7 @@ from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter, Workflow
 from anonymizer.engine.workflow_columns.detection.config import RegexDetectionConfig
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.measurement import MeasurementConfig, configured_measurement_session
+from tests.detector_results import builtin_stub
 from tests.engine.ndd.stub_provider import COMPLETE, Script, cut_off, stub_provider
 
 _PREFIX = "Record missing from workflow output"
@@ -423,8 +424,15 @@ def test_multiline_exception_markers_do_not_leak_into_reasons_or_warnings(
     reasons = _reasons_by_position(tagged, result)
     assert list(reasons) == [1]
 
-    detector = Mock(spec=EntityDetectionWorkflow)
-    detector.run.return_value = EntityDetectionResult(dataframe=result.dataframe, failed_records=result.failed_records)
+    detector = builtin_stub(
+        Mock(
+            return_value=EntityDetectionResult(
+                dataframe=result.dataframe,
+                failed_records=result.failed_records,
+                source_positions=tuple(result.source_positions or ()),
+            )
+        )
+    )
     csv_path = tmp_path / "input.csv"
     df.to_csv(csv_path, index=False)
     anonymizer = Anonymizer(detection_workflow=detector)

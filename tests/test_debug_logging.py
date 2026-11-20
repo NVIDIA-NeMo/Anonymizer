@@ -21,6 +21,7 @@ from anonymizer.engine.replace.replace_runner import ReplacementResult, Replacem
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.logging import LoggingConfig, configure_logging
 from tests.conftest import stub_run_with_detection
+from tests.detector_results import input_record_ids, returns_detector_result
 
 
 @pytest.fixture(autouse=True)
@@ -41,7 +42,7 @@ def _stub_anonymizer() -> Anonymizer:
             COL_FINAL_ENTITIES: entities,
         }
     )
-    detection_workflow = Mock(spec=EntityDetectionWorkflow)
+    detection_workflow = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
     detection_workflow.run.return_value = EntityDetectionResult(
         dataframe=det_df,
         failed_records=[
@@ -74,7 +75,8 @@ def debug_messages(
     config = AnonymizerConfig(replace=Redact())
     with caplog.at_level(logging.DEBUG, logger="anonymizer"):
         result = _stub_anonymizer.run(config=config, data=AnonymizerInput(source=str(csv_path)))
-    assert [(f.record_id, f.reason) for f in result.failed_records] == [("r1", "timeout"), ("r2", "parse error")]
+    first = input_record_ids(AnonymizerInput(source=str(csv_path)))[0]
+    assert [(f.record_id, f.reason) for f in result.failed_records] == [(first, "timeout"), ("r2", "parse error")]
     return [r.message for r in caplog.records if r.levelno == logging.DEBUG]
 
 
@@ -129,7 +131,9 @@ def test_public_pipeline_returns_failed_record_details_without_logging_them(
             logger.handlers = handlers
             logger.setLevel(level)
             logger.propagate = propagate
-    assert [(f.record_id, f.step, f.reason) for f in result.failed_records] == [(canary, canary, canary)] * 2
+    # A detector failure is named by the input record's id; the runner's failure keeps its own.
+    assert [(f.step, f.reason) for f in result.failed_records] == [(canary, canary)] * 2
+    assert result.failed_records[1].record_id == canary
     assert result.trace_dataframe[canary].tolist() == ["Alice works at Acme", "Bob likes cats"]
     assert "2 total failures" in stream.getvalue()
     assert canary.lower() not in stream.getvalue().lower()

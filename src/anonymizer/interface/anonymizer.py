@@ -17,7 +17,7 @@ from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, ParamSpec, Protocol, TypedDict, TypeGuard, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, ParamSpec, Protocol, TypedDict, TypeGuard, TypeVar, cast
 
 import pandas as pd
 from data_designer.config.models import ModelProvider
@@ -41,7 +41,6 @@ from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
     COL_ATTRIBUTE_FIDELITY_VALID,
-    COL_DETECTED_ENTITIES,
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_VALID,
     COL_ENTITIES_BY_VALUE,
@@ -66,6 +65,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.detect_step import UNSPANNED_CHECK_BUILTIN
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
+from anonymizer.engine.detection.result import from_detection_frame, render_detector_result, validate_detector_result
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
@@ -237,6 +237,17 @@ def _evaluate_on_graph(
     limits = Limits(max_operations=len(operations), max_targets=len(graph.targets), max_mentions=0, max_context_items=0)
     result = run_invocation(graph, workflow, limits, on_empty=bodies)
     return current, failures, result
+
+
+def _with_record_ids(frame: pd.DataFrame) -> pd.DataFrame:
+    """``frame`` with an ``_anonymizer_record_id`` per row: its own column when present (``TextRecordsInput`` ids),
+    else the adapter's uuid5 of the row, so detection, every later stage and every failure name the same record."""
+    if RECORD_ID_COLUMN in frame.columns:
+        return frame
+    frame = frame.copy()
+    ids = [NddAdapter._compute_record_id(row) for _, row in frame.iterrows()]
+    frame[RECORD_ID_COLUMN] = pd.Series(ids, index=frame.index, dtype=object)
+    return frame
 
 
 def _record_ids(frame: pd.DataFrame) -> tuple[str, ...] | None:
@@ -524,29 +535,20 @@ class Anonymizer:
                 support and otherwise raise ``InvalidConfigError``. Methods without
                 ``entity_label_examples`` remain supported when no examples are configured;
                 configuring unsupported examples raises ``InvalidConfigError`` too.
-                Its entity spans must be half-open, within the text, non-empty,
-                labelled, and slice to their ``value`` exactly. Identical spans
-                collapse into the first labelled one, keeping its label, and a span
-                contained in a labelled span gives way to the outer span; later
-                steps and the result's ``final_entities`` see the collapsed spans; a
-                detector-supplied ``tagged_text`` is not regenerated from them.
-                Any other overlap or contract break fails the record at ``detect``
-                with ``overlapping_output_ownership``, ``mention_out_of_range``,
-                ``mention_slice_mismatch`` or ``mention_unlabelled``; in Rewrite a
-                payload that does not parse fails with ``invalid_output`` (Replace
-                rejects it at ``replace``). For a row with spans, the
-                ``_entities_by_value`` view is that of its kept spans plus every
-                detector pair, and every collapsed span's value, that occurs in
-                the row's text outside those spans; a row without spans keeps the detector's view. In the
-                Replace modes, a row whose view holds a value that occurs in its
-                text outside every kept span fails at ``detect`` with
-                ``unspanned_value``.
-                These checks and the derived view
-                apply only when the detector returns source positions or unique
-                record ids (ids exist only with ``TextRecordsInput``) and leaves
-                each row's text unchanged; otherwise the result is used as
-                returned, may stop the run, and a record may be released with its
-                spans unprotected.
+                Its ``run`` returns a ``DetectorResult``: one ``DetectorRow`` per answered
+                input record, named by the record's ``_anonymizer_record_id``. Only the
+                built-in ``EntityDetectionWorkflow`` class itself returns a frame; its
+                subclasses return a ``DetectorResult`` like any other detector. A result
+                that cannot be placed against the input raises
+                ``InvalidDetectorResultError`` before any model call; a record neither
+                answered nor failed fails at ``detect`` with ``dropped_output``. Spans
+                must be half-open, within the text, non-empty, labelled, and slice to
+                their ``value`` exactly; identical spans collapse into the first labelled
+                one and a span inside a labelled span gives way to it. Any other overlap
+                or contract break fails the record at ``detect``. In the Replace modes a
+                row with a reported value that occurs in its text outside every kept span
+                fails at ``detect`` with ``unspanned_value``. See "Custom detection
+                workflows" in the detection concepts page.
             replace_runner: Custom replacement workflow (advanced/testing). Its ``evaluate()`` must keep each row's
                 record id: ``evaluate()`` matches judge rows to records only by id, reports a row without one
                 unassessed, and reports a row given another record's id as that record.
@@ -593,7 +595,11 @@ class Anonymizer:
             self._data_designer.set_run_config(data_designer_run_config)
         self._adapter = NddAdapter(data_designer=self._data_designer)
         self._detection_workflow = detection_workflow or EntityDetectionWorkflow(adapter=self._adapter)
-        self._custom_detection = detection_workflow is not None
+        # Decided once: only the built-in class itself returns a detection frame; any other detector, its subclasses
+        # and spec mocks included, returns a ``DetectorResult``.
+        self._detector_kind: Literal["builtin", "custom"] = (
+            "builtin" if detection_workflow is None or type(detection_workflow) is EntityDetectionWorkflow else "custom"
+        )
         self._replace_runner = replace_runner or ReplacementWorkflow(
             llm_workflow=LlmReplaceWorkflow(adapter=self._adapter),
             detection_judge=DetectionJudgeWorkflow(adapter=self._adapter),
@@ -1125,7 +1131,7 @@ class Anonymizer:
         preview_num_records: int | None,
         session: Session | None = None,
     ) -> AnonymizerResult:
-        input_df = context.dataframe
+        input_df = _with_record_ids(context.dataframe)
         num_records = len(input_df)
         if preview_num_records is not None and preview_num_records != num_records:
             effective_records = min(preview_num_records, num_records)
@@ -1210,13 +1216,15 @@ class Anonymizer:
         )
 
         def detect(frame: pd.DataFrame) -> EntityDetectionResult:
-            result = self._detection_workflow.run(
+            returned: object = self._detection_workflow.run(
                 frame,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.detection,
                 **detection_options,
             )
-            return result
+            if self._detector_kind == "builtin":
+                return from_detection_frame(frame, returned)
+            return render_detector_result(frame, validate_detector_result(frame, returned))
 
         def detect_then_announce(frame: pd.DataFrame) -> EntityDetectionResult:
             result = detect(frame)
@@ -1244,7 +1252,8 @@ class Anonymizer:
             outcomes = None
         elif config.replace is not None:
             # Passed only when set: a caller's run_with_detection override may predate the keyword.
-            unspanned = {"unspanned_check": True} if self._custom_detection or UNSPANNED_CHECK_BUILTIN else {}
+            custom = self._detector_kind == "custom"
+            unspanned = {"unspanned_check": True} if custom or UNSPANNED_CHECK_BUILTIN else {}
             # Only a stable Session is passed: without one, an override with the signature before ``session`` is
             # called exactly as before.
             stable: dict[str, Any] = (
@@ -1328,8 +1337,8 @@ class Anonymizer:
             detection_failed,
             detection_elapsed,
         )
-        if COL_DETECTED_ENTITIES in detected_df.columns:
-            label_counts = _count_labels(detected_df[COL_DETECTED_ENTITIES])
+        if COL_FINAL_ENTITIES in detected_df.columns:
+            label_counts = _count_labels(detected_df[COL_FINAL_ENTITIES])
             if label_counts:
                 logger.info(LOG_INDENT + "distinct entity labels: %d", len(label_counts))
         logger.info(
@@ -1585,9 +1594,10 @@ def _count_labels(entities_column: pd.Series) -> Counter[str]:
 
 
 def _count_entities(df: pd.DataFrame) -> int:
-    if COL_DETECTED_ENTITIES not in df.columns:
+    """The final entities across ``df``'s rows: what later steps protect, for built-in and custom detectors alike."""
+    if COL_FINAL_ENTITIES not in df.columns:
         return 0
-    return int(df[COL_DETECTED_ENTITIES].apply(lambda raw: len(_unwrap_entities(raw))).sum())
+    return int(df[COL_FINAL_ENTITIES].apply(lambda raw: len(_unwrap_entities(raw))).sum())
 
 
 def _rename_output_columns(df: pd.DataFrame, *, resolved_text_column: str) -> pd.DataFrame:

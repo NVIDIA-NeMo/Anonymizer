@@ -59,6 +59,7 @@ from anonymizer.engine.detection.detection_workflow import (
     _build_entities_by_value,
 )
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
+from anonymizer.engine.detection.result import DetectorResult
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.graph_core.execution import Advisory, Reason, TargetOutcome
 from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
@@ -76,6 +77,7 @@ from anonymizer.interface.anonymizer import Anonymizer, _accepts_entity_label_ex
 from anonymizer.interface.errors import AnonymizerWorkflowError, InvalidConfigError, InvalidInputError
 from anonymizer.interface.results import AnonymizerResult
 from tests.conftest import stub_run_with_detection
+from tests.detector_results import as_detector_result, returns_detector_result
 
 
 @pytest.fixture
@@ -90,7 +92,7 @@ def _make_anonymizer(
     replace_return: ReplacementResult | None = None,
     rewrite_return: RewriteResult | None = None,
 ) -> tuple[Anonymizer, Mock, Mock, Mock]:
-    detection_workflow = Mock(spec=EntityDetectionWorkflow)
+    detection_workflow = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
     detection_workflow.run.return_value = detection_return or EntityDetectionResult(
         dataframe=pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
         failed_records=[],
@@ -325,9 +327,9 @@ class _Replay040DetectionWorkflow:
         tag_latent_entities: bool = True,
         compute_grouped_entities: bool | None = None,
         preview_num_records: int | None = None,
-    ) -> EntityDetectionResult:
+    ) -> DetectorResult:
         self.calls.append("run")
-        return self._result
+        return as_detector_result(dataframe, self._result)
 
     def build_detection_config(
         self,
@@ -2013,7 +2015,11 @@ class _FirstWordDetector:
         self.calls: list[int] = []
         self.record_ids = record_ids
 
-    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+    def run(self, dataframe: pd.DataFrame, **kwargs: object) -> DetectorResult:
+
+        return as_detector_result(dataframe, self.frame(dataframe))
+
+    def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
         self.calls.append(len(dataframe))
         frame = dataframe.copy()
         if self.record_ids:

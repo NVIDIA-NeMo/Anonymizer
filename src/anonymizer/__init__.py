@@ -37,11 +37,13 @@ if TYPE_CHECKING:
     )
     from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
     from anonymizer.config.rewrite import PrivacyGoal
+    from anonymizer.engine.detection.result import DetectedSpan, DetectorResult, DetectorRow
     from anonymizer.interface.anonymizer import Anonymizer as Anonymizer
     from anonymizer.interface.errors import (
         AnonymizerError,
         AnonymizerIOError,
         InvalidConfigError,
+        InvalidDetectorResultError,
         InvalidInputError,
     )
     from anonymizer.interface.factory import (
@@ -77,6 +79,10 @@ _EXPORTS = {
     "AnonymizerIOError": "anonymizer.interface.errors",
     "InvalidConfigError": "anonymizer.interface.errors",
     "InvalidInputError": "anonymizer.interface.errors",
+    "InvalidDetectorResultError": "anonymizer.interface.errors",
+    "DetectedSpan": "anonymizer.engine.detection.result",
+    "DetectorResult": "anonymizer.engine.detection.result",
+    "DetectorRow": "anonymizer.engine.detection.result",
     "LoggingConfig": "anonymizer.logging",
     "configure_logging": "anonymizer.logging",
     "ModelProvider": "data_designer.config.models",
@@ -116,10 +122,14 @@ __all__ = [
     "BuiltinRegex",
     "DEFAULT_ENTITY_LABELS",
     "Detect",
+    "DetectedSpan",
+    "DetectorResult",
+    "DetectorRow",
     "EvaluateConfig",
     "GlinerEndpoint",
     "Hash",
     "InvalidConfigError",
+    "InvalidDetectorResultError",
     "InvalidInputError",
     "LoggingConfig",
     "ModelProvider",

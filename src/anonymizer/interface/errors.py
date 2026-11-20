@@ -27,3 +27,11 @@ class AnonymizerWorkflowError(AnonymizerError):
     so callers can inspect the exact failure without the anonymizer layer leaking backend
     exception types into its own public error hierarchy.
     """
+
+
+class InvalidDetectorResultError(AnonymizerError):
+    """Raised when a custom ``detection_workflow`` returns a result that cannot be placed against its input.
+
+    The result is not a ``DetectorResult``, or it names a record id that is not an input id, or names one twice.
+    No record of that batch is released, and no model is called after detection.
+    """

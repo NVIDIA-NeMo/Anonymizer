@@ -33,6 +33,7 @@ from anonymizer.engine.ndd.failed_record import FailedRecord
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow, _rewrite_lowered, _Rows
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL
+from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import measurement_session
 from tests.spec_programs._builder import Checks, graph, run
 
@@ -359,14 +360,15 @@ def program() -> list[dict[str, str]]:
     c.guard("E16.14", failure_order)
 
     def reroute_failures() -> tuple[bool, str]:
+        # A detection result that cannot be placed is no longer rerouted: it raises before any rewrite stage.
         detection = _detection(["c", "a", "b"], entity_rows=(0, 1, 2), failures=(_DETECTION_FAILURE,))
         workflow = _stubbed(RewriteWorkflow(Mock()), fail_row=1, failure=_REWRITE_FAILURE)
         frame = pd.DataFrame({COL_TEXT: ["a", "b", "c"]})
-        result = workflow.run_with_detection(frame, detect=lambda _: detection, **_OPTIONS)
-        return (
-            result.failed_records == [_DETECTION_FAILURE, _REWRITE_FAILURE] and result.detection is detection,
-            f"rerouted failures={[f.step for f in result.failed_records]}",
-        )
+        try:
+            workflow.run_with_detection(frame, detect=lambda _: detection, **_OPTIONS)
+        except AnonymizerWorkflowError as exc:
+            return True, f"raised: {exc}"
+        return False, "an unplaceable detection result was rerouted"
 
     c.guard("E16.15", reroute_failures)
 
@@ -377,11 +379,14 @@ def program() -> list[dict[str, str]]:
         missing_source = pd.DataFrame({COL_TEXT: ["a", None]})
         missing = _detection(["a", "b"], entity_rows=())
         missing.dataframe[COL_TEXT] = pd.Series(["a", np.nan], dtype=object)
-        got = (
-            resolve_positions(source, differs),
-            resolve_positions(source, same),
-            resolve_positions(missing_source, missing),
-        )
+
+        def placed(src: pd.DataFrame, result: object) -> object:
+            try:  # no row is placed by its text: an unplaceable result raises
+                return resolve_positions(src, result)  # ty: ignore[invalid-argument-type]
+            except AnonymizerWorkflowError:
+                return None
+
+        got = (placed(source, differs), placed(source, same), placed(missing_source, missing))
         return got == (None, None, None), f"differing text={got[0]}, equal text={got[1]}, missing values={got[2]}"
 
     c.guard("E16.16", position_resolution)

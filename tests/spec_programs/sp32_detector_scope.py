@@ -14,6 +14,7 @@ from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT, DEFAULT_ENTITY_LABELS
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
+from tests.detector_results import returns_detector_result
 from tests.spec_programs._builder import Checks
 
 
@@ -23,7 +24,7 @@ def program() -> list[dict[str, str]]:
 
     # E32.2 run and preview expose the default resolved scope.
     def e2() -> tuple[bool, str]:
-        detector = Mock(spec=EntityDetectionWorkflow)
+        detector = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
         frame = pd.DataFrame({COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [{"entities": []}]})
         detector.run.return_value = EntityDetectionResult(dataframe=frame, failed_records=[])
         anonymizer = Anonymizer(detection_workflow=detector)

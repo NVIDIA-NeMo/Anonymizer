@@ -176,14 +176,6 @@ class ReplacementWorkflow:
             map_arguments=dict(
                 model_configs=model_configs, selected_models=selected_models, preview_num_records=preview_num_records
             ),
-            reroute=lambda detected: self.run(
-                detected,
-                replace_method=replace_method,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                preview_num_records=preview_num_records,
-                session=session,
-            ),
             session=session,
             unspanned_check=unspanned_check,
         )
