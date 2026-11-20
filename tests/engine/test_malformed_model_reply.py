@@ -8,9 +8,11 @@ Only the HTTP client is scripted: DataDesigner builds the facades, runs the colu
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from collections import defaultdict
+from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
@@ -1021,6 +1023,18 @@ def _per_row_warnings(caplog: pytest.LogCaptureFixture, *columns: str) -> int:
     return sum(1 for m in messages if m.startswith(columns) and " unavailable after " in m)
 
 
+@contextlib.contextmanager
+def _captured(caplog: pytest.LogCaptureFixture) -> Generator[None]:
+    """Capture warnings during ``Anonymizer.run()``, which stops the package's records from propagating."""
+    package = logging.getLogger("anonymizer")
+    package.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING):
+            yield
+    finally:
+        package.removeHandler(caplog.handler)
+
+
 def _summaries(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [
         r.getMessage() for r in dict.fromkeys(r for r in caplog.records if r.name == "anonymizer.rewrite.responses")
@@ -1048,14 +1062,8 @@ def test_quality_evaluation_without_a_response_in_an_earlier_round_is_counted(
     script["privacy"] = [*[_LEAK] * (1 + middle), _privacy_response("Absent.")]
     script["repair"] = [json.dumps({"rewritten_text": _REPAIRED_TEXT})]
 
-    # ``Anonymizer.run()`` stops the package's records from propagating, so capture them at its logger.
-    package = logging.getLogger("anonymizer")
-    package.addHandler(caplog.handler)
-    try:
-        with caplog.at_level(logging.WARNING):
-            result = _anonymizer_run(tmp_path, workflow, max_repair_iterations=3)
-    finally:
-        package.removeHandler(caplog.handler)
+    with _captured(caplog):
+        result = _anonymizer_run(tmp_path, workflow, max_repair_iterations=3)
 
     assert calls[step] >= _RETRIES + 1  # every attempt of that round was spent
     assert result.outcome(0).qualification == "met"  # the last round passed, so the summary must not rely on it
@@ -1083,3 +1091,35 @@ def test_trace_of_a_repair_withheld_for_its_privacy_response(
         assert frame.iloc[0][COL_REWRITTEN_TEXT_NEXT] == _REPAIRED_TEXT
     else:
         assert COL_REWRITTEN_TEXT_NEXT not in frame.columns
+
+
+# --- Repair: a repair that still fails privacy after its last round is withheld, as an unparsed one is ---
+
+
+@pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])
+@pytest.mark.parametrize("rounds", [1, 3])
+def test_repair_that_still_leaks_after_its_last_round_is_withheld_and_flagged(
+    tmp_path: Path,
+    repairer: tuple[dict[str, list[str]], dict[str, int]],
+    caplog: pytest.LogCaptureFixture,
+    workflow: type[RewriteWorkflow],
+    rounds: int,
+) -> None:
+    script, calls = repairer
+    script["privacy"] = [_LEAK]  # every evaluation of the record leaks
+    script["repair"] = [json.dumps({"rewritten_text": _REPAIRED_TEXT})]
+
+    with _captured(caplog):
+        result = _anonymizer_run(tmp_path, workflow, max_repair_iterations=rounds)
+
+    assert calls["repair"] == rounds  # every repair parsed; the loop ran out of rounds
+    assert result.failed_records == []
+    row, clean = result.dataframe.iloc[0], result.dataframe.iloc[1]
+    assert pd.isna(row["text_rewritten"])  # the failing repair candidate is not released
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert ("failed", "high_leak") in [(r.code, r.check) for r in outcome.reasons]
+    assert clean["text_rewritten"] == _OTHER_TEXT
+    assert result.outcome(1).qualification == "met"
+    assert _summaries(caplog) == []  # every response parsed, so no step is counted

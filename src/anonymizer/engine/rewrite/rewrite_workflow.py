@@ -468,6 +468,35 @@ def _withhold_unassessed(frame: pd.DataFrame) -> None:
         frame.loc[unassessed, COL_REWRITTEN_TEXT] = None
 
 
+_PRIVACY_CHECKS = frozenset({"high_leak", "leakage_within_threshold"})
+
+
+def _withhold_failed_repairs(frame: pd.DataFrame, result: ProtectionResult, target_of: Mapping[int, Datum]) -> None:
+    """Null the rewritten text of repaired rows whose final candidate still fails a privacy check.
+
+    The repair loop has no round left for them, and their outcome is already ``not_met`` and flagged; the failing
+    candidate is not released, as for a repair response that cannot be parsed. Call it after the summary, which
+    counts a repaired row without text as an unparsed repair.
+    """
+    if COL_REPAIR_ITERATIONS not in frame.columns:
+        return
+    failed = [
+        _repaired(record.get(COL_REPAIR_ITERATIONS))
+        and any(
+            reason.code == "failed" and reason.check in _PRIVACY_CHECKS
+            for reason in result.outcome(target_of[record[ROW_ORDER_COL]]).reasons
+        )
+        for record in frame.to_dict("records")
+    ]
+    withheld = pd.Series(failed, index=frame.index, dtype=bool) & frame[COL_REWRITTEN_TEXT].notna()
+    if withheld.any():
+        frame.loc[withheld, COL_REWRITTEN_TEXT] = None
+
+
+def _repaired(iterations: Any) -> bool:
+    return not pd.isna(iterations) and int(iterations) > 0
+
+
 def _needs_review(result: ProtectionResult, target: Datum) -> bool:
     metrics = result.value(target, "metrics") or {}
     return result.outcome(target).qualification != "met" or bool(metrics.get("undetected_value_kept"))
@@ -500,9 +529,11 @@ def _rewrite_lowered(
 
     result = _protect_rewrite(graph, rewrite, evaluation)
     frame = rows.frame
-    _flag_review(frame, result, dict(zip(order, graph.targets)), evaluation)
+    target_of = dict(zip(order, graph.targets))
+    _flag_review(frame, result, target_of, evaluation)
     warn_kept_without_response(frame)
     _withhold_unassessed(frame)
+    _withhold_failed_repairs(frame, result, target_of)
     _apply_passthrough_defaults(passthrough_rows)
     return RewriteResult(
         dataframe=merge_and_reorder(frame, passthrough_rows),
@@ -664,9 +695,11 @@ class RewriteWorkflow:
         if entity_rows.empty:
             output = merge_and_reorder(passthrough_rows)
         else:
-            _flag_review(frame, result, dict(enumerate(state.owners)), evaluation)
+            target_of = dict(enumerate(state.owners))
+            _flag_review(frame, result, target_of, evaluation)
             warn_kept_without_response(frame)
             _withhold_unassessed(frame)
+            _withhold_failed_repairs(frame, result, target_of)
             output = merge_and_reorder(frame, passthrough_rows)
         record_stage(
             stage,

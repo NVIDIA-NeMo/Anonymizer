@@ -275,7 +275,11 @@ quality questions, rewrite and repair responses that still cannot be parsed afte
 instead of dropping it, and the run ends with one warning counting such records per step.
 - The count for an evaluation step includes a record whose response was missing in an earlier repair round, not only
   in the last one.
-- What to do: read the warning; a step listed for most records points at that step's model.
+- A repaired record whose last candidate still fails a privacy check (`high_leak` or `leakage_within_threshold`) now
+  has its rewritten text withheld (null), as a record whose repair response cannot be parsed does. It was released
+  before, flagged and `not_met`; it is still flagged and `not_met`.
+- What to do: read the warning; a step listed for most records points at that step's model. Expect null rewritten
+  text for repaired records that still leak, and treat null text as "not released".
 
 ### #407: frozen config and one options object
 

@@ -1005,7 +1005,11 @@ def test_repair_loop_through_run_returns_each_rows_last_repair(
 
     out = result.dataframe
     assert result.failed_records == []
-    assert _by_id(out, COL_REWRITTEN_TEXT) == {"twice": "twice-2", "exhausted": "exhausted-3"}
+    # The exhausted row still leaks after its last repair, so its text is withheld; the trace keeps the candidate.
+    texts = _by_id(out, COL_REWRITTEN_TEXT)
+    assert texts["twice"] == "twice-2"
+    assert pd.isna(texts["exhausted"])
+    assert _by_id(out, COL_REWRITTEN_TEXT_NEXT)["exhausted"] == "exhausted-3"
     assert _by_id(out, COL_REPAIR_ITERATIONS) == {"twice": 2, "exhausted": 3}
     assert _by_id(out, COL_LEAKAGE_MASS) == {"twice": 0.0, "exhausted": 3.0}
     assert {k: bool(v) for k, v in _by_id(out, COL_NEEDS_HUMAN_REVIEW).items()} == {"twice": False, "exhausted": True}
