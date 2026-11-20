@@ -21,7 +21,16 @@ import pandas as pd
 
 from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_FINAL_ENTITIES, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, _build_entities_by_value
-from anonymizer.engine.graph_core.authoring import DATUM, MENTIONS, Datum, Mention, Operation, Requests, mention_problem
+from anonymizer.engine.graph_core.authoring import (
+    DATUM,
+    MENTIONS,
+    Datum,
+    Mention,
+    Operation,
+    Refusal,
+    Requests,
+    mention_problem,
+)
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.backend import per_target
 from anonymizer.engine.row_partitioning import cell_text, try_resolve_source_positions
@@ -42,12 +51,19 @@ class DetectState:
 
 
 def detect_step(
-    dataframe: pd.DataFrame, detect: Callable[[pd.DataFrame], EntityDetectionResult], state: DetectState
+    dataframe: pd.DataFrame,
+    detect: Callable[[pd.DataFrame], EntityDetectionResult],
+    state: DetectState,
+    *,
+    spans_only: bool = False,
 ) -> Operation:
     """The ``detect`` operation over ``dataframe``: one ``detect`` call, its outcome recorded in ``state``.
 
     A result that is not verifiably one input row per returned row (see ``resolve_positions``), or that returns a row
     whose text differs from its input row's, fails every target; the caller then works over the returned frame.
+
+    With ``spans_only`` (Replace, which replaces spans and nothing else), a row whose by-value view lists a value that
+    occurs in its text outside every kept span fails with ``unspanned_value``: no step would protect that value.
     """
 
     def run_detection(target: tuple[Datum, ...]) -> list[tuple[object, ...] | None]:
@@ -74,7 +90,9 @@ def detect_step(
         raw_entities = result.dataframe.get(COL_FINAL_ENTITIES, repeat({}, len(positions)))
         rebuilt: dict[int, set[int]] = {}  # row -> the entities it loses
         malformed: set[Datum] = set()
-        for row, (datum, raw) in enumerate(zip(surviving, raw_entities)):
+        unspanned: set[Datum] = set()
+        by_value = result.dataframe.get(COL_ENTITIES_BY_VALUE, repeat(None, len(positions)))
+        for row, (datum, raw, listed) in enumerate(zip(surviving, raw_entities, by_value)):
             try:  # the parse Replace applies, so a malformed payload fails its record in every mode
                 entities = EntitiesSchema.from_raw(raw, strict=True)
             except ValueError:
@@ -85,6 +103,10 @@ def detect_step(
                 rebuilt[row] = covered
                 entities = EntitiesSchema(entities=[e for i, e in enumerate(entities.entities) if i not in covered])
             state.rows[datum] = entities
+            # A span that breaks the contract fails the row with its own reason first.
+            sound = not mention_problem(accepted_mentions(datum, entities))
+            if spans_only and sound and unspanned_pairs(listed, datum.text, entities):
+                unspanned.add(datum)
             # The by-value rule: a row with spans gets the view of its kept spans plus every detector pair whose value
             # occurs in its text outside them (see ``_with_entities``); a row without spans keeps the detector's view.
             if entities.entities:
@@ -92,9 +114,14 @@ def detect_step(
         # Later steps read the by-value column for every returned row, so it is added even when no row is rebuilt.
         if rebuilt or COL_ENTITIES_BY_VALUE not in result.dataframe.columns:
             state.detected[-1] = dataclasses.replace(result, dataframe=_with_entities(result.dataframe, rebuilt))
-        # A non-mention entry fails the record with ``invalid_output``.
+        # A non-mention entry fails the record with ``invalid_output``; a ``Refusal`` with its own reason.
         mentions: list[tuple[object, ...]] = [
-            ("malformed",) if d in malformed else tuple(accepted_mentions(d, state.rows[d])) for d in surviving
+            ("malformed",)
+            if d in malformed
+            else (Refusal("unspanned_value"),)
+            if d in unspanned
+            else tuple(accepted_mentions(d, state.rows[d]))
+            for d in surviving
         ]
         return per_target(mentions, positions, len(target))
 
@@ -183,16 +210,16 @@ def _with_entities(frame: pd.DataFrame, covered: dict[int, set[int]]) -> pd.Data
 def _union(derived: dict[str, Any], listed: object, text: str, entities: object) -> dict[str, Any]:
     """``derived`` plus every pair of ``listed`` whose value occurs in ``text`` outside the spans of ``entities``."""
     items = {item["value"]: list(item["labels"]) for item in derived["entities_by_value"]}
-    for value, labels in unspanned_pairs(listed, text, entities):
+    for value, labels in unspanned_pairs(listed, text, EntitiesSchema.from_raw(entities)):
         merged = items.setdefault(value, [])
         merged.extend(label for label in labels if label not in merged)
     return {**derived, "entities_by_value": [{"value": v, "labels": labels} for v, labels in items.items()]}
 
 
-def unspanned_pairs(listed: object, text: str, entities: object) -> list[tuple[str, list[str]]]:
+def unspanned_pairs(listed: object, text: str, entities: EntitiesSchema) -> list[tuple[str, list[str]]]:
     """The pairs of the by-value cell ``listed`` whose value occurs in ``text`` at least once outside every span of
     ``entities``: values the detector reported that its spans do not protect."""
-    spans = [(e.start_position, e.end_position) for e in EntitiesSchema.from_raw(entities).entities]
+    spans = [(e.start_position, e.end_position) for e in entities.entities]
     unspanned = []
     for value, labels in _listed_pairs(listed):
         start = text.find(value)

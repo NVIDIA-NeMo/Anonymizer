@@ -848,3 +848,51 @@ FULL_PAIRS = (("Alice Smith", "full_name"), ("Paris", "city"))
 
 def _view(*pairs: tuple[str, str]) -> dict[str, Any]:
     return {"entities_by_value": [{"value": v, "labels": [lab]} for v, lab in pairs]}
+
+
+# shape -> (spans, or None for no final_entities column; the detector's by-value view) for TEXT
+UNSPANNED: dict[str, tuple[list[dict[str, Any]] | None, dict[str, Any]]] = {
+    "span_missing_a_listed_value": ([NAME], _view(*FULL_PAIRS)),
+    "extra_pair_outside_the_spans": ([NAME, CITY], _view(*FULL_PAIRS, ("lives", "other"))),
+    "spans_free_with_pairs": ([], _view(*FULL_PAIRS)),
+    "no_entities_column": (None, _view(*FULL_PAIRS)),
+}
+
+
+class _UnspannedDetector(_Detector):
+    def __init__(self, shape: str) -> None:
+        super().__init__([])
+        self.spans, self.view = UNSPANNED[shape]
+
+    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+        frame = dataframe.copy()
+        texts = [str(t) for t in frame[COL_TEXT]]
+        if self.spans is not None:
+            frame[COL_FINAL_ENTITIES] = [{"entities": self.spans if t == TEXT else CONTROL_ENTITIES} for t in texts]
+        frame[COL_ENTITIES_BY_VALUE] = [
+            self.view if t == TEXT else _build_entities_by_value({"entities": CONTROL_ENTITIES}) for t in texts
+        ]
+        return EntityDetectionResult(frame, [], tuple(range(len(frame))))
+
+
+@pytest.mark.parametrize("strategy", ["redact", "hash", "substitute"])
+@pytest.mark.parametrize("shape", list(UNSPANNED))
+def test_replace_fails_a_row_whose_reported_value_has_no_span(shape: str, strategy: str, tmp_path: Path) -> None:
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": [TEXT, CONTROL]}).to_csv(source, index=False)
+
+    def run_workflow(self: NddAdapter, df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
+        out = df.copy().reset_index(drop=True)
+        out[COL_REPLACEMENT_MAP] = _substitute_map(out)
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
+
+    replace = {"redact": Redact(), "hash": Hash(), "substitute": Substitute()}[strategy]
+    anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, _UnspannedDetector(shape)))
+    with patch.object(NddAdapter, "run_workflow", run_workflow):
+        result = anonymizer.run(config=AnonymizerConfig(replace=replace), data=AnonymizerInput(source=str(source)))
+
+    control_kept = shape != "no_entities_column"
+    assert result.failed_records == [FailedRecord("0", "detect", "unspanned_value")] + (
+        [] if control_kept else [FailedRecord("1", "detect", "unspanned_value")]
+    )
+    assert not [v for v in PROTECTED for text in result.dataframe["text_replaced"] if v in text]

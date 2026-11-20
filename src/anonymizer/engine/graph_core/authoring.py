@@ -30,12 +30,21 @@ def utf8_size(text: str) -> int:
     return len(text.encode("utf-8"))
 
 
+@dataclass(frozen=True)
+class Refusal:
+    """An entry in place of a datum's mentions that fails the record with ``reason``."""
+
+    reason: str
+
+
 def mention_problem(mentions: Iterable[object], target: Datum | None = None) -> str:
     """The first rule ``mentions`` break, or "": each is a ``Mention`` (on ``target`` when given) whose offsets are a
     valid half-open interval of its datum, whose claimed text matches that slice, that has a label, and that overlaps
     no other."""
     by_datum: dict[Datum, list[Mention]] = {}
     for m in mentions:
+        if isinstance(m, Refusal):
+            return m.reason
         if not isinstance(m, Mention):
             return "invalid_output"
         if target is not None and m.datum != target:

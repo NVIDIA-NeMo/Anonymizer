@@ -516,8 +516,10 @@ class Anonymizer:
                 rejects it at ``replace``). For a row with spans, the
                 ``_entities_by_value`` view is that of its kept spans plus every
                 detector pair whose value occurs in the row's text outside those
-                spans; a row without
-                spans keeps the detector's view. These checks and the derived view
+                spans; a row without spans keeps the detector's view. In Replace,
+                a row whose view lists a value that occurs in its text outside
+                every kept span fails at ``detect`` with ``unspanned_value``.
+                These checks and the derived view
                 apply only when the detector returns source positions or unique
                 record ids (ids exist only with ``TextRecordsInput``) and leaves
                 each row's text unchanged; otherwise the result is used as

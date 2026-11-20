@@ -192,7 +192,7 @@ def run_replace_pipeline(
         positions = result.source_positions and tuple(result.source_positions[i] for i in kept.index)
         return dataclasses.replace(result, dataframe=kept.reset_index(drop=True), source_positions=positions)
 
-    detect_op = detect_step(dataframe, detect_replaceable, state)
+    detect_op = detect_step(dataframe, detect_replaceable, state, spans_only=True)
     tracker = ProgressTracker(total=len(graph.targets), label="Replacement")
     map_step = build_map = None
     if isinstance(replace_method, Substitute):

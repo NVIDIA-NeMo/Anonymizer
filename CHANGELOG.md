@@ -296,7 +296,10 @@ corrects the Detection entry "Detector spans are checked against the text", whic
   view whose value occurs in the row's text outside them; a row without spans keeps the detector's view. The column may be left
   out.
 - These rules apply when the detector reports source positions or unique record ids and leaves the text unchanged.
-- What to do: match the new failure reasons.
+- Replace (Redact, Hash, Substitute) fails a row at `detect` with `unspanned_value` when its `_entities_by_value`
+  view lists a value that occurs in the text outside every kept span. Such a value was released unreplaced before.
+- What to do: match the new failure reasons. A detector used with Replace must report a span for every value it
+  lists in `_entities_by_value`, or leave the column out.
 
 ### #407: frozen config and one options object
 
