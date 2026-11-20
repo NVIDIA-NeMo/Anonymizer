@@ -31,6 +31,7 @@ import pandas as pd
 from anonymizer.config.replace_strategies import Annotate, LocalReplaceMethod, Substitute
 from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
+    COL_PLACEHOLDER_IN_TEXT,
     COL_REPLACED_TEXT,
     COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
@@ -62,6 +63,7 @@ from anonymizer.engine.ndd.backend import (
     register_plain_kind,
     run_invocation,
 )
+from anonymizer.engine.protection_policy import assess, placeholder_in_text, repeat_handling
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
     LlmReplaceWorkflow,
@@ -226,7 +228,7 @@ def run_replace_pipeline(
         positions = result.source_positions and tuple(result.source_positions[i] for i in kept.index)
         return dataclasses.replace(result, dataframe=kept.reset_index(drop=True), source_positions=positions)
 
-    detect_op = detect_step(dataframe, detect_replaceable, state, repeats="fail" if detector == "custom" else "protect")
+    detect_op = detect_step(dataframe, detect_replaceable, state, repeats=repeat_handling("replace", detector))
     tracker = ProgressTracker(total=len(graph.targets), label="Replacement")
     map_step = build_map = None
     if isinstance(replace_method, Substitute):
@@ -277,6 +279,12 @@ def run_replace_pipeline(
     # A row whose detected text is missing keeps the detection frame's own stringification (``<NA>`` for ``pd.NA``).
     output_df[COL_REPLACED_TEXT] = [str(text) if missing(text) else result.value(d) for d, text in zip(targets, shown)]
     output_df[COL_REPLACEMENT_APPLICATION] = [result.value(d, "application") for d in targets]
+    if map_step:  # only Substitute mints placeholders; the policy decides whether one flags the row
+        flags = assess("placeholder_in_text", "replace", detector).action == "flag"
+        output_df[COL_PLACEHOLDER_IN_TEXT] = [
+            flags and placeholder_in_text(str(text), rmap)
+            for text, rmap in zip(output_df[COL_REPLACED_TEXT], output_df[COL_REPLACEMENT_MAP])
+        ]
     tracker.log_final()
     record_stage(
         "ReplacementWorkflow.run",

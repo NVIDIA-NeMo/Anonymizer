@@ -58,6 +58,7 @@ from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.protection_policy import placeholder_in_text as _placeholder_in_text
 from anonymizer.engine.replace.llm_replace_workflow import _fold_replacement_maps
 from anonymizer.engine.rewrite.repair import RepairWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import (
@@ -65,7 +66,6 @@ from anonymizer.engine.rewrite.rewrite_workflow import (
     _detection_valid_fraction,
     _join_new_columns,
     _leftover_metrics,
-    _placeholder_in_text,
 )
 from anonymizer.engine.spans import Span
 from anonymizer.engine.value_matching import format_cause

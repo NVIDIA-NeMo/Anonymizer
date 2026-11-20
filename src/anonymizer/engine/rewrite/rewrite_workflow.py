@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -65,7 +64,8 @@ from anonymizer.engine.ndd.backend import (
 )
 from anonymizer.engine.ndd.model_response import no_response
 from anonymizer.engine.ndd.workflow_utils import run_columns
-from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow, is_placeholder
+from anonymizer.engine.protection_policy import assess, placeholder_in_text, repeat_handling
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
@@ -292,41 +292,9 @@ def _rewrite_entry(row: dict[str, object]) -> dict[str, object] | RewriteUnavail
         "any_high_leaked": row.get(COL_ANY_HIGH_LEAKED),
         "weighted_leakage_rate": row.get(COL_WEIGHTED_LEAKAGE_RATE),
         **_leftover_metrics(row),
-        "placeholder_in_text": _placeholder_in_text(text, row.get(COL_REPLACEMENT_MAP)),
+        "placeholder_in_text": placeholder_in_text(text, row.get(COL_REPLACEMENT_MAP)),
     }
     return {"text": text, "metrics": metrics}
-
-
-def _placeholder_in_text(text: str, replacement_map: object) -> bool:
-    """Whether ``text`` holds a placeholder substitute of the row's replacement map; ``False`` without a map.
-
-    A placeholder stands in for a substitute that collided with a value in the record. It leaks nothing, so the row
-    stays met, but text that carries one needs review. The match is loose: any case, brackets optional, ``_``, ``-``
-    or one space between words, and the separator before the number optional. The number is required.
-    """
-    payload = normalize_payload(replacement_map)
-    entries = payload.get("replacements") if isinstance(payload, dict) else None
-    if not isinstance(entries, list):
-        return False
-    folded = text.casefold()
-    return any(
-        _placeholder_pattern(entry["synthetic"]).search(folded)
-        for entry in entries
-        if isinstance(entry, dict)
-        and isinstance(entry.get("label"), str)
-        and isinstance(entry.get("synthetic"), str)
-        and is_placeholder(entry["label"], entry["synthetic"])
-    )
-
-
-def _placeholder_pattern(placeholder: str) -> re.Pattern[str]:
-    """The loose casefolded pattern of ``placeholder``, an ``is_placeholder`` substitute. Its words are the minted
-    token's own, split at each ``_`` with empty items kept, so a label's punctuation runs match as minted."""
-    token, number = placeholder.casefold()[1:-1].rsplit("_", 1)
-    number = re.escape(number)
-    separator = r"[_\- ]"
-    body = separator.join(re.escape(word) for word in token.split("_"))
-    return re.compile(rf"(?<![^\W_]){body}{separator}?{number}(?!\d)")
 
 
 def _leftover_metrics(row: Mapping[str, object]) -> dict[str, bool | str | None]:
@@ -465,7 +433,10 @@ def _withhold_unassessed(frame: pd.DataFrame) -> None:
     The final checks have already run on the text and could not assess it; without a privacy verdict it is not
     released. Rows whose text is already null are left alone (see ``_withhold_rewritten_text`` on null columns).
     """
-    if COL_PRIVACY_QA_REANSWER not in frame.columns:
+    if (
+        COL_PRIVACY_QA_REANSWER not in frame.columns
+        or assess("privacy_unassessed", "rewrite", "builtin").action != "withhold"
+    ):
         return
     unassessed = frame[COL_PRIVACY_QA_REANSWER].map(no_response).astype(bool) & frame[COL_REWRITTEN_TEXT].notna()
     if unassessed.any():
@@ -473,6 +444,8 @@ def _withhold_unassessed(frame: pd.DataFrame) -> None:
 
 
 _PRIVACY_CHECKS = frozenset({"high_leak", "leakage_within_threshold"})
+# Rewrite's runners take no detector kind (J3): its verdicts are the same for both kinds, which the policy tests pin.
+_REWRITE_REPEATS = repeat_handling("rewrite", "builtin")
 
 
 def _withhold_failed_repairs(frame: pd.DataFrame, result: ProtectionResult, target_of: Mapping[int, Datum]) -> None:
@@ -482,6 +455,8 @@ def _withhold_failed_repairs(frame: pd.DataFrame, result: ProtectionResult, targ
     ran out of rounds, the preset does not send the row to repair, or ``max_repair_iterations`` is 0. Call it after
     the summary, which counts a repaired row without text as an unparsed repair.
     """
+    if assess("privacy_check_failed", "rewrite", "builtin").action != "withhold":
+        return
     failed = [
         any(
             reason.code == "failed" and reason.check in _PRIVACY_CHECKS
@@ -511,9 +486,11 @@ def _unavailable_if(outcome: TargetOutcome, withheld: bool) -> TargetOutcome:
 
 def _needs_review(result: ProtectionResult, target: Datum) -> bool:
     metrics = result.value(target, "metrics") or {}
-    return result.outcome(target).qualification != "met" or bool(
-        metrics.get("undetected_value_kept") or metrics.get("placeholder_in_text")
+    flagged = (
+        bool(metrics.get(situation)) and assess(situation, "rewrite", "builtin").action == "flag"
+        for situation in ("undetected_value_kept", "placeholder_in_text")
     )
+    return result.outcome(target).qualification != "met" or any(flagged)
 
 
 def _rewrite_lowered(
@@ -655,7 +632,7 @@ class RewriteWorkflow:
         evaluation = options["evaluation"]
         graph = rows_as_graph(dataframe[COL_TEXT])
         state = DetectState()
-        detect_op = detect_step(dataframe, detect, state)
+        detect_op = detect_step(dataframe, detect, state, repeats=_REWRITE_REPEATS)
         rows = _Rows(pd.DataFrame())
         parts: list[tuple[pd.DataFrame, pd.DataFrame]] = []
 

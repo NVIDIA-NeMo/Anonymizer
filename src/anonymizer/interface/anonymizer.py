@@ -50,6 +50,7 @@ from anonymizer.engine.constants import (
     COL_LEAKAGE_MASS,
     COL_MISSED_ENTITIES,
     COL_NEEDS_HUMAN_REVIEW,
+    COL_PLACEHOLDER_IN_TEXT,
     COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
     COL_RELATIONAL_CONSISTENCY_VALID,
     COL_REPLACED_TEXT,
@@ -99,6 +100,7 @@ from anonymizer.engine.ndd.model_loader import (
     validate_model_alias_references,
     validate_model_configs_reference_providers,
 )
+from anonymizer.engine.protection_policy import assess, fail_reasons
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
@@ -250,6 +252,29 @@ def _require_detector_keyword(runner: object) -> None:
             '`detector: Literal["builtin", "custom"] = "builtin"` (or **kwargs) to the override and pass it on to '
             "super().run_with_detection; it replaces unspanned_check."
         )
+
+
+def _placed_output(
+    source: pd.DataFrame,
+    output: pd.DataFrame,
+    detection_failures: list[FailedRecord],
+    runner_failures: list[FailedRecord],
+    step: str,
+    mode: Literal["replace", "rewrite"],
+    detector: Literal["builtin", "custom"],
+) -> tuple[pd.DataFrame, list[FailedRecord]]:
+    """An override runner's ``output``, checked at the seam (I1): only rows placed by a unique input record id are
+    released, and each ``source`` record that no placed row answers and no failure names fails at ``step`` with the
+    policy's ``unplaced_output`` reason. Returns the released rows and ``runner_failures`` plus those failures."""
+    positions = _source_positions(source, output)
+    placed = [i for i, p in enumerate(positions) if p is not None]
+    ids = _record_ids(source) or ()
+    answered = {ids[p] for p in positions if p is not None}
+    named = {f.record_id for f in (*detection_failures, *runner_failures)}
+    reason = assess("unplaced_output", mode, detector).reason
+    unplaced = [FailedRecord(i, step, reason) for i in ids if i not in answered and i not in named]
+    released = output if len(placed) == len(output) else output.iloc[placed].reset_index(drop=True)
+    return released, [*runner_failures, *unplaced]
 
 
 def _with_record_ids(frame: pd.DataFrame) -> pd.DataFrame:
@@ -1262,7 +1287,15 @@ class Anonymizer:
                 selected_models=self._selected_models.replace,
                 preview_num_records=preview_num_records,
             )
-            final_df, post_detection_failures = replace_result.dataframe, list(replace_result.failed_records)
+            final_df, post_detection_failures = _placed_output(
+                detected_df,
+                replace_result.dataframe,
+                detection_failures,
+                list(replace_result.failed_records),
+                "replace",
+                "replace",
+                self._detector_kind,
+            )
             replacement_elapsed = time.perf_counter() - t0
             outcomes = None
         elif config.replace is not None:
@@ -1321,7 +1354,15 @@ class Anonymizer:
                 t0 = time.perf_counter()
                 logger.info("✏️ Running rewrite pipeline")
                 rewrite_result = rewrite_runner.run(detected_df, **rewrite_options)
-                post_detection_failures = list(rewrite_result.failed_records)
+                placed_df, post_detection_failures = _placed_output(
+                    detected_df,
+                    rewrite_result.dataframe,
+                    detection_failures,
+                    list(rewrite_result.failed_records),
+                    "rewrite",
+                    "rewrite",
+                    self._detector_kind,
+                )
                 replacement_elapsed = time.perf_counter() - t0
                 outcomes = None
             else:
@@ -1337,7 +1378,11 @@ class Anonymizer:
                 replacement_elapsed = time.perf_counter() - t0 - detection_elapsed
                 post_detection_failures = rewrite_result.failed_records[len(detection_failures) :]
                 outcomes = rewrite_result.outcomes
-            final_df = rewrite_result.dataframe
+            final_df = (
+                placed_df
+                if rewrite_runner.__class__.run not in (RewriteWorkflow.run, CombinedRewriteWorkflow.run)
+                else rewrite_result.dataframe
+            )
         entity_count = _count_entities(detected_df)
         # Rows the graph rejects at its ``detect`` step come back with the later steps' failures; count them here.
         rejected_at_detect = sum(f.step == "detect" for f in post_detection_failures)
@@ -1692,6 +1737,7 @@ def _build_user_dataframe(
             f"{text_col}_replaced",
             f"{text_col}_with_spans",
             COL_FINAL_ENTITIES,
+            COL_PLACEHOLDER_IN_TEXT,  # Substitute only
             COL_ENTITY_COVERAGE,
             COL_MISSED_ENTITIES,
             COL_TYPE_FIDELITY_VALID,
@@ -1806,10 +1852,10 @@ def _step_to_field(step: str) -> str:
             return "unknown"
 
 
-# The reasons the protection graph gives a failed record: an operation's own failure, or a rejected mention.
-_KNOWN_FAILURE_REASONS = frozenset(
+# The reasons a failed record can carry: the protection graph's own (an operation's failure or a rejected mention),
+# and every failure reason of the release policy table.
+_GRAPH_FAILURE_REASONS = frozenset(
     {
-        "dropped_output",
         "invalid_output",
         "mention_not_on_target",
         "mention_out_of_range",
@@ -1819,9 +1865,9 @@ _KNOWN_FAILURE_REASONS = frozenset(
         "over_limit",
         "overlapping_output_ownership",
         "raised",
-        "unspanned_value",
     }
 )
+_KNOWN_FAILURE_REASONS = _GRAPH_FAILURE_REASONS | fail_reasons()
 # Graph operation names a failed record can carry besides the workflow names ``_step_to_field`` knows.
 _KNOWN_FAILURE_STEPS = frozenset({"replace", "rewrite", "verify-no-original", "verify-patches"})
 
