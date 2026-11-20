@@ -292,14 +292,15 @@ corrects the Detection entry "Detector spans are checked against the text", whic
   and an unlabelled span that no labelled span covers fails with `mention_unlabelled`.
 - In Rewrite, a `final_entities` payload that does not parse fails the record with `invalid_output`. Replace still
   rejects it at `replace`.
-- For a row with spans, the `_entities_by_value` view is that of its kept spans plus every pair of the detector's
-  view whose value occurs in the row's text outside them; a row without spans keeps the detector's view. The column may be left
-  out.
+- For a row with spans, the `_entities_by_value` view is that of its kept spans plus every pair of the
+  detector's view whose value occurs in the row's text outside them, by the leftover check's matching rule; a row
+  without spans keeps the detector's view. The column may be left out.
 - These rules apply when the detector reports source positions or unique record ids and leaves the text unchanged.
-- Replace (Redact, Hash, Substitute) fails a row at `detect` with `unspanned_value` when its `_entities_by_value`
-  view lists a value that occurs in the text outside every kept span. Such a value was released unreplaced before.
-- What to do: match the new failure reasons. A detector used with Replace must report a span for every value it
-  lists in `_entities_by_value`, or leave the column out.
+- With a custom detector, the Replace modes (Redact, Hash, Annotate, Substitute) fail a row at `detect` with
+  `unspanned_value` when its view holds a value that occurs in the text outside every kept span, including a span's
+  value repeated without a span. Such a value was released unreplaced before. Built-in detection is not checked.
+- What to do: match the new failure reasons. A custom detector used with Replace must report a span for every
+  occurrence of every value it reports.
 
 ### #407: frozen config and one options object
 

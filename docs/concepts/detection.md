@@ -51,11 +51,15 @@ The spans a custom `detection_workflow` returns in `final_entities` follow one c
 slice it covers equals its `value` exactly. Each span needs a non-empty `label`: an unlabelled span never covers
 another, and one that is not identical to or inside a labelled span fails its record. The `_entities_by_value` column
 is optional. For a row with spans, it is the view of the kept spans plus every pair of the detector's view whose value
-occurs in the row's text outside those spans; a row without spans keeps the detector's view. The rule keeps one invariant: every value the
-detector reports for a row, from a span or a by-value pair, that occurs in the row's text is either in the replacement
-view or fails the row, so released text never holds such a value unflagged. Replace (Redact, Hash, Substitute)
-replaces spans only, so in Replace a row whose view lists a value that occurs in its text outside every kept span fails
-at the `detect` step with the reason `unspanned_value`.
+occurs in the row's text outside those spans; a row without spans keeps the detector's view. "Occurs" follows the
+leftover check's rule: whole words, with case and accents folded, so "Ann" does not occur in "Annual" and "Jose"
+occurs in "José". The rule keeps one invariant: every value the detector reports for a row, from a span or a by-value
+pair, that occurs in the row's text is either in the replacement view or fails the row, so released text never holds
+such a value unflagged. The Replace modes (Redact, Hash, Annotate, Substitute) replace spans only, so with a custom
+detector a row whose view, after that derivation, holds a value that occurs in its text outside every kept span fails
+at the `detect` step with the reason `unspanned_value`. That includes a span's value repeated without a span, and a
+value that crosses two spans (`Paris/Rome` over spans on `Paris` and `Rome`). Built-in detection is not held to this
+check.
 
 Two overlap shapes are resolved at the `detect` step. Spans with identical bounds collapse into one, keeping the first
 labelled span in the detector's order with its label, and a span contained in a labelled span gives way to the outer
