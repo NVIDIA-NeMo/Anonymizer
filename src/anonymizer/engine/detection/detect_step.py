@@ -25,7 +25,7 @@ from anonymizer.engine.graph_core.authoring import DATUM, MENTIONS, Datum, Menti
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.backend import per_target
 from anonymizer.engine.row_partitioning import try_resolve_source_positions
-from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
+from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.engine.schemas.shared import to_python
 
 
@@ -74,8 +74,7 @@ def detect_step(
         raw_entities = result.dataframe.get(COL_FINAL_ENTITIES, repeat({}, len(positions)))
         rebuilt: dict[int, set[int]] = {}  # row -> the entities it loses
         malformed: set[Datum] = set()
-        by_value = result.dataframe.get(COL_ENTITIES_BY_VALUE, repeat(None, len(positions)))
-        for row, (datum, raw, listed) in enumerate(zip(surviving, raw_entities, by_value)):
+        for row, (datum, raw) in enumerate(zip(surviving, raw_entities)):
             try:  # the parse Replace applies, so a malformed payload fails its record in every mode
                 entities = EntitiesSchema.from_raw(raw, strict=True)
             except ValueError:
@@ -86,13 +85,9 @@ def detect_step(
                 rebuilt[row] = covered
                 entities = EntitiesSchema(entities=[e for i, e in enumerate(entities.entities) if i not in covered])
             state.rows[datum] = entities
-            # The by-value rule: derive the view only when it is missing or stale. A view that is missing, empty or
-            # lacks a kept (value, label) pair is rebuilt from the kept entities; a view that lists every kept pair is
-            # the detector's own and is used as returned, extra pairs included.
-            if not _absent(listed) and {(e.value, e.label) for e in entities.entities} <= _pairs(listed):
-                continue
-            if entities.entities:
-                rebuilt.setdefault(row, set())
+            # The by-value rule: the view is always derived from the row's kept entities. A detector's own view is
+            # not used: a pair no kept span has would leave the rewrite's deterministic replacements unready.
+            rebuilt.setdefault(row, set())
         # Later steps read the by-value column for every returned row, so it is added even when no row is rebuilt.
         if rebuilt or COL_ENTITIES_BY_VALUE not in result.dataframe.columns:
             state.detected[-1] = dataclasses.replace(result, dataframe=_with_entities(result.dataframe, rebuilt))
@@ -151,7 +146,8 @@ def covered_spans(datum: Datum, entities: EntitiesSchema) -> set[int]:
 
 def _with_entities(frame: pd.DataFrame, covered: dict[int, set[int]]) -> pd.DataFrame:
     """A copy of ``frame`` whose rows at the positions in ``covered`` lose those entities, with their by-value view
-    rebuilt (the column is added, with a missing cell for every other row, when the detector returned none).
+    rebuilt from the kept entities (the column is added when the detector returned none; a row not in ``covered``
+    keeps its cell, or a missing one).
 
     A rewritten entities cell keeps its own encoding (a JSON string stays a string) and its own keys. A rebuilt
     by-value cell takes the encoding of the column's first present cell, else of its row's entities cell, so a
@@ -181,12 +177,6 @@ def _without(raw: object, covered: set[int]) -> object:
     if not isinstance(entities, list):  # a wrapped model or another shape ``from_raw`` reads: use what it read
         entities = [e.model_dump(mode="json") for e in EntitiesSchema.from_raw(raw).entities]
     return _encoded_like(raw, {**payload, "entities": [e for i, e in enumerate(entities) if i not in covered]})
-
-
-def _pairs(cell: object) -> set[tuple[str, str]]:
-    return {
-        (item.value, label) for item in EntitiesByValueSchema.from_raw(cell).entities_by_value for label in item.labels
-    }
 
 
 def _encoded_like(raw: object, payload: dict[str, Any]) -> object:

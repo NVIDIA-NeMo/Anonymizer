@@ -717,25 +717,47 @@ def test_a_detector_without_a_by_value_column_completes_whatever_its_rows(
     assert (list(result.dataframe[column]) if column in result.dataframe.columns else []) == texts
 
 
-@pytest.mark.parametrize("mode", ["rewrite", "combined"])
-def test_a_complete_by_value_view_is_used_as_the_detector_returned_it(mode: str, tmp_path: Path) -> None:
-    extra = {"value": "Acme", "labels": ["organization"]}
-    own = _build_entities_by_value({"entities": [NAME, CITY]})
-    own = {**own, "entities_by_value": [*own["entities_by_value"], extra]}
+@pytest.mark.parametrize("shape", ["good", "nested"])
+def test_a_by_value_view_with_an_extra_pair_is_derived_and_protected(shape: str, tmp_path: Path) -> None:
+    """A detector's view listing a pair no kept span has is replaced by the view of its kept spans, so the rewrite's
+    deterministic replacements stay ready and no protected value reaches the baseline text."""
+    entities = [NAME, CITY] if shape == "good" else SHAPES["nested_inner_first"][0]
+    view = _build_entities_by_value({"entities": [NAME, CITY]})
+    view = {**view, "entities_by_value": [*view["entities_by_value"], {"value": "lives", "labels": ["other"]}]}
+
+    class ExtraPairDetector(_Detector):
+        def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+            result = super().run(dataframe)
+            result.dataframe[COL_ENTITIES_BY_VALUE] = [view, *result.dataframe[COL_ENTITIES_BY_VALUE].iloc[1:]]
+            return result
+
     source = tmp_path / "in.csv"
     pd.DataFrame({"text": [TEXT, CONTROL]}).to_csv(source, index=False)
     frames: list[pd.DataFrame] = []
     anonymizer = Anonymizer(
-        detection_workflow=cast(EntityDetectionWorkflow, _StaleByValueDetector(own)),
+        detection_workflow=cast(EntityDetectionWorkflow, ExtraPairDetector(entities)),
         rewrite_runner=_capturing(RewriteWorkflow(Mock()), frames),
-        combined_rewrite_runner=cast(CombinedRewriteWorkflow, _capturing(CombinedRewriteWorkflow(Mock()), frames)),
     )
-    anonymizer.run(
-        config=AnonymizerConfig(rewrite=Rewrite(use_combined_graph=mode == "combined")),
-        data=AnonymizerInput(source=str(source)),
-    )
+    anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=AnonymizerInput(source=str(source)))
 
-    assert _requested_pairs(frames[0][COL_ENTITIES_BY_VALUE].iloc[0]) == KEPT_PAIRS | {("Acme", "organization")}
+    row = frames[0].to_dict("records")[0]
+    assert _requested_pairs(row[COL_ENTITIES_BY_VALUE]) == KEPT_PAIRS
+    # The rewrite generation's replacement step, fed what a model would ask for: every pair it was shown.
+    pairs = _requested_pairs(row[COL_ENTITIES_BY_VALUE])
+    prepared = _prepare_rewrite_tagged_text(
+        {
+            **row,
+            COL_REPLACEMENT_MAP: _substitute_map(pd.DataFrame({COL_ENTITIES_BY_VALUE: [row[COL_ENTITIES_BY_VALUE]]}))[
+                0
+            ],
+            COL_REWRITE_DISPOSITION_BLOCK: [
+                {"entity_value": v, "entity_label": lab, "protection_method_suggestion": "replace"} for v, lab in pairs
+            ],
+            COL_TAG_NOTATION: "bracket",
+        }
+    )
+    assert prepared[COL_REWRITE_REPLACEMENT_READY] is True
+    assert not [v for v in PROTECTED if v in prepared[COL_REWRITE_BASELINE_TEXT]]
 
 
 @pytest.mark.parametrize("mode", ["redact", "substitute", "rewrite"])

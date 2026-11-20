@@ -50,9 +50,8 @@ The spans a custom `detection_workflow` returns in `final_entities` follow one c
 (`start_position` inclusive, `end_position` exclusive), lies within the record's text, is non-empty, and the text
 slice it covers equals its `value` exactly. Each span needs a non-empty `label`: an unlabelled span never covers
 another, and one that is not identical to or inside a labelled span fails its record. The `_entities_by_value` column
-is optional, and is derived only when it is missing or stale: a row whose cell is missing, empty, or lacks a value
-and label of its kept spans gets one built from its `final_entities`; a cell that lists every kept value and label is
-used as the detector returned it, extra entries included.
+is optional and is not used: every row's view is derived from its kept `final_entities` spans, so it lists exactly
+the values and labels of those spans.
 
 Two overlap shapes are resolved at the `detect` step. Spans with identical bounds collapse into one, keeping the first
 labelled span in the detector's order with its label, and a span contained in a labelled span gives way to the outer

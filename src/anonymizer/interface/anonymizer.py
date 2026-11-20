@@ -513,11 +513,9 @@ class Anonymizer:
                 with ``overlapping_output_ownership``, ``mention_out_of_range``,
                 ``mention_slice_mismatch`` or ``mention_unlabelled``; in Rewrite a
                 payload that does not parse fails with ``invalid_output`` (Replace
-                rejects it at ``replace``). The ``_entities_by_value`` view is
-                derived only when missing or stale: a row whose cell is missing,
-                empty or lacks a kept span's value and label gets one built from
-                its ``final_entities``; a cell listing every kept pair is used as
-                returned. These checks and the rebuild
+                rejects it at ``replace``). Each row's ``_entities_by_value`` view
+                is derived from its kept ``final_entities`` spans; a view the
+                detector returns is not used. These checks and the rebuild
                 apply only when the detector returns source positions or unique
                 record ids; without them a contract break may stop the run and a
                 record may be released with its spans unprotected.
