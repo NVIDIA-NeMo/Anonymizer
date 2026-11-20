@@ -52,10 +52,11 @@ def _nums(leftovers: tuple[Leftover, ...]) -> list[tuple[int | None, int, int, i
 
 # Case, short codes, CJK, Thai, accents (precomposed and combining), casefold expansion, fullwidth, digits,
 # punctuation and word boundaries; and marks that NFKD keeps (not Mn) but reorders by combining class: musical
-# symbols, a precomposed note that decomposes into them, a Hangul tone mark, viramas and a Vietnamese reading mark.
+# symbols, a precomposed note that decomposes into them, a Hangul tone mark, viramas and a Vietnamese reading mark;
+# and Mn marks of class 0 (dropped, so they can leave the marks around them out of canonical order).
 _ALPHABET = ["a", "b", "c", "A", "B", "C", " ", "  ", "中", "文", "ก", "é", "e\u0301", "É", "ß", "Ａ", "1", "'",
              "-", "_", ".", ",", "\n", "\U0001d165", "\U0001d16d", "\U0001d16e", "\U0001d160", "\u302e",
-             "\u1715", "\ua953", "\U00016ff0"]  # fmt: skip
+             "\u1715", "\ua953", "\U00016ff0", "\u093a", "\ufe0f"]  # fmt: skip
 
 
 def _string(rng: random.Random, low: int, high: int) -> str:
@@ -138,6 +139,8 @@ _MIRA = "Mira\U0001d157\U0001d16d\U0001d16e"  # the last two marks are out of ca
         (_MIRA, "Mira\U0001d157\U0001d16e\U0001d16d called."),  # copied in canonical order
         ("김\u302e\u1715", "김\u302e\u1715 called."),  # Hangul tone mark then virama
         ("Ana\ua953\U00016ff0", "Ana\ua953\U00016ff0 called."),  # virama then Vietnamese reading mark
+        ("Mira\U0001d16d\u093a\u1b44", "Mira\U0001d16d\u093a\u1b44 called."),  # normalizing twice reorders
+        ("Ana\u302e\ufe0f\u1715", "Ana\u302e\ufe0f\u1715 called."),
     ],
 )
 def test_a_value_with_reordered_marks_is_found_where_it_occurs(value: str, output: str) -> None:
@@ -309,3 +312,67 @@ def test_entity_spans_keep_every_position_and_only_usable_spans() -> None:
         (Span(8, 11), "l0"),
         (None, "l2"),  # the slice is not the value
     ]
+
+
+_FUZZ_POOLS = (
+    list("abcAB01_'-., "),
+    list("aIİıßſKσςΣǅﬃŉΐ"),
+    [chr(c) for c in range(0x0300, 0x0370)],
+    [
+        "\U0001d165",
+        "\U0001d166",
+        "\U0001d16d",
+        "\U0001d16e",
+        "\U0001d172",
+        "\u302e",
+        "\u302f",
+        "\u1715",
+        "\u1734",
+        "\u1b44",
+        "\ua953",
+        "\ua9c0",
+        "\U000111c0",
+        "\U00016ff0",
+        "\U00016ff1",
+    ],
+    ["\u093a", "\ufe0f", "\u200d", "\u0903"],
+    ["\U0001d15e", "\U0001d160", "\U0001d1bb", "é", "ǖ", "ṩ"],
+    [" ", "\n", "\u00a0", "\u3000", "\u200b"],
+    list("김한가中文かカ"),
+    list("Ａｂ①㎏ﷺ¼™ﬁ²"),
+)
+
+
+def _fuzz_string(rng: random.Random, low: int, high: int) -> str:
+    return "".join(rng.choice(rng.choice(_FUZZ_POOLS)) for _ in range(rng.randint(low, high)))
+
+
+def test_matching_holds_on_a_wide_unicode_corpus() -> None:
+    """Over marks of every kind, casefold expansions, compatibility forms and spaces: the map is the normalized text,
+    matching agrees with the presence rule, every span is valid and holds the value, and nothing raises."""
+    rng = random.Random(426)
+    found = 0
+    for _ in range(2_000):
+        value = _fuzz_string(rng, 1, 5)
+        text = _fuzz_string(rng, 0, 12)
+        if rng.random() < 0.6:
+            cut = rng.randint(0, len(text))
+            text = text[:cut] + value + text[cut:]
+        for t in (text, value):
+            (plain, origin), (folded, folded_origin) = _mapped(t)
+            assert plain == _normalized(t) and folded == plain.casefold()
+            assert all(0 <= i < len(t) for i in origin + folded_origin)
+        key = _normalized(value)
+        leftovers = count_values("", [], text, [value])
+        plain = _normalized(text)
+        present = _occurs(key, plain, plain.casefold())
+        assert any(x.in_output for x in leftovers) is present
+        found += present
+        for x in leftovers:
+            for span in x.output_spans:
+                assert 0 <= span.start < span.end <= len(text)
+                held = _normalized(text[span.slice])
+                assert (key if value_matching._short_code(key) else key.casefold()) in (
+                    held if value_matching._short_code(key) else held.casefold()
+                )
+    assert found > 300  # matches, not only misses

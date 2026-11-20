@@ -953,8 +953,16 @@ def test_leftovers_explain_a_substitute_that_brings_a_value_back(tmp_path: Path)
         result.leftovers(1)
 
 
-def test_a_redact_template_that_brings_back_a_name_with_reordered_marks_fails_the_advisory(tmp_path: Path) -> None:
-    name = "Mira\U0001d157\U0001d16d\U0001d16e"  # NFKD puts the last two marks in the other order
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("Mira\U0001d157\U0001d16d\U0001d16e", id="marks-out-of-canonical-order"),
+        pytest.param("Mira\U0001d16d\u093a\u1b44", id="marks-reordered-after-a-dropped-mark"),
+    ],
+)
+def test_a_redact_template_that_brings_back_a_name_with_reordered_marks_fails_the_advisory(
+    tmp_path: Path, name: str
+) -> None:
     text = f"{name} called."
     detector = Mock(spec=EntityDetectionWorkflow)
     detector.run.side_effect = lambda frame, **_: EntityDetectionResult(

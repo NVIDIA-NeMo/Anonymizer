@@ -2264,3 +2264,16 @@ def test_a_name_with_marks_out_of_canonical_order_copied_verbatim_is_not_met(tmp
     assert result.dataframe["needs_human_review"].tolist() == [True]
     assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [("failed", "replacements_applied", "e0:N1,D1,O1")]
     assert format_cause(x for x in result.leftovers(0) if x.over_bound) == outcome.reasons[0].cause
+
+
+def test_a_name_whose_marks_reorder_after_a_dropped_mark_is_counted(tmp_path: Path) -> None:
+    """Normalizing this name twice reorders its marks; it is normalized once, so the run completes and counts it."""
+    name = "Mira\U0001d16d\u093a\u1b44"
+    text = f"{name} called."
+    adapter = _ScriptedAdapter({"rec": 0}, initial=text, policy=_disposition((name, "replace", "tagged")))
+    result = _run_result(adapter, tmp_path, text, [_span(text, name)])
+
+    assert [(r.code, r.check, r.cause) for r in result.outcome(0).reasons] == [
+        ("failed", "replacements_applied", "e0:N1,D1,O1")
+    ]
+    assert format_cause(result.leftovers(0)) == "e0:N1,D1,O1"

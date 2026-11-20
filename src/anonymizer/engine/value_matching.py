@@ -142,10 +142,12 @@ class _Matcher:
             pos = text.find(self.key, pos + 1)
 
 
-def _compiled(values: Iterable[str]) -> dict[str, _Matcher]:
-    """One matcher per distinct normalized value; a blank value and a one-character unspaced value get none."""
+def _compiled(keys: Iterable[str]) -> dict[str, _Matcher]:
+    """One matcher per distinct key, each already ``_normalized`` (normalizing is not idempotent: a dropped mark can
+    leave marks out of canonical order, so a key is normalized once); a blank key and a one-character unspaced key
+    get none."""
     matchers: dict[str, _Matcher] = {}
-    for value in {_normalized(v) for v in values} - {""}:
+    for value in set(keys) - {""}:
         cased = _short_code(value)
         key = value if cased else value.casefold()
         if not (_unspaced(key[0]) and _unspaced(key[-1])):
