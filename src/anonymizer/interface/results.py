@@ -14,7 +14,7 @@ from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACEMENT_MAP,
 from anonymizer.engine.graph_core.execution import TargetOutcome
 from anonymizer.engine.graph_core.session import SessionChanges
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.engine.replace.llm_replace_workflow import _is_placeholder
+from anonymizer.engine.replace.llm_replace_workflow import is_placeholder
 from anonymizer.engine.rewrite.rewrite_workflow import rewrite_leftovers
 from anonymizer.engine.row_partitioning import cell_text
 from anonymizer.engine.schemas import EntitiesSchema
@@ -44,9 +44,10 @@ class SessionCallChanges:
 
 @dataclass(frozen=True)
 class Replacement:
-    """One replacement map entry. ``placeholder`` is a token-shape check: it is true when ``synthetic`` has the form
-    of a placeholder Anonymizer can mint, such as ``[SUBSTITUTE_FIRST_NAME_1]``, for any label and written exactly
-    that way. It does not say who produced it: Anonymizer may have minted it in this call, the Session may have held it
+    """One replacement map entry. ``placeholder`` is a token-shape check tied to the entry's label: it is true when
+    ``synthetic`` has the form of a placeholder Anonymizer can mint for ``label``, such as ``[SUBSTITUTE_FIRST_NAME_1]``
+    for ``first_name``, in any letter case; a token shaped for another label reads false. It does not say who
+    produced it: Anonymizer may have minted it in this call, the Session may have held it
     from an earlier call, or the model may have proposed it. The result's ``session_changes`` counts only the
     placeholders minted in the call."""
 
@@ -115,7 +116,7 @@ class _DisplayMixin:
             return ()
         entries = _normalize_replacement_map(self.trace_dataframe[COL_REPLACEMENT_MAP].iloc[row])
         parts = [(str(e.get("original", "")), str(e.get("label", "")), str(e.get("synthetic", ""))) for e in entries]
-        return tuple(Replacement(o, lb, s, _is_placeholder(s)) for o, lb, s in parts if o and lb and s)
+        return tuple(Replacement(o, lb, s, is_placeholder(lb, s)) for o, lb, s in parts if o and lb and s)
 
     def leftovers(self, row: int) -> tuple[Leftover, ...]:
         """Each detected value of output row ``row`` as the leftover check counts it, in ``cause`` order: Replace's

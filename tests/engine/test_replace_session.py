@@ -55,7 +55,7 @@ from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWor
 from anonymizer.graph import SessionSnapshot
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import InvalidConfigError
-from anonymizer.interface.results import Replacement, SessionCallChanges
+from anonymizer.interface.results import AnonymizerResult, Replacement, SessionCallChanges
 from tests.engine import test_replace_detect_failures as rejected
 
 LABELS = {"Alice": "first_name", "ALICE": "first_name", "Bob": "first_name", "Carol": "first_name"}
@@ -816,6 +816,24 @@ def test_is_placeholder_accepts_exactly_the_minted_tokens() -> None:
             assert _is_placeholder(token), token
     for value in ("[SUBSTITUTE_X_01]", "[SUBSTITUTE_A_0]", "[SUBSTITUTE_First_1]", "[REDACTED_FIRST_NAME]"):
         assert not _is_placeholder(value), value
+
+
+@pytest.mark.parametrize(
+    ("synthetic", "expected"),
+    [
+        ("[SUBSTITUTE_CITY_7]", True),
+        ("[substitute_city_7]", True),
+        ("[SUBSTITUTE_FIRST_NAME_7]", False),
+        ("Lyon", False),
+    ],
+    ids=["own-label", "lower-case", "another-label", "plain"],
+)
+def test_replacement_placeholder_is_tied_to_the_label_and_case_insensitive(synthetic: str, expected: bool) -> None:
+    frame = pd.DataFrame(
+        {COL_REPLACEMENT_MAP: [{"replacements": [{"original": "Paris", "label": "CITY", "synthetic": synthetic}]}]}
+    )
+    result = AnonymizerResult(dataframe=frame, trace_dataframe=frame, resolved_text_column="text", failed_records=[])
+    assert result.replacement_map(0) == (Replacement("Paris", "CITY", synthetic, expected),)
 
 
 @pytest.mark.parametrize("preview", [False, True], ids=["run", "preview"])

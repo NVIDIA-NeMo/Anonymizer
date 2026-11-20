@@ -237,8 +237,9 @@ session = Session.restore(SessionSnapshot.from_bytes(saved))
 See [Graph SDK](graph-sdk.md#session-provisional) for the Session itself.
 
 To read what a row was given, `result.replacement_map(row)` returns its entries as `Replacement(original, label,
-synthetic, placeholder)`. `placeholder` is a token-shape check: it is true when the substitute has the form of a
-placeholder such as `[SUBSTITUTE_FIRST_NAME_1]`, for any label and written exactly that way, whether Anonymizer minted
+synthetic, placeholder)`. `placeholder` is a token-shape check tied to the entry's label: it is true when the substitute
+has the form of a placeholder for that label, such as `[SUBSTITUTE_FIRST_NAME_1]` for `first_name`, in any letter
+case (`[substitute_first_name_1]` too); a token shaped for another label reads false. It holds whether Anonymizer minted
 it in this call, the Session held it from an earlier call, or the model proposed it. `result.session_changes` counts
 only the placeholders minted in the call.
 
