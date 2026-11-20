@@ -4,6 +4,23 @@
 # hooks this repository keeps in common with other NVIDIA NeMo repositories. Maintainers apply
 # it with an internal tool, house, which writes this file; contributors never need to run it.
 # source_commit identifies the baseline version applied. Do not edit.
-schema_version = 1
-source_commit = "6cce74072a0bf5b122ee0e7eaf95cb05299bb049" # pragma: allowlist secret
+schema_version = 2
+source_commit = "135d4f06bc094a4a7766ed2739b32aea5201d254" # pragma: allowlist secret
 profile = "public"
+# exclusions lists the Ruff exclusions house derived, which it removes once they stop applying.
+exclusions = [
+    "vendor/**",
+    "third_party/**",
+    "uv.lock",
+    "mise.lock",
+    "LICENSE",
+    "**/skill.oms.sig",
+    "docs/fern/**/*.markdown",
+    "docs/fern/**/*.md",
+    "docs/fern/**/*.mdx",
+    "docs/**/*.markdown",
+    "docs/**/*.md",
+    "docs/**/*.mdx",
+    "skills/anonymizer/BENCHMARK.md",
+    "skills/anonymizer/skill-card.md",
+]
