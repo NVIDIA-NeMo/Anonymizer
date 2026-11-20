@@ -30,7 +30,9 @@ from anonymizer.engine.ndd import backend
 from anonymizer.engine.ndd.backend import register_plain_kind, rows_as_graph, run_invocation
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
-PLAIN_KINDS = ("replacement-map", "replacement-application", "replace-metrics", "rewrite-metrics", "coverage-metrics")
+PLAIN_KINDS = ("replacement-map", "replacement-application", "rewrite-metrics", "coverage-metrics")
+# evaluate()'s replace-metrics keeps copy=dict, so an unreadable judge value reaches its verifier (#387).
+DICT_KINDS = ("replace-metrics",)
 MODULES = (
     "anonymizer.interface.anonymizer",
     "anonymizer.engine.rewrite.rewrite_workflow",
@@ -52,7 +54,7 @@ def test_every_dict_kind_copies_to_plain_whatever_the_import_order(first: str) -
             *(f"import {m}" for m in (first, *rest)),
             "from anonymizer.engine.ndd.backend import _plain",
             "from anonymizer.engine.graph_core.kernel import kind",
-            f"print(all(kind(n).copy is _plain for n in {PLAIN_KINDS!r}))",
+            f"print(all(kind(n).copy is _plain for n in {PLAIN_KINDS!r}) and all(kind(n).copy is dict for n in {DICT_KINDS!r}))",
         ]
     )
     out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
