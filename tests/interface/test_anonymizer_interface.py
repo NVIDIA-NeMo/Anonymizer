@@ -32,7 +32,7 @@ from anonymizer.config.anonymizer_config import (
 )
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection
 from anonymizer.config.regex import RegexLimits, RegexRule
-from anonymizer.config.replace_strategies import Redact, Substitute
+from anonymizer.config.replace_strategies import Hash, Redact, Substitute
 from anonymizer.engine.constants import (
     COL_ATTRIBUTE_FIDELITY_VALID,
     COL_DETECTED_ENTITIES,
@@ -1058,6 +1058,16 @@ def test_validate_config_passes_for_valid_substitute_config() -> None:
 def test_validate_config_passes_for_valid_rewrite_config() -> None:
     anonymizer, _, _, _ = _make_anonymizer()
     anonymizer.validate_config(AnonymizerConfig(rewrite=Rewrite()))
+
+
+def test_validate_config_refuses_a_hash_copied_from_a_result() -> None:
+    anonymizer, _, _, _ = _make_anonymizer()
+    # model_copy skips validation, as reusing a result's strategy through a copied config would.
+    config = AnonymizerConfig(replace=Hash(key="s3cr3t")).model_copy(
+        update={"replace": Hash(key="s3cr3t").without_key()}
+    )
+    with pytest.raises(InvalidConfigError, match="Hash requires a secret key"):
+        anonymizer.validate_config(config)
 
 
 def test_validate_config_raises_on_unknown_detection_alias(

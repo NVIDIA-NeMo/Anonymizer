@@ -581,12 +581,12 @@ def test_hash_strategy_executes(
     )
     result = runner.run(
         input_df,
-        replace_method=Hash(),
+        replace_method=Hash(key="s3cr3t"),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
     )
     assert result.failed_records == []
-    assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == "<HASH_FIRST_NAME_3bc51062973c>"
+    assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == Hash(key="s3cr3t").replace(text="Alice", label="first_name")
 
 
 def test_redact_none_replaces_all(
@@ -1013,7 +1013,7 @@ def test_a_redact_template_that_brings_back_a_name_with_reordered_marks_fails_th
             id="float-with-a-blank-row",
         ),
         pytest.param({"text": [True]}, [[_ent("True", 0)]], Redact(format_template="True"), False, id="bool"),
-        pytest.param({"text": [123456]}, [[_ent("123456", 0)]], Hash(), False, id="int-hash-passes"),
+        pytest.param({"text": [123456]}, [[_ent("123456", 0)]], Hash(key="s3cr3t"), False, id="int-hash-passes"),
     ],
 )
 def test_leftovers_are_what_the_replace_advisory_counted(

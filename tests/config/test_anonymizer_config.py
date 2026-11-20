@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import logging
+import pickle
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from pydantic import ValidationError
@@ -31,9 +32,147 @@ from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
 
 
 def test_hash_is_deterministic() -> None:
-    strategy = Hash()
+    strategy = Hash(key="s3cr3t")
     value = strategy.replace(text="alice@example.com", label="email")
     assert value == strategy.replace(text="alice@example.com", label="email")
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: Hash(),  # ty: ignore[missing-argument]
+        lambda: Hash(key=None),
+        lambda: AnonymizerConfig.model_validate({"replace": {"kind": "hash"}}),
+        lambda: AnonymizerConfig.model_validate({"replace": {"kind": "hash", "key": None}}),
+    ],
+    ids=["no-key", "key-none", "dict-no-key", "dict-key-none"],
+)
+def test_hash_without_key_fails_and_names_the_fix(build: Any) -> None:
+    with pytest.raises(ValidationError, match=r"Hash requires a secret key: pass Hash\(key=\.\.\.\)") as exc_info:
+        build()
+    assert "ANONYMIZER_HASH_KEY" in str(exc_info.value)
+
+
+def test_hash_copy_without_key_cannot_hash() -> None:
+    stripped = Hash(key="s3cr3t").without_key()
+    assert stripped.key is None
+    with pytest.raises(ValueError, match="Hash requires a secret key"):
+        stripped.replace(text="Alice", label="first_name")
+
+
+_KEY = "s3cr3t-key-material"
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: Hash(key=_KEY, algorithm="md5"),
+        lambda: Hash(key=_KEY, digest_length=3),
+        lambda: Hash(key=_KEY, format_template="<HASH>"),
+        lambda: Hash.model_validate({"key": _KEY, "kind": "redact"}),
+        lambda: AnonymizerConfig(replace=Hash(key=_KEY), rewrite=Rewrite()),
+        lambda: AnonymizerConfig.model_validate({"replace": {"kind": "hash", "key": _KEY}, "rewrite": {}}),
+        lambda: AnonymizerConfig.model_validate_json(
+            f'{{"replace": {{"kind": "hash", "key": "{_KEY}"}}, "rewrite": {{}}}}'
+        ),
+        lambda: AnonymizerConfig.model_validate({"replace": {"kind": "hash", "key": _KEY, "algorithm": "sha1"}}),
+        lambda: AnonymizerConfig.model_validate(
+            {"replace": {"kind": "hash", "key": _KEY}, "detect": {"gliner_threshold": 5}}
+        ),
+        lambda: AnonymizerConfig.model_validate({"replace": {"kind": "hash", "key": _KEY}, "emit_telemetry": "maybe"}),
+        lambda: AnonymizerConfig.model_validate({"replace": {"kind": "hsh", "key": _KEY}}),
+        lambda: AnonymizerConfig.model_validate({"replace": {"key": _KEY}}),
+        lambda: AnonymizerConfig.model_validate({"replace": {"kind": 5, "key": _KEY}}),
+        lambda: AnonymizerConfig.model_validate_json(f'{{"replace": {{"kind": "hsh", "key": "{_KEY}"}}}}'),
+        lambda: AnonymizerConfig.model_validate({"replace": [{"kind": "hash", "key": _KEY}]}),
+        lambda: AnonymizerConfig.model_validate({"replace": ({"kind": "hash", "key": _KEY},)}),
+        lambda: Hash.model_validate({"key": [_KEY]}),
+        lambda: Hash.model_validate({"key": {"k": _KEY}}),
+        lambda: Hash.model_validate({"key": _KEY.encode() + b"\xff"}),
+        lambda: AnonymizerConfig.model_validate({"replace": {"kind": "hash", "key": 1234567}}),
+        lambda: AnonymizerConfig.model_validate_json('{"replace": {"kind": "hash", "key": 1234567.5}}'),
+    ],
+    ids=[
+        "algorithm",
+        "digest-length",
+        "template",
+        "kind",
+        "both-modes-instance",
+        "both-modes-dict",
+        "both-modes-json",
+        "config-algorithm",
+        "config-detect",
+        "config-telemetry",
+        "bad-kind",
+        "no-kind",
+        "int-kind",
+        "bad-kind-json",
+        "replace-list",
+        "replace-tuple",
+        "key-list",
+        "key-dict",
+        "key-bad-bytes",
+        "key-int",
+        "key-float-json",
+    ],
+)
+def test_validation_errors_carry_no_key(build: Any) -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        build()
+    error = exc_info.value
+    for secret in (_KEY, "1234567"):
+        assert secret not in str(error)
+        assert secret not in repr(error.errors())
+        assert secret not in error.json()
+        assert secret.encode() not in pickle.dumps(error)
+
+
+def test_hash_rejects_a_key_that_is_not_utf8_without_echoing_it() -> None:
+    key = "s3cr3t-key-material-\udcff"
+    with pytest.raises(ValidationError, match="encodes as UTF-8") as exc_info:
+        Hash(key=key)
+    error = exc_info.value
+    assert _KEY not in str(error) and _KEY not in repr(error.errors()) and _KEY not in error.json()
+
+
+def test_config_refuses_a_hash_copied_from_a_result() -> None:
+    with pytest.raises(ValidationError, match="Hash requires a secret key"):
+        AnonymizerConfig(replace=Hash(key=_KEY).without_key())
+
+
+def test_keyed_hash_folds_case_and_whitespace_and_depends_on_key() -> None:
+    keyed = Hash(key="s3cr3t")
+    token = keyed.replace(text="Acme  Corp", label="company_name")
+    assert token == keyed.replace(text="ACME\u202fcorp", label="company_name")
+    assert token != Hash(key="other").replace(text="Acme  Corp", label="company_name")
+    assert "s3cr3t" not in repr(keyed)
+
+
+def test_keyed_hash_output_is_hmac_sha256_of_folded_text() -> None:
+    # From `printf 'acme corp' | openssl dgst -sha256 -hmac s3cr3t`, first 12 hex characters.
+    expected = "<HASH_COMPANY_NAME_44cf69ecb37f>"
+    tokens = {Hash(key="s3cr3t").replace(text="Acme  Corp", label="company_name") for _ in range(2)}
+    assert tokens == {expected}
+
+
+@pytest.mark.parametrize("key", ["", "   ", "\t\n"], ids=["empty", "spaces", "whitespace"])
+def test_hash_rejects_blank_key(key: str) -> None:
+    with pytest.raises(ValidationError, match="key must not be empty"):
+        Hash(key=key)
+
+
+def test_keyed_hash_config_does_not_reload_from_json_with_masked_key() -> None:
+    dumped = AnonymizerConfig(replace=Hash(key="s3cr3t")).model_dump_json()
+    assert "s3cr3t" not in dumped
+    with pytest.raises(ValidationError, match="masked placeholder"):
+        AnonymizerConfig.model_validate_json(dumped)
+
+
+@pytest.mark.parametrize("algorithm", ["sha1", "md5"])
+def test_keyed_hash_rejects_non_default_algorithm(algorithm: Literal["sha1", "md5"]) -> None:
+    with pytest.raises(ValidationError, match="HMAC-SHA256") as exc_info:
+        Hash(key="s3cr3t", algorithm=algorithm)
+    assert "s3cr3t" not in str(exc_info.value)
 
 
 def test_rewrite_defaults_privacy_goal() -> None:
@@ -883,7 +1022,8 @@ def test_builtin_regex_rejects_unknown_label() -> None:
     [("annotate", Annotate), ("redact", Redact), ("hash", Hash), ("substitute", Substitute)],
 )
 def test_replace_dict_resolves_by_kind(kind: str, expected_type: type) -> None:
-    config = AnonymizerConfig.model_validate({"replace": {"kind": kind}})
+    extra = {"key": "s3cr3t"} if kind == "hash" else {}
+    config = AnonymizerConfig.model_validate({"replace": {"kind": kind, **extra}})
     assert type(config.replace) is expected_type
 
 
@@ -893,7 +1033,7 @@ def test_replace_dict_kind_is_case_insensitive() -> None:
 
 
 def test_replace_instance_needs_no_explicit_kind() -> None:
-    config = AnonymizerConfig(replace=Hash(digest_length=8))
+    config = AnonymizerConfig(replace=Hash(key="s3cr3t", digest_length=8))
     assert isinstance(config.replace, Hash)
     assert config.replace.kind == "hash"
 
@@ -909,8 +1049,9 @@ def test_replace_instance_kind_cannot_be_overridden() -> None:
         Redact.model_validate({"kind": "hash"})
 
 
-@pytest.mark.parametrize("replace", [Annotate(), Redact(), Hash(), Substitute(instructions="Keep it short.")])
-def test_replace_config_round_trips_through_json(replace: Annotate | Redact | Hash | Substitute) -> None:
+# A keyed Hash does not round-trip: its key is masked (see the masked-placeholder test).
+@pytest.mark.parametrize("replace", [Annotate(), Redact(), Substitute(instructions="Keep it short.")])
+def test_replace_config_round_trips_through_json(replace: Annotate | Redact | Substitute) -> None:
     config = AnonymizerConfig(replace=replace)
     assert AnonymizerConfig.model_validate_json(config.model_dump_json()) == config
 

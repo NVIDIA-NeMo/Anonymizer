@@ -255,9 +255,9 @@ Symptoms: every "Alice" becomes "Maya," every city becomes "Springfield," every 
 
 ### Hash output isn't stable across runs
 
-The digest is deterministic given the same `algorithm`, `digest_length`, and *input text*. The label is **not** part of the digest — but it *is* templated into the output wrapper (default `format_template="<HASH_{label}_{digest}>"`). So:
+The digest is deterministic given the same `key`, `digest_length`, and *input text* (casefolded, with runs of whitespace collapsed). The label is **not** part of the digest — but it *is* templated into the output wrapper (default `format_template="<HASH_{label}_{digest}>"`). So:
 
-- **Digest differs across runs**: the detected entity text changed (whitespace, casing, surrounding context). Check the `<your_text_column>_with_spans` column to confirm.
+- **Digest differs across runs**: the key changed, or the detected entity text changed beyond casing and whitespace. Check that every run reads the same key, and check the `<your_text_column>_with_spans` column for the entity text.
 - **Only the wrapper differs** (digest is the same, but e.g. `<HASH_FIRST_NAME_abc>` becomes `<HASH_NAME_abc>`): the label changed between runs. The digest is still stable; only the wrapper text moved. To avoid label drift in the output, set `format_template="<HASH_{digest}>"` to drop the label entirely.
 
 ### Validation passed but `preview` errors at LLM call

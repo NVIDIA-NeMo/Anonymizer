@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from anonymizer.config.anonymizer_config import DetectionScope
-from anonymizer.config.replace_strategies import Annotate, ReplaceMethod
+from anonymizer.config.replace_strategies import Annotate, Hash, ReplaceMethod
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_SENSITIVITY_DISPOSITION
 from anonymizer.engine.graph_core.execution import TargetOutcome
@@ -18,6 +18,11 @@ from anonymizer.engine.row_partitioning import cell_text
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.engine.value_matching import Leftover, count_values, entity_spans
 from anonymizer.interface.display import render_record_html
+
+
+def _without_secrets(method: ReplaceMethod | None) -> ReplaceMethod | None:
+    """Drop the Hash key so a saved or pickled result never holds it; ``evaluate()`` needs only the type."""
+    return method.without_key() if isinstance(method, Hash) and method.key is not None else method
 
 
 class _DisplayMixin:
@@ -146,6 +151,7 @@ class AnonymizerResult(_DisplayMixin):
             ``run()`` / ``preview()``; consumed by ``evaluate()`` to dispatch the
             right judges. ``None`` on results that were constructed by hand or
             loaded from a pre-strategy-tracking format.
+            A ``Hash`` is kept without its key, so a saved result holds no key material.
         rewrite_config: The privacy goal that produced this result when rewrite
             mode was used. Set by ``run()`` / ``preview()``; consumed by
             ``evaluate()`` to dispatch the rewrite judges. Mutually exclusive
@@ -188,6 +194,9 @@ class AnonymizerResult(_DisplayMixin):
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
     _outcome_ids: tuple[str, ...] | None = field(default=None, repr=False, compare=False)
 
+    def __post_init__(self) -> None:
+        self.replace_method = _without_secrets(self.replace_method)
+
     def __repr__(self) -> str:
         return (
             "AnonymizerResult("
@@ -216,6 +225,7 @@ class PreviewResult(_DisplayMixin):
             ``preview()``; consumed by ``evaluate()`` to dispatch the right
             judges. ``None`` on results that were constructed by hand or loaded
             from a pre-strategy-tracking format.
+            A ``Hash`` is kept without its key, so a saved result holds no key material.
         rewrite_config: The privacy goal that produced this preview when rewrite
             mode was used. Set by ``preview()``; consumed by ``evaluate()`` to
             dispatch the rewrite judges. Mutually exclusive with ``replace_method``.
@@ -257,6 +267,9 @@ class PreviewResult(_DisplayMixin):
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
     _outcome_ids: tuple[str, ...] | None = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        self.replace_method = _without_secrets(self.replace_method)
 
     def __repr__(self) -> str:
         return (

@@ -8,11 +8,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from anonymizer.config.entity_labels import normalize_entity_label
 from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
-from anonymizer.config.replace_strategies import ReplaceMethod
+from anonymizer.config.replace_strategies import HASH_KEY_REQUIRED_MESSAGE, Hash, ReplaceMethod
 from anonymizer.config.rewrite import (
     DEFAULT_PRESERVE_TEXT,
     DEFAULT_PROTECT_TEXT,
@@ -400,7 +400,7 @@ class AnonymizerConfig(BaseModel):
     detect: Detect = Field(default_factory=Detect, description="Entity detection configuration.")
     replace: ReplaceMethod | None = Field(
         default=None,
-        description="Replacement method (Substitute(), Redact(), Annotate(), or Hash()).",
+        description="Replacement method (Substitute(), Redact(), Annotate(), or Hash(key=...)).",
     )
     rewrite: Rewrite | None = Field(default=None, description="Optional rewrite-mode parameters. ")
     emit_telemetry: bool = Field(
@@ -411,16 +411,31 @@ class AnonymizerConfig(BaseModel):
         ),
     )
 
+    # The two-mode and keyless-Hash checks are field-level: a model-level error carries the whole input, a Hash key
+    # included, in ``errors()`` and ``json()``. ``replace`` is declared before ``rewrite``, so ``info.data`` has it.
+
+    @field_validator("replace")
+    @classmethod
+    def validate_replace_has_key(cls, value: ReplaceMethod | None) -> ReplaceMethod | None:
+        if isinstance(value, Hash) and value.key is None:
+            raise ValueError(HASH_KEY_REQUIRED_MESSAGE)
+        return value
+
+    @field_validator("rewrite")
+    @classmethod
+    def validate_not_both_modes(cls, value: Rewrite | None, info: ValidationInfo) -> Rewrite | None:
+        if value is not None and info.data.get("replace") is not None:
+            raise ValueError(
+                "Cannot use both replace and rewrite — choose one mode."
+                " Use replace=Redact() for entity replacement, or rewrite=Rewrite() for LLM rewriting."
+            )
+        return value
+
     @model_validator(mode="after")
     def validate_exactly_one_mode(self) -> AnonymizerConfig:
         if self.replace is None and self.rewrite is None:
             raise ValueError(
                 "Exactly one of replace or rewrite must be provided."
-                " Use replace=Redact() for entity replacement, or rewrite=Rewrite() for LLM rewriting."
-            )
-        if self.replace is not None and self.rewrite is not None:
-            raise ValueError(
-                "Cannot use both replace and rewrite — choose one mode."
                 " Use replace=Redact() for entity replacement, or rewrite=Rewrite() for LLM rewriting."
             )
         return self

@@ -205,7 +205,7 @@ def test_accepted_shapes_are_protected_and_collapsed_in_the_output(shape: str, s
         out[COL_REPLACEMENT_MAP] = _substitute_map(out)
         return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
 
-    method = {"redact": Redact(), "hash": Hash(), "substitute": Substitute()}[strategy]
+    method = {"redact": Redact(), "hash": Hash(key="s3cr3t"), "substitute": Substitute()}[strategy]
     anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, _Detector(SHAPES[shape][0])))
     with patch.object(NddAdapter, "run_workflow", run_workflow):
         result = anonymizer.run(config=AnonymizerConfig(replace=method), data=AnonymizerInput(source=str(source)))
@@ -889,7 +889,7 @@ def test_replace_fails_a_row_whose_reported_value_has_no_span(shape: str, strate
         out[COL_REPLACEMENT_MAP] = _substitute_map(out)
         return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
 
-    replace = {"redact": Redact(), "hash": Hash(), "substitute": Substitute()}[strategy]
+    replace = {"redact": Redact(), "hash": Hash(key="s3cr3t"), "substitute": Substitute()}[strategy]
     anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, _UnspannedDetector(shape)))
     with patch.object(NddAdapter, "run_workflow", run_workflow):
         result = anonymizer.run(config=AnonymizerConfig(replace=replace), data=AnonymizerInput(source=str(source)))
@@ -940,7 +940,7 @@ def _one_row_run(
         anonymizer._custom_detection = False
     config = {
         "redact": AnonymizerConfig(replace=Redact()),
-        "hash": AnonymizerConfig(replace=Hash()),
+        "hash": AnonymizerConfig(replace=Hash(key="s3cr3t")),
         "annotate": AnonymizerConfig(replace=Annotate()),
         "substitute": AnonymizerConfig(replace=Substitute()),
         "rewrite": AnonymizerConfig(rewrite=Rewrite()),

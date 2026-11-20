@@ -160,7 +160,7 @@ The four strategies are summarised in [Replace](replace.md#strategy-comparison).
 | Realistic-looking text safe for sharing or training | **Substitute** | LLM-generated synthetic values preserve readability |
 | Clear visual marking that an entity was removed | **Redact** | `[REDACTED_FIRST_NAME]` is unambiguous |
 | To inspect what was detected without losing the original | **Annotate** | Original text is preserved next to the label — **not privacy-safe on its own** |
-| Deterministic re-identification across documents (same person → same token) | **Hash** | Same input always produces the same hash digest |
+| Deterministic re-identification across documents (same person → same token) | **Hash** | Same input and key always produce the same hash digest |
 
 **If you're not sure which to pick, use `Substitute`.** It's the most general-purpose choice and matches the bulk of production usage.
 
@@ -259,7 +259,7 @@ A starting point for common scenarios. Always run `preview` and iterate from her
 | "Anonymize survey responses before sharing the dataset" | Replace | `Substitute()` |
 | "Anonymize customer support transcripts for fine-tuning a model" | Replace | `Substitute(instructions="Preserve domain-specific terminology and locale.")` |
 | "Anonymize legal opinions for an SFT dataset" | Rewrite | `Rewrite(privacy_goal=PrivacyGoal(protect="party names, case numbers, judge names, and locations below the state level", preserve="argument structure and procedural posture"), risk_tolerance="low")` |
-| "Allow re-joining records by identifier without keeping the identifier" | Replace | `Hash(algorithm="sha256", digest_length=16)` |
+| "Allow re-joining records by identifier without keeping the identifier" | Replace | `Hash(key=os.environ["ANONYMIZER_HASH_KEY"], digest_length=16)` |
 | "I just want to see what the detector finds" | Replace | `Annotate()` (preview only — never ship Annotate output as anonymized data) |
 
 Once you have a starting config, run `anonymizer validate <config>`, then `anonymizer preview --num-records 5 <config>`, then iterate. See [Troubleshooting](../troubleshooting.md) for what to change when preview shows a problem.

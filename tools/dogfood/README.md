@@ -78,7 +78,7 @@ reach the pipeline):
 .venv/bin/python tools/dogfood/dogfood_run.py --mode redact     --call run     --data mydata.csv --text-column mytext --configs tools/dogfood/model_configs.yaml --providers tools/dogfood/providers.yaml --out /tmp/dogfood/branch-redact-run
 .venv/bin/python tools/dogfood/dogfood_run.py --mode substitute --call preview --data mydata.csv --text-column mytext --configs tools/dogfood/model_configs.yaml --providers tools/dogfood/providers.yaml --out /tmp/dogfood/branch-substitute-preview
 .venv/bin/python tools/dogfood/dogfood_run.py --mode annotate   --call run     --data mydata.csv --text-column mytext --configs tools/dogfood/model_configs.yaml --providers tools/dogfood/providers.yaml --out /tmp/dogfood/branch-annotate-run
-.venv/bin/python tools/dogfood/dogfood_run.py --mode hash       --call run     --data mydata.parquet --text-column mytext --hash-algorithm sha1 --digest-length 16 --configs tools/dogfood/model_configs.yaml --providers tools/dogfood/providers.yaml --out /tmp/dogfood/branch-hash-run
+ANONYMIZER_HASH_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')" .venv/bin/python tools/dogfood/dogfood_run.py --mode hash --call run --data mydata.parquet --text-column mytext --digest-length 16 --configs tools/dogfood/model_configs.yaml --providers tools/dogfood/providers.yaml --out /tmp/dogfood/branch-hash-run
 .venv/bin/python tools/dogfood/dogfood_run.py --mode rewrite    --call run     --data mydata.csv --text-column mytext --risk-tolerance moderate --max-repair-iterations 1 --strict --combined --configs tools/dogfood/model_configs.yaml --providers tools/dogfood/providers.yaml --out /tmp/dogfood/branch-rewrite-run
 
 # released-wheel environment (same commands, different --out and venv)
@@ -87,8 +87,8 @@ reach the pipeline):
 
 `--format-template` overrides the redaction/annotation/hash template (see the `Redact` / `Annotate`
 / `Hash` docstrings in `anonymizer.config.replace_strategies` for the placeholders each one
-accepts); `--no-normalize-label` disables `Redact.normalize_label`; `--hash-algorithm` and
-`--digest-length` configure `Hash`. `--strict`, `--risk-tolerance`, `--max-repair-iterations`, and
+accepts); `--no-normalize-label` disables `Redact.normalize_label`; `--digest-length` configures
+`Hash`, which reads its key from `ANONYMIZER_HASH_KEY` (`--hash-algorithm` accepts only `sha256`). `--strict`, `--risk-tolerance`, `--max-repair-iterations`, and
 `--combined` map to `Rewrite.strict_entity_protection`, `.risk_tolerance`, `.max_repair_iterations`,
 and `.use_combined_graph`. Run `--help` for the full list.
 

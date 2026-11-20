@@ -150,7 +150,7 @@ class Case:
 
 CASES = [
     Case("redact", lambda: AnonymizerConfig(replace=Redact()), drops={"entity-detection": "Bob"}),
-    Case("hash", lambda: AnonymizerConfig(replace=Hash()), drops={"replace-judges": "Dora"}),
+    Case("hash", lambda: AnonymizerConfig(replace=Hash(key="parity-key")), drops={"replace-judges": "Dora"}),
     Case("annotate", lambda: AnonymizerConfig(replace=Annotate())),
     Case(
         "substitute",
