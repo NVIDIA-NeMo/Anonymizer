@@ -376,8 +376,8 @@ fails that target with the refusal's reason (`unspanned_value`); it is not part 
 | `verifier_ports` | `Operation` | An `assessment` output alongside other outputs or under another name, or an output port named `assessment` of another kind. |
 | `seed_output_reserved` | `Operation` | An output named `session`, `identities` or `record`. |
 | `invalid_subject_key`, `reserved_subject_key` | `SubjectKey` | An empty key, or `by-value` or `substitute-fallback`. |
-| `invalid_slot`, `invalid_value` | `SessionView`, `Decision` | A slot that is not `(SubjectKey, str, str)`, or a value that is not a `str`. |
-| `invalid_decision` | `Decision` | A value that is not a `str`, or `supersedes` that is not a `bool`. |
+| `invalid_slot`, `invalid_value` | `SessionView` | A slot that is not `(SubjectKey, str, str)`, or a value that is not a `str`. |
+| `invalid_slot`, `invalid_decision` | `Decision` | A slot that is not `(SubjectKey, str, str)`; a value that is not a `str`, or `supersedes` that is not a `bool`. |
 | `session_mode_invalid` | `Session` | An invalid mode. |
 | `snapshot_incompatible` | `Session.restore`, `SessionSnapshot.from_bytes` | Not a snapshot, or bytes this version cannot read. |
 
