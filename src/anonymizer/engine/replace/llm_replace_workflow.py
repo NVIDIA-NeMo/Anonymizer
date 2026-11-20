@@ -6,9 +6,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
 from collections import Counter
 from collections.abc import Container
 from dataclasses import dataclass, field
+from functools import cache
 from math import inf
 from typing import Literal
 
@@ -732,14 +734,43 @@ class _AssignedElsewhere:
         )
 
 
+def _token_piece(char: str) -> str:
+    """What one label character contributes to a placeholder token: its upper-case form, or ``_`` if not alphanumeric.
+    The form can be longer than the character, and need not be alphanumeric (``ǰ`` gives ``J`` and a combining mark)."""
+    return char.upper() if char.isalnum() else "_"
+
+
 def _label_token(label: str) -> str:
-    return "".join(char.upper() if char.isalnum() else "_" for char in label).strip("_") or "VALUE"
+    return "".join(map(_token_piece, label)).strip("_") or "VALUE"
+
+
+@cache
+def _token_pieces() -> tuple[frozenset[str], int]:
+    """Every string ``_token_piece`` returns, and the longest of them."""
+    pieces = frozenset(_token_piece(chr(code)) for code in range(sys.maxunicode + 1))
+    return pieces, max(map(len, pieces))
+
+
+def _is_token(token: str) -> bool:
+    """Whether ``token`` is ``_label_token`` of some label: a non-empty concatenation of ``_token_piece`` results that
+    neither starts nor ends with ``_``."""
+    if not token or token.startswith("_") or token.endswith("_"):
+        return False
+    if _label_token(token) == token:  # nearly every token: each character is its own piece
+        return True
+    pieces, longest = _token_pieces()
+    reachable = [True] + [False] * len(token)
+    for end in range(1, len(token) + 1):
+        reachable[end] = any(
+            reachable[end - n] and token[end - n : end] in pieces for n in range(1, min(longest, end) + 1)
+        )
+    return reachable[-1]
 
 
 def _is_placeholder(value: str) -> bool:
     """Whether ``value`` is a token ``_collision_safe_synthetic`` can mint."""
     match = _PLACEHOLDER.fullmatch(value)
-    return match is not None and _label_token(match[1]) == match[1]
+    return match is not None and _is_token(match[1])
 
 
 def _placeholder_prefix(label: str) -> str:
