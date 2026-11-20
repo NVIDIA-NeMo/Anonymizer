@@ -19,7 +19,7 @@ from typing import Any, Literal, NewType, cast
 
 import pandas as pd
 
-from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_FINAL_ENTITIES, COL_TEXT, RECORD_ID_COLUMN
+from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_FINAL_ENTITIES, RECORD_ID_COLUMN
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, _build_entities_by_value
 from anonymizer.engine.graph_core.authoring import (
     DATUM,
@@ -34,7 +34,7 @@ from anonymizer.engine.graph_core.authoring import (
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.backend import per_target
 from anonymizer.engine.protection_policy import assess
-from anonymizer.engine.row_partitioning import cell_text, resolve_source_positions
+from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.schemas.detection import EntitySchema
 from anonymizer.engine.schemas.shared import to_python
@@ -52,6 +52,9 @@ class RowDetections:
     record_id: RecordId
     entities: EntitiesSchema
     added: tuple[EntitySchema, ...] = ()  # spans the engine added at a built-in detector's missed repeats
+    # Reported values the kept spans do not protect, as ``(value, labels)``: the detector's own pairs and the values of
+    # spans the collapse dropped, where they occur outside every kept span. Rewrite's view lists them.
+    extras: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass
@@ -97,6 +100,7 @@ def detect_step(
         raw_entities = result.dataframe.get(COL_FINAL_ENTITIES, repeat({}, len(positions)))
         rebuilt: dict[int, set[int]] = {}  # row -> the entities it loses
         appended: dict[int, list[EntitySchema]] = {}  # row -> its kept spans once repeat spans are added
+        extras: dict[int, tuple[tuple[str, tuple[str, ...]], ...]] = {}  # row -> its view's extra pairs
         malformed: set[Datum] = set()
         unspanned: set[Datum] = set()
         by_value = result.dataframe.get(COL_ENTITIES_BY_VALUE, repeat(None, len(positions)))
@@ -126,7 +130,8 @@ def detect_step(
                     inner = covered_spans(datum, merged)
                     entities = EntitiesSchema(entities=[e for i, e in enumerate(merged.entities) if i not in inner])
                     appended[row] = list(entities.entities)
-            state.rows[datum] = RowDetections(record_ids[row], entities, tuple(added))
+            extras[row] = _extra_pairs(datum.text, entities, listed, raw)
+            state.rows[datum] = RowDetections(record_ids[row], entities, tuple(added), extras[row])
             if repeats != "release" and sound and values_outside_spans(datum.text, entities, values):
                 unspanned.add(datum)
             # The by-value rule: a row with spans gets the view of its kept spans plus every detector pair, and every
@@ -137,7 +142,7 @@ def detect_step(
         # Later steps read the by-value column for every returned row, so it is added even when no row is rebuilt.
         frame = result.dataframe
         if rebuilt or COL_ENTITIES_BY_VALUE not in frame.columns:
-            frame = _with_entities(frame, rebuilt, appended)
+            frame = _with_entities(frame, rebuilt, appended, extras)
         # Every returned row carries the input record id at its resolved position: later stages name it by that id.
         if RECORD_ID_COLUMN not in frame.columns:
             frame = frame.assign(**{RECORD_ID_COLUMN: pd.Series(record_ids, index=frame.index, dtype=object)})
@@ -215,22 +220,25 @@ def covered_spans(datum: Datum, entities: EntitiesSchema) -> set[int]:
 
 
 def _with_entities(
-    frame: pd.DataFrame, covered: dict[int, set[int]], appended: dict[int, list[EntitySchema]] | None = None
+    frame: pd.DataFrame,
+    covered: dict[int, set[int]],
+    appended: dict[int, list[EntitySchema]] | None = None,
+    extras: dict[int, tuple[tuple[str, tuple[str, ...]], ...]] | None = None,
 ) -> pd.DataFrame:
     """A copy of ``frame`` whose rows at the positions in ``covered`` lose those entities, with their by-value view
     rebuilt (the column is added when the detector returned none; a row not in ``covered`` keeps its cell).
 
     The invariant: for each row, every value the detector reports, from a span or a by-value pair, that occurs in the
     row's text is either in the replacement view or fails the row. Nothing reported is dropped silently, and released
-    text never holds such a value unflagged. So a rebuilt view is the view of the kept spans plus every pair of the
-    detector's own view, and every value of a span the collapse dropped, that occurs in the row's text outside those
-    spans; a value inside a kept span is protected by that span, and a value that does not occur protects nothing.
+    text never holds such a value unflagged. So a rebuilt view is the view of the kept spans plus the row's ``extras``
+    (``RowDetections.extras``, computed once by the detect step); this function only renders them.
 
     A rewritten entities cell keeps its own encoding (a JSON string stays a string) and its own keys. A rebuilt
     by-value cell takes the encoding of the column's first present cell, else of its row's entities cell, so a
     homogeneous column stays homogeneous and the trace can be written to parquet. Seeds do not depend on it: later
     stages encode every seed cell on its own."""
     frame = frame.copy()
+    extras = extras or {}
     has_entities = COL_FINAL_ENTITIES in frame.columns
     given = list(frame[COL_FINAL_ENTITIES]) if has_entities else [None] * len(frame)
     appended = appended or {}
@@ -241,12 +249,14 @@ def _with_entities(
     if has_entities:
         frame[COL_FINAL_ENTITIES] = final
     by_value = list(frame[COL_ENTITIES_BY_VALUE]) if COL_ENTITIES_BY_VALUE in frame.columns else [None] * len(given)
-    texts = [cell_text(t) for t in frame[COL_TEXT]] if COL_TEXT in frame.columns else [""] * len(given)
     sample = next((cell for cell in by_value if not _absent(cell)), None)
     frame[COL_ENTITIES_BY_VALUE] = [
         _encoded_like(
             given[row] if sample is None else sample,
-            _union(_build_entities_by_value(final[row]), raw, texts[row], final[row], given[row]),
+            _union(
+                _build_entities_by_value(final[row]),
+                extras.get(row, ()),
+            ),
         )
         if row in covered
         else raw
@@ -255,14 +265,20 @@ def _with_entities(
     return frame
 
 
-def _union(derived: dict[str, Any], listed: object, text: str, kept: object, returned: object) -> dict[str, Any]:
-    """``derived`` plus every pair whose value occurs in ``text`` outside the spans of ``kept``: the pairs of the
-    detector's view ``listed``, and those of the spans it ``returned`` before the collapse, so a collapsed span's value
-    is added wherever no kept span covers it."""
+def _extra_pairs(
+    text: str, kept: EntitiesSchema, listed: object, returned: object
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """The pairs whose value occurs in ``text`` outside every span of ``kept``: those of the detector's view
+    ``listed``, then those of the spans it ``returned`` before the collapse, so a collapsed span's value is listed
+    wherever no kept span covers it."""
+    candidates = unspanned_pairs(listed, text, kept) + unspanned_pairs(_build_entities_by_value(returned), text, kept)
+    return tuple((value, tuple(labels)) for value, labels in candidates)
+
+
+def _union(derived: dict[str, Any], extras: tuple[tuple[str, tuple[str, ...]], ...]) -> dict[str, Any]:
+    """``derived`` plus the row's ``extras`` (``RowDetections.extras``), each label once per value."""
     items = {item["value"]: list(item["labels"]) for item in derived["entities_by_value"]}
-    spans = EntitiesSchema.from_raw(kept)
-    candidates = unspanned_pairs(listed, text, spans) + unspanned_pairs(_build_entities_by_value(returned), text, spans)
-    for value, labels in candidates:
+    for value, labels in extras:
         merged = items.setdefault(value, [])
         merged.extend(label for label in labels if label not in merged)
     return {**derived, "entities_by_value": [{"value": v, "labels": labels} for v, labels in items.items()]}
