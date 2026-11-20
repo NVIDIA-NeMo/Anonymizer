@@ -443,7 +443,9 @@ def _fold_replacement_maps(
     the earliest accepted mention (``spans``: each exact value's first start offset in the record), ties and values
     without a span broken by exact value; the maps are in target order. That spelling's entry gives the record's
     shared substitute, so neither the model's entry order nor the detector's return order changes the text. A key the
-    run has not mapped yet takes the Session's assignment for that spelling; other spellings are re-cased against it. A substitute also collides when the view's
+    run has not mapped yet takes the Session's assignment for that spelling. A shared substitute is re-cased to
+    another spelling only when the re-cased form normalizes to the same value; otherwise it is emitted as assigned,
+    and a placeholder for the entry's label is always kept as minted, so only a genuine alternate is a fallback. A substitute also collides when the view's
     ``assigned_to_other_value`` finds it assigned to another subject or normalized value, or to a fallback entry; the
     key's own slot and the same normalized value under any other label do not count, so a value under two labels can
     keep one substitute. A record-local fallback also collides when the view's ``assigned_elsewhere`` finds it
@@ -508,6 +510,14 @@ def _fold_replacement_maps(
             for key, entry in sorted(keyed, key=lambda ke: (offsets.get(ke[1]["original"], inf), ke[1]["original"])):
                 reference.setdefault(key, (entry["original"], entry["synthetic"]))
 
+        def render(source: tuple[str, str], entry: dict) -> str:
+            recased = _recase(source[1], like=entry["original"], source=source[0])
+            if view is None:
+                return recased
+            if is_placeholder(entry["label"], source[1]) or _fold(recased) != _fold(source[1]):
+                return source[1]
+            return recased
+
         record: dict[tuple[str, str], tuple[str, str]] = {}
         placeholders: Counter[str] = run_placeholders if consistency == "run" else Counter()
         used = 0
@@ -516,7 +526,7 @@ def _fold_replacement_maps(
             own = (entry["original"], entry["synthetic"])
             first = key not in record
             source = record.setdefault(key, held(key, reference.get(key, own)))
-            synthetic = _recase(source[1], like=entry["original"], source=source[0])
+            synthetic = render(source, entry)
             if collides(_fold(synthetic), key, shared=True):
                 step = "own" if entry["synthetic"] != synthetic else None
                 source = own
