@@ -5,9 +5,10 @@
 This section lists what changes for users between v0.5.0 and v1.0.0. It will be updated until the release, and
 becomes the v1.0.0 release notes after #319 lands on `main`.
 
-- **Describes:** commit `affd605a`, the head of the #319 branch.
+- **Describes:** commit `3dc8c7eb`, the head of the #319 branch.
 - **Compared against:** v0.5.0 (`81bcea43`).
-- **Last reconciled with main at `628be95a`.** The next update reads `git log 628be95a..main` and the new commits on
+- **Last reconciled with main at `628be95a`.** The branch has since merged main at `6c5eb897` (#438), which this
+  file has not been checked against. The next update reads `git log 628be95a..main` and the new commits on
   the #319 branch.
 
 v1.0.0 may break compatibility with v0.5.0. Each entry says what changed, where it changed, and what to do.
@@ -53,6 +54,33 @@ validation error when the strategy is built. v0.5.0 accepted it and left the ori
 - What to do: rename the label.
 - Changed in: #305.
 
+**`Hash` requires a secret key.** The digest is HMAC-SHA256 of the entity text with `Hash.key`, after casefolding and
+collapsing runs of whitespace (the fold Substitute uses to match variants of a value). v0.5.0 hashed the exact text
+with an unkeyed digest, which could be reversed for low-entropy values, such as dates of birth or ZIP codes, by hashing
+candidates. `Hash()` without a key raises a validation error that says how to pass one. `algorithm` accepts only
+`sha256`; v0.5.0 also accepted `sha1` and `md5`. The CLI reads the key from `ANONYMIZER_HASH_KEY`. Results keep the
+strategy without its key, and a config built from one is refused. JSON dumps of a config mask the key, so a saved JSON
+config does not load until you pass the key again; a pickled config keeps it. Validation errors from `Hash` and
+`AnonymizerConfig`, including their `errors()` and `json()`, do not carry the key.
+- What to do: pass `Hash(key=...)`, for example from `os.environ["ANONYMIZER_HASH_KEY"]`, and set that variable for
+  `--replace hash`. Drop `algorithm="sha1"` or `"md5"`. Every token changes, and case and spacing variants of a value
+  now share one token. Keep the key to get the same tokens in later runs, and pass it again when you load a saved
+  config, including a v0.5.0 dump that holds `Hash`.
+- Changed in: #381.
+
+**An input column named like an internal column is rejected.** `run()`, `preview()` and `export_detection_config()`
+raise `InvalidInputError`, naming each such column, when the input has a column that the pipeline uses as its own, such
+as `_rewritten_text` or `_anonymizer_record_id`. v0.5.0 rejected only the internal text column, and read any other
+such column as pipeline data: in Rewrite mode an input `_rewritten_text` was released as the rewritten text. A column
+named `_anonymizer_record_id` is rejected even when it is the `id_column`. Your own text column is unaffected. Result
+columns are renamed with an `__input` suffix when an input column carries their name: v0.5.0 did this for the output
+columns `<text>_replaced`, `<text>_with_spans` and `<text>_rewritten` and for `final_entities`, `utility_score`,
+`leakage_mass`, `weighted_leakage_rate`, `any_high_leaked` and `needs_human_review`, and it now also covers the
+evaluation columns, such as `judge_evaluation`, `entity_coverage`, `missed_entities` and `detection_valid`, so an input
+value is no longer read as the pipeline's own result.
+- What to do: rename or drop the column before running.
+- Changed in: #440.
+
 ### Detection
 
 **Detection candidates follow a new, deterministic lifecycle.** Detected values are no longer propagated to other
@@ -80,11 +108,27 @@ A malformed augmenter response is retried under the run's restart and correction
   `extra_body`.
 - Changed in: #319 (`21a10a08`, `1302866d`), #422.
 
-**Detector spans are checked against the text.** A span whose text does not match the source fails the record. So
-does a span that ends past the end of the text; it used to be skipped. A row whose spans overlap fails at step
-`detect`. The reason gives offsets, never text. The built-in detector does not produce such spans.
-- What to do: a custom detector must report non-overlapping code-point offsets into the text it was given.
-- Changed in: #305, #423, #319.
+**Detector spans are checked against the text.** A custom detector's spans must be half-open, inside the text,
+non-empty, labelled, and equal to the text they cover. v0.5.0 Replace skipped a span that broke these rules, or that
+overlapped an earlier span, and left any of its text that no earlier span covered in the output. Now:
+- Spans with identical bounds collapse into the first labelled one, keeping its label, and a span inside a labelled
+  span gives way to the outer span. Later steps and `final_entities` see the collapsed spans.
+- Any other break fails the record at step `detect`. The reason is a fixed code, with no offsets and no text:
+  `overlapping_output_ownership` (a partial overlap), `mention_out_of_range` (past the end of the text, negative or
+  zero-width), `mention_slice_mismatch` (the text differs from `value`) or `mention_unlabelled` (no label, and no
+  labelled span covers it).
+- In Rewrite, a `final_entities` payload that does not parse fails the record at `detect` with `invalid_output`;
+  Replace fails it at step `replace` (see Replace).
+- `_entities_by_value` may be left out. For a row with spans, it is rebuilt from the kept spans plus every value the
+  detector listed, and the value of every collapsed span, that still occurs in the text outside the kept spans. A value
+  occurs as a whole word, ignoring case and accents (a value of up to three uppercase characters matches with its case,
+  and a value of two or more characters in Han, Thai or a similar script matches anywhere); a one-character value in an
+  unspaced script, such as 王, counts wherever it appears. A row without spans keeps the detector's view.
+- The built-in detector does not produce such spans.
+- What to do: a custom detector must report non-overlapping code-point offsets into the text it was given, and a
+  label for every span. These checks run only when the detector's rows name their input rows and keep the text
+  unchanged (see "A detector that changes the text").
+- Changed in: #305, #423, #319, #432.
 
 **The regex time budget is measured in CPU time.** Each rule's budget counts CPU seconds of its scanning thread, with
 a wall-clock ceiling of 20 times the budget. A record whose scan exceeds the CPU budget and one whose scan was starved
@@ -118,11 +162,26 @@ detector, fails the record at step `replace`. v0.5.0 returned the record with it
 - Changed in: #367.
 
 **Replace rows have a checked outcome.** Each Redact, Hash and Substitute row has the required check
-`replacements_applied`: the replacements rebuild the text. It also has the advisory
-`no_detected_value_outside_replacements`: a detected value appears in the text kept between the replaced spans.
-Annotate keeps the source text and is never marked protected. A `not_met` row stays in the output frame.
-- What to do: read `result.outcome(row)` before releasing a row.
-- Changed in: #319, #424.
+`replacements_applied`: the replacements rebuild the text. It also has the advisory `no_detected_value_added`: the
+replaced text holds a detected value more often than the source holds it outside the detected spans. Each detected value
+is counted as whole-word matches, ignoring case and accents (a value of up to three uppercase characters matches with
+its case, and a value of two or more characters in Han, Thai or a similar script matches anywhere), in the source (N),
+inside the detected spans (D) and in the replaced text (O), and the advisory fails when O is greater than N minus D. The
+count covers the whole replaced text, replacements included, so a substitute that brings back another detected value
+fails it, and a value that the source repeats outside the detected spans may stay. A failing check states
+`e<position>:N<n>,D<d>,O<o>` for each value over the bound in its `cause`: the entity's place among the detected spans
+and the counts, never record text. Annotate keeps the source text and is never marked protected. Rewrite rows carry no
+such advisory. A `not_met` row stays in the output frame.
+- What to do: read `result.outcome(row)` before releasing a row, and `result.leftovers(row)` to see the counted values.
+- Changed in: #319, #424, #426.
+
+**A custom detector must report a span for every occurrence of a value it reports.** With a custom detector, Redact,
+Hash, Annotate and Substitute fail a row at step `detect` with `unspanned_value` when a value the detector reports, in
+a span or in `_entities_by_value`, occurs in the text outside every kept span. That includes a span's value repeated
+without a span, and a value that crosses two spans. Replace changes spans only, so v0.5.0 returned such a value
+unreplaced. Built-in detection is not checked.
+- What to do: report a span for each occurrence, or read `failed_records`.
+- Changed in: #432.
 
 ### Rewrite
 
@@ -132,14 +191,65 @@ scored again. Now each repair sees the previous repair's text.
 - Changed in: #354.
 
 **The review flag follows the final checks.** `needs_human_review` is set when a required check on the final text
-does not pass, or when the utility score is missing or below the preset's floor. The checks are `high_leak`,
-`replacements_applied` and `leakage_within_threshold`. Compared with v0.5.0:
-- a row whose final text still contains a value the sensitivity policy replaces is flagged, and so is a row whose
-  policy is missing;
+does not pass, when the row keeps a replaced value or a placeholder as described below, or when the utility score is
+missing or below the preset's floor. The checks are `high_leak`, `replacements_applied` and
+`leakage_within_threshold`. Compared with v0.5.0:
+- `replacements_applied` counts each value the sensitivity policy replaces, as the Replace advisory does (N, D and O,
+  above). A row whose final text holds such a value more often than the source holds it outside the detected spans
+  fails, and its `cause` gives the counts. A row whose policy is missing is flagged too;
+- a row that keeps a replaced value within that bound, because the source holds it outside the detected spans (a
+  homograph, or a repeat that detection missed), stays met but is flagged;
+- a row whose final text holds a placeholder from its replacement map (`[SUBSTITUTE_<LABEL>_<n>]`) stays met but is
+  flagged. The match is loose: any case, brackets optional, `_`, `-` or one space between words, and the separator
+  before the number optional. The number is required;
 - a row with a missing or NaN metric is flagged; NaN used to pass and `None` used to raise;
 - "replacement unavailable" alone no longer flags a row.
-- What to do: read `result.outcome(row)` for the reason a row is flagged.
-- Changed in: #368, #319 (`3af11141`, `cb015ae3`, `7523154b`).
+- What to do: read `result.outcome(row)` for the reason a row is flagged, and `result.leftovers(row)` for the counts.
+- Changed in: #368, #319 (`3af11141`, `cb015ae3`, `7523154b`), #426, #431.
+
+**Rewrite keeps a record whose model response cannot be parsed.** Domain, meaning-unit, quality-question, rewrite,
+repair and evaluation responses that still cannot be parsed after their retries keep the record. v0.5.0 dropped it and
+listed it in `failed_records`. Each kept record logs a warning of its own, and the run ends with one warning counting
+such records per step; an evaluation step counts a record whose response was missing in an earlier repair round, not
+only in the last one. What the record gets:
+- Domain: classified as `OTHER`.
+- Meaning units or quality questions: the quality evaluation is skipped, `utility_score` is null and the row is
+  flagged. The privacy evaluation runs as usual.
+- Rewrite or repair: no rewritten text (null), null metrics, a flagged row and a `not_met` outcome.
+- Privacy evaluation: the rewritten text is withheld (null), the row is flagged, and its outcome is `not_met` with
+  `could_not_assess` reasons. Each evaluation call now retries in a second conversation, at most 8 requests where
+  v0.5.0 allowed 4. A privacy answer's `reason` that is too long is shortened and an empty one gets a default; v0.5.0
+  rejected the whole answer.
+- Sensitivity disposition: a response with a different number of entries than supplied entities is asked again, like
+  one that cannot be parsed. If none has the right count, the record has no disposition and is not rewritten: the
+  text is null, the row is flagged and its outcome is `not_met`. The per-row warning names the column and the request
+  count, and for a wrong entry count both counts, as in `entry_count_mismatch: 4 entries, 2 expected`.
+- What to do: read the warning. A step listed for most records points at that step's model.
+- Changed in: #427, #431.
+
+**Rewritten text that fails a privacy check is withheld.** A record whose final candidate fails `high_leak` or
+`leakage_within_threshold` has its rewritten text withheld (null), whether or not it was repaired: after the last
+repair round, when a repair response cannot be parsed, and when no repair ran, which includes every failing record under
+`max_repair_iterations=0` and a record whose high leak the `high` preset does not send to repair. The row stays flagged
+and `not_met`, and its outcome has `available=False`. v0.5.0 returned the text and flagged the row. Withheld and
+missing Rewrite text is `None` in the default staged mode and in the combined mode
+(`Rewrite(use_combined_graph=True)`).
+- What to do: treat null rewritten text as "not released". For an audit pass, run with `max_repair_iterations=0`:
+  `trace_dataframe` keeps the withheld first rewrite in its internal `_full_rewrite` column.
+- Changed in: #431.
+
+**A Rewrite step whose model keeps giving no usable response stops early.** When the share of a step's last
+`shutdown_error_window` rows without a usable response reaches `shutdown_error_rate` (by default 5 of 10), that step
+sends no further requests and logs one warning naming the step, the rate, the window and the threshold. Rows that
+finished are returned. Each row not run is listed in `failed_records` with the reason `stopped_early (<step>)`, where
+`<step>` is the step's column name, for example `stopped_early (_domain)`; a row cancelled before any step refused it
+lists every stopped step. The stop does not raise, even when no row finished. Each repair round counts on its own, in
+the staged and the combined mode. A row that failed for another reason keeps that reason, and an error the stop did not
+cause still fails the run. A dataset smaller than the window never stops. In v0.5.0 DataDesigner's own shutdown ended
+the run and raised `AnonymizerWorkflowError` when no row had finished.
+- What to do: check the named step's model. To run every row anyway, set `disable_early_shutdown=True` in
+  `data_designer_run_config`.
+- Changed in: #431.
 
 **Rows that fail detection in Rewrite are failed records.** They are absent from the output and listed in
 `failed_records` with step `detect`. They used to be rewritten anyway.
@@ -239,9 +349,17 @@ rewrite judge skips a row with no detected entities). A judge never changes qual
 - Changed in: #387.
 
 **A detector that changes the text loses per-row outcomes.** When a custom detector returns a row whose text differs
-from its input, the run replaces or rewrites the detector's frame as returned. That call has no per-row outcomes.
-- What to do: return the input text unchanged.
-- Changed in: #319 (`845f4106`).
+from its input, or rows that name no input row, the run replaces or rewrites the detector's frame as returned. That
+call has no per-row outcomes, and the span checks under Detection and the `unspanned_value` check under Replace do not
+run. In Replace, identical and contained spans still collapse, but any other broken span raises `GraphRejection` for
+the whole run instead of failing one record.
+- What to do: return the input text unchanged, and name each row's input row with source positions or record IDs.
+- Changed in: #319 (`845f4106`), #432.
+
+**`display_record` reads a null metric as "not available".** A null Utility, Leakage or Weighted Leakage Rate (`None`,
+NA or NaN) shows "not available". v0.5.0 omitted the metric for `None`, and showed `nan` for NaN and a blank for NA.
+- What to do: nothing.
+- Changed in: #431.
 
 **Custom workflow results must say which input row they answer.** A result without source positions corresponds to
 its input only through unique record IDs. Equal row counts or equal text are no longer enough.
@@ -263,6 +381,14 @@ the model adapter and the entity coverage judge's "scores may be unavailable" wa
 not its message, because the message can carry record content; backend class names are shortened to a neutral form.
 - What to do: update log parsers.
 - Changed in: #319 (`372bbd0b`).
+
+**The failure warning lists counts by step and reason.** The warning that counts failed records ends with
+`step/reason=count` for each kind of failure, for example `detect/mention_slice_mismatch=1`. v0.5.0 gave only the
+total. Only known steps and reason codes are named: any other reason counts under its step alone and any other step
+under `other`. Record IDs and values stay out of the line. In the progress lines, a record rejected at `detect` counts
+under detection, not under replacement or rewrite.
+- What to do: update log parsers.
+- Changed in: #432.
 
 **DataDesigner task tracing is always on.** It is used to report failure causes, and costs about 250 bytes per task
 attempt.
@@ -296,6 +422,9 @@ These change no public name and no behaviour for supported input.
   disposition parser's error message uses the wording of the other parsers (#412).
 - **Stages run through one helper.** `run_columns` in `anonymizer.engine.ndd.workflow_utils` derives the seed columns,
   seeds the frame and runs the columns for the Rewrite, evaluation and Replace stages (#411).
+- **Character ranges have one type.** Detection, replacement and the leftover checks carry character ranges as `Span`
+  and `Spans` (`anonymizer.engine.spans`) instead of raw offset pairs. No behaviour changes for any reachable input
+  (#430).
 - **A missing import is restored.** #429 began writing skipped span label counts with `json.dumps` in
   `anonymizer.engine.replace.strategies` while #412 removed that module's `json` import. Together every local
   replacement raised `NameError` on this branch. #435 restores the import. v0.5.0 never had the fault.
@@ -316,82 +445,14 @@ These are additions and break nothing.
 - `anonymizer.graph`, the graph SDK (#319). It is provisional, and its names may change. `prepare` rejects two
   operations with the same flattened name (`duplicate_operation_name`).
 - `Finding` in `anonymizer.config.rewrite`, and `EvaluationCriteria.repair_on` (#368).
+- `result.leftovers(row)` on `run()` and `preview()` results. It returns the counted values of a row as `Leftover`
+  records, in the order of the check's `cause`, for auditing; it holds record text. It raises `ValueError` for an
+  Annotate result, and for a Rewrite row whose rewritten text is null, which has no output to count. `outcome(row)`
+  keeps that row's reasons (#426, #431).
 
 ## Pending changes
 
 These are not on the #319 branch yet. Each lands with its change.
-
-### #426: leftover-value counting
-
-**Leftover checks count values instead of testing presence.** Each detected value is counted in the source, inside
-the detected spans, and in the output. A row fails only when the output holds a value more often than the source
-holds it outside the detected spans. A failing check states counts and positions in its `cause`, never record text.
-- Replace: the advisory `no_detected_value_outside_replacements` is renamed `no_detected_value_added`. It scans the
-  whole replaced text, replacements included.
-- Rewrite: `replacements_applied` uses the same bound. A row that keeps a replaced value within the bound stays met
-  but is flagged for review through the metric `undetected_value_kept`. Rewrite rows carry no advisory.
-- New: `result.leftovers(row)` returns the counted values of a row, for auditing.
-- Rewrite: a placeholder from the row's replacement map left in the text flags the row for review through the
-  metric `placeholder_in_text`, loose forms included: any case, with or without brackets, with `_`, `-` or one
-  space between words, and with or without the separator before the number. The number is required. The row stays
-  met.
-- What to do: update code that matches the advisory name. Expect fewer `not_met` Rewrite rows, and some new review
-  flags.
-
-### #431: rows kept without a model response
-
-**Rewrite keeps a record whose model response cannot be parsed, at every step.** Domain, disposition, meaning units,
-quality questions, rewrite and repair responses that still cannot be parsed after their retries keep the record
-instead of dropping it, and the run ends with one warning counting such records per step.
-- The count for an evaluation step includes a record whose response was missing in an earlier repair round, not only
-  in the last one.
-- A record whose final candidate fails a privacy check (`high_leak` or `leakage_within_threshold`) now has its
-  rewritten text withheld (null), whether or not it was repaired, as a record whose repair response cannot be parsed
-  does, and its outcome reads `available=False`. It was released before, flagged and `not_met`; it is still flagged
-  and `not_met`. This includes every failing record under `max_repair_iterations=0`, and a record whose high leak the
-  `high` preset does not send to repair.
-- What to do: read the warning; a step listed for most records points at that step's model. Treat null rewritten text
-  as "not released"; an audit pass with `max_repair_iterations=0` finds the withheld first rewrite in
-  `trace_dataframe`'s `_full_rewrite`.
-- `result.leftovers(row)` raises `ValueError` for a Rewrite row whose rewritten text is null (withheld or never
-  produced). It counted no leftovers for such a row before, even when the row's saved `replacements_applied` cause
-  counted a value in the withheld candidate. `result.outcome(row)` keeps that cause.
-- `display_record` shows "not available" for a null Utility, Leakage or Weighted Leakage Rate (`None`, NA or NaN). It
-  showed a blank for NA, `nan` for NaN, and omitted the metric for `None`.
-- Withheld or missing Rewrite text is `None` in both modes. The combined mode (`Rewrite(use_combined_graph=True)`)
-  gave `pd.NA`.
-- A Rewrite step whose model keeps giving no usable response now stops early. When the share of a step's last
-  `shutdown_error_window` rows without a usable response reaches `shutdown_error_rate` (by default 5 of 10), that step
-  sends no further requests and logs one warning naming the step, the rate, the window and the threshold. Rows that
-  finished are returned; each row not run is listed in `failed_records` with the reason `stopped_early (<step>)`, and
-  the stop does not raise. Each repair round counts on its own, in both modes. An error the stop did not cause still
-  fails the run. Before, DataDesigner's own shutdown stopped the run, which raised `AnonymizerWorkflowError`
-  when no row had finished. A dataset smaller than the window never stops.
-- What to do: check the named step's model; set `RunConfig(disable_early_shutdown=True)` to run every row anyway.
-- The per-row warning for a disposition with the wrong number of entries now gives both counts, as in
-  `entry_count_mismatch: 4 entries, 2 expected`; it said `unparseable_response`.
-
-### #432: detector span contract
-
-**Custom detector spans: some overlaps collapse, and other breaks fail the record with a named reason.** This
-corrects the Detection entry "Detector spans are checked against the text", which says every overlap fails.
-- Spans with identical bounds collapse into the first labelled one, keeping its label, and a span contained in a
-  labelled span gives way to the outer span. Later steps and `final_entities` see the collapsed spans.
-- Any other overlap fails the record at `detect` with `overlapping_output_ownership`. A span that is out of range or
-  zero-width fails with `mention_out_of_range`, a span whose text does not match fails with `mention_slice_mismatch`,
-  and an unlabelled span that no labelled span covers fails with `mention_unlabelled`.
-- In Rewrite, a `final_entities` payload that does not parse fails the record with `invalid_output`. Replace still
-  rejects it at `replace`.
-- For a row with spans, the `_entities_by_value` view is that of its kept spans plus every pair of the
-  detector's view, and the value of every span the collapse dropped, that occurs in the row's text outside them, by the leftover check's matching rule (whole
-  words, case and accents folded; a one-character value in an unspaced script, such as 王, counts wherever it
-  appears); a row without spans keeps the detector's view. The column may be left out.
-- These rules apply when the detector reports source positions or unique record ids and leaves the text unchanged.
-- With a custom detector, the Replace modes (Redact, Hash, Annotate, Substitute) fail a row at `detect` with
-  `unspanned_value` when its view holds a value that occurs in the text outside every kept span, including a span's
-  value repeated without a span. Such a value was released unreplaced before. Built-in detection is not checked.
-- What to do: match the new failure reasons. A custom detector used with Replace must report a span for every
-  occurrence of every value it reports.
 
 ### #407: frozen config and one options object
 
@@ -400,7 +461,8 @@ strategies and the regex models are frozen.
 - What to do: use `model_copy(update=...)`.
 
 **Unknown keys are rejected.** The config and input models raise a validation error that names an unknown key,
-without echoing its value. `TextRecord` still ignores extra keys. Dumps written by v0.5.0 still load.
+without echoing its value. `TextRecord` still ignores extra keys. Dumps written by v0.5.0 still load, except one
+that holds `Hash`, which needs its key (see "`Hash` requires a secret key").
 - What to do: remove or correct the key the error names.
 
 **`Rewrite.instructions` is removed.** It never reached the rewrite model. Passing a value raises an error that points
@@ -427,19 +489,6 @@ called with eight keywords: `model_configs`, `selected_models`, `replace_model_s
 **Reserved labels are rejected earlier.** A `nagroup_g<N>` label is rejected when `Detect` or `RegexRule` is built,
 not when the run starts.
 
-### #381: keyed Hash
-
-**`Hash` requires a secret key.** The digest is HMAC-SHA256 of the entity text with `Hash.key`, after casefolding
-and collapsing runs of whitespace (the fold Substitute uses to match variants of a value). Unkeyed digests of
-low-entropy values, such as dates of birth or ZIP codes, could be reversed by hashing candidates. `Hash()` without a
-key raises a validation error that says how to pass one. `algorithm` accepts only `sha256`. The CLI reads the key
-from `ANONYMIZER_HASH_KEY`. Results keep the strategy without its key, and a config built from one is refused.
-JSON dumps of a config mask the key; a pickled config keeps it. Validation errors from `Hash` and `AnonymizerConfig`, including their
-`errors()` and `json()`, do not carry the key.
-- What to do: pass `Hash(key=...)`, for example from `os.environ["ANONYMIZER_HASH_KEY"]`, and set that variable for
-  `--replace hash`. Drop `algorithm="sha1"` or `"md5"`. Every token changes; keep the key to get the same tokens in
-  later runs, and pass it again when loading a saved config.
-
 ### #408: caller-held Session
 
 **`session=` on `run` and `preview`.** A `Session` from `anonymizer.graph` keeps substitutes stable across calls.
@@ -454,17 +503,6 @@ against the #319 branch.
 trailing field each. Operation outputs named `session`, `identities` or `record` are rejected, and the subject keys
 `by-value` and `substitute-fallback` are reserved.
 
-### #427, #430
-
-**#427: Rewrite keeps a record whose evaluation response cannot be parsed.** A record whose evaluation response still
-cannot be parsed after its retries is now kept instead of dropped. When the privacy evaluation has no answer, its
-rewritten text is withheld; any unavailable metrics are null; and the record is flagged for human review with a
-`not_met` outcome. Each evaluation call now retries in a second conversation (at most 8 requests). A privacy answer's
-`reason` that is too long is now shortened and an empty one gets a default, instead of the whole answer being
-rejected.
-
-**#430: Span-based bounds.** Internal. No behaviour change for any reachable input.
-
 ### #413, #416, #419
 
 **#413: graph port values must be plain.** The built-in dict port kinds accept only plain JSON-like values. A value
@@ -477,14 +515,3 @@ substitute.
 
 **#419: detector facts are checked privately.** No user-visible change. The detector declaration fields removed from
 `Detect` in #418 were never released.
-
-### Reserved input columns
-
-**An input column named like an internal column is rejected.** `run()`, `preview()` and `export_detection_config()`
-raise `InvalidInputError`, naming each such column, when the input has a column the pipeline uses as its own, such as
-`_rewritten_text` or `_anonymizer_record_id`. v0.5.0 read such a column as pipeline data: in Rewrite mode an input
-`_rewritten_text` was released as the rewritten text. Result columns, such as `final_entities` and the evaluation
-columns `judge_evaluation` and `detection_valid`, are renamed with an `__input` suffix, so an input value is no longer
-read as the pipeline's own result. Your own text column is unaffected. A column named `_anonymizer_record_id` is
-rejected even when it is the `id_column`.
-- What to do: rename or drop the column before running.
