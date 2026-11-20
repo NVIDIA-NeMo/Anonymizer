@@ -23,6 +23,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_FOR_REPLACE,
     COL_ENTITIES_FOR_REPLACE_JSON,
     COL_ENTITY_EXAMPLES,
+    COL_EVALUATION_UNAVAILABLE,
     COL_LEAKAGE_MASS,
     COL_LEAKED_PRIVACY_ITEMS,
     COL_NEEDS_HUMAN_REVIEW,
@@ -60,6 +61,7 @@ from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
+from anonymizer.engine.rewrite.response_summary import evaluation_unavailable
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
 )
@@ -337,6 +339,7 @@ def _finalization_column(states: list[EvaluationState]) -> CustomColumnConfig:
     )
     required_columns.append(COL_REWRITE_REPLACEMENT_READY)
     side_effect_columns = [
+        COL_EVALUATION_UNAVAILABLE,
         COL_QUALITY_QA_REANSWER,
         COL_PRIVACY_QA_REANSWER,
         COL_QUALITY_QA_COMPARE,
@@ -358,6 +361,18 @@ def _finalization_column(states: list[EvaluationState]) -> CustomColumnConfig:
             (candidate for candidate in reversed(states) if row.get(candidate.needs_repair) is not None),
             states[0],
         )
+        # The rounds before the chosen one are dropped with the internal columns: keep which steps had no response.
+        # ``_quality_qa`` is not required: the evaluation columns already wait for it, and a graph may lack it.
+        unavailable = 0
+        for earlier in states[: states.index(state) + 1]:
+            unavailable |= evaluation_unavailable(
+                row,
+                rewritten_text=earlier.rewritten_text,
+                quality_reanswer=earlier.quality_reanswer,
+                quality_compare=earlier.quality_compare,
+                privacy_reanswer=earlier.privacy_reanswer,
+            )
+        row[COL_EVALUATION_UNAVAILABLE] = unavailable
         row[COL_REWRITTEN_TEXT] = row.get(state.rewritten_text)
         row[COL_QUALITY_QA_REANSWER] = normalize_payload(row.get(state.quality_reanswer))
         row[COL_PRIVACY_QA_REANSWER] = normalize_payload(row.get(state.privacy_reanswer))

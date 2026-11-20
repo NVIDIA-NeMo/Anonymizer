@@ -268,6 +268,15 @@ holds it outside the detected spans. A failing check states counts and positions
 - What to do: update code that matches the advisory name. Expect fewer `not_met` Rewrite rows, and some new review
   flags.
 
+### #431: rows kept without a model response
+
+**Rewrite keeps a record whose model response cannot be parsed, at every step.** Domain, disposition, meaning units,
+quality questions, rewrite and repair responses that still cannot be parsed after their retries keep the record
+instead of dropping it, and the run ends with one warning counting such records per step.
+- The count for an evaluation step includes a record whose response was missing in an earlier repair round, not only
+  in the last one.
+- What to do: read the warning; a step listed for most records points at that step's model.
+
 ### #407: frozen config and one options object
 
 **Config fields cannot be reassigned.** `AnonymizerConfig`, `Detect`, `Rewrite`, `PrivacyGoal`, the replace

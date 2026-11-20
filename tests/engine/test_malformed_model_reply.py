@@ -24,7 +24,7 @@ from data_designer.engine.models.clients import factory as client_factory
 from data_designer.engine.models.clients.types import AssistantMessage, ChatCompletionRequest, ChatCompletionResponse
 from data_designer.interface.data_designer import DataDesigner
 
-from anonymizer.config.anonymizer_config import Rewrite
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
 from anonymizer.config.models import DetectionModelSelection, RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
@@ -75,6 +75,7 @@ from anonymizer.engine.rewrite.rewrite_generation import RewriteGenerationWorkfl
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
 from anonymizer.engine.schemas import Domain
+from anonymizer.interface.anonymizer import Anonymizer
 
 _PROVIDER = ModelProvider(name="scripted", endpoint="http://scripted.invalid/v1", api_key="unused")
 _DETECTOR = "scripted-detector"
@@ -765,6 +766,7 @@ class _StagedLoop(RewriteWorkflow):
     """Staged mode with only its evaluate-repair loop, over rows that already hold a rewrite."""
 
     def _produce(self, rows: Any, **options: Any) -> Any:
+        options = {**options, **_scripted_models()}
         stages = self._evaluate_repair_stages(
             rows,
             model_configs=options["model_configs"],
@@ -780,6 +782,7 @@ class _CombinedLoop(CombinedRewriteWorkflow):
     """Combined mode's evaluation, repair and finalize columns in one graph, over rows that already hold a rewrite."""
 
     def _produce(self, rows: Any, **options: Any) -> Any:
+        options = {**options, **_scripted_models()}
         selection, evaluation = options["selected_models"], options["evaluation"]
         states = [combined._evaluation_state(0, COL_REWRITTEN_TEXT_INITIAL)]
         columns = combined._evaluation_columns(
@@ -815,13 +818,19 @@ class _CombinedLoop(CombinedRewriteWorkflow):
         return generate
 
 
-def _repair_run(tmp_path: Path, workflow: type[RewriteWorkflow], max_repair_iterations: int) -> Any:
+def _scripted_models() -> dict[str, Any]:
+    """The evaluator and repairer models the loops run with, whatever models their caller passes."""
     selection = RewriteModelSelection.model_validate(
         {**load_default_model_selection().rewrite.model_dump(), "evaluator": _EVALUATOR, "repairer": _REPAIRER}
     )
+    return {"model_configs": [_model(_EVALUATOR), _model(_REPAIRER)], "selected_models": selection}
+
+
+def _seeded_rows() -> pd.DataFrame:
+    """The record under test and a clean record, each with a rewrite and the columns its evaluation reads."""
     other_quality = {"items": [{**_EVAL_QUALITY_QA["items"][0], "reference_answer": _OTHER_TEXT}]}
     entities = {"entities_by_value": [{"value": "7312", "labels": ["card_last_four"]}]}
-    frame = pd.DataFrame(
+    return pd.DataFrame(
         {
             COL_TEXT: [_TEXT, _OTHER_TEXT],
             COL_ENTITIES_BY_VALUE: [entities, entities],
@@ -833,15 +842,45 @@ def _repair_run(tmp_path: Path, workflow: type[RewriteWorkflow], max_repair_iter
             COL_REWRITE_REPLACEMENT_READY: [True, True],
         }
     )
+
+
+def _repair_run(tmp_path: Path, workflow: type[RewriteWorkflow], max_repair_iterations: int) -> Any:
+    frame = _seeded_rows()
     detected = EntityDetectionResult(dataframe=frame, failed_records=[], source_positions=(0, 1))
     return workflow(adapter=_adapter(tmp_path)).run_with_detection(
         frame[[COL_TEXT]],
         detect=lambda _: detected,
-        model_configs=[_model(_EVALUATOR), _model(_REPAIRER)],
-        selected_models=selection,
         replace_model_selection=load_default_model_selection().replace,
         privacy_goal=_PRIVACY_GOAL,
         evaluation=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=max_repair_iterations).evaluation,
+        **_scripted_models(),
+    )
+
+
+def _anonymizer_run(tmp_path: Path, workflow: type[RewriteWorkflow], max_repair_iterations: int) -> Any:
+    """Run both records through ``Anonymizer.run()``: detection returns the seeded rows, and the loop evaluates."""
+    seeded = _seeded_rows().drop(columns=[COL_TEXT])
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{column: seeded[column].tolist() for column in seeded.columns}),
+        failed_records=[],
+        source_positions=tuple(range(len(frame))),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": [_TEXT, _OTHER_TEXT]}).to_csv(csv_path, index=False)
+    runner = workflow(adapter=_adapter(tmp_path))
+    combined_graph = isinstance(runner, CombinedRewriteWorkflow)
+    anonymizer = (
+        Anonymizer(detection_workflow=detector, combined_rewrite_runner=runner)
+        if combined_graph
+        else Anonymizer(detection_workflow=detector, rewrite_runner=runner)
+    )
+    rewrite = Rewrite(
+        privacy_goal=_PRIVACY_GOAL, max_repair_iterations=max_repair_iterations, use_combined_graph=combined_graph
+    )
+    return anonymizer.run(
+        config=AnonymizerConfig(rewrite=rewrite, emit_telemetry=False),
+        data=AnonymizerInput(source=str(csv_path), text_column="text"),
     )
 
 
@@ -967,3 +1006,61 @@ def test_disposition_response_with_surplus_entries_on_every_attempt_keeps_the_ro
     assert pd.isna(row[COL_SENSITIVITY_DISPOSITION])
     assert calls[_DISPOSER] == 6
     assert len(result.dataframe.iloc[1][COL_SENSITIVITY_DISPOSITION]["sensitivity_disposition"]) == 1
+
+
+# --- Evaluation: a step that never responds in a round the repair loop replaces is still counted ---
+
+_UNPARSED = "I cannot answer that."
+_RETRIES = 8  # a first request and its corrections and restarts, as the default run config allows
+
+
+def _per_row_warnings(caplog: pytest.LogCaptureFixture, *columns: str) -> int:
+    """The per-row "unavailable after" warnings logged for ``columns`` (in either mode's column names)."""
+    messages = [r.getMessage() for r in dict.fromkeys(caplog.records)]
+    return sum(1 for m in messages if m.startswith(columns) and " unavailable after " in m)
+
+
+def _summaries(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        r.getMessage() for r in dict.fromkeys(r for r in caplog.records if r.name == "anonymizer.rewrite.responses")
+    ]
+
+
+@pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])
+@pytest.mark.parametrize("middle", [False, True], ids=["round-0", "middle-round"])
+@pytest.mark.parametrize("step", ["quality", "compare"])
+def test_quality_evaluation_without_a_response_in_an_earlier_round_is_counted(
+    tmp_path: Path,
+    repairer: tuple[dict[str, list[str]], dict[str, int]],
+    caplog: pytest.LogCaptureFixture,
+    workflow: type[RewriteWorkflow],
+    step: str,
+    middle: bool,
+) -> None:
+    """The round without a response leaks, so the row is repaired and a later round passes: not the last round.
+
+    In the middle-round case the first evaluation is complete and leaks too.
+    """
+    script, calls = repairer
+    good = _QUALITY_RESPONSE if step == "quality" else _COMPARE_RESPONSE
+    script[step] = [*[good] * middle, *[_UNPARSED] * _RETRIES, good]
+    script["privacy"] = [*[_LEAK] * (1 + middle), _privacy_response("Absent.")]
+    script["repair"] = [json.dumps({"rewritten_text": _REPAIRED_TEXT})]
+
+    # ``Anonymizer.run()`` stops the package's records from propagating, so capture them at its logger.
+    package = logging.getLogger("anonymizer")
+    package.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING):
+            result = _anonymizer_run(tmp_path, workflow, max_repair_iterations=3)
+    finally:
+        package.removeHandler(caplog.handler)
+
+    assert calls[step] >= _RETRIES + 1  # every attempt of that round was spent
+    assert result.outcome(0).qualification == "met"  # the last round passed, so the summary must not rely on it
+    per_row = _per_row_warnings(caplog, COL_QUALITY_QA_REANSWER, COL_QUALITY_QA_COMPARE)
+    assert per_row == 1
+    assert _summaries(caplog) == [
+        f"Rows kept without a usable model response after their retries, by step: quality evaluation={per_row}. "
+        "If most rows are listed, check that step's model."
+    ]

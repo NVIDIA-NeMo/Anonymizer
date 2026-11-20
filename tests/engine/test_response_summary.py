@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import random
 
 import pandas as pd
 import pytest
@@ -11,6 +12,7 @@ import pytest
 from anonymizer.engine.constants import (
     COL_DOMAIN,
     COL_DOMAIN_UNAVAILABLE,
+    COL_EVALUATION_UNAVAILABLE,
     COL_FULL_REWRITE,
     COL_MEANING_UNITS,
     COL_PRIVACY_QA_REANSWER,
@@ -20,7 +22,7 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT,
 )
 from anonymizer.engine.rewrite.domain_classification import UNAVAILABLE_DOMAIN
-from anonymizer.engine.rewrite.response_summary import warn_kept_without_response
+from anonymizer.engine.rewrite.response_summary import mark_evaluation_unavailable, warn_kept_without_response
 
 _RESPONSE = {"answers": []}
 _DOMAIN = {"domain": "FINANCIAL", "domain_confidence": 0.9}
@@ -111,3 +113,66 @@ def test_frames_without_the_columns_log_nothing(caplog: pytest.LogCaptureFixture
         warn_kept_without_response(pd.DataFrame({"text": ["a"]}))
 
     assert [record for record in caplog.records if record.name == "anonymizer.rewrite.responses"] == []
+
+
+def _summary(caplog: pytest.LogCaptureFixture) -> str:
+    (message,) = {record.getMessage() for record in caplog.records if record.name == "anonymizer.rewrite.responses"}
+    return message
+
+
+def test_the_evaluation_marker_keeps_earlier_rounds_and_leaves_the_frame(caplog: pytest.LogCaptureFixture) -> None:
+    frame = pd.DataFrame([_row(**{COL_QUALITY_QA_REANSWER: None}), _row(**{COL_PRIVACY_QA_REANSWER: None}), _row()])
+    mark_evaluation_unavailable(frame)
+    # The next round answers every step and overwrites the columns.
+    for column in (COL_QUALITY_QA_REANSWER, COL_PRIVACY_QA_REANSWER):
+        frame[column] = [_RESPONSE] * len(frame)
+    mark_evaluation_unavailable(frame)
+
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.responses"):
+        warn_kept_without_response(frame)
+
+    assert _summary(caplog).startswith(
+        "Rows kept without a usable model response after their retries, by step: "
+        "privacy evaluation=1, quality evaluation=1."
+    )
+    assert COL_EVALUATION_UNAVAILABLE not in frame.columns
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_each_evaluation_step_counts_the_rows_without_a_response_in_any_round(
+    seed: int, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Rounds overwrite the evaluation columns; the count is the rows that had no response in at least one round."""
+    rng = random.Random(seed)
+    rows, rounds = rng.randint(1, 12), rng.randint(1, 4)
+    steps = {
+        "quality": COL_QUALITY_QA_REANSWER,
+        "compare": COL_QUALITY_QA_COMPARE,
+        "privacy": COL_PRIVACY_QA_REANSWER,
+    }
+    missing = {step: [[rng.random() < 0.2 for _ in range(rounds)] for _ in range(rows)] for step in steps}
+    frame = pd.DataFrame([_row() for _ in range(rows)])
+    for k in range(rounds):
+        for step, column in steps.items():
+            good = {"per_item": []} if step == "compare" else _RESPONSE
+            frame[column] = [None if missing[step][i][k] else good for i in range(rows)]
+        # Without the quality answers the comparison is not asked, so it has nothing to miss.
+        frame.loc[frame[COL_QUALITY_QA_REANSWER].isna(), COL_QUALITY_QA_COMPARE] = None
+        if k < rounds - 1:  # the last round is read from the frame
+            mark_evaluation_unavailable(frame)
+
+    def rows_missing(*names: str) -> int:
+        return sum(any(missing[name][i][k] for name in names for k in range(rounds)) for i in range(rows))
+
+    expected = {
+        "privacy evaluation": rows_missing("privacy"),
+        "quality evaluation": rows_missing("quality", "compare"),
+    }
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.responses"):
+        warn_kept_without_response(frame)
+
+    # One record, which caplog can list twice once DataDesigner has reconfigured logging in an earlier test.
+    counted = [r.getMessage() for r in dict.fromkeys(caplog.records) if r.name == "anonymizer.rewrite.responses"]
+    shown = ", ".join(f"{step}={count}" for step, count in expected.items() if count)
+    message = f"Rows kept without a usable model response after their retries, by step: {shown}. "
+    assert counted == ([message + "If most rows are listed, check that step's model."] if shown else [])

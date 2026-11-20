@@ -68,7 +68,7 @@ from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
 from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
-from anonymizer.engine.rewrite.response_summary import warn_kept_without_response
+from anonymizer.engine.rewrite.response_summary import mark_evaluation_unavailable, warn_kept_without_response
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
 )
@@ -831,6 +831,7 @@ class RewriteWorkflow:
         def evaluate(df: pd.DataFrame, iteration: int) -> pd.DataFrame:
             df = run_and_join(df, eval_columns, f"rewrite-evaluate-{iteration}", overwrite=True)
             _normalize_evaluation_payloads(df)
+            mark_evaluation_unavailable(df)  # the next round overwrites this round's columns
             return df
 
         def initial_evaluate() -> None:
