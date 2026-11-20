@@ -2250,3 +2250,17 @@ def test_leftovers_reject_a_result_without_the_trace() -> None:
     )
     with pytest.raises(ValueError, match="no leftover trace"):
         result.leftovers(0)
+
+
+def test_a_name_with_marks_out_of_canonical_order_copied_verbatim_is_not_met(tmp_path: Path) -> None:
+    """The value and both texts are matched in one normalized form, so marks NFKD reorders still match."""
+    name = "Mira\U0001d157\U0001d16d\U0001d16e"
+    text = f"{name} called."
+    adapter = _ScriptedAdapter({"rec": 0}, initial=text, policy=_disposition((name, "replace", "tagged")))
+    result = _run_result(adapter, tmp_path, text, [_span(text, name)])
+    outcome = result.outcome(0)
+
+    assert outcome.qualification == "not_met"
+    assert result.dataframe["needs_human_review"].tolist() == [True]
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [("failed", "replacements_applied", "e0:N1,D1,O1")]
+    assert format_cause(x for x in result.leftovers(0) if x.over_bound) == outcome.reasons[0].cause

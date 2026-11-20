@@ -137,7 +137,8 @@ class _Matcher:
         pos = text.find(self.key)
         while pos >= 0:
             if self.pattern is None or self.pattern.match(text, pos):
-                yield Span(origin[pos], origin[pos + len(self.key) - 1] + 1)
+                covered = origin[pos : pos + len(self.key)]  # canonical reordering can move marks across sources
+                yield Span(min(covered), max(covered) + 1)
             pos = text.find(self.key, pos + 1)
 
 
@@ -163,23 +164,37 @@ def _normalized(text: str) -> str:
 def _mapped(text: str) -> tuple[tuple[str, list[int]], tuple[str, list[int]]]:
     """``_normalized(text)`` and its casefold, each with the index in ``text`` of every character's source character.
 
-    Built one source character at a time; equal to the whole-string forms except for canonical reordering of
-    combining marks that are not ``Mn``.
+    Each source character is decomposed (NFKD) and every run of combining marks is put in canonical order, carrying
+    the source indexes along, which is what NFKD does to the whole string; marks are dropped and whitespace collapsed
+    only after that, so the plain form equals ``_normalized(text)``. Inside a reordered run the indexes are not
+    increasing.
     """
+    decomposed = [
+        (d, i) for i, c in enumerate(text) for d in (unicodedata.normalize("NFKD", c) if not c.isascii() else c)
+    ]
+    start = 0
+    while start < len(decomposed):
+        if not unicodedata.combining(decomposed[start][0]):
+            start += 1
+            continue
+        end = start
+        while end < len(decomposed) and unicodedata.combining(decomposed[end][0]):
+            end += 1
+        decomposed[start:end] = sorted(decomposed[start:end], key=lambda pair: unicodedata.combining(pair[0]))
+        start = end
     plain: list[str] = []
     origin: list[int] = []
     pending = False
-    for i, c in enumerate(text):
-        for d in unicodedata.normalize("NFKD", c) if not c.isascii() else c:
-            if d.isspace():
-                pending = bool(plain)
-            elif unicodedata.category(d) != "Mn":
-                if pending:
-                    plain.append(" ")
-                    origin.append(i)
-                    pending = False
-                plain.append(d)
+    for d, i in decomposed:
+        if d.isspace():
+            pending = bool(plain)
+        elif unicodedata.category(d) != "Mn":
+            if pending:
+                plain.append(" ")
                 origin.append(i)
+                pending = False
+            plain.append(d)
+            origin.append(i)
     folded: list[str] = []
     folded_origin: list[int] = []
     for d, i in zip(plain, origin):

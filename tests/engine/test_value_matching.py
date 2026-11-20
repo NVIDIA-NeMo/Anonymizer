@@ -51,9 +51,11 @@ def _nums(leftovers: tuple[Leftover, ...]) -> list[tuple[int | None, int, int, i
 
 
 # Case, short codes, CJK, Thai, accents (precomposed and combining), casefold expansion, fullwidth, digits,
-# punctuation and word boundaries.
+# punctuation and word boundaries; and marks that NFKD keeps (not Mn) but reorders by combining class: musical
+# symbols, a precomposed note that decomposes into them, a Hangul tone mark, viramas and a Vietnamese reading mark.
 _ALPHABET = ["a", "b", "c", "A", "B", "C", " ", "  ", "中", "文", "ก", "é", "e\u0301", "É", "ß", "Ａ", "1", "'",
-             "-", "_", ".", ",", "\n"]  # fmt: skip
+             "-", "_", ".", ",", "\n", "\U0001d165", "\U0001d16d", "\U0001d16e", "\U0001d160", "\u302e",
+             "\u1715", "\ua953", "\U00016ff0"]  # fmt: skip
 
 
 def _string(rng: random.Random, low: int, high: int) -> str:
@@ -111,6 +113,38 @@ def test_count_values_finds_a_value_exactly_when_the_presence_rule_does() -> Non
     ]
     assert mismatches == []
     assert sum(_reference_any_value_occurs(v, t) for v, t in corpus) > 2_000  # matches, not only misses
+
+
+def test_every_reported_span_is_a_span_of_the_text_holding_the_value() -> None:
+    """Spans stay valid where canonical reordering moves a mark ahead of the character it followed."""
+    checked = 0
+    for values, text in _corpus(20_000):
+        for leftover in _counts("", [], text, values):
+            key = _normalized(leftover.value).casefold()
+            for span in leftover.output_spans:
+                assert 0 <= span.start < span.end <= len(text)
+                assert key in _normalized(text[span.slice]).casefold()
+                checked += 1
+    assert checked > 2_000
+
+
+_MIRA = "Mira\U0001d157\U0001d16d\U0001d16e"  # the last two marks are out of canonical order
+
+
+@pytest.mark.parametrize(
+    ("value", "output"),
+    [
+        (_MIRA, f"{_MIRA} called."),  # copied verbatim
+        (_MIRA, "Mira\U0001d157\U0001d16e\U0001d16d called."),  # copied in canonical order
+        ("김\u302e\u1715", "김\u302e\u1715 called."),  # Hangul tone mark then virama
+        ("Ana\ua953\U00016ff0", "Ana\ua953\U00016ff0 called."),  # virama then Vietnamese reading mark
+    ],
+)
+def test_a_value_with_reordered_marks_is_found_where_it_occurs(value: str, output: str) -> None:
+    source = f"{value} called."
+    leftovers = count_values(source, [(Span(0, len(value)), "first_name")], output)
+    assert format_cause(leftovers) == "e0:N1,D1,O1"
+    assert leftovers[0].output_spans == Spans([Span(0, len(output) - len(" called."))])
 
 
 def test_a_value_inside_another_detected_value() -> None:

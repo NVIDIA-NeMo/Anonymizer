@@ -952,6 +952,27 @@ def test_leftovers_explain_a_substitute_that_brings_a_value_back(tmp_path: Path)
         result.leftovers(1)
 
 
+def test_a_redact_template_that_brings_back_a_name_with_reordered_marks_fails_the_advisory(tmp_path: Path) -> None:
+    name = "Mira\U0001d157\U0001d16d\U0001d16e"  # NFKD puts the last two marks in the other order
+    text = f"{name} called."
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": [_ent(name, 0)]}]}),
+        failed_records=[],
+        source_positions=(0,),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": [text]}).to_csv(csv_path, index=False)
+    result = Anonymizer(detection_workflow=detector).run(
+        config=AnonymizerConfig(replace=Redact(format_template=f"[X] {name}"), emit_telemetry=False),
+        data=AnonymizerInput(source=str(csv_path), text_column="text"),
+    )
+
+    (advisory,) = result.outcome(0).advisories
+    assert (advisory.status, advisory.cause) == ("failed", "e0:N1,D1,O1")
+    _agrees(result, 0, advisory.cause)
+
+
 def test_leftovers_name_a_value_by_its_own_span(tmp_path: Path) -> None:
     """John matches inside "John Smith" first, yet its entry is John's own span."""
     text = "John Smith called. John said hi."
