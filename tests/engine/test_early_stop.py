@@ -8,13 +8,16 @@ Only the HTTP client is scripted, per model alias; every Rewrite step, detection
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
 import re
 import threading
+import time
 from collections import Counter
 from collections.abc import Callable, Generator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -79,31 +82,90 @@ _REQUESTS_PER_ROW = 6  # a first request and the corrections and restarts the de
 Failing = Callable[[int, int], bool]
 
 
+@dataclass
+class _Hold:
+    """Keeps a failing alias's prose answers back until ``until`` says the rows that should finish have finished.
+
+    DataDesigner shuts the whole run down once enough rows fail, and drops every row still part-way through its
+    columns. Which rows were part-way then depends on how the event loop interleaved the requests, so a test that
+    needs particular rows to come back holds the failures until those rows have their last answer, plus ``settle``
+    seconds for DataDesigner to record them as complete. ``timeout`` only stops a mistake from hanging the suite.
+    """
+
+    until: Callable[[Counter[str]], bool]
+    settle: float = 0.2
+    timeout: float = 30.0
+    _deadline: float = field(default=0.0, repr=False)
+    _released_at: float | None = field(default=None, repr=False)
+
+    def _remaining(self, answered: Counter[str]) -> float:
+        """Seconds still to wait; 0 once released, or once the timeout has passed."""
+        now = time.monotonic()
+        if not self._deadline:
+            self._deadline = now + self.timeout
+        if self._released_at is None and self.until(answered):
+            self._released_at = now
+        if self._released_at is None:
+            return 0.0 if now > self._deadline else 0.005
+        return max(0.0, self._released_at + self.settle - now)
+
+    async def wait(self, answered: Counter[str]) -> None:
+        while delay := self._remaining(answered):
+            await asyncio.sleep(delay)
+
+    def wait_blocking(self, answered: Counter[str]) -> None:
+        while delay := self._remaining(answered):
+            time.sleep(delay)
+
+
 class _Client:
     """Responds per alias; the failing alias answers prose whenever ``failing`` says so."""
 
-    def __init__(self, role: str, failing: dict[str, Failing], calls: Counter[str], lock: threading.Lock) -> None:
+    def __init__(
+        self,
+        role: str,
+        failing: dict[str, Failing],
+        calls: Counter[str],
+        lock: threading.Lock,
+        holds: dict[str, _Hold],
+        answered: Counter[str],
+    ) -> None:
         self._role, self._failing, self._calls, self._lock = role, failing, calls, lock
+        self._hold, self._answered = holds.get(role), answered
 
-    def _response(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
+    def _plan(self, request: ChatCompletionRequest) -> tuple[str, bool]:
+        """The request's prompt, and whether it gets prose."""
         prompt = json.dumps(request.messages, default=str)
         with self._lock:
             n = self._calls[self._role]
             self._calls[self._role] += 1
         match = re.search(r"Record (\d+):", prompt)
         failing = self._failing.get(self._role)
-        if failing is not None and failing(n, int(match.group(1)) if match else -1):
+        return prompt, failing is not None and failing(n, int(match.group(1)) if match else -1)
+
+    def _response(self, prompt: str, prose: bool) -> ChatCompletionResponse:
+        if prose:
             return ChatCompletionResponse(message=AssistantMessage(content=_PROSE))
         if self._role == "evaluator":
             kind = "privacy" if "privacy auditor" in prompt else "compare" if "A student took" in prompt else "quality"
-            return ChatCompletionResponse(message=AssistantMessage(content=_EVALUATOR[kind]))
-        return ChatCompletionResponse(message=AssistantMessage(content=_GOOD[self._role]))
+            content = _EVALUATOR[kind]
+        else:
+            content = _GOOD[self._role]
+        with self._lock:
+            self._answered[self._role] += 1
+        return ChatCompletionResponse(message=AssistantMessage(content=content))
 
     def completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
-        return self._response(request)
+        prompt, prose = self._plan(request)
+        if prose and self._hold is not None:
+            self._hold.wait_blocking(self._answered)
+        return self._response(prompt, prose)
 
     async def acompletion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
-        return self._response(request)
+        prompt, prose = self._plan(request)
+        if prose and self._hold is not None:
+            await self._hold.wait(self._answered)
+        return self._response(prompt, prose)
 
     def supports_chat_completion(self) -> bool:
         return True
@@ -116,13 +178,19 @@ class _Client:
 
 
 @pytest.fixture
-def scripted(monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str, Failing], Counter[str]]:
+def holds() -> dict[str, _Hold]:
+    return {}
+
+
+@pytest.fixture
+def scripted(monkeypatch: pytest.MonkeyPatch, holds: dict[str, _Hold]) -> tuple[dict[str, Failing], Counter[str]]:
     failing: dict[str, Failing] = {}
     calls: Counter[str] = Counter()
+    answered: Counter[str] = Counter()  # usable answers returned, per alias
     lock = threading.Lock()
 
     def create(model_config: Any, *args: Any, **kwargs: Any) -> _Client:
-        return _Client(model_config.alias.removeprefix("scripted-"), failing, calls, lock)
+        return _Client(model_config.alias.removeprefix("scripted-"), failing, calls, lock, holds, answered)
 
     monkeypatch.setattr(client_factory, "create_model_client", create)
     return failing, calls
@@ -213,17 +281,21 @@ def test_a_step_that_never_responds_stops_and_lists_the_rows_not_run(
 
 @_MODES
 def test_a_step_that_stops_responding_returns_the_rows_that_finished(
-    tmp_path: Path, scripted: tuple[dict[str, Failing], Counter[str]], combined: bool
+    tmp_path: Path, scripted: tuple[dict[str, Failing], Counter[str]], holds: dict[str, _Hold], combined: bool
 ) -> None:
     failing, calls = scripted
-    failing["domain"] = lambda n, record: n >= 15  # healthy for 15 rows, then down for good
-    rows = 30
+    healthy, rows = 15, 30
+    failing["domain"] = lambda n, record: record >= healthy  # records 0-14 answer; the rest never do
+    # The stop shuts the run down and drops rows still part-way through their columns, so the failures wait until the
+    # healthy rows have their last answer: the rewrite, or in combined mode the last of the 3 evaluations per row.
+    last, per_row = ("evaluator", 3) if combined else ("rewriter", 1)
+    holds["domain"] = _Hold(until=lambda answered: answered[last] >= healthy * per_row)
 
     result = _run(tmp_path, rows, combined=combined)
 
-    assert 15 <= len(result.dataframe) < rows  # the rows that finished come back
+    assert healthy <= len(result.dataframe) < rows  # the rows that finished come back
     _assert_partitioned(result, rows, "stopped_early (_domain)")
-    assert calls["domain"] < 15 + (rows - 15) * _REQUESTS_PER_ROW
+    assert calls["domain"] < healthy + (rows - healthy) * _REQUESTS_PER_ROW
 
 
 @_MODES
