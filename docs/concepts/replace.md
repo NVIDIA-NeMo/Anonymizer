@@ -198,8 +198,8 @@ session = Session.restore(SessionSnapshot.from_bytes(saved))
   Session. Each call logs its changes to the Session as counts at INFO, and the result carries them as
   `result.session_changes`: `added`, `reused`, `revised` and `ignored` assignments, new record-local `fallbacks`,
   and the placeholders the call created, by cause (`placeholders_protected`: the model proposed a value from the
-  record; `placeholders_taken`: another value in the call holds it; `placeholders_session`: only the Session rules
-  it out). It is `None` without a stable Session.
+  record; `placeholders_taken`: another value, or another label of the same value, in the call holds it;
+  `placeholders_session`: only the Session rules it out). It is `None` without a stable Session.
 - Two different values never share a substitute across those calls, and a new substitute never equals a value an
   earlier call replaced.
 - A value the Session already holds needs no new mapping from the model: it is not retried and cannot fail its
@@ -218,7 +218,11 @@ session = Session.restore(SessionSnapshot.from_bytes(saved))
   error instead of running without it.
 - The snapshot bytes hold original values in plain text. Protecting them is your responsibility.
 - The Session also holds record-local fallback entries: a substitute used in one record in place of a value's shared
-  one is recorded so no other value takes it later. These entries are bookkeeping, not assignments.
+  one is recorded so no other value, and no other label of the same value, takes it later. Within a call too, a
+  substitute is either a value's shared one or a record-local fallback, never both, so replaying a row whose values
+  all take their shared substitutes gives the same text and leaves the snapshot unchanged. A row that itself needs a
+  record-local fallback gets a new placeholder each time it is replayed, because fallbacks are not reused. These
+  entries are bookkeeping, not assignments.
 - `Session()` without `stable_replacements=True` retains nothing, and the call behaves as it does without
   `session=`. A custom replace runner is called as it is without `session=`, so an override written before `session`
   existed keeps working.

@@ -825,6 +825,80 @@ def test_assigned_to_other_value_ignores_the_same_value_under_another_label() ->
     assert view({(FALLBACK, "user_name", "kim"): "kim"}).assigned_to_other_value("kim", slot)
 
 
+def _self_consistent(session: Session) -> list[tuple[str, str, str]]:
+    """By-value slots whose assignment the Session's own view rules out for that slot; empty when consistent."""
+    view = session._view()
+    return [
+        (slot[1], slot[2], entry.assignment)
+        for slot, entry in session._slots.items()
+        if slot[0] is not FALLBACK and view.assigned_to_other_value(entry.assignment, slot)
+    ]
+
+
+def _octavia_entities(text: str) -> dict[str, Any]:
+    """Each Lumen and Octavia in ``text``: a first name, or an account id right after "account "."""
+    spans = []
+    for m in re.finditer("Lumen|Octavia", text):
+        label = "account_id" if text[: m.start()].lower().endswith("account ") else "first_name"
+        spans.append({"id": str(len(spans)), "value": m[0], "label": label, "start_position": m.start()})
+        spans[-1]["end_position"] = m.end()
+    return {"entities": spans}
+
+
+_OCTAVIA = {"Octavia": "Mira", "Lumen": "Nora"}
+
+
+@pytest.mark.parametrize(
+    ("calls", "expected"),
+    [
+        ([["Lumen and Octavia.", "Account Octavia."]], ["Nora and Mira.", "Account [SUBSTITUTE_ACCOUNT_ID_1]."]),
+        ([["Account Octavia.", "Lumen and Octavia."]], ["Account Mira.", "Nora and [SUBSTITUTE_FIRST_NAME_1]."]),
+        ([["Lumen and Octavia, account Octavia."]], ["Nora and Mira, account [SUBSTITUTE_ACCOUNT_ID_1]."]),
+        ([["Account Octavia."], ["Lumen and Octavia."]], ["Nora and [SUBSTITUTE_FIRST_NAME_1]."]),
+    ],
+    ids=["fallback-row-first", "account-row-first", "one-record", "across-calls"],
+)
+def test_a_value_under_two_labels_is_never_both_a_fallback_and_an_assignment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, calls: list[list[str]], expected: list[str]
+) -> None:
+    """Octavia holds Lumen as a first name; Lumen in the record sends her first name to the fallback Mira, while her
+    account id proposes Mira too. Mira is one of the two, never both, so replays are a fixed point."""
+    monkeypatch.setattr(f"{__name__}._entities", _octavia_entities)
+    session = Session(stable_replacements=True)
+    _protect(tmp_path, ["Octavia."], {"Octavia": "Lumen"}, session)
+    for texts in calls:
+        output = _protect(tmp_path, texts, _OCTAVIA, session)
+        assert _self_consistent(session) == []
+    assert list(output["text_replaced"]) == expected
+    restored = Session.restore(SessionSnapshot.from_bytes(session.snapshot().to_bytes()))
+    replayed, results = [], []
+    for _ in range(2):
+        before = restored.snapshot().to_bytes()
+        replayed += list(_protect(tmp_path, ["Account Octavia."], _OCTAVIA, restored, results)["text_replaced"])
+        assert restored.snapshot().to_bytes() == before
+    assert replayed[0] == replayed[1]
+    assert [r.added for r in results] == [0, 0]
+
+
+def test_a_row_that_needs_a_fallback_gets_a_new_placeholder_on_each_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A record-local fallback is never reused in a later call, by design, so such a row is not a fixed point."""
+    monkeypatch.setattr(f"{__name__}._entities", _octavia_entities)
+    session = Session(stable_replacements=True)
+    _protect(tmp_path, ["Octavia."], {"Octavia": "Lumen"}, session)
+    _protect(tmp_path, ["Lumen and Octavia.", "Account Octavia."], _OCTAVIA, session)
+    restored = Session.restore(SessionSnapshot.from_bytes(session.snapshot().to_bytes()))
+    replayed, results = [], []
+    for _ in range(2):
+        before = restored.snapshot().to_bytes()
+        replayed += list(_protect(tmp_path, ["Lumen and Octavia."], _OCTAVIA, restored, results)["text_replaced"])
+        assert restored.snapshot().to_bytes() != before
+    assert replayed == ["Nora and [SUBSTITUTE_FIRST_NAME_1].", "Nora and [SUBSTITUTE_FIRST_NAME_2]."]
+    assert [r.fallbacks for r in results] == [1, 1]
+    assert _self_consistent(restored) == []
+
+
 def _echo(value: str, answer: str | tuple[str, str]) -> tuple[str, str]:
     return answer if isinstance(answer, tuple) else (value, answer)
 
@@ -1067,6 +1141,7 @@ def test_stable_session_substitutes_stay_unique_and_fixed_across_retried_calls(
                 if synthetic not in fallbacks:
                     assert substitute_of.setdefault(key, synthetic) == synthetic, (seed, key)
         session._accept([(d, "test") for row in result.decisions for d in row])
+        assert _self_consistent(session) == [], seed
     assert all(len(values) == 1 for values in values_of.values()), (seed, values_of)
 
 

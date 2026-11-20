@@ -313,6 +313,9 @@ replace runner that overrides `run()`. The session and its snapshots are provisi
 - Under a stable session, a custom replace runner is also rejected before detection when it overrides
   `run_with_detection()` or its map workflow's `generate_validated_maps()`, even when the override forwards
   `**kwargs` or `session`. Such an override used to run and could leave the session empty.
+- Under a stable session, a value detected under two labels no longer gets one substitute as a record-local fallback
+  under one label and as the shared substitute under the other. The second use gets a placeholder instead, in either
+  row order and across calls, so replaying the row gives the same text and snapshot.
 
 **Placeholders are kept as minted.** A variant of a value that received a placeholder gets the placeholder exactly as
 minted, not re-cased (for example `[substitute_first_name_1]`). v0.5.0 had no re-casing, so this changes output only

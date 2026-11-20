@@ -413,8 +413,11 @@ def _fold_replacement_maps(
     share one (one value under two labels may); placeholders are numbered across the run. A key holding a run-wide
     mapping ignores other keys' proposals, so its run-wide substitute wins over them. When that substitute collides in a
     record and the key falls back, its fallback is checked like any other key's: a key earlier in the record that
-    already emitted the same value keeps it, and the holder moves on to a placeholder. In both modes a key is never
-    blocked by another key for the same normalized value (one value under two labels).
+    already emitted the same value keeps it, and the holder moves on to a placeholder. Without a ``view``, a key is
+    never blocked by another key for the same normalized value (one value under two labels). With one, that holds for
+    run-wide substitutes only: a substitute that another key of the call, any label, emitted as a record-local fallback
+    cannot become a key's run-wide substitute, and one that another key holds run-wide cannot be a key's record-local
+    fallback, in either order.
 
     When given, ``tally`` counts each fallback as ``(label, step)`` with step ``own``, ``placeholder_taken``
     (``"run"`` only: another key emitted it), ``placeholder_session`` (only the Session's view rules it out) or
@@ -425,7 +428,9 @@ def _fold_replacement_maps(
     assignment, re-cased against its normalized original. A substitute also collides when the view's
     ``assigned_to_other_value`` finds it assigned to another subject or normalized value, or to a fallback entry; the
     key's own slot and the same normalized value under any other label do not count, so a value under two labels keeps
-    one substitute. Unless it is the key's own held substitute, it also collides when it is a value the Session holds.
+    one substitute. A record-local fallback also collides when the view's ``assigned_elsewhere`` finds it assigned to
+    any other slot, the same value's other labels included, since the Session then holds it as a fallback too. Unless
+    it is the key's own held substitute, it also collides when it is a value the Session holds.
     A placeholder is never one the Session assigns to another key. ``decisions`` then gets one tuple per map: a
     decision for each key first used in that map, holding the key's run-wide substitute, and one for each record-local
     substitute not marked before, under the fallback subject and keyed by that substitute, so later calls treat it as
@@ -443,11 +448,25 @@ def _fold_replacement_maps(
             run_wide[key] = (key[1], assigned)
         return run_wide.get(key, own)
 
-    def crosses(value: str, key: tuple[str, str]) -> bool:
+    # Under a view, what the call emitted so far, by normalized substitute: each key's own run-wide substitute
+    # (``emitted_stable``) and its record-local fallbacks (``emitted_local``). A substitute is one of the two, never both, whatever
+    # the label: the Session holds a fallback against every other slot.
+    emitted_stable: dict[str, set[tuple[str, str]]] = {}
+    emitted_local: dict[str, set[tuple[str, str]]] = {}
+
+    def crosses(value: str, key: tuple[str, str], *, fixes: bool) -> bool:
         if view is None:
             return False
         holding = key in run_wide and _fold(run_wide[key][1]) == value
-        return view.assigned_to_other_value(value, (BY_VALUE, *key)) or (not holding and view.is_original(value))
+        slot = (BY_VALUE, *key)
+        # A record-local fallback must not be any other slot's assignment, the same value's other labels included.
+        elsewhere = view.assigned_to_other_value(value, slot) if fixes else view.assigned_elsewhere(value, slot)
+        return elsewhere or (not holding and view.is_original(value))
+
+    def across_labels(value: str, key: tuple[str, str], *, fixes: bool) -> bool:
+        """Whether another key of the call, any label, holds ``value`` the other way: as a fallback when it would
+        become ``key``'s run-wide substitute (``fixes``), as its run-wide substitute when it would be a fallback."""
+        return any(other != key for other in (emitted_local if fixes else emitted_stable).get(value, ()))
 
     for index, raw in enumerate(maps):
         keyed = [((e["label"], _fold(e["original"])), e) for e in raw.get("replacements", [])]
@@ -457,11 +476,13 @@ def _fold_replacement_maps(
             proposed.setdefault(_fold(entry["synthetic"]), set()).add(key)
         emitted: dict[str, set[tuple[str, str]]] = {}
 
-        def collides(value: str, key: tuple[str, str], *, shared: bool) -> bool:
+        def collides(value: str, key: tuple[str, str], *, shared: bool, fixes: bool = True) -> bool:
             rivals = proposed.get(value, set()) if shared and key not in run_wide else set()
             others = rivals | emitted.get(value, set()) | taken.get(value, set())
             blocked = any(other[1] != key[1] for other in others)
-            return value in originals or blocked or crosses(value, key)
+            if view is not None:
+                blocked = blocked or across_labels(value, key, fixes=fixes)
+            return value in originals or blocked or crosses(value, key, fixes=fixes)
 
         record: dict[tuple[str, str], tuple[str, str]] = {}
         placeholders: Counter[str] = run_placeholders if consistency == "run" else Counter()
@@ -477,8 +498,11 @@ def _fold_replacement_maps(
                 source = own
                 synthetic = entry["synthetic"]
                 value = _fold(synthetic)
-                if value in originals if consistency == "record" else collides(value, key, shared=False):
+                # The fallback becomes the key's run-wide substitute only when the key has none yet.
+                fixes = first and key not in run_wide
+                if value in originals if consistency == "record" else collides(value, key, shared=False, fixes=fixes):
                     rival = any(other[1] != key[1] for other in emitted.get(value, set()) | taken.get(value, set()))
+                    rival = rival or (view is not None and across_labels(value, key, fixes=fixes))
                     cause = "protected" if value in originals else "taken" if rival else "session"
                     step = f"placeholder_{cause}"
                     placeholders[entry["label"]] += 1
@@ -495,6 +519,10 @@ def _fold_replacement_maps(
                 if tally is not None and step:
                     tally[(entry["label"], step)] += 1
             emitted.setdefault(_fold(synthetic), set()).add(key)
+            if view is not None:
+                emitted_value = _fold(synthetic)
+                is_shared = emitted_value == _fold(run_wide.get(key, record[key])[1])
+                (emitted_stable if is_shared else emitted_local).setdefault(emitted_value, set()).add(key)
             out.append({**entry, "synthetic": synthetic})
         if used and tally is not None:
             tally[("records_with_placeholder",)] += 1
