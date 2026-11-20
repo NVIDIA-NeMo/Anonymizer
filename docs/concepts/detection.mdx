@@ -55,8 +55,8 @@ The spans a custom `detection_workflow` returns in `final_entities` follow one c
 (`start_position` inclusive, `end_position` exclusive), lies within the record's text, is non-empty, and the text
 slice it covers equals its `value` exactly. Each span needs a non-empty `label`: an unlabelled span never covers
 another, and one that is not identical to or inside a labelled span fails its record. The `_entities_by_value` column
-is optional. For a row with spans, it is the view of the kept spans plus every pair of the detector's view whose value
-occurs in the row's text outside those spans; a row without spans keeps the detector's view. "Occurs" follows the
+is optional. For a row with spans, it is the view of the kept spans plus every pair of the detector's view, and the
+value of every span the collapse dropped, that occurs in the row's text outside those spans; a row without spans keeps the detector's view. "Occurs" follows the
 leftover check's rule: whole words, with case and accents folded, so "Ann" does not occur in "Annual" and "Jose"
 occurs in "José". A one-character value in an unspaced script, such as 王, which that rule
 does not match, counts wherever it appears. The rule keeps one invariant: every value the detector reports for a row, from a span or a by-value

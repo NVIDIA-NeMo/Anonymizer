@@ -104,19 +104,21 @@ def detect_step(
                 malformed.add(datum)
                 state.rows[datum] = EntitiesSchema()
                 continue
+            spanned = [e.value for e in entities.entities]  # before the collapse: a dropped span's value counts too
             if covered := covered_spans(datum, entities):
                 rebuilt[row] = covered
                 entities = EntitiesSchema(entities=[e for i, e in enumerate(entities.entities) if i not in covered])
             state.rows[datum] = entities
             # A span that breaks the contract fails the row with its own reason first.
             sound = not mention_problem(accepted_mentions(datum, entities))
-            # Replace replaces spans only: every value of the row's view after derivation (its spans' values and the
-            # detector's pairs) must lie inside a kept span wherever it occurs.
-            reported = [e.value for e in entities.entities] + [value for value, _ in _listed_pairs(listed)]
-            if spans_only and sound and values_outside_spans(datum.text, entities, reported):
+            # Replace replaces spans only: every value the detector reported (its spans' values, collapsed spans
+            # included, and its pairs) must lie inside a kept span wherever it occurs.
+            values = spanned + [value for value, _ in _listed_pairs(listed)]
+            if spans_only and sound and values_outside_spans(datum.text, entities, values):
                 unspanned.add(datum)
-            # The by-value rule: a row with spans gets the view of its kept spans plus every detector pair whose value
-            # occurs in its text outside them (see ``_with_entities``); a row without spans keeps the detector's view.
+            # The by-value rule: a row with spans gets the view of its kept spans plus every detector pair, and every
+            # collapsed span's value, that occurs in its text outside them (see ``_with_entities``); a row without
+            # spans keeps the detector's view.
             if entities.entities:
                 rebuilt.setdefault(row, set())
         # Later steps read the by-value column for every returned row, so it is added even when no row is rebuilt.
@@ -187,8 +189,8 @@ def _with_entities(frame: pd.DataFrame, covered: dict[int, set[int]]) -> pd.Data
     The invariant: for each row, every value the detector reports, from a span or a by-value pair, that occurs in the
     row's text is either in the replacement view or fails the row. Nothing reported is dropped silently, and released
     text never holds such a value unflagged. So a rebuilt view is the view of the kept spans plus every pair of the
-    detector's own view whose value occurs in the row's text outside those spans; a value inside a kept span is
-    protected by that span, and a value that does not occur protects nothing.
+    detector's own view, and every value of a span the collapse dropped, that occurs in the row's text outside those
+    spans; a value inside a kept span is protected by that span, and a value that does not occur protects nothing.
 
     A rewritten entities cell keeps its own encoding (a JSON string stays a string) and its own keys. A rebuilt
     by-value cell takes the encoding of the column's first present cell, else of its row's entities cell, so a
@@ -206,7 +208,7 @@ def _with_entities(frame: pd.DataFrame, covered: dict[int, set[int]]) -> pd.Data
     frame[COL_ENTITIES_BY_VALUE] = [
         _encoded_like(
             given[row] if sample is None else sample,
-            _union(_build_entities_by_value(final[row]), raw, texts[row], final[row]),
+            _union(_build_entities_by_value(final[row]), raw, texts[row], final[row], given[row]),
         )
         if row in covered
         else raw
@@ -215,10 +217,14 @@ def _with_entities(frame: pd.DataFrame, covered: dict[int, set[int]]) -> pd.Data
     return frame
 
 
-def _union(derived: dict[str, Any], listed: object, text: str, entities: object) -> dict[str, Any]:
-    """``derived`` plus every pair of ``listed`` whose value occurs in ``text`` outside the spans of ``entities``."""
+def _union(derived: dict[str, Any], listed: object, text: str, kept: object, returned: object) -> dict[str, Any]:
+    """``derived`` plus every pair whose value occurs in ``text`` outside the spans of ``kept``: the pairs of the
+    detector's view ``listed``, and those of the spans it ``returned`` before the collapse, so a collapsed span's value
+    is added wherever no kept span covers it."""
     items = {item["value"]: list(item["labels"]) for item in derived["entities_by_value"]}
-    for value, labels in unspanned_pairs(listed, text, EntitiesSchema.from_raw(entities)):
+    spans = EntitiesSchema.from_raw(kept)
+    candidates = unspanned_pairs(listed, text, spans) + unspanned_pairs(_build_entities_by_value(returned), text, spans)
+    for value, labels in candidates:
         merged = items.setdefault(value, [])
         merged.extend(label for label in labels if label not in merged)
     return {**derived, "entities_by_value": [{"value": v, "labels": labels} for v, labels in items.items()]}

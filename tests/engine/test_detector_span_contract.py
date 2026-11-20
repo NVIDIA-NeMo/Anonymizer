@@ -35,7 +35,7 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
-from anonymizer.engine.detection.detect_step import _with_entities, accepted_mentions
+from anonymizer.engine.detection.detect_step import _with_entities, accepted_mentions, covered_spans
 from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionResult,
     EntityDetectionWorkflow,
@@ -1040,6 +1040,8 @@ _TOKENS = [
     "the",
     "王",
     "李明",
+    "Alice Smith",
+    "Alice",
 ]
 _LABELS = {
     "Ann": "first_name",
@@ -1050,6 +1052,8 @@ _LABELS = {
     "José": "first_name",
     "王": "last_name",
     "李明": "full_name",
+    "Alice Smith": "full_name",
+    "Alice": "first_name",
 }
 _EXTRA_PAIRS = [("rome", "city"), ("Jose", "first_name"), ("Lee", "first_name"), ("Rome", "city"), ("Paris", "city")]
 
@@ -1072,7 +1076,7 @@ def _random_row(rng: random.Random) -> tuple[str, list[dict[str, Any]] | None, o
     return text, (None if not spans and rng.random() < 0.3 else spans), view
 
 
-@pytest.mark.parametrize("mode", ["redact", "hash", "annotate", "substitute", "rewrite"])
+@pytest.mark.parametrize("mode", ["redact", "hash", "annotate", "substitute", "rewrite", "combined"])
 def test_every_reported_value_is_protected_or_fails_its_row(mode: str, tmp_path: Path) -> None:
     """The by-value invariant over random rows: every value the detector reports (span or by-value pair) that occurs
     in the row's text, under the leftover check's matching rule, lies inside a kept span or is in the Rewrite view, or
@@ -1083,11 +1087,13 @@ def test_every_reported_value_is_protected_or_fails_its_row(mode: str, tmp_path:
         result, frames = _one_row_run(tmp_path, text, spans, view, mode)
         listed = [v for v, _ in _requested_pairs(view)] if view is not None else []
         reported = [e["value"] for e in spans or []] + listed
-        kept = EntitiesSchema.from_raw({"entities": spans or []})
+        returned = EntitiesSchema.from_raw({"entities": spans or []})
+        dropped = covered_spans(GraphScope().datum(text), returned)  # nested spans the detect step collapses
+        kept = EntitiesSchema(entities=[e for i, e in enumerate(returned.entities) if i not in dropped])
         outside = {value for value in reported if _occurs_outside(text, kept, value)}
         if result.failed_records:
             assert [f.step for f in result.failed_records] == ["detect"], (text, spans, view)
-        elif mode == "rewrite":
+        elif mode in ("rewrite", "combined"):
             assert outside <= (_seed_values(frames) if frames else set()), (text, spans, view)
         else:
             assert not outside, (text, spans, view)
@@ -1155,3 +1161,41 @@ def test_a_replace_runner_override_without_the_unspanned_keyword_still_runs(tmp_
 
     assert calls == ["old"]
     assert result.failed_records == []
+
+
+@pytest.mark.parametrize("view", ["absent", "outer_only"])
+@pytest.mark.parametrize("mode", ["redact", "hash", "annotate", "substitute", "rewrite", "combined"])
+def test_a_collapsed_spans_value_outside_the_kept_spans_is_reported(view: str, mode: str, tmp_path: Path) -> None:
+    """A nested span the detect step collapses still reports its value: "Alice" also stands alone, outside the kept
+    "Alice Smith", so Replace fails the row and the Rewrite view holds it."""
+    text = "Alice Smith met Alice."
+    spans = [_at(text, "Alice Smith", "full_name"), _at(text, "Alice", "first_name")]
+    cell = None if view == "absent" else _view(("Alice Smith", "full_name"))
+    result, frames = _one_row_run(tmp_path, text, spans, cell, mode)
+
+    if mode in ("rewrite", "combined"):
+        assert result.failed_records == []
+        assert _seed_values(frames) == {"Alice Smith", "Alice"}
+    else:
+        assert result.failed_records == [FailedRecord("0", "detect", "unspanned_value")]
+
+
+@pytest.mark.parametrize("mode", ["redact", "rewrite"])
+def test_a_collapsed_spans_value_inside_a_kept_span_is_not_added(mode: str, tmp_path: Path) -> None:
+    """ "Smith" occurs only inside the kept "Alice Smith": it is protected by that span and adds nothing."""
+    text = "Alice Smith met Bob."
+    spans = [_at(text, "Alice Smith", "full_name"), _at(text, "Smith", "last_name"), _at(text, "Bob", "first_name")]
+    result, frames = _one_row_run(tmp_path, text, spans, None, mode)
+
+    assert result.failed_records == []
+    if mode == "rewrite":
+        assert _seed_values(frames) == {"Alice Smith", "Bob"}
+
+
+def test_an_unspanned_value_is_named_in_the_failure_log(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    text = "Qb Bob met Bob."
+    with caplog.at_level(logging.DEBUG, logger="anonymizer"):
+        result, _ = _one_row_run(tmp_path, text, [_at(text, "Bob", "first_name")], None, "redact")
+
+    assert result.failed_records == [FailedRecord("0", "detect", "unspanned_value")]
+    assert "1 record(s) failed during pipeline processing: detect/unspanned_value=1." in caplog.text

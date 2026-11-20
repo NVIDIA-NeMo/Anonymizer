@@ -516,8 +516,8 @@ class Anonymizer:
                 payload that does not parse fails with ``invalid_output`` (Replace
                 rejects it at ``replace``). For a row with spans, the
                 ``_entities_by_value`` view is that of its kept spans plus every
-                detector pair whose value occurs in the row's text outside those
-                spans; a row without spans keeps the detector's view. In the
+                detector pair, and every collapsed span's value, that occurs in
+                the row's text outside those spans; a row without spans keeps the detector's view. In the
                 Replace modes, a row whose view holds a value that occurs in its
                 text outside every kept span fails at ``detect`` with
                 ``unspanned_value``.
@@ -1719,6 +1719,7 @@ _KNOWN_FAILURE_REASONS = frozenset(
         "over_limit",
         "overlapping_output_ownership",
         "raised",
+        "unspanned_value",
     }
 )
 # Graph operation names a failed record can carry besides the workflow names ``_step_to_field`` knows.
