@@ -165,11 +165,13 @@ coverage judge reports missed entities. The `run()` result is not changed.
 **Each Replace judge runs in its own workflow.** `evaluate()` on a Replace result ran every judge as a column of one
 DataDesigner workflow, and DataDesigner dropped a record when any of its columns failed, so one judge's unusable
 response emptied every judge's score for that record. Now each active judge runs as its own workflow, one after
-another. A judge that fails for a record leaves only its own score empty, and each failing judge adds its own entry to
-`failed_records`. `evaluate()` takes the sum of the judge times instead of the longest.
-- What to do: nothing. Expect one `failed_records` entry per failing judge and row; its `reason` names the judge's
-  column when the cause was recorded. Expect a longer `evaluate()` whenever more than one judge is active (always for
-  Substitute).
+another. A judge that fails for a record leaves only its own score empty, and each record failure DataDesigner returns
+for a judge adds its own entry to `failed_records`. A judge whose whole workflow raises is logged at WARNING and leaves
+its scores empty for every row without adding to `failed_records`. `evaluate()` takes the sum of the judge times
+instead of the longest.
+- What to do: nothing. Expect one `failed_records` entry per judge and row that DataDesigner reports as failed; its
+  `reason` names the judge's column when the cause was recorded. Expect a longer `evaluate()` whenever more than one
+  judge is active (always for Substitute).
 - Changed in: #434.
 
 **Judges read only the columns they need, and a failed judge is logged.** Each evaluation judge sends DataDesigner only
@@ -224,10 +226,13 @@ rewrite judge skips a row with no detected entities). A judge never changes qual
 `qualification` and `protected` still say what the run decided. The evaluate frame does not change.
 - Matching: judge rows and the run's outcomes are matched to records only by a non-null `_anonymizer_record_id` that
   occurs once in the evaluated result, once among the judge's rows and once among the run's own outcomes. Row order
-  and text are never used. A row without such an id is `not_assessed` and unprotected, and each judge reads
-  `could_not_assess` with cause `unplaced`.
+  and text are never used. A row without an id, or whose id does not occur exactly once in the evaluated result and
+  among the judge's rows, cannot be placed: it is `not_assessed` and unprotected, and each judge reads
+  `could_not_assess` with cause `unplaced`. A placed row whose id does not occur exactly once among the run's outcomes
+  is `not_assessed` and unprotected, but keeps its judges' actual advisories.
   Outcomes are looked up by id, so reordering or filtering the result's rows before `evaluate()` keeps each row's own
-  outcome. A result with no outcomes, such as one from a custom runner, gives `not_assessed` and unprotected rows.
+  outcome. A result with no outcomes, such as one from a custom runner or one saved before outcomes were kept, gives
+  `not_assessed` and unprotected rows with their judges' advisories.
 - What to do: a custom `replace_runner` or `rewrite_runner` must keep each row's `_anonymizer_record_id` in the
   trace it returns and in its `evaluate()` output. Every built-in runner does. A row a custom runner gives another
   record's id is reported as that record.
