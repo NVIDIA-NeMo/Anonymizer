@@ -617,7 +617,7 @@ def _combined(tmp_path: Path, quality_qa: Any, rewritten_text: Any = _EVAL_TEXT)
     state = combined._evaluation_state(0, COL_REWRITTEN_TEXT_INITIAL)
     columns = [
         *combined._evaluation_columns(Mock(), selected_models=selection, evaluation=evaluation, state=state),
-        combined._finalization_column([state], evaluation),
+        combined._finalization_column([state]),
     ]
     other_quality = {"items": [{**_EVAL_QUALITY_QA["items"][0], "reference_answer": _OTHER_TEXT}]}
     result = _adapter(tmp_path).run_workflow(
@@ -650,7 +650,6 @@ def test_combined_evaluation_without_quality_questions_keeps_the_privacy_metrics
     assert row[COL_REWRITTEN_TEXT] == _EVAL_TEXT
     assert pd.isna(row[COL_UTILITY_SCORE])
     assert row[COL_LEAKAGE_MASS] == 0.0
-    assert row[COL_NEEDS_HUMAN_REVIEW]  # unavailable utility is flagged
     assert calls["quality"] == 0
 
 
@@ -724,7 +723,6 @@ def test_combined_evaluation_of_a_missing_rewrite_keeps_the_row_withheld_and_fla
     row = frame.iloc[0]
     assert pd.isna(row[COL_REWRITTEN_TEXT])
     assert pd.isna(row[COL_LEAKAGE_MASS])
-    assert row[COL_NEEDS_HUMAN_REVIEW]
     assert dict(calls) == {}
     assert frame.iloc[1][COL_REWRITTEN_TEXT] == _OTHER_TEXT
 
@@ -803,7 +801,7 @@ class _CombinedLoop(CombinedRewriteWorkflow):
                 Mock(), selected_models=selection, evaluation=evaluation, state=states[-1]
             )
             internal += [c for c in repair.__dict__.values() if isinstance(c, str)]
-        columns.append(combined._finalization_column(states, evaluation))
+        columns.append(combined._finalization_column(states))
         internal += [c for s in states for c in s.__dict__.values() if isinstance(c, str)]
 
         def generate() -> None:

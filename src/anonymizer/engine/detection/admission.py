@@ -28,6 +28,7 @@ from anonymizer.engine.schemas import (
     ValidationRequestDecisionSets,
     ValidationRequestInventory,
 )
+from anonymizer.engine.spans import Span
 
 _T = TypeVar("_T")
 logger = logging.getLogger("anonymizer.detection.admission")
@@ -138,12 +139,8 @@ def _apply_regex_label_eligibility(
     constrained = {_normalize_label(label) for label in constrained_labels}
     if not constrained:
         return results
-    evidence = {
-        (
-            observations_by_ref[result.observation_ref].start_position,
-            observations_by_ref[result.observation_ref].end_position,
-            _normalize_label(result.effective_label or ""),
-        )
+    evidence: set[tuple[Span, str]] = {
+        (observations_by_ref[result.observation_ref].span, _normalize_label(result.effective_label or ""))
         for result in results
         if result.status is AdmissionStatus.accepted
         and observations_by_ref[result.observation_ref].source_kind in {"regex_user", "regex_builtin"}
@@ -151,7 +148,7 @@ def _apply_regex_label_eligibility(
         == _normalize_label(result.effective_label or "")
     }
     evidence.update(
-        (candidate.start_position, candidate.end_position, _normalize_label(candidate.label))
+        (candidate.span, _normalize_label(candidate.label))
         for candidate in evidence_candidates
         if candidate.source_text_ref == source_text_ref
         and any(origin.source_kind in {"regex_user", "regex_builtin"} for origin in candidate.accepted_origins)
@@ -168,7 +165,7 @@ def _apply_regex_label_eligibility(
         if (
             result.status is not AdmissionStatus.rejected
             and label in constrained
-            and (observation.start_position, observation.end_position, label) not in evidence
+            and (observation.span, label) not in evidence
             and not original_regex_fallback
         ):
             result = AdmissionResult(
@@ -269,12 +266,7 @@ def _admit_llm_observation(
 
 
 def _validate_inventory_entry(observation: Observation, entry: ValidationInventoryEntry) -> None:
-    if (
-        observation.value != entry.value
-        or observation.label != entry.label
-        or observation.start_position != entry.start_position
-        or observation.end_position != entry.end_position
-    ):
+    if observation.value != entry.value or observation.label != entry.label or observation.span != entry.span:
         raise ValueError("validation inventory entry does not match its authoritative observation")
 
 

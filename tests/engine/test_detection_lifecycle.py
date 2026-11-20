@@ -23,6 +23,7 @@ from anonymizer.engine.schemas import (
     ValidationInventoryEntry,
     ValidationRequestInventory,
 )
+from anonymizer.engine.spans import Span
 
 
 def _source_text_ref(*, record_id: str = "record-1") -> SourceTextRef:
@@ -65,6 +66,31 @@ def _observation(
 
 def _observation_ref() -> ObservationRef:
     return ObservationRef(detection_result_id="r1", observation_id="o1")
+
+
+def test_bounded_models_expose_their_bounds_as_a_span_without_serializing_it() -> None:
+    observation = _observation(start_position=3, end_position=8)
+    entry = ValidationInventoryEntry(
+        alias="c1",
+        observation_ref=observation.ref,
+        value="Alice",
+        label="first_name",
+        start_position=3,
+        end_position=8,
+    )
+    candidate = AdmittedCandidate(
+        source_text_ref=_source_text_ref(),
+        value="Alice",
+        label="first_name",
+        start_position=3,
+        end_position=8,
+        lineage=(observation.ref,),
+        has_fallback_protection=True,
+    )
+
+    assert _source_view().span == Span(0, 20)
+    assert observation.span == entry.span == candidate.span == Span(3, 8)
+    assert all("span" not in model.model_dump() for model in (_source_view(), observation, entry, candidate))
 
 
 @pytest.mark.parametrize("allowed", [None, [], ["first_name", "email"]])

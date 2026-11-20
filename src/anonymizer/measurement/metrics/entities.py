@@ -7,6 +7,7 @@ from collections import Counter
 from collections.abc import Mapping
 from typing import Any, cast
 
+from anonymizer.engine.spans import Span
 from anonymizer.measurement._coerce import _coerce_float, _coerce_payload, _f1, _safe_ratio
 
 _GROUND_TRUTH_ENTITY_COLUMNS = ("ground_truth_entities", "gt_entities", "expected_entities")
@@ -183,13 +184,13 @@ def _entities_match_relaxed(
     left_span = _entity_span(left)
     right_span = _entity_span(right)
     if left_span is not None and right_span is not None:
-        return left_span[0] < right_span[1] and right_span[0] < left_span[1]
+        return left_span.overlaps(right_span)
     left_value = left.get("value")
     right_value = right.get("value")
     return left_value is not None and right_value is not None and str(left_value) == str(right_value)
 
 
-def _entity_span(entity: dict[str, Any]) -> tuple[int, int] | None:
+def _entity_span(entity: dict[str, Any]) -> Span | None:
     start = _coerce_float(entity.get("start_position", entity.get("start")))
     end = _coerce_float(entity.get("end_position", entity.get("end")))
     if start is None or end is None:
@@ -198,7 +199,7 @@ def _entity_span(entity: dict[str, Any]) -> tuple[int, int] | None:
     end_int = int(end)
     if start_int < 0 or end_int <= start_int:
         return None
-    return start_int, end_int
+    return Span(start_int, end_int)
 
 
 def _entity_labels_compatible(left: object, right: object) -> bool:

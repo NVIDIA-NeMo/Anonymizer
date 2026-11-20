@@ -878,10 +878,9 @@ def test_plain_augment_prompt_examples_ground_exact_source(notation: TagNotation
     expected_values = ["Jane", "Doe", "Santa Clara"] if strict_labels else ["Jane", "Doe", "Santa Clara", "full-time"]
     assert result.failures == ()
     assert [item.value for item in result.grounded_entities.entities] == expected_values
-    assert [
-        (source[item.start_position : item.end_position], item.start_position, item.end_position)
-        for item in result.occurrences
-    ] == [(value, source.index(value), source.index(value) + len(value)) for value in expected_values]
+    assert [(source[item.span.slice], item.span.start, item.span.end) for item in result.occurrences] == [
+        (value, source.index(value), source.index(value) + len(value)) for value in expected_values
+    ]
     if not strict_labels:
         assert output.entities[3].context_before == "in Santa Clara. She works "
 
