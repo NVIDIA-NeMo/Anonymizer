@@ -40,7 +40,11 @@ class SessionCallChanges:
 
 @dataclass(frozen=True)
 class Replacement:
-    """One replacement map entry; ``placeholder`` is true for a token minted in place of a colliding substitute."""
+    """One replacement map entry. ``placeholder`` is a token-shape check: it is true when ``synthetic`` has the form
+    of a placeholder Anonymizer can mint, such as ``[SUBSTITUTE_FIRST_NAME_1]``, for any label and written exactly
+    that way. It does not say who produced it: Anonymizer may have minted it in this call, the Session may have held it
+    from an earlier call, or the model may have proposed it. The result's ``session_changes`` counts only the
+    placeholders minted in the call."""
 
     original: str
     label: str
@@ -75,7 +79,8 @@ class _DisplayMixin:
         return outcomes[row]
 
     def replacement_map(self, row: int) -> tuple[Replacement, ...]:
-        """The replacement map of output row ``row``; empty when the trace carries no map.
+        """The replacement map of output row ``row``; empty when the trace carries no map. Each entry's
+        ``placeholder`` is the token-shape check described on :class:`Replacement`.
 
         Raises:
             IndexError: ``row`` is not an output row.

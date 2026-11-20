@@ -316,6 +316,9 @@ replace runner that overrides `run()`. The session and its snapshots are provisi
 - Under a stable session, a value detected under two labels no longer gets one substitute as a record-local fallback
   under one label and as the shared substitute under the other. The second use gets a placeholder instead, in either
   row order and across calls, so replaying the row gives the same text and snapshot.
+- `result.replacement_map(row)` entries carry `placeholder`, a token-shape check: it is true for a substitute shaped
+  like `[SUBSTITUTE_FIRST_NAME_1]`, whether Anonymizer minted it, the session held it, or the model proposed it.
+  `result.session_changes` counts only the placeholders minted in the call.
 
 **Placeholders are kept as minted.** A variant of a value that received a placeholder gets the placeholder exactly as
 minted, not re-cased (for example `[substitute_first_name_1]`). v0.5.0 had no re-casing, so this changes output only

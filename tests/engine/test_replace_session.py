@@ -685,6 +685,16 @@ def test_the_result_reads_each_rows_replacement_map(tmp_path: Path, preview: boo
     assert no_map.replacement_map(0) == ()
 
 
+@pytest.mark.parametrize("stable", [False, True], ids=["no-session", "stable"])
+def test_placeholder_is_a_token_shape_check_not_a_minted_count(tmp_path: Path, stable: bool) -> None:
+    """A placeholder-shaped substitute the model proposes reads ``placeholder=True``; none is counted as minted."""
+    session, kept = (Session(stable_replacements=True) if stable else _UNSET), []
+    output = _protect(tmp_path, ["Alice is here."], {"Alice": "[SUBSTITUTE_FIRST_NAME_1]"}, session, kept=kept)
+    assert list(output["text_replaced"]) == ["[SUBSTITUTE_FIRST_NAME_1] is here."]
+    assert kept[0].replacement_map(0) == (Replacement("Alice", "first_name", "[SUBSTITUTE_FIRST_NAME_1]", True),)
+    assert kept[0].session_changes == (SessionCallChanges(added=1) if stable else None)
+
+
 # One string detected under two labels: a user name that is also a customer id.
 _USER = "lei_wilson_4541"
 
