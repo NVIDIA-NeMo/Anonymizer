@@ -267,6 +267,7 @@ Same judge as in replace mode — see [Entity Detection Judge](#entity-detection
 | Scenario | `detection_valid` | Display | Log |
 |---|---|---|---|
 | No entities detected in this record | `1.0` | 1.00 | `INFO`: "N passthrough row(s) have no detected entities — detection_valid set to 1.0 (trivially valid)" |
+| Only latent entities detected (Rewrite) | `1.0` | 1.00 | — (the detection judge reads explicit entities only and is not asked) |
 | Judge ran and all detections passed | `1.0` | 1.00 | — |
 | Judge ran and flagged one or more detections | 0–1 fraction | numeric score | — |
 | Judge call failed or entity data unreadable | `None` | Unavailable | `WARNING`: "Could not parse entities_by_value to compute detection_valid fraction" |

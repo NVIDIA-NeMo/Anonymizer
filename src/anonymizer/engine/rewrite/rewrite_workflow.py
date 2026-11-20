@@ -647,8 +647,9 @@ class RewriteWorkflow:
         """Run ``detect``, then ``rewrite`` and the final checks over every input row as one invocation.
 
         ``rewrite`` splits the detection frame with ``routes_to_rewrite``: rows with neither an explicit nor a latent
-        entity take the passthrough defaults and the rest go through ``_produce``, the stages ``run`` uses. A row the detector drops, or whose mentions the graph
-        rejects, fails at ``detect`` and is absent from the output. ``stage`` names the measurement.
+        entity take the passthrough defaults and the rest go through ``_produce``, the stages ``run`` uses. A row the
+        detector drops, or whose mentions the graph rejects, fails at ``detect`` and is absent from the output.
+        ``stage`` names the measurement.
         """
         started = time.perf_counter()
         evaluation = options["evaluation"]
