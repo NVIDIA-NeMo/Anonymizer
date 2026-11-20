@@ -263,20 +263,21 @@ def _log_unavailable_scores(
 def _reject_runner_without_session(runner: ReplacementWorkflow, config: AnonymizerConfig) -> None:
     """Reject a replace runner that a stable Session cannot be shown to reach: one whose ``run()`` or
     ``run_with_detection()``, or under Substitute whose map workflow's ``generate_validated_maps()``, is not the stock
-    method. The check compares the bound method's function, so an override set on the instance counts, and it does not
-    read signatures: a ``**kwargs`` override that drops ``session`` would otherwise run without it."""
-    hooks: list[tuple[str, object, Callable[..., object]]] = [
-        ("run()", runner.run, ReplacementWorkflow.run),
-        ("run_with_detection()", runner.run_with_detection, ReplacementWorkflow.run_with_detection),
+    method bound to its own object (the runner, or the runner's ``_llm_workflow``). The check compares the bound
+    method's function and the object it is bound to, so an override set on the instance counts, and so does the stock
+    function bound to another object or to the class. It does not read signatures: a ``**kwargs`` override that drops
+    ``session`` would otherwise run without it."""
+    hooks: list[tuple[str, object, Callable[..., object], object]] = [
+        ("run()", runner.run, ReplacementWorkflow.run, runner),
+        ("run_with_detection()", runner.run_with_detection, ReplacementWorkflow.run_with_detection, runner),
     ]
     llm_workflow = getattr(runner, "_llm_workflow", None)
     if isinstance(config.replace, Substitute) and llm_workflow is not None:
+        name = "generate_validated_maps() on its replacement map workflow"
         stock = LlmReplaceWorkflow.generate_validated_maps
-        hooks.append(
-            ("generate_validated_maps() on its replacement map workflow", llm_workflow.generate_validated_maps, stock)
-        )
-    for name, method, stock in hooks:
-        if getattr(method, "__func__", None) is not stock:
+        hooks.append((name, llm_workflow.generate_validated_maps, stock, llm_workflow))
+    for name, method, stock, owner in hooks:
+        if getattr(method, "__func__", None) is not stock or getattr(method, "__self__", None) is not owner:
             raise InvalidConfigError(
                 f"A custom replace runner that overrides {name} cannot take part in a stable Session: Anonymizer "
                 "cannot verify that an override passes the Session on, and one that does not would give substitutes "

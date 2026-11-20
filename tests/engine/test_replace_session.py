@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import functools
 import json
 import logging
 import random
 import re
+import types
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import Mock, patch
@@ -617,6 +619,159 @@ def test_a_generate_map_only_override_keeps_a_stable_session(tmp_path: Path, pre
     )
     assert list(second["text_replaced"]) == ["Bob again."]
     assert results == [SessionCallChanges(added=1), SessionCallChanges(reused=1)]
+
+
+def _dropping(method: Any) -> Any:
+    """``method`` wrapped with ``functools.wraps`` so that it drops ``session``."""
+
+    @functools.wraps(method)
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        kwargs.pop("session", None)
+        return method(self, *args, **kwargs)
+
+    return wrapper
+
+
+def _runner(adapter: NddAdapter, case: str) -> ReplacementWorkflow:
+    """A replace runner built as ``case`` names: stock forms first, then forms that must be rejected."""
+
+    class Sub(ReplacementWorkflow):
+        pass
+
+    class SubSub(Sub):
+        pass
+
+    class Llm(LlmReplaceWorkflow):
+        pass
+
+    class LlmSub(Llm):
+        pass
+
+    class Rebound(ReplacementWorkflow):
+        run_with_detection = ReplacementWorkflow.run_with_detection
+
+    class Init(ReplacementWorkflow):
+        def __init__(self) -> None:
+            super().__init__(llm_workflow=LlmReplaceWorkflow(adapter=adapter))
+
+    class InheritsDropping(_DroppingRunner):
+        pass
+
+    class InheritsDroppingMaps(_DroppingMaps):
+        pass
+
+    class Wrapped(ReplacementWorkflow):
+        run_with_detection = _dropping(ReplacementWorkflow.run_with_detection)
+
+    class WrappedMaps(LlmReplaceWorkflow):
+        generate_validated_maps = _dropping(LlmReplaceWorkflow.generate_validated_maps)
+
+    class ClassBound(ReplacementWorkflow):
+        _llm_workflow = _DroppingMaps(adapter=adapter)
+        run_with_detection = classmethod(ReplacementWorkflow.run_with_detection)
+
+    def stock(runner_type: Any = ReplacementWorkflow, llm_type: Any = LlmReplaceWorkflow) -> ReplacementWorkflow:
+        return runner_type(llm_workflow=llm_type(adapter=adapter))
+
+    simple = {
+        "stock": lambda: stock(),
+        "subclass-of-subclass": lambda: stock(SubSub),
+        "llm-subclass-of-subclass": lambda: stock(llm_type=LlmSub),
+        "class-rebinding-the-stock-function": lambda: stock(Rebound),
+        "map-only-override": lambda: stock(llm_type=_OldMapOnly),
+        "init-only-override": lambda: Init(),
+        "inherited-dropping-run-with-detection": lambda: stock(InheritsDropping),
+        "inherited-dropping-validated-maps": lambda: stock(llm_type=InheritsDroppingMaps),
+        "wrapped-run-with-detection": lambda: stock(Wrapped),
+        "wrapped-validated-maps": lambda: stock(llm_type=WrappedMaps),
+        "classmethod-run-with-detection": lambda: stock(ClassBound),
+    }
+    if case in simple:
+        return simple[case]()
+    runner = stock()
+    llm = cast(LlmReplaceWorkflow, runner._llm_workflow)
+    if case == "staticmethod-run-with-detection":
+        runner = stock(type("Static", (ReplacementWorkflow,), {}))
+        dropping = _dropping(ReplacementWorkflow.run_with_detection)
+        setattr(type(runner), "run_with_detection", staticmethod(lambda *a, **kw: dropping(runner, *a, **kw)))
+    elif case == "instance-run":
+        object.__setattr__(runner, "run", lambda df, **kw: ReplacementWorkflow.run(runner, df, **kw))
+    elif case == "instance-validated-maps":
+        stock_maps = llm.generate_validated_maps
+        object.__setattr__(llm, "generate_validated_maps", lambda df, **kw: stock_maps(df, **kw))
+    elif case == "stock-run-with-detection-bound-to-another-runner":
+        other = stock(llm_type=_DroppingMaps)
+        object.__setattr__(
+            runner, "run_with_detection", types.MethodType(ReplacementWorkflow.run_with_detection, other)
+        )
+    elif case == "stock-validated-maps-bound-to-another-workflow":
+        bound = types.MethodType(LlmReplaceWorkflow.generate_validated_maps, _DroppingMaps(adapter=adapter))
+        object.__setattr__(llm, "generate_validated_maps", bound)
+    else:
+        raise AssertionError(case)
+    return runner
+
+
+_STOCK_FORMS = [
+    "stock",
+    "subclass-of-subclass",
+    "llm-subclass-of-subclass",
+    "class-rebinding-the-stock-function",
+    "map-only-override",
+    "init-only-override",
+]
+_REJECTED_FORMS = {
+    "inherited-dropping-run-with-detection": "run_with_detection()",
+    "inherited-dropping-validated-maps": "generate_validated_maps() on its replacement map workflow",
+    "wrapped-run-with-detection": "run_with_detection()",
+    "wrapped-validated-maps": "generate_validated_maps() on its replacement map workflow",
+    "staticmethod-run-with-detection": "run_with_detection()",
+    "instance-run": "run()",
+    "instance-validated-maps": "generate_validated_maps() on its replacement map workflow",
+    "stock-run-with-detection-bound-to-another-runner": "run_with_detection()",
+    "stock-validated-maps-bound-to-another-workflow": "generate_validated_maps() on its replacement map workflow",
+    "classmethod-run-with-detection": "run_with_detection()",
+}
+
+
+@pytest.mark.parametrize("case", _STOCK_FORMS)
+def test_a_stock_form_of_runner_takes_a_stable_session(tmp_path: Path, case: str) -> None:
+    detector = cast(EntityDetectionWorkflow, _Detector())
+    runner = _runner(Anonymizer(detection_workflow=detector)._adapter, case)
+    anonymizer = Anonymizer(detection_workflow=detector, replace_runner=runner)
+    session, results = Session(stable_replacements=True), []
+    _protect(tmp_path, ["Alice is here."], {"Alice": "Bob"}, session, results, anonymizer=anonymizer)
+    second = _protect(tmp_path, ["Alice again."], {"Alice": "Zed"}, session, results, anonymizer=anonymizer)
+    assert list(second["text_replaced"]) == ["Bob again."]
+    assert results == [SessionCallChanges(added=1), SessionCallChanges(reused=1)]
+
+
+@pytest.mark.parametrize("strategy", [Redact(), Annotate(), Hash()], ids=["redact", "annotate", "hash"])
+def test_a_stock_runner_takes_a_stable_session_with_a_local_strategy(tmp_path: Path, strategy: ReplaceMethod) -> None:
+    detector = cast(EntityDetectionWorkflow, _Detector())
+    runner = _runner(Anonymizer(detection_workflow=detector)._adapter, "stock")
+    anonymizer = Anonymizer(detection_workflow=detector, replace_runner=runner)
+    session, results = Session(stable_replacements=True), []
+    _protect(tmp_path, ["Alice is here."], {}, session, results, strategy=strategy, anonymizer=anonymizer)
+    assert results == [SessionCallChanges()]
+
+
+@pytest.mark.parametrize("case", list(_REJECTED_FORMS))
+def test_a_rebound_or_wrapped_hook_is_rejected_under_a_stable_session(tmp_path: Path, case: str) -> None:
+    detector = _Detector()
+    runner = _runner(Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, detector))._adapter, case)
+    anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, detector), replace_runner=runner)
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": ["Alice lives in Paris."]}).to_csv(source, index=False)
+    session, before = Session(stable_replacements=True), _Detector.calls
+    message = f"A custom replace runner that overrides {_REJECTED_FORMS[case]} cannot take part in a stable Session"
+    with patch.object(NddAdapter, "run_workflow") as model, pytest.raises(InvalidConfigError, match=re.escape(message)):
+        anonymizer.run(
+            config=AnonymizerConfig(replace=Substitute()), data=AnonymizerInput(source=str(source)), session=session
+        )
+    assert _Detector.calls == before
+    assert model.call_count == 0
+    assert session.size == 0
 
 
 def test_a_placeholder_is_reused_verbatim_in_a_later_call(tmp_path: Path) -> None:
