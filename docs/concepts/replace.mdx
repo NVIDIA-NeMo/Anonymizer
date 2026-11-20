@@ -230,9 +230,11 @@ session = Session.restore(SessionSnapshot.from_bytes(saved))
 - The snapshot bytes hold original values in plain text. Protecting them is your responsibility.
 - The Session also holds record-local fallback entries: a substitute used in one record in place of a value's shared
   one is recorded so no other value, and no other label of the same value, takes it later. Within a call too, a
-  substitute is either a value's shared one or a record-local fallback, never both, so replaying a row whose values
-  all take their shared substitutes gives the same text and leaves the snapshot unchanged. A row that itself needs a
-  record-local fallback gets a new placeholder each time it is replayed, because fallbacks are not reused. These
+  substitute is either a value's shared one or a record-local fallback, never both, so replaying the same rows in the
+  same order, when their values all take their shared substitutes, gives the same text and leaves the snapshot
+  unchanged. A call that first spells a value differently can get another letter case of its substitute. A row that
+  itself needs a record-local fallback gets a new placeholder each time it is replayed, because fallbacks are not
+  reused. These
   entries are bookkeeping, not assignments.
 - `Session()` without `stable_replacements=True` retains nothing, and the call behaves as it does without
   `session=`. A custom replace runner is called as it is without `session=`, so an override written before `session`
