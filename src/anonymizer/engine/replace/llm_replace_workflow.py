@@ -620,15 +620,11 @@ Rules:
 5. When replacing geographic locations, keep the replacements within
    a coherent region so that travel routes and residences remain plausible.
 
-6. Keep distinct source values distinct, preserving failed/successful lookups and old/new details.
-
-7. Preserve identifier components that encode type or provider. Keep equivalent references
-   consistent while retaining each reference's format.
-
-8. Keep replacements valid in their surrounding structure, including dictionary keys.
+6. Keep replacements valid in their surrounding structure, including dictionary keys.
    Do not introduce duplicate keys or change value types.
 
-CRITICAL: Every entity MUST have a different synthetic value. Never return original=synthetic.
+CRITICAL: Every replacement must differ from its original, and distinct original values
+must not collapse to the same replacement.
 
 Before generating replacements, verify:
    - That each new_value is clearly different in meaning from the original and is not a synonym or simple rewording.
