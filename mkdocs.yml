@@ -165,7 +165,22 @@ nav:
       - Choosing a Strategy: concepts/choosing-a-strategy.md
       - Evaluation: concepts/evaluation.md
       - Self-hosting GLiNER: concepts/self-hosting-gliner.md
-      - Graph SDK: concepts/graph-sdk.md
+      - Graph SDK:
+          - Overview: concepts/graph-sdk.md
+          - Concepts: concepts/graph-sdk/concepts.md
+          - Glossary: concepts/graph-sdk/glossary.md
+          - Guides:
+              - Write an operation: concepts/graph-sdk/guide-write-an-operation.md
+              - Add a verifier and require a check: concepts/graph-sdk/guide-verify-and-require-checks.md
+              - Process all targets in one call: concepts/graph-sdk/guide-batch-targets.md
+              - Give an operation context: concepts/graph-sdk/guide-give-an-operation-context.md
+              - Write your own detector: concepts/graph-sdk/guide-custom-detector.md
+              - Release related texts together: concepts/graph-sdk/guide-release-together.md
+              - Set limits, budget requests and cancel: concepts/graph-sdk/guide-limits-budgets-cancel.md
+              - Rebuild a document from protected parts: concepts/graph-sdk/guide-rebuild-documents.md
+              - Find out why a target was withheld: concepts/graph-sdk/guide-read-outcomes.md
+          - Ideas: concepts/graph-sdk/ideas.md
+          - Reference: concepts/graph-sdk/reference.md
       - Deploy Local Models: concepts/inference-services.md
   - Tuning Quality and Throughput: tuning.md
   - Troubleshooting: troubleshooting.md

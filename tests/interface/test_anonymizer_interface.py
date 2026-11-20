@@ -51,6 +51,7 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     COL_TYPE_FIDELITY_VALID,
     RECORD_ID_COLUMN,
+    RESERVED_INPUT_COLUMNS,
 )
 from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionResult,
@@ -939,6 +940,26 @@ def test_run_with_colliding_internal_text_column_raises(
             config=stub_anonymizer_config,
             data=AnonymizerInput(source=str(input_csv), text_column="bio"),
         )
+
+
+@pytest.mark.parametrize("method", ["run", "preview"])
+@pytest.mark.parametrize("column", sorted(RESERVED_INPUT_COLUMNS))
+def test_input_column_named_like_internal_column_is_rejected(
+    method: str,
+    column: str,
+    stub_anonymizer_config: AnonymizerConfig,
+    tmp_path: Path,
+) -> None:
+    input_csv = tmp_path / "input.csv"
+    pd.DataFrame({"bio": ["Alice bio text"], column: ["note"]}).to_csv(input_csv, index=False)
+    anonymizer, detection_workflow, _, _ = _make_anonymizer()
+
+    with pytest.raises(InvalidInputError, match=f"reserved internal column.*{column}"):
+        getattr(anonymizer, method)(
+            config=stub_anonymizer_config,
+            data=AnonymizerInput(source=str(input_csv), text_column="bio"),
+        )
+    detection_workflow.run.assert_not_called()
 
 
 def test_run_with_colliding_output_column_renames_input_and_warns(

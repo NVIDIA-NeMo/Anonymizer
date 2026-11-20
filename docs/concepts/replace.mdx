@@ -180,3 +180,48 @@ AnonymizerConfig(replace=Hash(algorithm="sha1", digest_length=8))
 ## Evaluating replace output
 
 After running `replace`, you can score detection recall and the quality of substitutions using LLM-as-judge evaluation. See [Evaluation](/concepts/evaluation) for details on the always-on entity coverage judge, the three Substitute quality judges (type fidelity, attribute fidelity, relational consistency), the opt-in detection validity judge, and how to call `Anonymizer.evaluate()`.
+
+---
+
+## Reading each row's outcome
+
+`run()` and `preview()` return one outcome per output row: `result.outcome(row)` is a `TargetOutcome`, the type the
+[graph SDK](/concepts/graph-sdk) uses. Three of its fields answer separate questions:
+
+| Field | Question | Values |
+|---|---|---|
+| `terminal` | Did every step run for the row? | `success`, `failed`, `cancelled`, `blocked` |
+| `qualification` | Did every required check pass on the final text? | `met`, `not_met`, `not_assessed` |
+| `protected` | May the row's output be released? | `True`, `False` |
+
+A row that is not released stays in the output frame, so read its outcome before you use the row. `reasons` says
+why a row is `not_met`, and `advisories` holds checks that are reported but never change release. A row index
+outside the result raises `IndexError`, as does a result from a custom `replace_runner` or `rewrite_runner`, which
+carries no outcomes.
+
+In Replace mode, `not_met` means the row's replacements did not all land: its required `replacements_applied` check
+failed, for example because the replacement map omitted a detected entity.
+
+Redact, Hash and Substitute rows (not Annotate) also carry the advisory `no_detected_value_added`. The replaced text
+is scanned whole, replacements included:
+
+- `failed`: the text holds a detected value more often than the source holds that value outside the detected spans.
+- `passed`: it does not.
+- `could_not_assess`: the check could not run.
+
+A `failed` advisory's `cause` lists each value over that bound as `e<i>:N<n>,D<d>,O<o>`, joined by `;`: `i` is the
+position, among the row's entities sorted by start, of the value's own detected span, else of the first
+detected span that contains one of its matches, or `-` (`e-`) when no detected span holds it; `n` the value's occurrences
+in the source, `d` those inside a detected span, and `o` its occurrences in the replaced text. It holds no record
+text. To see which value an entry names and where it occurs, `result.leftovers(row)` returns one `Leftover` for
+every detected value, in the order `cause` uses (`cause` lists only those over the bound), with its `position`, `value`, `label`, `span`, `in_source`, `undetected_spans` and
+`output_spans`; unlike `cause`, it returns record text. For example:
+
+```python
+[(x.position, x.value, x.output_spans) for x in result.leftovers(0)]
+```
+
+The check matches words, not meanings: an ordinary word spelled like a detected value, such as "will" when the name
+"Will" was detected, passes when the source already held it outside the detected spans, and a replacement that
+equals or contains another detected value is reported. Like every advisory, it never changes the row's
+qualification or release.
