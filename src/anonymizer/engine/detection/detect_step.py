@@ -12,7 +12,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from itertools import repeat
 from typing import Any, cast
@@ -36,6 +36,11 @@ from anonymizer.engine.ndd.backend import per_target
 from anonymizer.engine.row_partitioning import cell_text, try_resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.schemas.shared import to_python
+from anonymizer.engine.value_matching import count_values, entity_spans
+
+# Whether Replace fails a built-in detection row whose detected value occurs outside every kept span. Custom detectors
+# are always checked. Off until it is ruled: a built-in span model that misses a repeat would then fail the row.
+UNSPANNED_CHECK_BUILTIN = False
 
 
 @dataclass
@@ -105,7 +110,10 @@ def detect_step(
             state.rows[datum] = entities
             # A span that breaks the contract fails the row with its own reason first.
             sound = not mention_problem(accepted_mentions(datum, entities))
-            if spans_only and sound and unspanned_pairs(listed, datum.text, entities):
+            # Replace replaces spans only: every value of the row's view after derivation (its spans' values and the
+            # detector's pairs) must lie inside a kept span wherever it occurs.
+            reported = [e.value for e in entities.entities] + [value for value, _ in _listed_pairs(listed)]
+            if spans_only and sound and values_outside_spans(datum.text, entities, reported):
                 unspanned.add(datum)
             # The by-value rule: a row with spans gets the view of its kept spans plus every detector pair whose value
             # occurs in its text outside them (see ``_with_entities``); a row without spans keeps the detector's view.
@@ -217,18 +225,21 @@ def _union(derived: dict[str, Any], listed: object, text: str, entities: object)
 
 
 def unspanned_pairs(listed: object, text: str, entities: EntitiesSchema) -> list[tuple[str, list[str]]]:
-    """The pairs of the by-value cell ``listed`` whose value occurs in ``text`` at least once outside every span of
+    """The pairs of the by-value cell ``listed`` whose value occurs in ``text`` outside every kept span of
     ``entities``: values the detector reported that its spans do not protect."""
-    spans = [(e.start_position, e.end_position) for e in entities.entities]
-    unspanned = []
-    for value, labels in _listed_pairs(listed):
-        start = text.find(value)
-        while start >= 0:
-            if not any(s <= start and start + len(value) <= e for s, e in spans):
-                unspanned.append((value, labels))
-                break
-            start = text.find(value, start + 1)
-    return unspanned
+    outside = values_outside_spans(text, entities, [value for value, _ in _listed_pairs(listed)])
+    return [(value, labels) for value, labels in _listed_pairs(listed) if value in outside]
+
+
+def values_outside_spans(text: str, entities: EntitiesSchema, values: Iterable[str]) -> set[str]:
+    """The ``values`` with a match in ``text`` that no kept span contains, under the leftover check's own matching
+    rule (``count_values``: whole words, case and accents folded). A match that crosses two spans is outside both."""
+    spans = entity_spans(text, entities.entities)
+    return {
+        value
+        for value in dict.fromkeys(values)
+        if any(leftover.undetected_spans for leftover in count_values(text, spans, "", [value]))
+    }
 
 
 def _listed_pairs(listed: object) -> list[tuple[str, list[str]]]:

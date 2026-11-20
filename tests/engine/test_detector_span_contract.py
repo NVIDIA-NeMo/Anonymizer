@@ -19,7 +19,7 @@ import pandas as pd
 import pytest
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
-from anonymizer.config.replace_strategies import Hash, Redact, Substitute
+from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_ENTITIES_BY_VALUE,
@@ -48,6 +48,7 @@ from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteW
 from anonymizer.engine.rewrite.rewrite_generation import _prepare_rewrite_tagged_text
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.value_matching import count_values, entity_spans
 from anonymizer.interface.anonymizer import Anonymizer
 
 TEXT = "Alice Smith lives in Paris."  # Alice 0-5, Smith 6-11, Alice Smith 0-11, Paris 21-26
@@ -899,84 +900,162 @@ def test_replace_fails_a_row_whose_reported_value_has_no_span(shape: str, strate
     assert not [v for v in PROTECTED for text in result.dataframe["text_replaced"] if v in text]
 
 
-_SPAN_CHOICES = {
-    "both": [NAME, CITY],
-    "name_only": [NAME],
-    "nested": SHAPES["nested_inner_first"][0],
-    "none": [],
-}
-_PAIR_CHOICES = [*FULL_PAIRS, ("lives", "other"), ("Zurich", "city"), ("Alice", "first_name")]
-
-
-def _reported_in_text(spans: list[dict[str, Any]], view: dict[str, Any]) -> set[str]:
-    values = {e["value"] for e in spans} | {item["value"] for item in view["entities_by_value"]}
-    return {v for v in values if v in TEXT}
-
-
-def _covered(value: str, spans: list[tuple[int, int, str]]) -> bool:
-    """Every occurrence of ``value`` in ``TEXT`` lies inside one of ``spans``."""
-    start = TEXT.find(value)
-    while start >= 0:
-        if not any(s <= start and start + len(value) <= e for s, e, _ in spans):
-            return False
-        start = TEXT.find(value, start + 1)
-    return True
-
-
-@pytest.mark.parametrize("mode", ["redact", "hash", "substitute", "rewrite"])
-def test_every_reported_value_is_protected_or_fails_its_row(mode: str, tmp_path: Path) -> None:
-    """The by-value invariant over random shapes: every value the detector reports for a row (span or by-value pair)
-    that occurs in the row's text is covered by a kept span, is in the row's replacement view (Rewrite), or the row
-    fails; a released Replace row never holds one."""
-    rng = random.Random(f"432-{mode}")
+def _one_row_run(
+    tmp_path: Path, text: str, spans: list[dict[str, Any]] | None, view: object, mode: str, *, custom: bool = True
+) -> tuple[Any, list[pd.DataFrame]]:
+    """``text`` through ``Anonymizer.run`` with a detector that returns ``spans`` (``None``: no entities column) and
+    the by-value cell ``view``; Rewrite captures the rows its generation step is given."""
     source = tmp_path / "in.csv"
-    pd.DataFrame({"text": [TEXT]}).to_csv(source, index=False)
+    pd.DataFrame({"text": [text]}).to_csv(source, index=False)
+
+    class Detector:
+        def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+            frame = dataframe.copy()
+            if spans is not None:
+                frame[COL_FINAL_ENTITIES] = [{"entities": spans}]
+            frame[COL_ENTITIES_BY_VALUE] = pd.Series([view], index=frame.index, dtype=object)
+            return EntityDetectionResult(frame, [], (0,))
 
     def run_workflow(self: NddAdapter, df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
         out = df.copy().reset_index(drop=True)
         out[COL_REPLACEMENT_MAP] = _substitute_map(out)
         return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
 
-    for _ in range(60):
-        spans = _SPAN_CHOICES[rng.choice(list(_SPAN_CHOICES))]
-        view = _view(*rng.sample(_PAIR_CHOICES, rng.randint(0, len(_PAIR_CHOICES))))
-        drop_entities = not spans and rng.random() < 0.5
-        encode = rng.choice([lambda c: c, json.dumps])
+    frames: list[pd.DataFrame] = []
+    anonymizer = Anonymizer(
+        detection_workflow=cast(EntityDetectionWorkflow, Detector()),
+        rewrite_runner=_capturing(RewriteWorkflow(Mock()), frames),
+    )
+    if not custom:  # the built-in detection path, with this detector standing in for the built-in workflow
+        anonymizer._custom_detection = False
+    config = {
+        "redact": AnonymizerConfig(replace=Redact()),
+        "hash": AnonymizerConfig(replace=Hash()),
+        "annotate": AnonymizerConfig(replace=Annotate()),
+        "substitute": AnonymizerConfig(replace=Substitute()),
+        "rewrite": AnonymizerConfig(rewrite=Rewrite()),
+    }[mode]
+    with patch.object(NddAdapter, "run_workflow", run_workflow):
+        return anonymizer.run(config=config, data=AnonymizerInput(source=str(source))), frames
 
-        class Detector:
-            def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
-                frame = dataframe.copy()
-                if not drop_entities:
-                    frame[COL_FINAL_ENTITIES] = [encode({"entities": spans})]
-                frame[COL_ENTITIES_BY_VALUE] = [encode(view)]
-                return EntityDetectionResult(frame, [], (0,))
 
-        frames: list[pd.DataFrame] = []
-        anonymizer = Anonymizer(
-            detection_workflow=cast(EntityDetectionWorkflow, Detector()),
-            rewrite_runner=_capturing(RewriteWorkflow(Mock()), frames),
-        )
-        config = {
-            "redact": AnonymizerConfig(replace=Redact()),
-            "hash": AnonymizerConfig(replace=Hash()),
-            "substitute": AnonymizerConfig(replace=Substitute()),
-            "rewrite": AnonymizerConfig(rewrite=Rewrite()),
-        }[mode]
-        with patch.object(NddAdapter, "run_workflow", run_workflow):
-            result = anonymizer.run(config=config, data=AnonymizerInput(source=str(source)))
+def _at(text: str, value: str, label: str, nth: int = 0) -> dict[str, Any]:
+    start = -1
+    for _ in range(nth + 1):
+        start = text.index(value, start + 1)
+    return _e(value, label, start, start + len(value))
 
-        reported = _reported_in_text(spans, view)
+
+def _seed_values(frames: list[pd.DataFrame]) -> set[str]:
+    return {v for v, _ in _requested_pairs(frames[0][COL_ENTITIES_BY_VALUE].iloc[0])}
+
+
+@pytest.mark.parametrize(
+    ("text", "span", "variant"),
+    [
+        ("Qa Paris met ROME.", ("Paris", "city"), ("rome", "city")),
+        ("Qd José met Paris.", ("Paris", "city"), ("Jose", "first_name")),
+    ],
+    ids=["case", "accent"],
+)
+def test_a_case_or_accent_variant_pair_stays_in_the_rewrite_view(
+    text: str, span: tuple[str, str], variant: tuple[str, str], tmp_path: Path
+) -> None:
+    """A listed pair occurs under the leftover check's matching rule (case and accents folded), not only byte for
+    byte; it stays in the view the rewrite is given."""
+    result, frames = _one_row_run(tmp_path, text, [_at(text, *span)], _view(span, variant), "rewrite")
+
+    assert result.failed_records == []
+    assert _seed_values(frames) == {span[0], variant[0]}
+
+
+@pytest.mark.parametrize("view", ["complete", "absent", "stale"])
+@pytest.mark.parametrize("strategy", ["redact", "substitute"])
+def test_replace_fails_a_spans_unspanned_repeat_whatever_the_detectors_view(
+    view: str, strategy: str, tmp_path: Path
+) -> None:
+    """The check reads the row's view after derivation, so a span value repeated outside every span fails the row
+    whether the detector listed it, gave no view or gave a stale one."""
+    text = "Qb Bob met Bob."
+    cell = {"complete": _view(("Bob", "first_name")), "absent": None, "stale": _view(("Zurich", "city"))}[view]
+    result, _ = _one_row_run(tmp_path, text, [_at(text, "Bob", "first_name")], cell, strategy)
+
+    assert result.failed_records == [FailedRecord("0", "detect", "unspanned_value")]
+
+
+@pytest.mark.parametrize("strategy", ["redact", "hash", "annotate", "substitute"])
+@pytest.mark.parametrize(
+    ("text", "spans"),
+    [
+        ("Ann filed the Annual report.", [("Ann", "first_name")]),
+        ("Eve is 34 and paid $340.", [("Eve", "first_name"), ("34", "age")]),
+    ],
+    ids=["embedded_word", "embedded_number"],
+)
+def test_a_value_inside_a_longer_word_is_not_an_unspanned_occurrence(
+    text: str, spans: list[tuple[str, str]], strategy: str, tmp_path: Path
+) -> None:
+    entities = [_at(text, *s) for s in spans]
+    result, _ = _one_row_run(tmp_path, text, entities, _build_entities_by_value({"entities": entities}), strategy)
+
+    assert result.failed_records == []
+
+
+@pytest.mark.parametrize(("custom", "builtin_checked"), [(True, False), (False, False), (False, True)])
+def test_the_replace_check_scope(custom: bool, builtin_checked: bool, tmp_path: Path) -> None:
+    """Custom detectors are always checked; built-in detection only when ``UNSPANNED_CHECK_BUILTIN`` is set."""
+    text = "Bob met Bob's sister."
+    with patch("anonymizer.interface.anonymizer.UNSPANNED_CHECK_BUILTIN", builtin_checked):
+        result, _ = _one_row_run(tmp_path, text, [_at(text, "Bob", "first_name")], None, "redact", custom=custom)
+
+    checked = custom or builtin_checked
+    assert result.failed_records == ([FailedRecord("0", "detect", "unspanned_value")] if checked else [])
+
+
+# Tokens that collide: a value inside a longer word, repeats, a case and an accent variant, adjacent values.
+_TOKENS = ["Ann", "Annual", "Bob", "Bobsled", "34", "$340", "Paris", "ROME", "José", "Paris/Rome", "met", "in", "the"]
+_LABELS = {"Ann": "first_name", "Bob": "first_name", "34": "age", "Paris": "city", "ROME": "city", "José": "first_name"}
+_EXTRA_PAIRS = [("rome", "city"), ("Jose", "first_name"), ("Lee", "first_name"), ("Rome", "city"), ("Paris", "city")]
+
+
+def _random_row(rng: random.Random) -> tuple[str, list[dict[str, Any]] | None, object]:
+    text = "Q " + " ".join(rng.choice(_TOKENS) for _ in range(rng.randint(2, 7))) + "."
+    spans: list[dict[str, Any]] = []
+    for value, label in _LABELS.items():
+        start = -1
+        while (start := text.find(value, start + 1)) >= 0:
+            whole = (start == 0 or not text[start - 1].isalnum()) and not text[start + len(value)].isalnum()
+            if whole and rng.random() < 0.6:
+                spans.append(_e(value, label, start, start + len(value)))
+    spans.sort(key=lambda e: e["start_position"])
+    pairs = {(e["value"], e["label"]) for e in spans if rng.random() < 0.8}
+    pairs |= set(rng.sample(_EXTRA_PAIRS, rng.randint(0, 2)))
+    view: object = _view(*sorted(pairs)) if rng.random() < 0.8 else None
+    if view is not None and rng.random() < 0.5:
+        view = json.dumps(view)
+    return text, (None if not spans and rng.random() < 0.3 else spans), view
+
+
+@pytest.mark.parametrize("mode", ["redact", "hash", "annotate", "substitute", "rewrite"])
+def test_every_reported_value_is_protected_or_fails_its_row(mode: str, tmp_path: Path) -> None:
+    """The by-value invariant over random rows: every value the detector reports (span or by-value pair) that occurs
+    in the row's text, under the leftover check's matching rule, lies inside a kept span or is in the Rewrite view, or
+    the row fails at ``detect``. A released Replace row has every such value inside a span."""
+    rng = random.Random(f"432-{mode}")
+    for _ in range(40):
+        text, spans, view = _random_row(rng)
+        result, frames = _one_row_run(tmp_path, text, spans, view, mode)
+        listed = [v for v, _ in _requested_pairs(view)] if view is not None else []
+        reported = [e["value"] for e in spans or []] + listed
+        kept = EntitiesSchema.from_raw({"entities": spans or []})
+        outside = {
+            value
+            for value in reported
+            if any(lo.undetected_spans for lo in count_values(text, entity_spans(text, kept.entities), "", [value]))
+        }
         if result.failed_records:
-            assert [f.step for f in result.failed_records] == ["detect"], (spans, view)
-            continue
-        if mode == "rewrite":
-            if not frames:  # a row without entities passes through only when nothing it reports occurs
-                assert not reported, (spans, view)
-                continue
-            row = frames[0].to_dict("records")[0]
-            kept = _spans(row.get(COL_FINAL_ENTITIES, {"entities": []}))
-            listed = {v for v, _ in _requested_pairs(row[COL_ENTITIES_BY_VALUE])}
-            assert all(_covered(v, kept) or v in listed for v in reported), (spans, view)
+            assert [f.step for f in result.failed_records] == ["detect"], (text, spans, view)
+        elif mode == "rewrite":
+            assert outside <= (_seed_values(frames) if frames else set()), (text, spans, view)
         else:
-            released = str(result.dataframe["text_replaced"].iloc[0])
-            assert not [v for v in reported if v in released], (spans, view, released)
+            assert not outside, (text, spans, view)

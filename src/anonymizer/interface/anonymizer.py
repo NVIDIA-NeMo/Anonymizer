@@ -62,6 +62,7 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
     RECORD_ID_COLUMN,
 )
+from anonymizer.engine.detection.detect_step import UNSPANNED_CHECK_BUILTIN
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
@@ -516,9 +517,10 @@ class Anonymizer:
                 rejects it at ``replace``). For a row with spans, the
                 ``_entities_by_value`` view is that of its kept spans plus every
                 detector pair whose value occurs in the row's text outside those
-                spans; a row without spans keeps the detector's view. In Replace,
-                a row whose view lists a value that occurs in its text outside
-                every kept span fails at ``detect`` with ``unspanned_value``.
+                spans; a row without spans keeps the detector's view. In the
+                Replace modes, a row whose view holds a value that occurs in its
+                text outside every kept span fails at ``detect`` with
+                ``unspanned_value``.
                 These checks and the derived view
                 apply only when the detector returns source positions or unique
                 record ids (ids exist only with ``TextRecordsInput``) and leaves
@@ -571,6 +573,7 @@ class Anonymizer:
             self._data_designer.set_run_config(data_designer_run_config)
         self._adapter = NddAdapter(data_designer=self._data_designer)
         self._detection_workflow = detection_workflow or EntityDetectionWorkflow(adapter=self._adapter)
+        self._custom_detection = detection_workflow is not None
         self._replace_runner = replace_runner or ReplacementWorkflow(
             llm_workflow=LlmReplaceWorkflow(adapter=self._adapter),
             detection_judge=DetectionJudgeWorkflow(adapter=self._adapter),
@@ -1205,6 +1208,7 @@ class Anonymizer:
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.replace,
                 preview_num_records=preview_num_records,
+                unspanned_check=self._custom_detection or UNSPANNED_CHECK_BUILTIN,
             )
             assert replace_result.detection is not None
             detected_df, detection_failures = (
