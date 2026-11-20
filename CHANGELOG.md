@@ -457,9 +457,10 @@ session and its snapshots are provisional.
   `**kwargs` or `session`, and when the stock method is bound to another object.
 - Under a stable session, a value detected under two labels never gets one substitute as a record-local fallback
   under one label and as the shared substitute under the other. The second use gets a placeholder instead, in either
-  row order and across calls. Replaying the same rows in the same order, when their values all take their shared
-  substitutes, gives the same text and snapshot; a call that first spells a value differently can get another letter
-  case. A row that itself needs a fallback gets a new placeholder on each replay, because fallbacks are not reused.
+  row order and across calls. Replaying the same rows, when their values all take their shared substitutes, gives
+  the same text and snapshot, whatever order the model returns its entries or the detector its rows in; letter case
+  follows each value's earliest mention, and a substitute that re-casing would turn into another value (`Işıl`) is
+  used as assigned. A call whose earliest spelling of a value differs can get another letter case. A row that itself needs a fallback gets a new placeholder on each replay, because fallbacks are not reused.
 - `result.replacement_map(row)` entries carry `placeholder`, a token-shape check tied to the entry's label: it is
   true for a substitute shaped like that label's placeholder, such as `[SUBSTITUTE_FIRST_NAME_1]` for `first_name`, in
   any letter case, whether Anonymizer minted it, the session held it, or the model proposed it.

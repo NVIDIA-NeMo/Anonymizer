@@ -210,8 +210,9 @@ session = Session.restore(SessionSnapshot.from_bytes(saved))
   `placeholders_session`: only the Session rules it out). It is `None` without a stable Session.
 - Two different values never share a substitute across those calls, and a new substitute never equals a value an
   earlier call replaced.
-- A value the Session already holds needs no new mapping from the model: it is not retried and cannot fail its
-  record. A record can still fail for a value the Session does not hold.
+- A value the Session already holds needs no new mapping from the model: a returned record that omits it takes the
+  held substitute, is not retried for it and does not fail for it. A record the model does not return at all still
+  fails, held values or not, and a record can still fail for a value the Session does not hold.
   If the model omits a held value whose substitute equals a value detected in the new record, that value gets a
   placeholder in that record.
 - Redact, Annotate and Hash run unchanged and leave the Session unchanged. Hash is stable across calls only when
@@ -227,9 +228,12 @@ session = Session.restore(SessionSnapshot.from_bytes(saved))
 - The snapshot bytes hold original values in plain text. Protecting them is your responsibility.
 - The Session also holds record-local fallback entries: a substitute used in one record in place of a value's shared
   one is recorded so no other value, and no other label of the same value, takes it later. Within a call too, a
-  substitute is either a value's shared one or a record-local fallback, never both, so replaying the same rows in the
-  same order, when their values all take their shared substitutes, gives the same text and leaves the snapshot
-  unchanged. A call that first spells a value differently can get another letter case of its substitute. A row that
+  substitute is either a value's shared one or a record-local fallback, never both, so replaying the same rows, when
+  their values all take their shared substitutes, gives the same text and leaves the snapshot unchanged, whatever
+  order the model returns its entries or the detector its rows in. Each spelling's letter case follows the value's
+  spelling at its earliest mention, in row order; a re-cased substitute that would become another value (`Işıl` upper
+  cased is `IŞIL`) is used as assigned. A call whose earliest spelling of a value differs can get another letter case
+  of its substitute. A row that
   itself needs a record-local fallback gets a new placeholder each time it is replayed, because fallbacks are not
   reused. These
   entries are bookkeeping, not assignments.
