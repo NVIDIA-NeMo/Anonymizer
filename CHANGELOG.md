@@ -312,10 +312,11 @@ replace runner that overrides `run()`. The session and its snapshots are provisi
   signatures keep working.
 - Under a stable session, a custom replace runner is also rejected before detection when it overrides
   `run_with_detection()` or its map workflow's `generate_validated_maps()`, even when the override forwards
-  `**kwargs` or `session`. Such an override used to run and could leave the session empty.
-- Under a stable session, a value detected under two labels no longer gets one substitute as a record-local fallback
+  `**kwargs` or `session`, and when the stock method is bound to another object.
+- Under a stable session, a value detected under two labels never gets one substitute as a record-local fallback
   under one label and as the shared substitute under the other. The second use gets a placeholder instead, in either
-  row order and across calls, so replaying the row gives the same text and snapshot.
+  row order and across calls. Replaying a row whose values all take their shared substitutes gives the same text and
+  snapshot; a row that itself needs a fallback gets a new placeholder on each replay, because fallbacks are not reused.
 - `result.replacement_map(row)` entries carry `placeholder`, a token-shape check: it is true for a substitute shaped
   like `[SUBSTITUTE_FIRST_NAME_1]`, whether Anonymizer minted it, the session held it, or the model proposed it.
   `result.session_changes` counts only the placeholders minted in the call.
