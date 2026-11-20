@@ -677,7 +677,8 @@ def _filter_replacement_map_to_input_entities(
 
 
 class _AssignedElsewhere:
-    """A Session view as a protected container: the values it assigns to a slot other than ``slot``."""
+    """A Session view as a protected container: the values it assigns to a slot other than ``slot``, and every
+    original value it holds, so a new placeholder never equals what an earlier call replaced."""
 
     __slots__ = ("_slot", "_view")
 
@@ -685,7 +686,9 @@ class _AssignedElsewhere:
         self._view, self._slot = view, slot
 
     def __contains__(self, value: object) -> bool:
-        return isinstance(value, str) and self._view.assigned_elsewhere(value, self._slot)
+        return isinstance(value, str) and (
+            self._view.assigned_elsewhere(value, self._slot) or self._view.is_original(value)
+        )
 
 
 def _label_token(label: str) -> str:

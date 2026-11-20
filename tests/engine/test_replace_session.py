@@ -1066,6 +1066,21 @@ def test_a_value_under_two_labels_is_never_both_a_fallback_and_an_assignment(
     assert [r.added for r in results] == [0, 0]
 
 
+def test_a_minted_placeholder_never_equals_an_earlier_calls_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Call 1 detects the literal ``[SUBSTITUTE_FIRST_NAME_1]``; call 2's collision must not mint that token."""
+    token = "[SUBSTITUTE_FIRST_NAME_1]"
+    monkeypatch.setitem(LABELS, token, "first_name")
+    session = Session(stable_replacements=True)
+    assert list(_scripted(tmp_path, [f"{token} arrived."], [{token: "Maya"}], session)["text_replaced"]) == [
+        "Maya arrived."
+    ]
+    # Carol's proposal is Dave, an original of her record, so she takes a placeholder.
+    second = _scripted(tmp_path, ["Carol met Dave."], [{"Carol": "Dave", "Dave": "Eve"}], session)
+    assert list(second["text_replaced"]) == ["[SUBSTITUTE_FIRST_NAME_2] met Eve."]
+
+
 def test_a_replay_keeps_the_first_calls_spelling_of_each_substitute(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
