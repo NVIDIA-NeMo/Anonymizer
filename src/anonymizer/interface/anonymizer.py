@@ -91,7 +91,6 @@ from anonymizer.engine.graph_core.session import Session, SessionChanges
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import (
-    register_plain_kind,
     rows_as_graph,
     run_invocation,
 )
@@ -138,7 +137,7 @@ logger = logging.getLogger("anonymizer")
 
 
 REPLACE_METRICS = register_kind("replace-metrics", lambda v: isinstance(v, dict), copy=dict)
-COVERAGE_METRICS = register_plain_kind("coverage-metrics")
+COVERAGE_METRICS = register_kind("coverage-metrics", lambda v: isinstance(v, dict), copy=dict)
 
 # Verifiers by verdict column: (verifier name, reason when the verdict is not 1.0).
 _ASSESSMENTS = {

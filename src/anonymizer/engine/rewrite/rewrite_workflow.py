@@ -54,13 +54,13 @@ from anonymizer.engine.graph_core.authoring import (
     Workflow,
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult, TargetOutcome
+from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import (
     call_on_empty_input,
     per_target,
     raise_if_cancelled,
-    register_plain_kind,
     rows_as_graph,
     run_invocation,
 )
@@ -93,7 +93,7 @@ from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.rewrite.workflow")
 
-REWRITE_METRICS = register_plain_kind("rewrite-metrics")
+REWRITE_METRICS = register_kind("rewrite-metrics", lambda v: isinstance(v, dict), copy=dict)
 
 _PASSTHROUGH_DEFAULTS: dict[str, object] = {
     COL_UTILITY_SCORE: 1.0,

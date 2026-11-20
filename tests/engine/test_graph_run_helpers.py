@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The shared invocation runner and the plain dict port kinds."""
+"""The shared invocation runner and the dict port kinds: plain-copied, except the dict-copied metric kinds evaluate()
+reads."""
 
 from __future__ import annotations
 
@@ -30,9 +31,9 @@ from anonymizer.engine.ndd import backend
 from anonymizer.engine.ndd.backend import register_plain_kind, rows_as_graph, run_invocation
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
-PLAIN_KINDS = ("replacement-map", "replacement-application", "rewrite-metrics", "coverage-metrics")
-# evaluate()'s replace-metrics keeps copy=dict, so an unreadable judge value reaches its verifier (#387).
-DICT_KINDS = ("replace-metrics",)
+PLAIN_KINDS = ("replacement-map", "replacement-application")
+# evaluate()'s metric kinds keep copy=dict, so an unreadable judge value reaches its verifier as could_not_assess.
+DICT_KINDS = ("replace-metrics", "rewrite-metrics", "coverage-metrics")
 MODULES = (
     "anonymizer.interface.anonymizer",
     "anonymizer.engine.rewrite.rewrite_workflow",
@@ -47,7 +48,7 @@ class _Tolerated(Exception):
 
 
 @pytest.mark.parametrize("first", MODULES)
-def test_every_dict_kind_copies_to_plain_whatever_the_import_order(first: str) -> None:
+def test_dict_kinds_copy_to_plain_except_evaluate_metrics_whatever_the_import_order(first: str) -> None:
     rest = [m for m in MODULES if m != first]
     script = "\n".join(
         [
