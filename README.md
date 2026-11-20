@@ -62,7 +62,8 @@ uv run anonymizer preview --source $DATA_URL --text-column biography --replace r
 # Full run with output file
 uv run anonymizer run --source $DATA_URL --text-column biography --replace redact --output result.csv
 
-# Validate config without running
+# Validate config without running (hash reads its required key from ANONYMIZER_HASH_KEY)
+export ANONYMIZER_HASH_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
 uv run anonymizer validate --source $DATA_URL --text-column biography --replace hash
 ```
 

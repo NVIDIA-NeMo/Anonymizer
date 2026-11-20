@@ -308,7 +308,8 @@ not when the run starts.
 and collapsing runs of whitespace (the fold Substitute uses to match variants of a value). Unkeyed digests of
 low-entropy values, such as dates of birth or ZIP codes, could be reversed by hashing candidates. `Hash()` without a
 key raises a validation error that says how to pass one. `algorithm` accepts only `sha256`. The CLI reads the key
-from `ANONYMIZER_HASH_KEY`. Results keep the strategy without its key, and a serialized config masks it.
+from `ANONYMIZER_HASH_KEY`. Results keep the strategy without its key, and a config built from one is refused.
+JSON dumps of a config mask the key; a pickled config keeps it. Validation errors do not carry the key.
 - What to do: pass `Hash(key=...)`, for example from `os.environ["ANONYMIZER_HASH_KEY"]`, and set that variable for
   `--replace hash`. Drop `algorithm="sha1"` or `"md5"`. Every token changes; keep the key to get the same tokens in
   later runs, and pass it again when loading a saved config.

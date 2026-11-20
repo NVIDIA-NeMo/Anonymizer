@@ -66,7 +66,10 @@ class CliOpts:
     """
 
     # -- mode selection (exactly one required) --
-    replace: ReplaceChoice | None = None
+    replace: Annotated[
+        ReplaceChoice | None,
+        cyclopts.Parameter(help=f"Replace strategy. hash reads its required secret key from {HASH_KEY_ENV}."),
+    ] = None
     rewrite: bool = False
 
     # -- shared --
@@ -108,9 +111,7 @@ class CliOpts:
         ),
     ] = None
     normalize_label: bool = True
-    algorithm: Annotated[
-        Literal["sha256", "sha1", "md5"], cyclopts.Parameter(help="Hash algorithm; only sha256 is accepted.")
-    ] = "sha256"
+    algorithm: Annotated[Literal["sha256"], cyclopts.Parameter(help="Hash algorithm (HMAC-SHA256).")] = "sha256"
     digest_length: Annotated[int, cyclopts.Parameter(help="Hash digest length (6-64).")] = 12
 
     # -- rewrite-specific --
