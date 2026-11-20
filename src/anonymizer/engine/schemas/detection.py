@@ -9,6 +9,7 @@ from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from anonymizer.engine.schemas.shared import _parse_raw_wrapper
+from anonymizer.engine.spans import Span
 
 
 class FrozenStrictModel(BaseModel):
@@ -30,6 +31,10 @@ class SourceView(FrozenStrictModel):
     source_text_ref: SourceTextRef
     start_position: int = Field(ge=0)
     end_position: int = Field(ge=0)
+
+    @property
+    def span(self) -> Span:
+        return Span(self.start_position, self.end_position)
 
     @model_validator(mode="after")
     def validate_geometry(self) -> SourceView:
@@ -73,6 +78,10 @@ class Observation(FrozenStrictModel):
             observation_id=self.observation_id,
         )
 
+    @property
+    def span(self) -> Span:
+        return Span(self.start_position, self.end_position)
+
     @model_validator(mode="after")
     def validate_geometry(self) -> Observation:
         if self.end_position <= self.start_position:
@@ -103,10 +112,7 @@ class DetectionResult(FrozenStrictModel):
                 raise ValueError("observation belongs to another source text")
             if observation.source_kind != self.source_kind or observation.source_instance != self.source_instance:
                 raise ValueError("observation belongs to another component")
-            if (
-                observation.start_position < self.source_view.start_position
-                or observation.end_position > self.source_view.end_position
-            ):
+            if observation.span not in self.source_view.span:
                 raise ValueError("observation falls outside its source view")
         return self
 
@@ -166,6 +172,10 @@ class ValidationInventoryEntry(FrozenStrictModel):
     start_position: int = Field(ge=0)
     end_position: int = Field(gt=0)
 
+    @property
+    def span(self) -> Span:
+        return Span(self.start_position, self.end_position)
+
     @model_validator(mode="after")
     def validate_geometry(self) -> ValidationInventoryEntry:
         if self.end_position <= self.start_position:
@@ -195,14 +205,10 @@ class ValidationRequestInventory(FrozenStrictModel):
             raise ValueError("request-local observation references must be unique")
         if self.context_view.source_text_ref != self.source_text_ref:
             raise ValueError("context view belongs to another source text")
-        if len(self.source_context) != (self.context_view.end_position - self.context_view.start_position):
+        if len(self.source_context) != self.context_view.span.length:
             raise ValueError("context text does not match its source view")
-        for entry in self.entries:
-            if (
-                entry.start_position < self.context_view.start_position
-                or entry.end_position > self.context_view.end_position
-            ):
-                raise ValueError("inventory entry falls outside its context")
+        if any(entry.span not in self.context_view.span for entry in self.entries):
+            raise ValueError("inventory entry falls outside its context")
         return self
 
 
@@ -338,6 +344,10 @@ class AdmittedCandidate(FrozenStrictModel):
     def has_explicit_acceptance(self) -> bool:
         """Whether at least one origin explicitly admitted this candidate."""
         return bool(self.accepted_origins)
+
+    @property
+    def span(self) -> Span:
+        return Span(self.start_position, self.end_position)
 
     @model_validator(mode="after")
     def validate_candidate(self) -> AdmittedCandidate:

@@ -132,23 +132,29 @@ def program() -> list[dict[str, str]]:
         f"forward={f_out}, reversed={b_out}",
     )
 
-    # E20.4 a detector returning nested spans on one row fails that target; it is not resolved by picking one.
+    # E20.4 a detector's nested spans resolve to the outer span; a partial overlap fails that target, not picked from.
     text = "Alice Smith met Bob at noon."
-    frame = pd.DataFrame({COL_TEXT: [text, "plain"]})
-    spans = [{"value": text[0:4], "label": "a", "start_position": 0, "end_position": 4}]
-    spans.append({"value": text[0:22], "label": "b", "start_position": 0, "end_position": 22})
+    frame = pd.DataFrame({COL_TEXT: [text, text, "plain"]})
+    nested = [{"value": text[0:4], "label": "a", "start_position": 0, "end_position": 4}]
+    nested.append({"value": text[0:22], "label": "b", "start_position": 0, "end_position": 22})
+    partial = [nested[1], {"value": text[16:27], "label": "c", "start_position": 16, "end_position": 27}]
 
     def detect(df: pd.DataFrame) -> EntityDetectionResult:
-        return EntityDetectionResult(
-            df.assign(**{COL_FINAL_ENTITIES: [{"entities": spans}, {"entities": []}]}), [], (0, 1)
-        )
+        rows = [{"entities": nested}, {"entities": partial}, {"entities": []}]
+        return EntityDetectionResult(df.assign(**{COL_FINAL_ENTITIES: rows}), [], (0, 1, 2))
 
     scope = GraphScope()
     targets = tuple(scope.datum(t) for t in frame[COL_TEXT])
     step = detect_step(frame, detect, DetectState())
     r4 = protect(prepare(ProtectionGraph(scope, targets), Workflow("w", (step,))))
     out4 = _outcomes(r4, targets)
-    c.check("E20.4", out4 == [("failed", "overlapping_output_ownership"), ("success", "")], f"outcomes={out4}")
+    kept4 = [(m.start, m.end, m.label) for m in r4.value(targets[0], "mentions") or ()]
+    c.check(
+        "E20.4",
+        out4 == [("success", ""), ("failed", "overlapping_output_ownership"), ("success", "")]
+        and kept4 == [(0, 22, "b")],
+        f"outcomes={out4}, kept={kept4}",
+    )
 
     # E20.5 an augmenter value that is not verbatim in the source is rejected; accepted ones are source slices.
     text5 = "Alice met Bob."

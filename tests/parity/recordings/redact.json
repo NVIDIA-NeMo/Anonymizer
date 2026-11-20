@@ -63,10 +63,10 @@
    {"record_id": "c", "step": "entity-detection", "reason": "Record missing"}
   ],
   "outcomes": [
-   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []},
-   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []},
-   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []},
-   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []}
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "no_detected_value_added", "verifier": "verify-no-original", "status": "passed", "cause": ""}]},
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "no_detected_value_added", "verifier": "verify-no-original", "status": "passed", "cause": ""}]},
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "no_detected_value_added", "verifier": "verify-no-original", "status": "passed", "cause": ""}]},
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "no_detected_value_added", "verifier": "verify-no-original", "status": "passed", "cause": ""}]}
   ],
   "stages": [
    {"stage": "graph_prepare", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 4, "target_count": 5, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
@@ -175,9 +175,9 @@
    {"record_id": "c", "step": "entity-detection", "reason": "Record missing"}
   ],
   "outcomes": [
-   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []},
-   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []},
-   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": []}
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "no_detected_value_added", "verifier": "verify-no-original", "status": "passed", "cause": ""}]},
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "no_detected_value_added", "verifier": "verify-no-original", "status": "passed", "cause": ""}]},
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "no_detected_value_added", "verifier": "verify-no-original", "status": "passed", "cause": ""}]}
   ],
   "stages": [
    {"stage": "graph_prepare", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 4, "target_count": 4, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
@@ -291,7 +291,12 @@
    ]
   },
   "failed_records": [],
-  "outcomes": null,
+  "outcomes": [
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "no_detected_value_added", "verifier": "verify-no-original", "status": "passed", "cause": ""}, {"check": "coverage", "verifier": "coverage", "status": "passed", "cause": ""}]},
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "no_detected_value_added", "verifier": "verify-no-original", "status": "passed", "cause": ""}, {"check": "coverage", "verifier": "coverage", "status": "passed", "cause": ""}]},
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "no_detected_value_added", "verifier": "verify-no-original", "status": "passed", "cause": ""}, {"check": "coverage", "verifier": "coverage", "status": "passed", "cause": ""}]},
+   {"terminal": "success", "qualification": "met", "available": true, "protected": true, "reasons": [], "advisories": [{"check": "no_detected_value_added", "verifier": "verify-no-original", "status": "passed", "cause": ""}, {"check": "coverage", "verifier": "coverage", "status": "passed", "cause": ""}]}
+  ],
   "stages": [
    {"stage": "graph_prepare", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 2, "target_count": 4, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},
    {"stage": "graph_reconcile", "status": "completed", "elapsed_sec": "<varies>", "operation_count": 2, "target_count": 4, "terminal_counts": {"success": 4}, "input_rows_per_sec": "<varies>", "output_rows_per_sec": "<varies>", "schema_version": 2, "record_type": "stage", "run_id": "<varies>", "run_tags": {}, "timestamp_unix_sec": "<varies>"},

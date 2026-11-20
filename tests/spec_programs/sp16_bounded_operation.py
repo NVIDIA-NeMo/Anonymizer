@@ -313,7 +313,8 @@ def program() -> list[dict[str, str]]:
         review = [bool(v) for v in out[COL_NEEDS_HUMAN_REVIEW]]
         util = list(out[COL_UTILITY_SCORE])
         return (
-            text == ["r0", "r1", "r2"] and review == [True, False, True] and util == [0.9, 0.9, 0.01],
+            # Row 0's leakage is over the flag, so its text is withheld; rows 1 and 2 keep their own text.
+            text == [None, "r1", "r2"] and review == [True, False, True] and util == [0.9, 0.9, 0.01],
             f"texts={text}, review={review}, utility={util}",
         )
 

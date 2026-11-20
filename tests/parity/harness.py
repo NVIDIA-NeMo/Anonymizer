@@ -150,7 +150,7 @@ class Case:
 
 CASES = [
     Case("redact", lambda: AnonymizerConfig(replace=Redact()), drops={"entity-detection": "Bob"}),
-    Case("hash", lambda: AnonymizerConfig(replace=Hash()), drops={"replace-judges": "Dora"}),
+    Case("hash", lambda: AnonymizerConfig(replace=Hash(key="parity-key")), drops={"replace-judges": "Dora"}),
     Case("annotate", lambda: AnonymizerConfig(replace=Annotate())),
     Case(
         "substitute",
@@ -431,6 +431,7 @@ def _outcomes(result: Any) -> list[dict[str, Any]] | None:
             "available": o.available,
             "protected": o.protected,
             "reasons": [_cell(vars(r)) if hasattr(r, "__dict__") else str(r) for r in o.reasons],
+            "advisories": [_cell(vars(a)) for a in o.advisories],
         }
         for o in outcomes
     ]

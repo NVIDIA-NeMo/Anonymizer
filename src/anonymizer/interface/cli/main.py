@@ -38,6 +38,8 @@ from anonymizer.logging import LoggingConfig, configure_logging
 
 app = cyclopts.App(help="NeMo Anonymizer CLI")
 
+HASH_KEY_ENV = "ANONYMIZER_HASH_KEY"
+
 ReplaceChoice = Literal["redact", "hash", "annotate", "substitute"]
 RiskToleranceChoice = Literal["minimal", "low", "moderate", "high"]
 
@@ -57,13 +59,17 @@ class CliOpts:
 
     Replace-specific flags (``format_template``, ``normalize_label``,
     ``algorithm``, ``digest_length``) only apply when ``--replace`` is set.
+    ``--replace hash`` reads its required key from ``ANONYMIZER_HASH_KEY``.
 
     Rewrite-specific flags (``protect``, ``preserve``, ``risk_tolerance``,
     ``max_repair_iterations``) only apply when ``--rewrite`` is set.
     """
 
     # -- mode selection (exactly one required) --
-    replace: ReplaceChoice | None = None
+    replace: Annotated[
+        ReplaceChoice | None,
+        cyclopts.Parameter(help=f"Replace strategy. hash reads its required secret key from {HASH_KEY_ENV}."),
+    ] = None
     rewrite: bool = False
 
     # -- shared --
@@ -105,7 +111,7 @@ class CliOpts:
         ),
     ] = None
     normalize_label: bool = True
-    algorithm: Annotated[Literal["sha256", "sha1", "md5"], cyclopts.Parameter(help="Hash algorithm.")] = "sha256"
+    algorithm: Annotated[Literal["sha256"], cyclopts.Parameter(help="Hash algorithm (HMAC-SHA256).")] = "sha256"
     digest_length: Annotated[int, cyclopts.Parameter(help="Hash digest length (6-64).")] = 12
 
     # -- rewrite-specific --
@@ -184,6 +190,8 @@ def _build_replace_strategy(opts: CliOpts) -> Substitute | Redact | Hash | Annot
     if cls is Hash:
         kw["algorithm"] = opts.algorithm
         kw["digest_length"] = opts.digest_length
+        # The key stays out of argv and shell history; Hash names the fix when it is unset.
+        kw["key"] = os.environ.get(HASH_KEY_ENV)
     if cls is Substitute and opts.instructions is not None:
         kw["instructions"] = opts.instructions
     return cls(**kw)

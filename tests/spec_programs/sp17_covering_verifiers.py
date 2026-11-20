@@ -9,7 +9,12 @@ from typing import Any
 
 import pandas as pd
 
-from anonymizer.engine.constants import COL_DETECTION_VALID, COL_ENTITY_COVERAGE, COL_JUDGE_EVALUATION
+from anonymizer.engine.constants import (
+    COL_DETECTION_VALID,
+    COL_ENTITY_COVERAGE,
+    COL_JUDGE_EVALUATION,
+    RECORD_ID_COLUMN,
+)
 from anonymizer.engine.graph_core.authoring import DATUM, TEXT, Assessment, Operation, Requests, Workflow
 from anonymizer.engine.graph_core.execution import Reason, prepare
 from anonymizer.engine.graph_core.kernel import GraphRejection, register_kind
@@ -80,7 +85,11 @@ def program() -> list[dict[str, str]]:
         prepared.covering_verifiers == {1, 2}
         and [o.qualification for o in outcomes] == ["met", "not_met", "not_met"]
         and [o.reasons for o in outcomes]
-        == [(), (Reason("failed", "second", "second"),), (Reason("failed", "first", "first"),)]
+        == [
+            (),
+            (Reason("failed", "second", "second", "second_failed"),),
+            (Reason("failed", "first", "first", "first_failed"),),
+        ]
         and reasons == [["", ""], ["", "second_failed"], ["first_failed", ""]]
         and set(r.protected) == {a},
         f"covering={sorted(prepared.covering_verifiers)}, qualification={[o.qualification for o in outcomes]}, "
@@ -163,7 +172,9 @@ def program() -> list[dict[str, str]]:
     # requires no checks, so it qualifies nothing.
     nan = float("nan")
     coverage = _Judge("coverage-judge", "metrics", COVERAGE_METRICS, (COL_ENTITY_COVERAGE,), _keep)
-    _, _, r5 = _evaluate_on_graph(_frame(**{COL_ENTITY_COVERAGE: [1.0, 0.5, None, nan]}), "t", [coverage])
+    # Rows carry record ids: a judge's rows are placed only by id.
+    frame5 = _frame(**{COL_ENTITY_COVERAGE: [1.0, 0.5, None, nan], RECORD_ID_COLUMN: ["r0", "r1", "r2", "r3"]})
+    _, _, r5 = _evaluate_on_graph(frame5, "t", [coverage])
     quals5 = [r5.outcome(t).qualification for t in r5.targets]
     verdicts5 = [(a5.satisfied, a5.reason) for a5 in (r5.state.rows[i].outputs[1]["assessment"] for i in range(4))]
     c.check(
@@ -187,6 +198,7 @@ def program() -> list[dict[str, str]]:
             COL_ENTITY_COVERAGE: [1.0, 1.0, 1.0],
             COL_DETECTION_VALID: [True, 0.5, False],
             COL_JUDGE_EVALUATION: [{"score": 1}, None, {"score": 2}],
+            RECORD_ID_COLUMN: ["r0", "r1", "r2"],
         }
     )
     _, _, r6 = _evaluate_on_graph(frame6, "t", [wide])

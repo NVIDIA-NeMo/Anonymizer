@@ -44,6 +44,7 @@ from anonymizer.engine.graph_core.session import DECISIONS, SESSION_VIEW, Decisi
 Terminal = Literal["success", "failed", "cancelled", "blocked"]
 Qualification = Literal["met", "not_met", "not_assessed"]
 AttemptStatus = Literal["running", "succeeded", "failed", "blocked", "cancelled"]
+AdvisoryStatus = Literal["passed", "failed", "could_not_assess", "scored", "not_applicable"]
 
 SEEDS = {
     "text": TEXT,
@@ -319,11 +320,15 @@ class Reason:
 class Advisory:
     """A check the workflow does not require, as a final-text verifier assessed it: ``passed``, ``failed`` or
     ``could_not_assess``; ``cause`` is the verifier's stated cause for ``failed`` and ``could_not_assess``. It never
-    changes qualification or release. Fields hold codes and declared names, never record text."""
+    changes qualification or release. Fields hold codes and declared names, never record text.
+
+    The kernel emits only those three. The ``Anonymizer`` facade also reports ``evaluate()`` judges as advisories
+    and adds ``scored`` (an ungraded judge returned scores) and ``not_applicable`` (the judge skips such rows by
+    design)."""
 
     check: str
     verifier: str
-    status: Literal["passed", "failed", "could_not_assess"]
+    status: AdvisoryStatus
     cause: str = ""
 
 
@@ -801,7 +806,7 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
                 if a.satisfied is None:
                     reasons += [Reason("could_not_assess", c, name, a.reason) for c in checks]
                 elif a.satisfied is not True:
-                    reasons += [Reason("failed", c, name) for c in checks]
+                    reasons += [Reason("failed", c, name, a.reason) for c in checks]
             reasons += [Reason("missing", c) for c in requires if c not in covered]
             qual = "not_met" if reasons else "met"
         verdicts.append((terminal, qual, reasons))

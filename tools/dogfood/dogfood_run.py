@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import time
 import traceback
@@ -70,9 +71,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     strategy_group.add_argument(
         "--hash-algorithm",
-        choices=["sha256", "sha1", "md5"],
+        choices=["sha256"],
         default=None,
-        help="Hash only: digest algorithm (default sha256).",
+        help="Hash only: digest algorithm (sha256, the only one Hash accepts). The key is read from ANONYMIZER_HASH_KEY.",
     )
     strategy_group.add_argument(
         "--digest-length", type=int, default=None, help="Hash only: hex characters kept from the digest (default 12)."
@@ -179,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
             strategy_kwargs["algorithm"] = args.hash_algorithm
         if args.digest_length is not None:
             strategy_kwargs["digest_length"] = args.digest_length
-        strategy = Hash(**strategy_kwargs)
+        strategy = Hash(**strategy_kwargs, key=os.environ.get("ANONYMIZER_HASH_KEY"))
     else:
         strategy = None
 

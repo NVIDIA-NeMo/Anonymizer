@@ -157,9 +157,12 @@ class ReplacementWorkflow:
         selected_models: ReplaceModelSelection,
         preview_num_records: int | None = None,
         session: Session | None = None,
+        unspanned_check: bool = False,
     ) -> ReplacementResult:
         """Detect entities with ``detect`` and apply the replacement strategy as one graph invocation; ``session``
-        goes to that invocation and to ``run`` when detection output must be rerouted."""
+        goes to that invocation and to ``run`` when detection output must be rerouted.
+
+        With ``unspanned_check``, a row whose reported value occurs outside every kept span fails at ``detect``."""
         from anonymizer.engine.replace.route import run_replace_pipeline
 
         return run_replace_pipeline(
@@ -179,6 +182,7 @@ class ReplacementWorkflow:
                 session=session,
             ),
             session=session,
+            unspanned_check=unspanned_check,
         )
 
     def evaluate(

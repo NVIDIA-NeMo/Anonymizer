@@ -8,7 +8,6 @@ import math
 from collections.abc import Callable
 from typing import Any, get_args
 
-import pandas as pd
 import pytest
 
 from anonymizer.config.rewrite import (
@@ -25,7 +24,7 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT,
     COL_UTILITY_SCORE,
 )
-from anonymizer.engine.rewrite.findings import needs_human_review, needs_repair, present_findings
+from anonymizer.engine.rewrite.findings import needs_repair, present_findings
 
 _NAN = math.nan
 _MISSING = object()
@@ -94,14 +93,18 @@ def test_nan_any_high_leaked_is_high_leak_and_repairs_except_high(
     assert Finding.high_leak in findings
     assert Finding.unavailable_evidence in findings
     assert needs_repair(row, ev) is expect_repair
-    assert needs_human_review(row, ev) is True
 
 
-def test_every_finding_holds_somewhere_and_unavailable_evidence_only_flags() -> None:
+def test_every_finding_holds_somewhere_and_unavailable_evidence_never_repairs() -> None:
     assert {finding for finding, _, expected in _CASES if expected} == set(Finding)
     for bundle in _RISK_TOLERANCE_BUNDLES.values():
-        assert Finding.unavailable_evidence in bundle.flag_on
         assert Finding.unavailable_evidence not in bundle.repair_on
+
+
+def test_no_preset_lists_findings_that_flag_for_review() -> None:
+    """The review flag follows the rewrite's final checks, not a list of findings, so none is published."""
+    for risk_tolerance in RiskTolerance:
+        assert not hasattr(EvaluationCriteria(risk_tolerance=risk_tolerance), "flag_on")
 
 
 def test_presets_repair_only_on_repair_findings() -> None:
@@ -112,9 +115,9 @@ def test_presets_repair_only_on_repair_findings() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Equivalence with the inline formulas these findings replaced. Since the
-# unavailable-evidence fix, missing or NaN metrics flag for review (where the
-# old formulas passed or raised) and never trigger repair (where they raised).
+# Equivalence with the inline repair formula these findings replaced. Since the
+# unavailable-evidence fix, missing or NaN metrics never trigger repair (where
+# the old formula raised).
 # ---------------------------------------------------------------------------
 
 
@@ -125,35 +128,10 @@ def _outcome(decide: Callable[..., bool], *args: Any) -> bool | type[Exception]:
         return type(exc)
 
 
-def _unavailable(row: dict[str, Any]) -> bool:
-    return Finding.unavailable_evidence in present_findings(row, EvaluationCriteria())
-
-
 def _old_repair(row: dict[str, Any], ev: EvaluationCriteria) -> bool:
     if ev.repair_any_high_leak and bool(row.get(COL_ANY_HIGH_LEAKED, False)):
         return True
     return float(row.get(COL_LEAKAGE_MASS, 0.0)) > ev.repair_threshold
-
-
-def _old_review_combined(row: dict[str, Any], ev: EvaluationCriteria) -> bool:
-    return (
-        row[COL_REWRITTEN_TEXT] is None
-        or not bool(row.get(COL_REWRITE_REPLACEMENT_READY, True))
-        or bool(row[COL_ANY_HIGH_LEAKED])
-        or float(row[COL_UTILITY_SCORE]) < ev.flag_utility_below
-        or float(row[COL_LEAKAGE_MASS]) > ev.flag_leakage_above
-    )
-
-
-def _old_review_staged(df: pd.DataFrame, ev: EvaluationCriteria) -> list[bool]:
-    ready = (
-        ~df[COL_REWRITE_REPLACEMENT_READY].apply(bool)
-        if COL_REWRITE_REPLACEMENT_READY in df.columns
-        else pd.Series(False, index=df.index)
-    )
-    review = df[COL_REWRITTEN_TEXT].isna() | ready | df[COL_ANY_HIGH_LEAKED].apply(bool)
-    review = review | (df[COL_UTILITY_SCORE].apply(float) < ev.flag_utility_below)
-    return (review | (df[COL_LEAKAGE_MASS].apply(float) > ev.flag_leakage_above)).tolist()
 
 
 _FLAGS = (True, False, None, _NAN, _MISSING)
@@ -161,23 +139,9 @@ _NUMBERS = (0.0, 0.45, 0.65, 1.2, 1.7, 2.2, 3.5, _NAN, None)
 
 
 @pytest.mark.parametrize("risk_tolerance", list(RiskTolerance))
-def test_findings_reproduce_previous_formulas(risk_tolerance: RiskTolerance) -> None:
+def test_findings_reproduce_previous_repair_formula(risk_tolerance: RiskTolerance) -> None:
     ev = EvaluationCriteria(risk_tolerance=risk_tolerance)
     for high, leakage in itertools.product(_FLAGS, (*_NUMBERS, _MISSING)):
         row = _row(**{COL_ANY_HIGH_LEAKED: high, COL_LEAKAGE_MASS: leakage})
         old = _outcome(_old_repair, row, ev)
         assert _outcome(needs_repair, row, ev) == (False if old is TypeError else old), row
-
-    # The combined path compared text with ``is None``; it never sees a float-NaN rewrite.
-    grid = list(itertools.product(("rewritten", None), _FLAGS, _FLAGS[:4], _NUMBERS, _NUMBERS))
-    for text, ready, high, utility, leakage in grid:
-        row = _row(**dict(zip(_CLEAN, (text, ready, high, utility, leakage), strict=True)))
-        old = True if _unavailable(row) else _outcome(_old_review_combined, row, ev)
-        assert _outcome(needs_human_review, row, ev) == old, row
-
-    values = itertools.product(("rewritten", None, _NAN), _FLAGS[:4], _FLAGS[:4], _NUMBERS, _NUMBERS)
-    frame = pd.DataFrame([dict(zip(_CLEAN, row, strict=True)) for row in values])
-    for df in (frame, frame.drop(columns=COL_REWRITE_REPLACEMENT_READY)):
-        rows = df.to_dict("records")
-        old = [_unavailable(row) or flagged for row, flagged in zip(rows, _old_review_staged(df, ev), strict=True)]
-        assert [needs_human_review(row, ev) for row in rows] == old

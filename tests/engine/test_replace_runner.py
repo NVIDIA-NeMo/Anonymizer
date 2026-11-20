@@ -48,6 +48,8 @@ from anonymizer.engine.replace import route
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult, LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.spans import Span, Spans
+from anonymizer.engine.value_matching import format_cause
 from anonymizer.interface.anonymizer import Anonymizer
 
 
@@ -580,12 +582,12 @@ def test_hash_strategy_executes(
     )
     result = runner.run(
         input_df,
-        replace_method=Hash(),
+        replace_method=Hash(key="s3cr3t"),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
     )
     assert result.failed_records == []
-    assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == "<HASH_FIRST_NAME_3bc51062973c>"
+    assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == Hash(key="s3cr3t").replace(text="Alice", label="first_name")
 
 
 def test_redact_none_replaces_all(
@@ -743,13 +745,9 @@ def test_run_reports_each_rows_protection_outcome(omit_bob: bool, tmp_path: Path
     second = result.outcome(1)
     assert second.qualification == ("not_met" if omit_bob else "met")
     assert any(reason.check == "replacements_applied" for reason in second.reasons) is omit_bob
-    assert [(v.check, v.status) for v in result.outcome(0).advisories] == [
-        ("no_detected_value_outside_replacements", "passed")
-    ]
+    assert [(v.check, v.status) for v in result.outcome(0).advisories] == [("no_detected_value_added", "passed")]
     second_status = "failed" if omit_bob else "passed"
-    assert [(v.check, v.status) for v in second.advisories] == [
-        ("no_detected_value_outside_replacements", second_status)
-    ]
+    assert [(v.check, v.status) for v in second.advisories] == [("no_detected_value_added", second_status)]
     with pytest.raises(IndexError):
         result.outcome(2)
 
@@ -764,8 +762,8 @@ _ALICE = {("Alice", "first_name"): "Maya"}
 @pytest.mark.parametrize(
     ("text", "entities", "patches", "advisory"),
     [
-        pytest.param("Alice met Alice", [_ent("Alice", 0)], _ALICE, ("failed", ""), id="value-repeated-in-kept-text"),
-        pytest.param('{"Alice": 1} Alice', [_ent("Alice", 13)], _ALICE, ("failed", ""), id="json-key-in-kept-text"),
+        pytest.param("Alice met Alice", [_ent("Alice", 0)], _ALICE, ("passed", ""), id="value-repeated-in-kept-text"),
+        pytest.param('{"Alice": 1} Alice', [_ent("Alice", 13)], _ALICE, ("passed", ""), id="json-key-in-kept-text"),
         pytest.param(
             "Alice met Alice", [_ent("Alice", 0), _ent("Alice", 10)], _ALICE, ("passed", ""), id="all-patched"
         ),
@@ -780,39 +778,63 @@ _ALICE = {("Alice", "first_name"): "Maya"}
             "Alice and Bob",
             [_ent("Alice", 0), _ent("Bob", 10)],
             {("Alice", "first_name"): "Bob", ("Bob", "first_name"): "Alice Jr"},
-            ("passed", ""),
+            ("failed", "e0:N1,D1,O1;e1:N1,D1,O1"),
             id="substitute-equals-another-original",
         ),
-        pytest.param("Alice met ALICE", [_ent("Alice", 0)], _ALICE, ("failed", ""), id="case-insensitive"),
+        pytest.param("Alice met ALICE", [_ent("Alice", 0)], _ALICE, ("passed", ""), id="case-insensitive"),
         pytest.param(
             "IN and in", [_ent("IN", 0, "state")], {("IN", "state"): "OH"}, ("passed", ""), id="short-code-case"
         ),
         pytest.param(
-            "IN and IN", [_ent("IN", 0, "state")], {("IN", "state"): "OH"}, ("failed", ""), id="short-code-kept"
+            "IN and IN", [_ent("IN", 0, "state")], {("IN", "state"): "OH"}, ("passed", ""), id="short-code-kept"
         ),
         pytest.param("Alice met Alicea", [_ent("Alice", 0)], _ALICE, ("passed", ""), id="letter-boundary"),
-        pytest.param("Alice met x_Alice_y", [_ent("Alice", 0)], _ALICE, ("failed", ""), id="underscore-boundary"),
+        pytest.param("Alice met x_Alice_y", [_ent("Alice", 0)], _ALICE, ("passed", ""), id="underscore-boundary"),
         pytest.param(
-            "José met Jose", [_ent("José", 0)], {("José", "first_name"): "Luis"}, ("failed", ""), id="accent-folded"
+            "José met Jose", [_ent("José", 0)], {("José", "first_name"): "Luis"}, ("passed", ""), id="accent-folded"
         ),
         pytest.param(
-            "Alice is alice_smith_42", [_ent("Alice", 0)], _ALICE, ("failed", ""), id="inside-unpatched-user-id"
+            "Alice is alice_smith_42", [_ent("Alice", 0)], _ALICE, ("passed", ""), id="inside-unpatched-user-id"
         ),
-        pytest.param("Alice met Bob", [_ent("Alice", 0), _ent("Bob", 10)], _ALICE, ("failed", ""), id="map-omits"),
+        pytest.param(
+            "Alice met Bob", [_ent("Alice", 0), _ent("Bob", 10)], _ALICE, ("failed", "e1:N1,D1,O1"), id="map-omits"
+        ),
         pytest.param(
             "Alice met Bob",
             [_ent("Alice", 0)],
             {("Alice", "last_name"): "Maya"},
-            ("could_not_assess", "reconstruction_mismatch"),
+            ("passed", ""),
             id="value-only-fallback",
         ),
         pytest.param("nobody here", [], {}, ("passed", ""), id="no-mentions"),
+        pytest.param(
+            "Alice met José",
+            [_ent("Alice", 0), _ent("José", 10)],
+            {("Alice", "first_name"): "Jose Ruiz", ("José", "first_name"): "Tom"},
+            ("failed", "e1:N1,D1,O1"),
+            id="substitute-holds-another-original",
+        ),
+        pytest.param(
+            "Mayfield and May",
+            [_ent("field", 3, "street"), _ent("May", 13)],
+            {("field", "street"): "XYZ", ("May", "first_name"): "Ann"},
+            ("passed", ""),
+            id="letter-substitute-at-seam",
+        ),
+        pytest.param(
+            "John Smith called. John said hi.",
+            [_ent("John Smith", 0, "full_name"), _ent("John", 19)],
+            {("John Smith", "full_name"): "[A]", ("John", "first_name"): "John"},
+            ("failed", "e1:N2,D2,O1"),
+            id="value-inside-another-names-its-own-span",
+        ),
     ],
 )
-def test_replace_reports_replaced_values_left_in_kept_text(
+def test_replace_reports_detected_values_added(
     text: str, entities: list[dict], patches: dict, advisory: tuple[str, str]
 ) -> None:
-    """The advisory follows Rewrite's matching rule over the kept text and never touches the row's outcome."""
+    """The advisory bounds each detected value by its count outside the detected spans, under Rewrite's matching rule
+    over the whole replaced text, and never touches the row's outcome."""
 
     def build_map(index: int, rows: object) -> dict:
         return {"replacements": [{"original": o, "label": lab, "synthetic": s} for (o, lab), s in patches.items()]}
@@ -823,7 +845,7 @@ def test_replace_reports_replaced_values_left_in_kept_text(
     outcome = with_check.outcome(graph.targets[0])
 
     assert [(a.check, a.verifier, a.status, a.cause) for a in outcome.advisories] == [
-        ("no_detected_value_outside_replacements", "verify-no-original", *advisory)
+        ("no_detected_value_added", "verify-no-original", *advisory)
     ]
     without = _without_advisory_verifier(graph, build_map)
     base = without.outcome(graph.targets[0])
@@ -854,10 +876,10 @@ def test_replace_advisory_error_is_could_not_assess(monkeypatch: pytest.MonkeyPa
     """A matcher error gives could_not_assess with a code; the row stays met and released; no text leaks."""
     canary = "canary-rpc-41"
 
-    def boom(values: object) -> object:
+    def boom(*args: object) -> object:
         raise ValueError(canary)
 
-    monkeypatch.setattr(route, "compile_values", boom)
+    monkeypatch.setattr(route, "count_values", boom)
     frame = pd.DataFrame({COL_TEXT: ["Alice met Alice"], COL_FINAL_ENTITIES: [{"entities": [_ent("Alice", 0)]}]})
     graph = route._lower(frame, COL_TEXT, COL_FINAL_ENTITIES)
     complete = {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]}
@@ -876,3 +898,188 @@ def test_annotate_has_no_advisory() -> None:
 
     assert "verify-no-original" not in result.prepared.names
     assert result.outcome(graph.targets[0]).advisories == ()
+
+
+def _agrees(result: Any, row: int, cause: str) -> None:
+    """Every ``e<i>:N..,D..,O..`` entry of ``cause`` is the helper's entry ``i`` with the same counts."""
+    entries = {
+        f"e{'-' if x.position is None else x.position}": f"N{x.in_source},D{x.detected},O{x.in_output}"
+        for x in result.leftovers(row)
+    }
+    assert cause
+    for part in cause.split(";"):
+        key, counts = part.split(":")
+        assert entries[key] == counts
+
+
+def test_leftovers_explain_a_substitute_that_brings_a_value_back(tmp_path: Path) -> None:
+    text = "Alice met José."
+    entities = [_ent("Alice", 0), _ent("José", 10)]
+    replacements = [
+        {"original": "Alice", "label": "first_name", "synthetic": "Jose Ruiz"},
+        {"original": "José", "label": "first_name", "synthetic": "Tom"},
+    ]
+    llm_workflow = Mock()
+    llm_workflow.generate_validated_maps.side_effect = lambda frame, **_: LlmReplaceResult(
+        dataframe=frame.assign(**{COL_REPLACEMENT_MAP: [{"replacements": replacements}]}),
+        failed_records=[],
+        source_positions=(0,),
+    )
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": entities}]}),
+        failed_records=[],
+        source_positions=(0,),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": [text]}).to_csv(csv_path, index=False)
+    anonymizer = Anonymizer(detection_workflow=detector, replace_runner=ReplacementWorkflow(llm_workflow=llm_workflow))
+    result = anonymizer.run(
+        config=AnonymizerConfig(replace=Substitute(), emit_telemetry=False),
+        data=AnonymizerInput(source=str(csv_path), text_column="text"),
+    )
+
+    (advisory,) = result.outcome(0).advisories
+    assert (advisory.check, advisory.status, advisory.cause) == ("no_detected_value_added", "failed", "e1:N1,D1,O1")
+    _agrees(result, 0, advisory.cause)
+    jose = result.leftovers(0)[1]
+    assert (jose.value, jose.label, jose.span, jose.undetected_spans, jose.output_spans) == (
+        "José",
+        "first_name",
+        Span(10, 14),
+        Spans(),
+        Spans([Span(0, 4)]),
+    )
+    with pytest.raises(IndexError):
+        result.leftovers(1)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("Mira\U0001d157\U0001d16d\U0001d16e", id="marks-out-of-canonical-order"),
+        pytest.param("Mira\U0001d16d\u093a\u1b44", id="marks-reordered-after-a-dropped-mark"),
+    ],
+)
+def test_a_redact_template_that_brings_back_a_name_with_reordered_marks_fails_the_advisory(
+    tmp_path: Path, name: str
+) -> None:
+    text = f"{name} called."
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": [_ent(name, 0)]}]}),
+        failed_records=[],
+        source_positions=(0,),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": [text]}).to_csv(csv_path, index=False)
+    result = Anonymizer(detection_workflow=detector).run(
+        config=AnonymizerConfig(replace=Redact(format_template=f"[X] {name}"), emit_telemetry=False),
+        data=AnonymizerInput(source=str(csv_path), text_column="text"),
+    )
+
+    (advisory,) = result.outcome(0).advisories
+    assert (advisory.status, advisory.cause) == ("failed", "e0:N1,D1,O1")
+    _agrees(result, 0, advisory.cause)
+
+
+@pytest.mark.parametrize(
+    ("columns", "entities", "method", "preview"),
+    [
+        pytest.param(
+            {"text": ["Alice met Bob"]}, [[_ent("Alice", 0)]], Redact(format_template="Alice"), False, id="str"
+        ),
+        pytest.param(
+            {"text": ["Alice met Bob"], "text_rewritten": ["note"]},
+            [[_ent("Alice", 0)]],
+            Redact(format_template="Alice"),
+            False,
+            id="metadata-column-named-like-the-rewrite-output",
+        ),
+        pytest.param(
+            {"text": ["Alice met Bob"], "text_rewritten": ["note"]},
+            [[_ent("Alice", 0)]],
+            Redact(format_template="Alice"),
+            True,
+            id="metadata-column-preview",
+        ),
+        pytest.param(
+            {"text": [123456]}, [[_ent("123456", 0)]], Redact(format_template="123456 archived"), False, id="int"
+        ),
+        pytest.param(
+            {"text": [123456, None]},
+            [[_ent("123456", 0)], []],
+            Redact(format_template="123456 archived"),
+            False,
+            id="float-with-a-blank-row",
+        ),
+        pytest.param({"text": [True]}, [[_ent("True", 0)]], Redact(format_template="True"), False, id="bool"),
+        pytest.param({"text": [123456]}, [[_ent("123456", 0)]], Hash(key="s3cr3t"), False, id="int-hash-passes"),
+    ],
+)
+def test_leftovers_are_what_the_replace_advisory_counted(
+    tmp_path: Path, columns: dict[str, list[object]], entities: list[list[dict]], method: Any, preview: bool
+) -> None:
+    """For every row, passing ones included, the audit holds one entry per detected value and its over-bound entries
+    are the advisory's cause, whatever the source cell's type and whatever the other columns are named."""
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": e} for e in entities]}),
+        failed_records=[],
+        source_positions=tuple(range(len(entities))),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame(columns).to_csv(csv_path, index=False)
+    anonymizer = Anonymizer(detection_workflow=detector)
+    config = AnonymizerConfig(replace=method, emit_telemetry=False)
+    data = AnonymizerInput(source=str(csv_path), text_column="text")
+    result = (
+        anonymizer.preview(config=config, data=data, num_records=len(entities))
+        if preview
+        else anonymizer.run(config=config, data=data)
+    )
+
+    for row, row_entities in enumerate(entities):
+        (advisory,) = result.outcome(row).advisories
+        leftovers = result.leftovers(row)
+        assert format_cause(x for x in leftovers if x.over_bound) == advisory.cause
+        assert [x.in_source for x in leftovers] == [1] * len(row_entities)
+    first = result.outcome(0).advisories[0]
+    assert first.status == ("passed" if isinstance(method, Hash) else "failed")
+
+
+def test_leftovers_name_a_value_by_its_own_span(tmp_path: Path) -> None:
+    """John matches inside "John Smith" first, yet its entry is John's own span."""
+    text = "John Smith called. John said hi."
+    entities = [_ent("John Smith", 0, "full_name"), _ent("John", 19)]
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": entities}]}),
+        failed_records=[],
+        source_positions=(0,),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": [text]}).to_csv(csv_path, index=False)
+    result = Anonymizer(detection_workflow=detector).run(
+        config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
+        data=AnonymizerInput(source=str(csv_path), text_column="text"),
+    )
+
+    smith, john = result.leftovers(0)
+    assert (smith.position, smith.value, smith.label, smith.span, smith.in_source, smith.detected) == (
+        0,
+        "John Smith",
+        "full_name",
+        Span(0, 10),
+        1,
+        1,
+    )
+    assert (john.position, john.value, john.label, john.span, john.in_source, john.detected, john.in_output) == (
+        1,
+        "John",
+        "first_name",
+        Span(19, 23),
+        2,
+        2,
+        0,
+    )

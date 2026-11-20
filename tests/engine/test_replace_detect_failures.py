@@ -22,10 +22,10 @@ from anonymizer.engine.detection.detection_workflow import (
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.interface.anonymizer import Anonymizer, AnonymizerResult
 
-REJECTED = "Alice Smith lives in Paris."  # overlapping first_name/full_name spans: fails at detect
+REJECTED = "Alice Smith lives in Paris."  # partially overlapping spans: fails at detect
 VALID = "Bob lives in Paris."  # shares (city, Paris) with the rejected row
 SUBSTITUTES = {
-    REJECTED: {"Alice": "Carol", "Alice Smith": "Carol Jones", "Paris": "Lyon"},
+    REJECTED: {"Alice Smith": "Carol Jones", "Smith lives": "Jones stays", "Paris": "Lyon"},
     VALID: {"Bob": "Dave", "Paris": "Nice"},
 }
 
@@ -43,7 +43,7 @@ def _span(text: str, value: str, label: str, span_id: int) -> dict[str, Any]:
 
 def _entities(text: str) -> dict[str, Any]:
     if text == REJECTED:
-        names = [_span(text, "Alice", "first_name", 0), _span(text, "Alice Smith", "full_name", 1)]
+        names = [_span(text, "Alice Smith", "full_name", 0), _span(text, "Smith lives", "other", 1)]
     else:
         names = [_span(text, "Bob", "first_name", 0)]
     return {"entities": [*names, _span(text, "Paris", "city", 9)]}

@@ -15,6 +15,7 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, ParamSpec, Protocol, TypedDict, TypeGuard, TypeVar, cast
 
@@ -34,7 +35,7 @@ from anonymizer.config.anonymizer_config import (
     resolve_effective_detection_labels,
 )
 from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
-from anonymizer.config.replace_strategies import ReplaceMethod, Substitute
+from anonymizer.config.replace_strategies import HASH_KEY_REQUIRED_MESSAGE, Hash, ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
@@ -60,7 +61,9 @@ from anonymizer.engine.constants import (
     COL_TYPE_FIDELITY_VALID,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
+from anonymizer.engine.detection.detect_step import UNSPANNED_CHECK_BUILTIN
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
@@ -77,11 +80,21 @@ from anonymizer.engine.graph_core.authoring import (
     Requests,
     Workflow,
 )
-from anonymizer.engine.graph_core.execution import ProtectionResult
+from anonymizer.engine.graph_core.execution import (
+    Advisory,
+    AdvisoryStatus,
+    ProtectionResult,
+    TargetOutcome,
+)
+from anonymizer.engine.graph_core.kernel import Status, register_kind
 from anonymizer.engine.graph_core.session import Session, SessionChanges
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.ndd.backend import per_target, register_plain_kind, rows_as_graph, run_invocation
+from anonymizer.engine.ndd.backend import (
+    register_plain_kind,
+    rows_as_graph,
+    run_invocation,
+)
 from anonymizer.engine.ndd.model_loader import (
     parse_model_configs,
     parse_model_providers,
@@ -93,7 +106,6 @@ from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import REWRITE_METRICS, RewriteWorkflow
-from anonymizer.engine.row_partitioning import try_resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult, SessionCallChanges
@@ -125,7 +137,7 @@ if sys.version_info >= (3, 14):
 logger = logging.getLogger("anonymizer")
 
 
-REPLACE_METRICS = register_plain_kind("replace-metrics")
+REPLACE_METRICS = register_kind("replace-metrics", lambda v: isinstance(v, dict), copy=dict)
 COVERAGE_METRICS = register_plain_kind("coverage-metrics")
 
 # Verifiers by verdict column: (verifier name, reason when the verdict is not 1.0).
@@ -139,24 +151,31 @@ _ASSESSMENTS = {
 
 
 class _Judge(NamedTuple):
-    """One judge body: the runner call over the whole frame, its output port and the verdict columns it returns."""
+    """One judge body: the runner call over the whole frame, its output port, the verdict columns it returns and
+    the ``context`` columns its port also carries for the verifiers, which judge nothing themselves."""
 
     name: str
     port: str
     kind: str
     columns: tuple[str, ...]
     run: Callable[[pd.DataFrame], tuple[pd.DataFrame, list[FailedRecord]]]
+    context: tuple[str, ...] = ()
 
 
-def _verdict(port: str, column: str, reason: str, *, graded: bool = True) -> Callable[..., Assessment]:
+def _verdict(
+    port: str, column: str, reason: str, *, graded: bool = True, applies: Callable[[dict], bool] | None = None
+) -> Callable[..., Assessment]:
     """A model-free verifier over ``port``'s per-row metrics: ``None`` or NaN is unavailable, else ``== 1.0``.
 
     ``True == 1.0``, so one comparison serves boolean verdicts and fractions; ``graded=False`` records availability.
+    An unavailable verdict on a row ``applies`` rejects is ``not_applicable``: the judge skips such rows by design.
     """
 
     def verify(target: Any, **ports: Any) -> Assessment:
         value = ports[port].get(column)
         if value is None or value is pd.NA or (isinstance(value, float) and value != value):
+            if applies is not None and not applies(ports[port]):
+                return Assessment(None, target, "not_applicable")
             return Assessment(None, target, "judge_unavailable")
         satisfied = not graded or bool(value == 1.0)
         return Assessment(satisfied, target, "" if satisfied else reason)
@@ -169,8 +188,9 @@ def _evaluate_on_graph(
 ) -> tuple[pd.DataFrame, list[FailedRecord], ProtectionResult]:
     """Run each judge body over the whole frame as one invocation, then the model-free verifiers per row.
 
-    A row is a target whose datum is its candidate text; nothing reads it. Each body fans its returned frame out by
-    position, so a row a judge dropped or could not score carries ``None`` verdicts, never a failed target. The
+    A row is a target whose datum is its candidate text; nothing reads it. Each body places its returned rows on
+    their targets by record id (``_source_positions``), so a row a judge dropped, could not score or returned
+    without a unique id carries ``None`` verdicts, never a failed target. The
     workflow requires no checks, so the verifiers report and qualify nothing. The output frame is the last body's, unfiltered; a body's own error is
     raised as 0.4.0 raised it.
     """
@@ -184,15 +204,14 @@ def _evaluate_on_graph(
             nonlocal current
             current, failed = judge.run(current)
             failures.extend(failed)
-            present = [c for c in judge.columns if c in current.columns]
+            present = [c for c in (*judge.columns, *judge.context) if c in current.columns]
             rows = current[present].to_dict("records") if present else [{} for _ in range(len(current))]
-            if len(rows) == len(target):
-                return rows
-            # A judge dropped rows: map the survivors back to their targets; an unmatched target reads as unavailable.
-            positions = try_resolve_source_positions(frame, current, None)
-            if positions is None:
-                return [{} for _ in target]
-            return [row or {} for row in per_target(rows, positions, len(target))]
+            # Place each returned row on its own target by record id; a target no row was placed on is unavailable.
+            placed: list[dict[str, Any]] = [{} for _ in target]
+            for row, p in zip(rows, _source_positions(frame, current)):
+                if p is not None:
+                    placed[p] = row or {}
+            return placed
 
         return judge_rows
 
@@ -208,7 +227,11 @@ def _evaluate_on_graph(
                 verifiers.insert(0, Operation.verifier("coverage", verify, {"text": TEXT, **inputs}))
             else:
                 name, reason = _ASSESSMENTS[column]
-                verify = _verdict(judge.port, column, reason, graded=column != COL_JUDGE_EVALUATION)
+                verify = (
+                    _verdict(judge.port, column, reason, graded=False, applies=_judged_by_rewrite_judge)
+                    if column == COL_JUDGE_EVALUATION
+                    else _verdict(judge.port, column, reason)
+                )
                 verifiers.append(Operation.verifier(name, verify, inputs))
     operations = (*bodies, *verifiers)
     workflow = Workflow("evaluate", operations)
@@ -217,9 +240,94 @@ def _evaluate_on_graph(
     return current, failures, result
 
 
+def _record_ids(frame: pd.DataFrame) -> tuple[str, ...] | None:
+    """The record id of each row, ``None`` when the frame carries none."""
+    if RECORD_ID_COLUMN not in frame.columns:
+        return None
+    return tuple(str(i) for i in frame[RECORD_ID_COLUMN])
+
+
+def _source_positions(source: pd.DataFrame, returned: pd.DataFrame) -> tuple[int | None, ...]:
+    """The ``source`` position of each ``returned`` row, ``None`` for a row that cannot be placed.
+
+    A row is placed only by its record id, and only when that id occurs exactly once in ``source`` and once in
+    ``returned``. Row order and text are never read: records may share their text, and a judge may reorder rows.
+    A row without an id (missing column or a null), with an unknown id or with a repeated id cannot be placed. Ids
+    compare as text, so a judge that retypes an id onto another record's text (``"1"`` and ``1.0`` as ``"1.0"``)
+    relabels the row, which the id contract trusts."""
+    if RECORD_ID_COLUMN not in source.columns or RECORD_ID_COLUMN not in returned.columns:
+        return (None,) * len(returned)
+    source_ids, ids = (tuple(None if pd.isna(i) else str(i) for i in f[RECORD_ID_COLUMN]) for f in (source, returned))
+    in_source, in_returned = Counter(source_ids), Counter(ids)
+    where = {i: p for p, i in enumerate(source_ids) if i is not None and in_source[i] == 1}
+    return tuple(where.get(i) if i is not None and in_returned[i] == 1 else None for i in ids)
+
+
+def _reported_outcomes(
+    result: ProtectionResult,
+    source: pd.DataFrame,
+    output: pd.DataFrame,
+    ran: Sequence[TargetOutcome] | None,
+    ran_ids: Sequence[str] | None,
+) -> tuple[TargetOutcome, ...]:
+    """Each ``output`` row's outcome, one per row, even when no row can be placed in ``source``.
+
+    Each row is placed in ``source`` only by its unique record id (``_source_positions``), as ``_evaluate_on_graph``
+    placed every judge's rows. A placed row's outcome is the evaluated result's outcome (``ran``) of the record with
+    that id (``ran_ids``), or an unassessed outcome when the result carries no outcomes or no single row with that
+    id, with each verifier appended as an advisory naming it, in verifier order, in place of any advisory an earlier
+    evaluation of the result gave the same verifier; a row whose text was edited under a kept id keeps the run's
+    verdict on the run's own text. A row that cannot be placed (no id, a null, an unknown or a repeated one) is unassessed
+    and unprotected, and each verifier reads ``could_not_assess`` with cause ``unplaced``. A verifier that gave no
+    assessment is ``could_not_assess`` with its execution code (``raised``, or ``blocked`` when an earlier verifier
+    of the row failed) as the cause. The ungraded rewrite judge reports ``scored`` when it returned scores and
+    ``not_applicable`` on a row it skips by design."""
+    codes: dict[bool | None, AdvisoryStatus] = {True: "passed", False: "failed", None: "could_not_assess"}
+    ungraded = _ASSESSMENTS[COL_JUDGE_EVALUATION][0]
+    names = result.prepared.names
+    positions = _source_positions(source, output)
+    verifiers = [i for i, (_, op) in enumerate(result.prepared.workflow.flatten()) if op.is_verifier]
+    errors = {(e.unit, e.node): e.reason for e in result.state.entries if e.status == Status.FAILED}
+    ledger = result.ledger()  # target-major; a verifier that never ran is ``blocked``
+    unassessed = TargetOutcome("success", "not_assessed", False, False)
+    by_id: dict[str, TargetOutcome] = {}
+    if ran is not None and ran_ids is not None and len(ran) == len(ran_ids):
+        counts = Counter(ran_ids)
+        by_id = {i: outcome for i, outcome in zip(ran_ids, ran) if counts[i] == 1}
+    source_ids = _record_ids(source) or ()
+
+    def advisory(p: int, i: int) -> Advisory:
+        row = result.state.rows[p]
+        a = row.outputs.get(i, {}).get("assessment")
+        if not isinstance(a, Assessment):
+            cause = errors.get((p, i), ledger[p * len(names) + i][2])
+            return Advisory(names[i], names[i], "could_not_assess", cause)
+        if a.satisfied is None and a.reason == "not_applicable":
+            return Advisory(names[i], names[i], "not_applicable")
+        status = "scored" if a.satisfied and names[i] == ungraded else codes[a.satisfied]
+        return Advisory(names[i], names[i], status, a.reason)
+
+    judges = {names[i] for i in verifiers}
+
+    def reported(p: int | None) -> TargetOutcome:
+        if p is None:
+            unplaced = (Advisory(names[i], names[i], "could_not_assess", "unplaced") for i in verifiers)
+            return replace(unassessed, advisories=tuple(unplaced))
+        base = by_id.get(source_ids[p], unassessed)
+        kept = (a for a in base.advisories if a.verifier not in judges)  # an earlier evaluation's judges
+        return replace(base, advisories=(*kept, *(advisory(p, i) for i in verifiers)))
+
+    return tuple(reported(p) for p in positions)
+
+
 def _has_entities_for_evaluation(raw: object) -> bool:
     """Return whether a row should receive entity-dependent evaluation scores."""
     return bool(EntitiesByValueSchema.from_raw(raw).entities_by_value)
+
+
+def _judged_by_rewrite_judge(metrics: dict) -> bool:
+    """Whether the rewrite judge scores the row: it skips rows with no entities; unknown when the column is absent."""
+    return COL_ENTITIES_BY_VALUE not in metrics or _has_entities_for_evaluation(metrics[COL_ENTITIES_BY_VALUE])
 
 
 def _flag_missed_entities(df: pd.DataFrame) -> pd.DataFrame:
@@ -417,8 +525,34 @@ class Anonymizer:
                 support and otherwise raise ``InvalidConfigError``. Methods without
                 ``entity_label_examples`` remain supported when no examples are configured;
                 configuring unsupported examples raises ``InvalidConfigError`` too.
-            replace_runner: Custom replacement workflow (advanced/testing).
-            rewrite_runner: Custom rewrite workflow (advanced/testing).
+                Its entity spans must be half-open, within the text, non-empty,
+                labelled, and slice to their ``value`` exactly. Identical spans
+                collapse into the first labelled one, keeping its label, and a span
+                contained in a labelled span gives way to the outer span; later
+                steps and the result's ``final_entities`` see the collapsed spans; a
+                detector-supplied ``tagged_text`` is not regenerated from them.
+                Any other overlap or contract break fails the record at ``detect``
+                with ``overlapping_output_ownership``, ``mention_out_of_range``,
+                ``mention_slice_mismatch`` or ``mention_unlabelled``; in Rewrite a
+                payload that does not parse fails with ``invalid_output`` (Replace
+                rejects it at ``replace``). For a row with spans, the
+                ``_entities_by_value`` view is that of its kept spans plus every
+                detector pair, and every collapsed span's value, that occurs in
+                the row's text outside those spans; a row without spans keeps the detector's view. In the
+                Replace modes, a row whose view holds a value that occurs in its
+                text outside every kept span fails at ``detect`` with
+                ``unspanned_value``.
+                These checks and the derived view
+                apply only when the detector returns source positions or unique
+                record ids (ids exist only with ``TextRecordsInput``) and leaves
+                each row's text unchanged; otherwise the result is used as
+                returned, may stop the run, and a record may be released with its
+                spans unprotected.
+            replace_runner: Custom replacement workflow (advanced/testing). Its ``evaluate()`` must keep each row's
+                record id: ``evaluate()`` matches judge rows to records only by id, reports a row without one
+                unassessed, and reports a row given another record's id as that record.
+            rewrite_runner: Custom rewrite workflow (advanced/testing). Its ``evaluate()`` must keep each row's record
+                id, as for ``replace_runner``.
             combined_rewrite_runner: Custom combined rewrite workflow (advanced/testing).
         """
         _initialize_logging()
@@ -460,6 +594,7 @@ class Anonymizer:
             self._data_designer.set_run_config(data_designer_run_config)
         self._adapter = NddAdapter(data_designer=self._data_designer)
         self._detection_workflow = detection_workflow or EntityDetectionWorkflow(adapter=self._adapter)
+        self._custom_detection = detection_workflow is not None
         self._replace_runner = replace_runner or ReplacementWorkflow(
             llm_workflow=LlmReplaceWorkflow(adapter=self._adapter),
             detection_judge=DetectionJudgeWorkflow(adapter=self._adapter),
@@ -652,6 +787,7 @@ class Anonymizer:
                 data_summary=result.data_summary,
                 _outcomes=result._outcomes,
                 session_changes=result.session_changes,
+                _outcome_ids=result._outcome_ids,
             )
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
@@ -828,11 +964,18 @@ class Anonymizer:
                 COL_JUDGE_EVALUATION,
                 *((COL_DETECTION_VALID,) if evaluate_config.compute_detection_validity else ()),
             )
-            judged_df, all_failed, _ = _evaluate_on_graph(
+            judged_df, all_failed, evaluation = _evaluate_on_graph(
                 internal_df,
                 COL_REWRITTEN_TEXT,
                 [
-                    _Judge("rewrite-judges", "rewrite_metrics", REWRITE_METRICS, rewrite_columns, run_rewrite_judges),
+                    _Judge(
+                        "rewrite-judges",
+                        "rewrite_metrics",
+                        REWRITE_METRICS,
+                        rewrite_columns,
+                        run_rewrite_judges,
+                        context=(COL_ENTITIES_BY_VALUE,),
+                    ),
                     _Judge(
                         "coverage-judge", "coverage_metrics", COVERAGE_METRICS, (COL_ENTITY_COVERAGE,), run_coverage
                     ),
@@ -879,7 +1022,7 @@ class Anonymizer:
                         ("attribute fidelity", COL_ATTRIBUTE_FIDELITY_VALID, None),
                     ]
                 )
-            judged_df, all_failed, _ = _evaluate_on_graph(
+            judged_df, all_failed, evaluation = _evaluate_on_graph(
                 internal_df,
                 COL_REPLACED_TEXT,
                 [
@@ -893,6 +1036,13 @@ class Anonymizer:
                 ],
             )
         renamed_trace = _rename_output_columns(judged_df, resolved_text_column=text_column)
+        outcomes = _reported_outcomes(
+            evaluation,
+            internal_df,
+            judged_df,
+            getattr(output, "_outcomes", None),  # absent on results pickled before outcomes were kept
+            getattr(output, "_outcome_ids", None),
+        )
         result = AnonymizerResult(
             dataframe=_build_user_dataframe(
                 renamed_trace,
@@ -910,6 +1060,8 @@ class Anonymizer:
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
+            _outcomes=outcomes,
+            _outcome_ids=_record_ids(judged_df),
         )
         if result.failed_records:
             logger.debug("%d evaluation failed record(s).", len(result.failed_records))
@@ -1092,6 +1244,13 @@ class Anonymizer:
             replacement_elapsed = time.perf_counter() - t0
             outcomes = None
         elif config.replace is not None:
+            # Passed only when set: a caller's run_with_detection override may predate the keyword.
+            unspanned = {"unspanned_check": True} if self._custom_detection or UNSPANNED_CHECK_BUILTIN else {}
+            # Only a stable Session is passed: without one, an override with the signature before ``session`` is
+            # called exactly as before.
+            stable: dict[str, Any] = (
+                {"session": session} if session is not None and session.mode.stable_replacements else {}
+            )
             replace_result = self._replace_runner.run_with_detection(
                 input_df,
                 detect=detect_then_announce,
@@ -1099,9 +1258,8 @@ class Anonymizer:
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.replace,
                 preview_num_records=preview_num_records,
-                # Only a stable Session is passed: without one, an override with the signature before ``session``
-                # is called exactly as before.
-                **({"session": session} if session is not None and session.mode.stable_replacements else {}),
+                **stable,
+                **unspanned,
             )
             assert replace_result.detection is not None
             detected_df, detection_failures = (
@@ -1162,11 +1320,13 @@ class Anonymizer:
                 outcomes = rewrite_result.outcomes
             final_df = rewrite_result.dataframe
         entity_count = _count_entities(detected_df)
-        detection_failed = len(detection_failures)
+        # Rows the graph rejects at its ``detect`` step come back with the later steps' failures; count them here.
+        rejected_at_detect = sum(f.step == "detect" for f in post_detection_failures)
+        detection_failed = len(detection_failures) + rejected_at_detect
         logger.info(
             LOG_INDENT + "📋 Detection complete — %d entities found across %d records (%d failed) [%.1fs]",
             entity_count,
-            len(detected_df),
+            len(detected_df) - rejected_at_detect,
             detection_failed,
             detection_elapsed,
         )
@@ -1177,7 +1337,7 @@ class Anonymizer:
         logger.info(
             LOG_INDENT + "📋 %s complete (%d failed) [%.1fs]",
             "Rewrite" if config.rewrite is not None else "Replacement",
-            len(post_detection_failures),
+            len(post_detection_failures) - rejected_at_detect,
             replacement_elapsed,
         )
         if session_changes is not None:
@@ -1188,7 +1348,9 @@ class Anonymizer:
 
         all_failures = [*detection_failures, *post_detection_failures]
         if all_failures:
-            logger.warning("%d record(s) failed during pipeline processing.", len(all_failures))
+            logger.warning(
+                "%d record(s) failed during pipeline processing: %s.", len(all_failures), _failure_tally(all_failures)
+            )
         text_col = context.resolved_text_column
         renamed_trace = _rename_output_columns(final_df, resolved_text_column=text_col)
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
@@ -1222,6 +1384,7 @@ class Anonymizer:
             data_summary=data.data_summary,
             _outcomes=outcomes,
             session_changes=session_changes,
+            _outcome_ids=None if outcomes is None else _record_ids(final_df),
             effective_entity_labels=effective_labels,
         )
 
@@ -1245,6 +1408,9 @@ class Anonymizer:
         """Run semantic preflight checks shared by validate, run, and preview."""
         if config.rewrite is not None and config.rewrite.privacy_goal is None:
             raise InvalidConfigError("rewrite.privacy_goal must not be None")
+        # A result keeps its Hash without the key; a config copied from one is refused here, before detection.
+        if isinstance(config.replace, Hash) and config.replace.key is None:
+            raise InvalidConfigError(HASH_KEY_REQUIRED_MESSAGE)
         try:
             validate_model_alias_references(
                 self._model_configs,
@@ -1618,6 +1784,42 @@ def _step_to_field(step: str) -> str:
             return "rewrite_repair"
         case _:
             return "unknown"
+
+
+# The reasons the protection graph gives a failed record: an operation's own failure, or a rejected mention.
+_KNOWN_FAILURE_REASONS = frozenset(
+    {
+        "invalid_output",
+        "mention_not_on_target",
+        "mention_out_of_range",
+        "mention_slice_mismatch",
+        "mention_unlabelled",
+        "missing_output",
+        "over_limit",
+        "overlapping_output_ownership",
+        "raised",
+        "unspanned_value",
+    }
+)
+# Graph operation names a failed record can carry besides the workflow names ``_step_to_field`` knows.
+_KNOWN_FAILURE_STEPS = frozenset({"replace", "rewrite", "verify-no-original", "verify-patches"})
+
+
+def _failure_tally(failed: list[FailedRecord]) -> str:
+    """``step/reason=count`` per failure kind, for a log line: never a record id or value.
+
+    Only known steps and reason codes are named, since a caller's detector or runner can put anything in a failed
+    record. A failure with any other reason is counted under its step alone, and one with any other step under
+    ``other``.
+    """
+
+    def kind(failure: FailedRecord) -> str:
+        step, reason = failure.step, failure.reason
+        if step not in _KNOWN_FAILURE_STEPS and _step_to_field(step) == "unknown":
+            return "other"
+        return f"{step}/{reason}" if reason in _KNOWN_FAILURE_REASONS else step
+
+    return ", ".join(f"{key}={count}" for key, count in sorted(Counter(map(kind, failed)).items()))
 
 
 def _collect_failure_counts(failed: list[FailedRecord]) -> dict[str, int]:

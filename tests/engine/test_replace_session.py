@@ -324,7 +324,7 @@ def test_a_snapshot_restored_between_calls_gives_the_same_substitutes(tmp_path: 
     assert session.snapshot().to_bytes() == continuous.snapshot().to_bytes()
 
 
-@pytest.mark.parametrize("strategy", [Redact(), Annotate(), Hash()], ids=["redact", "annotate", "hash"])
+@pytest.mark.parametrize("strategy", [Redact(), Annotate(), Hash(key="test-key")], ids=["redact", "annotate", "hash"])
 def test_a_local_strategy_leaves_a_stable_session_unchanged(tmp_path: Path, strategy: ReplaceMethod) -> None:
     session, results = Session(stable_replacements=True), []
     _protect(tmp_path, ["Alice lives in Paris."], {"Alice": "Bob", "Paris": "Lyon"}, session, results)
@@ -470,7 +470,7 @@ def test_the_reroute_takes_a_stable_session(tmp_path: Path) -> None:
 
 
 class _OldSignature(ReplacementWorkflow):
-    """Overrides ``run_with_detection`` with the signature it had before ``session``."""
+    """Overrides ``run_with_detection`` with the signature it had before ``session`` (``unspanned_check`` included)."""
 
     def run_with_detection(  # ty: ignore[invalid-method-override]
         self,
@@ -481,6 +481,7 @@ class _OldSignature(ReplacementWorkflow):
         model_configs: Any,
         selected_models: Any,
         preview_num_records: int | None = None,
+        unspanned_check: bool = False,
     ) -> ReplacementResult:
         return super().run_with_detection(
             dataframe,
@@ -489,6 +490,7 @@ class _OldSignature(ReplacementWorkflow):
             model_configs=model_configs,
             selected_models=selected_models,
             preview_num_records=preview_num_records,
+            unspanned_check=unspanned_check,
         )
 
 
@@ -746,7 +748,7 @@ def test_a_stock_form_of_runner_takes_a_stable_session(tmp_path: Path, case: str
     assert results == [SessionCallChanges(added=1), SessionCallChanges(reused=1)]
 
 
-@pytest.mark.parametrize("strategy", [Redact(), Annotate(), Hash()], ids=["redact", "annotate", "hash"])
+@pytest.mark.parametrize("strategy", [Redact(), Annotate(), Hash(key="test-key")], ids=["redact", "annotate", "hash"])
 def test_a_stock_runner_takes_a_stable_session_with_a_local_strategy(tmp_path: Path, strategy: ReplaceMethod) -> None:
     detector = cast(EntityDetectionWorkflow, _Detector())
     runner = _runner(Anonymizer(detection_workflow=detector)._adapter, "stock")

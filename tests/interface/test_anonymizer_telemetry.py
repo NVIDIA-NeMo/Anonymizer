@@ -301,7 +301,7 @@ class TestFieldPopulation:
         "strategy_factory,expected_value",
         [
             (Redact, "redact"),
-            (Hash, "hash"),
+            (lambda: Hash(key="s3cr3t"), "hash"),
             (Substitute, "substitute"),
             (Annotate, "annotate"),
         ],
