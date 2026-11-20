@@ -67,6 +67,7 @@ class DetectorRow:
     """A detector's answer for one input record, named by that record's ``_anonymizer_record_id``.
 
     ``extra_values`` are ``(value, label)`` pairs reported without a span; ``latent`` feeds Rewrite's latent stage.
+    In Rewrite, a row with latent entries and no spans is rewritten; ``latent=()`` means none were found.
     """
 
     record_id: str
