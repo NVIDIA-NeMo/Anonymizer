@@ -86,7 +86,9 @@ def detect_step(
                 rebuilt[row] = covered
                 entities = EntitiesSchema(entities=[e for i, e in enumerate(entities.entities) if i not in covered])
             state.rows[datum] = entities
-            # A by-value view that is missing, empty or lacks a kept pair is rebuilt from the kept entities.
+            # The by-value rule: derive the view only when it is missing or stale. A view that is missing, empty or
+            # lacks a kept (value, label) pair is rebuilt from the kept entities; a view that lists every kept pair is
+            # the detector's own and is used as returned, extra pairs included.
             if not _absent(listed) and {(e.value, e.label) for e in entities.entities} <= _pairs(listed):
                 continue
             if entities.entities:

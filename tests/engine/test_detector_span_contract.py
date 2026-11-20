@@ -715,3 +715,24 @@ def test_a_detector_without_a_by_value_column_completes_whatever_its_rows(
     assert result.failed_records == failed
     column = "text_replaced" if mode in ("redact", "substitute") else "text_rewritten"
     assert (list(result.dataframe[column]) if column in result.dataframe.columns else []) == texts
+
+
+@pytest.mark.parametrize("mode", ["rewrite", "combined"])
+def test_a_complete_by_value_view_is_used_as_the_detector_returned_it(mode: str, tmp_path: Path) -> None:
+    extra = {"value": "Acme", "labels": ["organization"]}
+    own = _build_entities_by_value({"entities": [NAME, CITY]})
+    own = {**own, "entities_by_value": [*own["entities_by_value"], extra]}
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": [TEXT, CONTROL]}).to_csv(source, index=False)
+    frames: list[pd.DataFrame] = []
+    anonymizer = Anonymizer(
+        detection_workflow=cast(EntityDetectionWorkflow, _StaleByValueDetector(own)),
+        rewrite_runner=_capturing(RewriteWorkflow(Mock()), frames),
+        combined_rewrite_runner=cast(CombinedRewriteWorkflow, _capturing(CombinedRewriteWorkflow(Mock()), frames)),
+    )
+    anonymizer.run(
+        config=AnonymizerConfig(rewrite=Rewrite(use_combined_graph=mode == "combined")),
+        data=AnonymizerInput(source=str(source)),
+    )
+
+    assert _requested_pairs(frames[0][COL_ENTITIES_BY_VALUE].iloc[0]) == KEPT_PAIRS | {("Acme", "organization")}
