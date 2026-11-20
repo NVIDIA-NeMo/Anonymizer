@@ -1,0 +1,164 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# Give an operation context
+
+After reading this page you can let a step read text it does not protect, such as earlier messages in a thread or
+a structured profile, and control how much of it is read.
+
+!!! warning "Provisional"
+
+    The graph SDK is provisional. Names, signatures and default values may change in a later release.
+
+Context is read, never released. It helps a step decide what to change in a target; it is not itself output.
+
+## Declare context for a target
+
+A `ContextScope(target, items)` lists what one target may read. An item is one of:
+
+- another `Datum` from the same scope, delivered whole;
+- a `ContextView(target, over, start, end)`: the span `[start, end)` of another datum;
+- a `ContextSource(name, provider, max_items)`: a function you supply, called once per run, returning items.
+
+A step reads context by declaring the `context` input port. It receives a tuple of context items, each with the
+fields `source` (the source name, or `"datum"` or `"view"`), `index`, `text` and `kind`.
+
+```python
+from anonymizer import graph as g
+
+scope = g.GraphScope()
+earlier = scope.datum("Hi, I'm Dana Reyes from the Oakland office.")
+message = scope.datum("Thanks Dana, see you in Oakland.")
+
+
+def ticket_history() -> list[str]:
+    return ["Ticket 4411 opened by Dana Reyes."]
+
+
+history = g.ContextSource("ticket-history", ticket_history, max_items=10)
+graph = g.ProtectionGraph(scope, (message,), context=(g.ContextScope(message, (earlier, history)),))
+
+
+def redact_known(text: str, context: tuple) -> str:
+    for item in context:
+        print(f"read {item.source!r} #{item.index}: {item.text}")
+    for word in ("Dana", "Oakland"):
+        text = text.replace(word, "[REDACTED]")
+    return text
+
+
+workflow = g.Workflow("message", (g.Operation("redact", redact_known, {"text": "text", "context": "context"}),))
+result = g.protect(g.prepare(graph, workflow))
+print(result.value(message, "text"))
+print(result.retrievals)
+```
+
+```text
+read 'datum' #0: Hi, I'm Dana Reyes from the Oakland office.
+read 'ticket-history' #0: Ticket 4411 opened by Dana Reyes.
+Thanks [REDACTED], see you in [REDACTED].
+(Retrieval(source='ticket-history', status='ok', declared_max_items=10, observed_items=1, observed_bytes=33),)
+```
+
+Only `message` is a target. `earlier` is context: it is never processed or released. `result.retrievals` records one
+entry per context source with its status, item count and size in UTF-8 bytes.
+
+The function above ignores what it read and uses a fixed word list, to keep the example short. A real step would
+pass the context to a model or extract names from it.
+
+## When a source fails or returns too much
+
+A source is called once, before any step runs. Its items are never truncated and a failure is never replaced by
+empty context. If the provider raises, returns more than `max_items` items, or exceeds a byte ceiling, the
+retrieval closes with a status other than `ok` and every target that reads it fails with `binding_failed`, before
+its steps run:
+
+```python
+from anonymizer import graph as g
+
+
+def down() -> list[str]:
+    raise TimeoutError("history service down")
+
+
+scope = g.GraphScope()
+message = scope.datum("Thanks Dana.")
+graph = g.ProtectionGraph(
+    scope, (message,), context=(g.ContextScope(message, (g.ContextSource("history", down, max_items=10),)),)
+)
+workflow = g.Workflow(
+    "message", (g.Operation("redact", lambda text, context: text, {"text": "text", "context": "context"}),)
+)
+result = g.protect(g.prepare(graph, workflow))
+outcome = result.outcome(message)
+print(outcome.terminal, outcome.reason, result.retrievals[0].status)
+```
+
+```text
+failed binding_failed failed
+```
+
+| Retrieval status | Meaning |
+|---|---|
+| `ok` | Items delivered. |
+| `failed` | The provider raised. |
+| `overflow` | The provider returned more than `max_items` items. |
+| `over_byte_ceiling` | The items exceed the source's `max_bytes` or the run's `Limits.max_context_bytes`. |
+| `invalid_item` | An item failed its kind's check, or the kind's copy or size measure raised or gave no size. |
+| `not_started` | The run was cancelled before the source was called. |
+
+Set `ContextSource(..., max_bytes=n)` to cap one source, or `Limits(max_context_bytes=n)` to cap all context in a
+run. Static context (datums and views) over the run's ceiling is refused earlier, at `prepare`, with
+`over_byte_ceiling`.
+
+## Structured context
+
+Context items need not be text. Register a kind for them, set `kind=` on the source, and declare that kind on the
+step's `context` port. The value arrives in the item's `text` field with its own type:
+
+```python
+from anonymizer import graph as g
+
+PERSONA = g.register_kind(
+    "persona", lambda v: isinstance(v, dict) and "role" in v, lambda v: len(repr(v).encode("utf-8"))
+)
+
+scope = g.GraphScope()
+message = scope.datum("Thanks Dana, see you in Oakland.")
+persona = g.ContextSource("persona", lambda: [{"role": "nurse", "site": "Oakland"}], max_items=1, kind=PERSONA)
+graph = g.ProtectionGraph(scope, (message,), context=(g.ContextScope(message, (persona,)),))
+
+
+def generalize_site(text: str, context: tuple) -> str:
+    return text.replace(context[0].text["site"], "[SITE]")
+
+
+workflow = g.Workflow("persona", (g.Operation("generalize", generalize_site, {"text": "text", "context": PERSONA}),))
+print(g.protect(g.prepare(graph, workflow)).value(message, "text"))
+
+text_reader = g.Workflow(
+    "w", (g.Operation("reader", lambda text, context: text, {"text": "text", "context": "context"}),)
+)
+try:
+    g.prepare(graph, text_reader)
+except g.GraphRejection as exc:
+    print(exc.code, "|", exc.detail)
+```
+
+```text
+Thanks Dana, see you in [SITE].
+port_kind_mismatch | reader.context: persona != context
+```
+
+The second workflow declares its `context` port as plain text context, so `prepare` refuses it with
+`port_kind_mismatch` before the provider is ever called.
+
+`register_kind(name, check, measure=None, copy=None)` takes:
+
+- `check(value) -> bool`: is this value of the kind;
+- `measure(value) -> int`: its size in bytes, needed only when a byte ceiling applies; without one, `prepare` refuses
+  the source under a ceiling with `unsupported_context_kind`;
+- `copy(value) -> value`: an optional copy taken of each accepted value, so the producer cannot change it later.
+
+All context in one graph has one kind. Mixing a structured source with text, or two structured kinds, is refused
+with `unsupported_context_kind`.

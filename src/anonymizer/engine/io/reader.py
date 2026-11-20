@@ -11,14 +11,10 @@ import pyarrow.parquet as pq
 
 from anonymizer.config.anonymizer_config import AnonymizerInput, TextRecordsInput, infer_input_source_suffix
 from anonymizer.engine.constants import (
-    COL_ANY_HIGH_LEAKED,
-    COL_FINAL_ENTITIES,
-    COL_LEAKAGE_MASS,
-    COL_NEEDS_HUMAN_REVIEW,
     COL_TEXT,
-    COL_UTILITY_SCORE,
-    COL_WEIGHTED_LEAKAGE_RATE,
     RECORD_ID_COLUMN,
+    RESERVED_INPUT_COLUMNS,
+    RESULT_COLUMNS,
 )
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.engine.resolved_input import ResolvedInput
@@ -66,16 +62,9 @@ def read_input(input_data: AnonymizerInput | TextRecordsInput, *, nrows: int | N
 # (see ``_rename_output_columns`` in ``anonymizer.interface.anonymizer``).
 _OUTPUT_COLUMN_SUFFIXES: tuple[str, ...] = ("_replaced", "_with_spans", "_rewritten")
 
-# Fixed user-facing output column names that don't depend on the text column
-# (see ``_build_user_dataframe`` in ``anonymizer.interface.anonymizer``).
-_STATIC_OUTPUT_COLUMNS: tuple[str, ...] = (
-    COL_FINAL_ENTITIES,
-    COL_UTILITY_SCORE,
-    COL_LEAKAGE_MASS,
-    COL_WEIGHTED_LEAKAGE_RATE,
-    COL_ANY_HIGH_LEAKED,
-    COL_NEEDS_HUMAN_REVIEW,
-)
+# Fixed user-facing output column names that don't depend on the text column: the result and evaluation columns
+# (see ``_build_user_dataframe`` in ``anonymizer.interface.anonymizer``), derived from the ``COL_*`` constants.
+_STATIC_OUTPUT_COLUMNS: tuple[str, ...] = tuple(sorted(RESULT_COLUMNS))
 
 # Suffix appended to input columns whose names collide with anonymizer output
 # columns; mirrors how pandas disambiguates duplicate column names on read.
@@ -83,12 +72,20 @@ _INPUT_RENAME_SUFFIX = "__input"
 
 
 def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_text_column: str) -> None:
-    """Hard-error if the user's input contains the reserved internal text column."""
-    if COL_TEXT in dataframe.columns and selected_text_column != COL_TEXT:
-        raise InvalidInputError(
-            f"Input contains reserved internal column {COL_TEXT!r} while text_column={selected_text_column!r}. "
-            f"Either set text_column={COL_TEXT!r} or remove/rename {COL_TEXT!r} from input."
-        )
+    """Hard-error if the user's input has a column named like one the pipeline uses internally.
+
+    The pipeline would read such a column as its own (an input ``_rewritten_text`` is released as the rewritten
+    text), so none may be supplied. The selected text column is exempt: it is renamed to the internal text name
+    before the pipeline runs.
+    """
+    reserved = [c for c in dataframe.columns if c in RESERVED_INPUT_COLUMNS and c != selected_text_column]
+    if not reserved:
+        return
+    hint = f" or set text_column={COL_TEXT!r}" if COL_TEXT in reserved else ""
+    raise InvalidInputError(
+        f"Input contains reserved internal column(s) {reserved!r} while text_column={selected_text_column!r}. "
+        f"Remove or rename {'it' if len(reserved) == 1 else 'them'}{hint}."
+    )
 
 
 def _resolve_output_column_collisions(

@@ -8,7 +8,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Protocol, TypeGuard, cast
+from typing import Any, Protocol, TypeGuard, cast
 
 import pandas as pd
 from pydantic import BaseModel
@@ -431,6 +431,11 @@ def _normalize_replacement_map(raw: str | dict | object) -> list[dict[str, str]]
     return result
 
 
+def _metric_text(value: Any) -> str:
+    """Format a metric to two decimals; a null metric (NaN or NA) reads "not available", as in the repair prompt."""
+    return "not available" if value is None or pd.isna(value) else f"{value:.2f}"
+
+
 def _render_scores_section(row: pd.Series, *, is_rewrite: bool = False) -> str:
     """Render scores in up to three rows: objective metrics | detection validity | judge."""
     section_rows: list[str] = []
@@ -443,15 +448,15 @@ def _render_scores_section(row: pd.Series, *, is_rewrite: bool = False) -> str:
     weighted_leakage_rate = row.get(COL_WEIGHTED_LEAKAGE_RATE)
     needs_review = row.get(COL_NEEDS_HUMAN_REVIEW)
 
-    if utility is not None:
-        metric_parts.append(f"<span style='margin-right:16px'><strong>Utility:</strong> {utility:.2f}</span>")
-    if leakage is not None:
-        metric_parts.append(f"<span style='margin-right:16px'><strong>Leakage:</strong> {leakage:.2f}</span>")
-    if weighted_leakage_rate is not None:
-        metric_parts.append(
-            "<span style='margin-right:16px'><strong>Weighted Leakage Rate:</strong> "
-            f"{weighted_leakage_rate:.2f}</span>"
-        )
+    for name, column, value in (
+        ("Utility", COL_UTILITY_SCORE, utility),
+        ("Leakage", COL_LEAKAGE_MASS, leakage),
+        ("Weighted Leakage Rate", COL_WEIGHTED_LEAKAGE_RATE, weighted_leakage_rate),
+    ):
+        if column in row.index:
+            metric_parts.append(
+                f"<span style='margin-right:16px'><strong>{name}:</strong> {_metric_text(value)}</span>"
+            )
     if needs_review is not None:
         label = "Rewrite Needs Review" if is_rewrite else "Needs Review"
         badge_color = "#ef4444" if needs_review else "#22c55e"

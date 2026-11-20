@@ -29,7 +29,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-from anonymizer.engine.ndd.model_response import no_response
+from anonymizer.engine.ndd.model_response import ResponseCheckError, no_response
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.schemas import (
@@ -403,9 +403,10 @@ def _check_disposition_response(response: object, row: dict[str, Any], *, strict
         _parse_numbered_lines(row.get(COL_DISPOSITION_LATENT_ENTITIES))
     )
     if returned != supplied:
-        raise ValueError(
+        raise ResponseCheckError(
             f"The response has {returned} entries but {supplied} entities were supplied: "
-            f"return exactly {supplied} entries, with ids 1..{supplied}, one per supplied entity."
+            f"return exactly {supplied} entries, with ids 1..{supplied}, one per supplied entity.",
+            cause=f"entry_count_mismatch: {returned} entries, {supplied} expected",
         )
 
 

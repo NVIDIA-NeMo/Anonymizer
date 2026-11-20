@@ -7,60 +7,163 @@ description: ""
 
 # Graph SDK
 
-`anonymizer.graph` runs a local protection workflow over text targets. You declare the targets and their relationships, compose operations into a workflow, admit it with `prepare`, and execute it with `protect`. A successful operation does not by itself make an output protected: release depends on a separate verifier's assessment of the candidate text.
+After reading this page you can run a small protection workflow of your own, read its result, and know which page
+to open next.
 
-The surface is provisional. Names, signatures and defaults may change before it is published, and the `Anonymizer` facade does not depend on that stability.
+<Warning title="Provisional">
+The graph SDK is provisional. Its names, signatures and default values may change in a later release. The
+`Anonymizer` class does not depend on them staying the same.
+</Warning>
 
-The provider-free example, `examples/graph_sdk/local_workflows.py` in the repository, uses only names exported by `anonymizer.graph`. Save the file and run it in an environment that has `nemo-anonymizer`:
+## What the graph SDK is for
 
-```bash
-python local_workflows.py
+The `Anonymizer` class runs fixed strategies: Redact, Hash, Substitute, Rewrite. The graph SDK, in the module
+`anonymizer.graph`, lets you build your own strategy from Python functions and run it locally:
+
+- Write each step as an ordinary function: a regular expression, a call to your own model, a lookup.
+- Add a separate check that decides whether the output is good enough to release.
+- Get back, for each text, whether the steps ran, whether the check passed, and whether the output may be
+  released, as three separate answers.
+
+Use it when the built-in strategies do not fit: you want your own detector, a different rewrite loop, a field-by-field
+policy for table rows, or an audit of text that was anonymized elsewhere. If a built-in strategy does what you need,
+use the `Anonymizer` class instead.
+
+The SDK runs your functions synchronously, on the thread that calls it. It calls no model and no service by itself.
+Every external call happens inside a function you wrote.
+
+## A first program
+
+This program protects two short texts. Its only step knows one of two names, and a separate check looks for both
+names. One text passes the check and is released; the other is withheld.
+
+```python
+from anonymizer import graph as g
+
+NAMES = ("Alice", "Bob")
+
+
+def redact_alice(text: str) -> str:
+    """A step that knows only one of the two names."""
+    return text.replace("Alice", "[NAME]")
+
+
+def check_names(text: str, target: g.Datum) -> g.Assessment:
+    """A check that is separate from the step and looks at the step's output."""
+    return g.Assessment(not any(name in text for name in NAMES), target)
+
+
+# 1. Declare the texts to protect.
+scope = g.GraphScope()
+alice = scope.datum("Alice uses alice@example.test")
+bob = scope.datum("Bob uses bob@example.test")
+graph = g.ProtectionGraph(scope, (alice, bob))
+
+# 2. Compose the steps into a workflow.
+inputs = {"text": "text", "target": "datum"}
+verifier = g.Operation.verifier("check-names", check_names, inputs, checks=("names_removed",), subject=("text",))
+steps = (g.Operation("redact-alice", redact_alice), verifier)
+workflow = g.Workflow("redact-names", steps, requires=("names_removed",))
+
+# 3. Prepare (validate) the workflow, then run it.
+prepared = g.prepare(graph, workflow, limits=g.Limits(max_targets=2))
+print(prepared.summary().render())
+result = g.protect(prepared)
+
+# 4. Read the outcomes.
+for name, datum in (("alice", alice), ("bob", bob)):
+    outcome = result.outcome(datum)
+    print(f"{name}: terminal={outcome.terminal} qualification={outcome.qualification} protected={outcome.protected}")
+print(result.protected[alice])
+print(result.outcome(bob).reasons)
+print(result.summary().render())
 ```
 
-## Declare
+It prints:
 
-A `GraphScope` creates `Datum` values, each an immutable text with an identity that belongs to that scope. A `ProtectionGraph` binds the target datums and the relations among them:
+```text
+workflow: 2 operations [redact-alice, check-names]; targets: 2
+planned external requests: exact 0
+terminals: none (not executed)
+alice: terminal=success qualification=met protected=True
+bob: terminal=success qualification=not_met protected=False
+[NAME] uses alice@example.test
+(Reason(code='failed', check='names_removed', verifier='check-names', cause=''),)
+workflow: 2 operations [redact-alice, check-names]; targets: 2
+planned external requests: exact 0
+terminals: success=2; qualification: met=1, not_met=1
+reasons: failed=1; protected: 1; consistent: True
+observed: binding=exact 0, correction=exact 0, retry=exact 0, total=exact 0, requests=exact 0; budget: within
+```
 
-- `Mention` marks an exact half-open character interval of a target with a non-empty label.
-- `ContextScope` lists the context a target may read: other datums, a `ContextView` over part of a datum, or a `ContextSource`, a caller-owned provider retrieved once per run with a declared item bound. A source's `kind` names a registered artifact kind (default `"text"`); items reach the operation with that type and an item that fails (or raises in) the kind's check or measure closes the retrieval as `invalid_item`. An operation reading structured context declares that kind on its `context` port, so a text consumer is rejected as `port_kind_mismatch`. A graph's context has one kind: mixing kinds anywhere in the graph is `unsupported_context_kind`. `prepare` rejects a kind mismatch, mixed kinds, an unknown kind, and a kind without a byte measure when a byte ceiling applies, before any provider runs.
-- `Dependency` withholds one target's output when another target's output is withheld.
-- `OutputGroup` releases its member targets all together or not at all.
-- `Record` groups targets that belong together, such as the parts of one input row. `scope.record(members)` makes one from a tuple of targets, kept in the caller's order, and the graph takes them as `records=(...)`. Each target is in exactly one Record: a target in no declared Record is its own singleton Record, and a Record of one member is allowed. `graph.record_of(target)` returns a target's Record, and `graph.all_records` lists every Record once, ordered by its earliest target. A Record's identity is opaque, and its repr shows only its member count. A Record does not change release; use `OutputGroup` for all-or-none release.
+The repository ships the same program, with `assert` statements on its result, as
+[`examples/graph_sdk/local_workflows.py`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/examples/graph_sdk/local_workflows.py).
+It needs no model and no network.
 
-Constructing these values has no effect. Sequences passed to these types, to `Operation` and to `Workflow` are copied into tuples at construction, so mutating them afterwards has no effect. The graph constructor rejects foreign datums, out-of-range, unlabelled (`mention_unlabelled`) or overlapping mentions, duplicate context sources and dependency cycles with a `GraphRejection`. It rejects records that are not a tuple of `Record` values (`invalid_record`), an empty Record (`empty_record`), a Record made by another scope (`foreign_record`), a member that is not one of the graph's targets (`foreign_datum` or `unknown_reference`), and a target in two Records, or twice in one (`record_overlap`).
+## What each part does
 
-## Compose
+**Declare.** A `GraphScope` makes `Datum` values. A datum is one text plus an identity. Each datum you pass to
+`ProtectionGraph` is a **target**: a text the workflow protects and may release. Here there are two targets and no
+relations between them.
 
-An `Operation` is a name, a callback, typed input and output ports, and a declared `Requests` bound (none, exact, upper bound, unknown or opaque) on the external requests it makes per target. Input ports bind by name to the latest earlier output, or to a per-target seed: `text` (the current candidate), `source` (the original text), `mentions`, `context`, `target` and `record` (the target's Record). An operation may not declare an output named `record`, since it would replace that seed for every later operation; it is rejected at construction with `GraphRejection("seed_output_reserved")`. `Operation.verifier` builds an operation whose callback returns an `Assessment`, names the `checks` that assessment answers and, with `checks`, the `subject`: the input ports the assessment is about. A verifier's outputs are exactly `{"assessment": "assessment"}`, so it carries no other port; an operation that declares any other output layout with an `assessment`-kind port or a port named `assessment` is rejected at construction with `GraphRejection("verifier_ports")`. A `Workflow` names the checks it `requires` and is an ordered tuple of operations and nested workflows; a nested workflow's `requires` are required by the whole invocation. `checks`, `subject` and `requires` are tuples of names, such as `subject=("text",)`; a bare string is rejected at construction with `GraphRejection("names_not_tuple")`. Every `GraphRejection` is a `ValueError`; `datum_not_text` and `names_not_tuple` are also a `TypeError`. Catch `GraphRejection` to read its `code` and `detail`. A workflow released as `protected` may not nest a workflow released as anything other than `protected` at any depth; `prepare` rejects it with `GraphRejection("annotation_in_protected")`. Operation names must be unique once nested workflows are flattened, where a nested operation is named by its workflow path such as `inner/step`; `prepare` rejects a repeated name with `GraphRejection("duplicate_operation_name")`, whose `detail` names it. Callers that need an artifact kind beyond the built-in ones declare it with `register_kind`.
+**Compose.** An `Operation` wraps one of your functions. `Operation("redact-alice", redact_alice)` reads the current
+text and returns new text. `Operation.verifier(...)` wraps a function that returns an `Assessment`, a verdict about
+one target. The verifier says which **check** its verdict answers (`checks=("names_removed",)`) and which input it
+judged (`subject=("text",)`). The `Workflow` lists the steps in order and names the checks a target must pass
+(`requires=("names_removed",)`).
 
-A phase-scoped operation, built with `Operation.phase_scoped` (scope `phase_scoped`), runs once over every target that is ready for it instead of once per target. It declares per-target port kinds as usual, but receives each input port as a tuple of per-target values in target order, and returns a sequence with one entry per target in that order. An entry is the target's output; `None` fails that target with `missing_output`; an `Exception` instance fails it with `raised`. If the callback raises, every target it was given fails with `raised`; if it returns something that is not a sequence of one entry per target, they all fail with `invalid_output` and the error is recorded. Targets that failed an earlier operation are not passed to it and stay blocked. Its declared `Requests` count once per invocation, not once per target. An operation that reads the `record` seed receives each target's Record, so it can group the targets it was given by Record: the members of one Record get equal values. Mentions an operation returns on a `mentions` port are checked when accepted, by the same rules as declared mentions: each must be a `Mention` on its own target with valid offsets, matching claimed text, a non-empty label and no overlap, or that target fails with the rule's reason (`invalid_output`, `mention_not_on_target`, `mention_out_of_range`, `mention_slice_mismatch`, `mention_unlabelled`, `overlapping_output_ownership`) and other targets continue. Anonymizer's own detection step may also put an internal refusal entry in place of a target's mentions, which fails that target with the refusal's reason (`unspanned_value`); it is not part of the public API. Declared and accepted mentions count together against `Limits.max_mentions`; when one call's mentions would exceed it, every target of that call fails with `over_limit`. In Replace and Rewrite modes, detection runs as the first phase-scoped step of the same call that replaces or rewrites.
+Each function receives its inputs as keyword arguments named after its input ports. `check_names` asks for `text`
+(the current text) and `target` (the datum being processed), so the verifier declares
+`{"text": "text", "target": "datum"}`: port name on the left, kind of value on the right.
 
-`Workflow.release` is `"protected"` by default. An `"annotation"` workflow returns content that keeps the source text and never qualifies as protected.
+**Prepare.** `prepare` checks the whole workflow before any of your functions runs: that every input can be
+supplied, that every required check is answered by a verifier of the final text, and that the workflow fits the
+limits you set. It returns a `PreparedProtection` or raises `GraphRejection`. The first summary shows the plan: two
+operations, two targets, no external requests declared.
 
-## Prepare and protect
+**Protect.** `protect` runs the prepared workflow: it calls `redact_alice` for each target, then `check_names` for
+each target.
 
-`prepare(graph, workflow, limits=...)` checks the workflow against `Limits` and the port wiring before any callback runs, and returns a `PreparedProtection`. It raises `GraphRejection`, which carries a closed `code` and a `detail` naming the limit or rule, when the workflow is not admissible. A `request_budget` argument is checked here, at `prepare`: a workflow whose planned request count exceeds the budget, or is unknown or opaque, is rejected with `GraphRejection`. The budget is not enforced while the workflow runs. `PreparedProtection.summary()` returns the planned operations and request count without running anything.
+**Read.** Each target has a `TargetOutcome` with three separate facts:
 
-Only a verifier whose every `subject` port derives from the final candidate text answers a required check. `prepare` derives each port from the declared ports alone: the seeds `text`, `source`, `mentions` and `target` derive from the source text and `context` and `record` from none; each operation with a `text` output creates the next candidate; every output of such an operation derives from the candidate it emits (an interim rule: evidence returned beside a text counts as about that text), and any other operation's outputs derive from all of its inputs. A verifier that declares `checks` without a `subject`, names a subject that is not one of its inputs or derives from no candidate, or an operation that declares a `subject` but is not a verifier, is rejected with `GraphRejection("verifier_subject_invalid")`. A verifier with neither `checks` nor `subject` is allowed and answers no check. The graph checks the declaration, not what the callback reads: a verifier that declares `text` as its subject but bases its verdict on an earlier artifact is still accepted. A verifier of earlier text is a diagnostic: its assessment is readable with `value(..., producer=...)` but answers no required check. To stop early, raise from an operation. A workflow that requires a check declared only by a verifier of earlier text, or by no verifier, is rejected at `prepare` with `GraphRejection("required_check_not_final")`, whose `detail` names the unanswered checks. A workflow whose final `text` output has a kind other than `"text"` is rejected with `GraphRejection("final_text_not_text")`.
+| Fact | Question it answers | Alice | Bob |
+|---|---|---|---|
+| `terminal` | Did every step run? | `success` | `success` |
+| `qualification` | Did every required check pass on the final text? | `met` | `not_met` |
+| `protected` | Was the output released? | `True` | `False` |
 
-`protect(prepared, cancel=...)` runs the prepared workflow synchronously on the calling thread. A callback that raises closes its target as failed and does not raise out of `protect`. A `CancelToken` stops further dispatches and retrievals. An `Anonymizer.run()`, `preview()` or `evaluate()` called from a callback, whose steps the cancellation stops, raises `AnonymizerWorkflowError` instead of returning partial output.
+Bob's text ran without error but still contains "Bob", so the check failed and the output was withheld. A step that
+succeeds is not enough for release. Alice's text was released because Alice passed the declared check: a
+case-sensitive search for the names "Alice" and "Bob". `result.protected` maps released targets to their text, so
+it holds Alice's text only. `reasons` says why Bob was not released.
 
-`protect` accepts only a `PreparedProtection` returned by `prepare` and not altered since; otherwise it raises `GraphRejection("not_prepared")`. It rechecks the limits and admitted capabilities before any callback runs. Every `Assessment` a verifier returns must name the target it was produced for; one without a target, or naming another target, makes the whole invocation inconsistent, so no target qualifies, while the assessments stay readable on the result.
+The released text shows the scope of that check: it still contains the email address `alice@example.test`. `met`
+means the declared checks passed, nothing more. The checks you write define what "protected" means for your
+workflow.
 
-## Read the results
+## Where to go next
 
-`ProtectionResult` keeps three facts apart for each target in its `TargetOutcome`:
+- [Concepts](/concepts/graph-sdk/concepts): the model behind the four stages, and why the check is separate from the steps.
+- [Glossary](/concepts/graph-sdk/glossary): every term used in these pages, defined once.
+- Task guides:
+  - [Write an operation](/concepts/graph-sdk/guide-write-an-operation)
+  - [Add a verifier and require a check](/concepts/graph-sdk/guide-verify-and-require-checks)
+  - [Process all targets in one call](/concepts/graph-sdk/guide-batch-targets)
+  - [Give an operation context](/concepts/graph-sdk/guide-give-an-operation-context)
+  - [Write your own detector](/concepts/graph-sdk/guide-custom-detector)
+  - [Release related texts together](/concepts/graph-sdk/guide-release-together)
+  - [Set limits, budget requests and cancel](/concepts/graph-sdk/guide-limits-budgets-cancel)
+  - [Rebuild a document from protected parts](/concepts/graph-sdk/guide-rebuild-documents)
+  - [Find out why a target was withheld](/concepts/graph-sdk/guide-read-outcomes)
+- [Ideas](/concepts/graph-sdk/ideas): workflows the SDK makes possible beyond the built-in strategies.
+- [Reference](/concepts/graph-sdk/reference): every public name, field, limit and error code.
 
-- `terminal`: `success`, `failed`, `cancelled` or `blocked`.
-- `qualification`: `met` when every required check (including those of nested workflows) is answered by a verifier of the final candidate and every such verifier was satisfied, `not_met` otherwise, or `not_assessed` when the workflow requires no checks.
-- `protected`: whether the output was released, which requires `met` plus every dependency and group the target belongs to.
+## If you only use the `Anonymizer` class
 
-`reasons` says why a target is not met or not released, one `Reason` per cause: a required check `failed` or `could_not_assess` (each with the verifier's stated `cause`; the facade's verifiers state fixed codes or the count cause below, never record text) or `missing` (a final-text verifier declares its assessment on a port not named `assessment`, so its verdict is not read), an execution code such as `raised`, `inconsistent_invocation`, or `withheld` (with `withheld_by` naming the targets that withheld it). `reason` is the last reason's code. `advisories` holds one `Advisory(check, verifier, status, cause)` for each check that a verifier of the final candidate answered but the workflow does not require: `status` is `passed`, `failed`, or `could_not_assess` (the only statuses the kernel emits; `evaluate()` results of the `Anonymizer` facade also use `scored` and `not_applicable`, described below), `cause` is the verifier's stated cause for `failed` and `could_not_assess`, and an advisory never changes qualification or release. In the `Anonymizer` facade, Redact, Hash and Substitute rows (not Annotate) carry the advisory `no_detected_value_added`. The replaced text is scanned whole, replacements included: `failed` means it holds a detected value more often than the source holds that value outside the detected spans, `passed` means it does not, and `could_not_assess` means the check could not run. Its `cause` lists each value over that bound as `e<i>:N<n>,D<d>,O<o>`, joined by `;`: `i` is the position of the value's first detected span among the row's entities sorted by start, `n` the value's occurrences in the source, `d` those inside a detected span, and `o` its occurrences in the replaced text; it holds no record text. To see which value an entry names and where it occurs, `result.leftovers(row)` returns one `Leftover` per value, in `cause` order: its `position` (the cause's `i`), the `value` counted, the `label` and `span` of the entity at that position, the count `in_source`, the source matches that no detected span contains as `undetected_spans`, and the output matches as `output_spans`; `span` is a `Span(start, end)` and the two collections are `Spans`, ordered sets of them (`text[span.slice]` is the text a span covers). The properties `detected`, `in_output`, `over_bound` (the bound fails) and `undetected_kept` (the output keeps a value the source also holds outside the detected spans) follow from them; for example `[(x.position, x.value, x.output_spans) for x in result.leftovers(0)]`. Unlike `cause`, it returns record text. The check matches words, not meanings: an ordinary word spelled like a detected value, such as "will" when the name "Will" was detected, passes when the source already held it outside the detected spans, and a replacement that equals or contains another detected value is reported. Rewrite rows carry no advisory: their required `replacements_applied` check applies the same bound to the values the policy replaces and states the same `cause` when it fails (see [Rewrite](/concepts/rewrite)). `error` holds the exception that failed the target and is never rendered.
+You do not need this SDK to read a verdict. `run()` and `preview()` results carry one `TargetOutcome` per output
+row, the same type described here: `result.outcome(row)`. A row stays in the output frame even when it is not
+released, so read its outcome before you use the row. What `not_met` means depends on the mode:
 
-`result.protected` maps each released target to its text (its source text when no operation produces text). `result.content()` gives each target's final candidate without a protection claim: the output of the last operation that produces text. If that operation did not succeed, the target has no final candidate and its outcome gives the reason; earlier text is never substituted. `result.value(target, port)` reads the latest value of a named port from any operation, and `result.value(target, port, producer=name)` reads only the output of the operation called `name` (None when no operation has that name). `result.compose(parts)` joins the candidate texts of the listed targets in the caller's order; `result.reconstruct(parts, source)` joins them in the order of the positions `source` maps them to, and rejects a part outside `source`, two parts at one position or an untaken position. Either rejects a listed target that did not succeed with an available candidate as `unavailable_input`. Projections read the saved result and never rerun a callback. `result.summary()` returns an `InspectionSummary` of counts and reason codes with no text content; `render()` prints it. Its `budget` compares observed requests with the planned count: `exceeded` when the requests reported so far already pass a known plan, `within` when every step that could make requests reported and their reported sum stays within it, and `unknown` otherwise. Its `requests` row is the sum the steps reported: exact when every step that could make requests reported, a lower bound when only some did, and unknown when none did; `total` adds the context retrievals to that sum with the same exactness, so a step that reports requests counts whatever it declared. `result.ledger()` gives one status per target and operation; an operation that never ran is `blocked` when its target had already failed, and `cancelled` when the invocation was cancelled first.
-
-`result.assemble_regions(source, regions)` rebuilds one document from region replacements. Each region is a `(start, end, target)` range of the original `source`, replaced by that target's candidate; text outside the regions is kept, and ranges keep referring to the original source whatever the replacement lengths. It rejects a range outside `source` (`region_out_of_bounds`), ranges that overlap (`overlapping_region`) and a target without an available candidate (`unavailable_input`); a missing replacement is never filled with source text. The assembled text is a candidate, not released output. With an `anonymizer.measurement` session active, `prepare`, `protect` and outcome reconciliation each record one `stage` record (`graph_prepare`, `graph_protect`, `graph_reconcile`) carrying only operation and target counts, terminal counts and elapsed time.
-
-The example transforms two targets, one containing `Alice` and one containing `Bob`, with a transform that knows only `Alice`. The verifier answers the required `names_removed` check for both names, so the first target is `met` and released and the second is `not_met` and withheld. The email address in the released text is untouched: `met` applies to the declared name check, not to general anonymization quality.
-
-The `Anonymizer` facade keeps the same outcomes. `result.outcome(row)` on the `AnonymizerResult` or `PreviewResult` of `run()` or `preview()` returns the `TargetOutcome` of that output row. In Replace mode `not_met` means the row's replacements did not all land (the `replacements_applied` check failed, for example because the replacement map omitted a detected entity); in Rewrite mode it means a final privacy check on the rewritten text failed. Either way the row is still in the output frame, so read its outcome before releasing it. A row index outside the result raises `IndexError`, as does a result from a custom runner, which carries no outcomes. On an `evaluate()` result, `outcome(row)` is that row's outcome from the evaluated `run()` or `preview()` result, with each judge appended as an advisory whose `check` and `verifier` name the judge (`coverage`, `rewrite-judge`, `detection-validity`, `type-fidelity`, `relational-consistency` or `attribute-fidelity`). A judge advisory's `status` is `passed`, `failed` (with the failure `cause`, such as `entities_leaked`), `could_not_assess` (cause `judge_unavailable` when the judge gave no score, `raised` when its check raised, `blocked` when an earlier judge check of the row raised so this one never ran), `scored` (the rewrite judge, which has no pass threshold, returned scores; read them in the judge evaluation column) or `not_applicable` (the rewrite judge skips a row with no detected entities by design). Like any advisory, a judge never changes the row's qualification or release, so `qualification` and `protected` still say whether the run released the row; a judge's `failed` advisory is evidence to review before using the row. The run outcome is found by the row's record id, so reordering or filtering the result's rows before `evaluate()` keeps each row's own outcome. Each judge's rows are matched to records the same way, and only by a non-null record id that occurs once in the evaluated result and once among the judge's rows: row order and text are never used, since records can share their text. Ids compare as text. A row without such an id is reported unassessed: its outcome is `not_assessed` and unprotected, and each judge reads `could_not_assess` with cause `unplaced`, even when no row has one. The `replace_runner` and `rewrite_runner` arguments of `Anonymizer` are for advanced use and testing; a custom runner's `evaluate()` must keep each row's record id, and every built-in runner does. A row that a custom runner gives another record's id, including by retyping ids so that they compare equal as text, is reported as that record, with its run outcome and its judges' verdicts. A row starts from a `not_assessed`, unprotected outcome instead when the evaluated result carries no outcomes (a custom runner's result, or one pickled before outcomes were kept) or when its record id matches no single row of the evaluated result's outcomes (for example after its record ids were changed; the outcome is the run's verdict on the run's own text, and is not re-derived for a row whose text was edited under the same id). Evaluating an `evaluate()` result again replaces each judge's advisory rather than adding a second one. The input result is not changed.
+- [Replace](/concepts/replace#reading-each-rows-outcome): the row's replacements did not all land.
+- [Rewrite](/concepts/rewrite#reading-each-rows-outcome): a final check on the rewritten text failed or could not be assessed.
+- [Evaluation](/concepts/evaluation#outcomes-after-evaluate): what the judges of `evaluate()` add to each row's outcome.

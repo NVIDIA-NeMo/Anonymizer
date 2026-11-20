@@ -46,6 +46,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.ndd.model_response import step_names
 from anonymizer.engine.ndd.workflow_utils import run_columns
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
@@ -229,7 +230,8 @@ def _remap_custom_column(
             model_aliases=model_aliases,
         )
         async def remapped_generator(row: dict[str, Any], generator_params: Any, models: dict) -> dict[str, Any]:
-            generated = await generator(_canonical_row(row, mapping), generator_params, models)
+            with step_names(mapping):  # each round's requests count in that round's window
+                generated = await generator(_canonical_row(row, mapping), generator_params, models)
             return _copy_remapped_outputs(row, generated, outputs, mapping)
 
     elif column.generator_params is not None:
@@ -350,6 +352,7 @@ def _finalization_column(states: list[EvaluationState]) -> CustomColumnConfig:
         COL_NEEDS_REPAIR,
         COL_REPAIR_ITERATIONS,
         COL_NEEDS_HUMAN_REVIEW,
+        COL_REWRITTEN_TEXT_NEXT,
     ]
 
     @custom_column_generator(
@@ -383,6 +386,8 @@ def _finalization_column(states: list[EvaluationState]) -> CustomColumnConfig:
         row[COL_ANY_HIGH_LEAKED] = row.get(state.any_high_leaked)
         row[COL_NEEDS_REPAIR] = row.get(state.needs_repair)
         row[COL_REPAIR_ITERATIONS] = state.iteration
+        # As staged keeps ``_rewritten_text__next``: the candidate of the round chosen above, None before any repair.
+        row[COL_REWRITTEN_TEXT_NEXT] = row.get(state.rewritten_text) if state.iteration > 0 else None
         # A placeholder that keeps the column's place and type: ``_flag_review`` assigns the flag after the final checks.
         row[COL_NEEDS_HUMAN_REVIEW] = False
         return row

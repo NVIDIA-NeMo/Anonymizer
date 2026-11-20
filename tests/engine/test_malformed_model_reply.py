@@ -861,7 +861,11 @@ def _repair_run(tmp_path: Path, workflow: type[RewriteWorkflow], max_repair_iter
 
 
 def _anonymizer_run(
-    tmp_path: Path, workflow: type[RewriteWorkflow], max_repair_iterations: int, rewritten_text: str | None = _EVAL_TEXT
+    tmp_path: Path,
+    workflow: type[RewriteWorkflow],
+    max_repair_iterations: int,
+    rewritten_text: str | None = _EVAL_TEXT,
+    risk_tolerance: str | None = None,
 ) -> Any:
     """Run both records through ``Anonymizer.run()``: detection returns the seeded rows, and the loop evaluates."""
     seeded = _seeded_rows(rewritten_text).drop(columns=[COL_TEXT])
@@ -881,7 +885,10 @@ def _anonymizer_run(
         else Anonymizer(detection_workflow=detector, rewrite_runner=runner)
     )
     rewrite = Rewrite(
-        privacy_goal=_PRIVACY_GOAL, max_repair_iterations=max_repair_iterations, use_combined_graph=combined_graph
+        privacy_goal=_PRIVACY_GOAL,
+        max_repair_iterations=max_repair_iterations,
+        use_combined_graph=combined_graph,
+        **({} if risk_tolerance is None else {"risk_tolerance": risk_tolerance}),
     )
     return anonymizer.run(
         config=AnonymizerConfig(rewrite=rewrite, emit_telemetry=False),
@@ -1081,29 +1088,45 @@ def test_quality_evaluation_without_a_response_in_an_earlier_round_is_counted(
 def test_trace_of_a_repair_withheld_for_its_privacy_response(
     tmp_path: Path, repairer: tuple[dict[str, list[str]], dict[str, int]], workflow: type[RewriteWorkflow]
 ) -> None:
-    """Pins what the docs say each mode's trace keeps: staged keeps the repair candidate, combined does not."""
+    """Both modes keep the latest repair candidate in ``_rewritten_text__next``, though its text is withheld."""
     script, _ = repairer
     script["privacy"] = [_LEAK, *[_UNPARSED] * _RETRIES]
     script["repair"] = [json.dumps({"rewritten_text": _REPAIRED_TEXT})]
 
-    frame = _repair_run(tmp_path, workflow, max_repair_iterations=3).dataframe
+    frame = _anonymizer_run(tmp_path, workflow, max_repair_iterations=3).trace_dataframe
 
-    assert pd.isna(frame.iloc[0][COL_REWRITTEN_TEXT])
-    if workflow is _StagedLoop:
-        assert frame.iloc[0][COL_REWRITTEN_TEXT_NEXT] == _REPAIRED_TEXT
-    else:
-        assert COL_REWRITTEN_TEXT_NEXT not in frame.columns
-        # The production graph drops every round's repair candidate with its internal columns, as the harness does.
-        graph = CombinedRewriteWorkflow(adapter=Mock()).build_graph(
-            selected_models=load_default_model_selection().rewrite,
-            replace_model_selection=load_default_model_selection().replace,
-            privacy_goal=_PRIVACY_GOAL,
-            evaluation=Rewrite(privacy_goal=_PRIVACY_GOAL, max_repair_iterations=3).evaluation,
-        )
-        produced = {column.name for column in graph.columns}
-        candidates = {c for c in produced if c.startswith(COL_REWRITTEN_TEXT_NEXT)}
-        assert len(candidates) == 3
-        assert candidates <= set(graph.internal_columns)
+    assert pd.isna(frame.iloc[0]["text_rewritten"])
+    assert frame.iloc[0][COL_REWRITTEN_TEXT_NEXT] == _REPAIRED_TEXT
+    assert pd.isna(frame.iloc[1][COL_REWRITTEN_TEXT_NEXT])  # never repaired
+
+
+@pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])
+def test_trace_keeps_the_candidate_of_an_exhausted_repair(
+    tmp_path: Path, repairer: tuple[dict[str, list[str]], dict[str, int]], workflow: type[RewriteWorkflow]
+) -> None:
+    script, _ = repairer
+    script["privacy"] = [_LEAK]
+    script["repair"] = [json.dumps({"rewritten_text": _REPAIRED_TEXT})]
+
+    frame = _anonymizer_run(tmp_path, workflow, max_repair_iterations=2).trace_dataframe
+
+    assert pd.isna(frame.iloc[0]["text_rewritten"])
+    assert frame.iloc[0][COL_REWRITTEN_TEXT_NEXT] == _REPAIRED_TEXT
+
+
+@pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])
+def test_trace_keeps_no_candidate_after_a_later_repair_cannot_be_parsed(
+    tmp_path: Path, repairer: tuple[dict[str, list[str]], dict[str, int]], workflow: type[RewriteWorkflow]
+) -> None:
+    """An earlier round's candidate is not the latest one: both modes leave the column null."""
+    script, _ = repairer
+    script["privacy"] = [_LEAK]
+    script["repair"] = [json.dumps({"rewritten_text": _REPAIRED_TEXT}), "I cannot rewrite that."]
+
+    frame = _anonymizer_run(tmp_path, workflow, max_repair_iterations=3).trace_dataframe
+
+    assert pd.isna(frame.iloc[0]["text_rewritten"])
+    assert pd.isna(frame.iloc[0][COL_REWRITTEN_TEXT_NEXT])
 
 
 # --- Repair: a repair that still fails privacy after its last round is withheld, as an unparsed one is ---
@@ -1128,14 +1151,53 @@ def test_repair_that_still_leaks_after_its_last_round_is_withheld_and_flagged(
     assert calls["repair"] == rounds  # every repair parsed; the loop ran out of rounds
     assert result.failed_records == []
     row, clean = result.dataframe.iloc[0], result.dataframe.iloc[1]
-    assert pd.isna(row["text_rewritten"])  # the failing repair candidate is not released
+    assert row["text_rewritten"] is None  # the failing repair candidate is not released, as None in both modes
     assert row[COL_NEEDS_HUMAN_REVIEW]
     outcome = result.outcome(0)
     assert outcome.qualification == "not_met"
     assert ("failed", "high_leak") in [(r.code, r.check) for r in outcome.reasons]
+    assert not outcome.available
     assert clean["text_rewritten"] == _OTHER_TEXT
     assert result.outcome(1).qualification == "met"
+    assert result.outcome(1).available
     assert _summaries(caplog) == []  # every response parsed, so no step is counted
+
+
+@pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])
+@pytest.mark.parametrize(
+    ("risk_tolerance", "rounds"),
+    [
+        ("high", 2),  # a high leak at or under the preset's repair threshold is final, not sent to repair
+        ("low", 0),  # no repair round at all: the first rewrite is the final candidate
+    ],
+    ids=["high-not-sent-to-repair", "zero-rounds"],
+)
+def test_never_repaired_row_that_fails_privacy_is_withheld_and_flagged(
+    tmp_path: Path,
+    repairer: tuple[dict[str, list[str]], dict[str, int]],
+    workflow: type[RewriteWorkflow],
+    risk_tolerance: str,
+    rounds: int,
+) -> None:
+    script, calls = repairer
+    script["privacy"] = [_LEAK]
+    script["repair"] = [json.dumps({"rewritten_text": _REPAIRED_TEXT})]
+
+    result = _anonymizer_run(tmp_path, workflow, max_repair_iterations=rounds, risk_tolerance=risk_tolerance)
+
+    assert calls["repair"] == 0  # the row was never repaired
+    assert result.failed_records == []
+    row, clean = result.dataframe.iloc[0], result.dataframe.iloc[1]
+    assert row["text_rewritten"] is None  # the failing first rewrite is not released
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert ("failed", "high_leak") in [(r.code, r.check) for r in outcome.reasons]
+    assert not outcome.available
+    assert not outcome.protected
+    assert clean["text_rewritten"] == _OTHER_TEXT
+    assert result.outcome(1).qualification == "met"
+    assert result.outcome(1).available
 
 
 @pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])

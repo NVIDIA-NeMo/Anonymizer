@@ -224,7 +224,7 @@ def _make_repair_column(repairer_alias: str) -> Any:
         def parse(text: str) -> tuple[RewriteOutputSchema, bool]:
             return cast(RewriteOutputSchema, recipe.parse(text)), False
 
-        response = await ask(models[repairer_alias], prompt, parse, REPAIR_BUDGET)
+        response = await ask(models[repairer_alias], prompt, parse, REPAIR_BUDGET, step=COL_REWRITTEN_TEXT_NEXT)
         if response.value is None:
             # Keep the row with no next text: it is withheld and flagged, never released as the failing candidate.
             logger.warning(

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -287,32 +288,41 @@ def _rewrite_entry(row: dict[str, object]) -> dict[str, object] | RewriteUnavail
         "any_high_leaked": row.get(COL_ANY_HIGH_LEAKED),
         "weighted_leakage_rate": row.get(COL_WEIGHTED_LEAKAGE_RATE),
         **_leftover_metrics(row),
-        "placeholders_absent": _no_placeholder(text, row.get(COL_REPLACEMENT_MAP)),
+        "placeholder_in_text": _placeholder_in_text(text, row.get(COL_REPLACEMENT_MAP)),
     }
     return {"text": text, "metrics": metrics}
 
 
-def _no_placeholder(text: str, replacement_map: object) -> bool:
-    """Whether no placeholder substitute of the row's replacement map appears in ``text``, in any case; ``True``
-    without a map.
+def _placeholder_in_text(text: str, replacement_map: object) -> bool:
+    """Whether ``text`` holds a placeholder substitute of the row's replacement map; ``False`` without a map.
 
-    A placeholder stands in for a substitute that collided with a value in the record. It leaks nothing, but text
-    that carries one is visibly broken, so it is not released as protected.
+    A placeholder stands in for a substitute that collided with a value in the record. It leaks nothing, so the row
+    stays met, but text that carries one needs review. The match is loose: any case, brackets optional, ``_``, ``-``
+    or one space between words, and the separator before the number optional. The number is required.
     """
     payload = normalize_payload(replacement_map)
     entries = payload.get("replacements") if isinstance(payload, dict) else None
     if not isinstance(entries, list):
-        return True
-    placeholders = [
-        entry["synthetic"]
+        return False
+    folded = text.casefold()
+    return any(
+        _placeholder_pattern(entry["synthetic"]).search(folded)
         for entry in entries
         if isinstance(entry, dict)
         and isinstance(entry.get("label"), str)
         and isinstance(entry.get("synthetic"), str)
         and is_placeholder(entry["label"], entry["synthetic"])
-    ]
-    folded = text.casefold()
-    return not any(placeholder.casefold() in folded for placeholder in placeholders)
+    )
+
+
+def _placeholder_pattern(placeholder: str) -> re.Pattern[str]:
+    """The loose casefolded pattern of ``placeholder``, an ``is_placeholder`` substitute. Its words are the minted
+    token's own, split at each ``_`` with empty items kept, so a label's punctuation runs match as minted."""
+    token, number = placeholder.casefold()[1:-1].rsplit("_", 1)
+    number = re.escape(number)
+    separator = r"[_\- ]"
+    body = separator.join(re.escape(word) for word in token.split("_"))
+    return re.compile(rf"(?<![^\W_]){body}{separator}?{number}(?!\d)")
 
 
 def _leftover_metrics(row: Mapping[str, object]) -> dict[str, bool | str | None]:
@@ -385,7 +395,6 @@ def _final_checks(evaluation: EvaluationCriteria) -> tuple[Operation, ...]:
         "high_leak": _high_leak,
         "replacements_applied": _replacements_applied,
         "leakage_within_threshold": lambda metrics: _leakage_within(metrics, limit),
-        "placeholders_absent": lambda metrics: bool(metrics["placeholders_absent"]),
     }
 
     def verifier(check: str, predicate: Callable[[dict[str, Any]], bool | None]) -> Operation:
@@ -442,7 +451,8 @@ def _flag_review(
     frame: pd.DataFrame, result: ProtectionResult, target_of: Mapping[int, Datum], evaluation: EvaluationCriteria
 ) -> None:
     """Assign ``needs_human_review``: the row's target outcome is not qualified, its rewritten text keeps a replaced
-    value that the source also holds outside the detected spans, or its utility is unavailable or below the flag."""
+    value that the source also holds outside the detected spans (``undetected_value_kept``) or a placeholder of its
+    replacement map (``placeholder_in_text``), or its utility is unavailable or below the flag."""
     floor = evaluation.flag_utility_below
     review = [
         _needs_review(result, target_of[record[ROW_ORDER_COL]])
@@ -472,17 +482,14 @@ _PRIVACY_CHECKS = frozenset({"high_leak", "leakage_within_threshold"})
 
 
 def _withhold_failed_repairs(frame: pd.DataFrame, result: ProtectionResult, target_of: Mapping[int, Datum]) -> None:
-    """Null the rewritten text of repaired rows whose final candidate still fails a privacy check.
+    """Null the rewritten text of rows whose final candidate fails a privacy check, repaired or not.
 
-    The repair loop has no round left for them, and their outcome is already ``not_met`` and flagged; the failing
-    candidate is not released, as for a repair response that cannot be parsed. Call it after the summary, which
-    counts a repaired row without text as an unparsed repair.
+    Their outcome is already ``not_met`` and flagged; the failing candidate is not released, whether the repair loop
+    ran out of rounds, the preset does not send the row to repair, or ``max_repair_iterations`` is 0. Call it after
+    the summary, which counts a repaired row without text as an unparsed repair.
     """
-    if COL_REPAIR_ITERATIONS not in frame.columns:
-        return
     failed = [
-        _repaired(record.get(COL_REPAIR_ITERATIONS))
-        and any(
+        any(
             reason.code == "failed" and reason.check in _PRIVACY_CHECKS
             for reason in result.outcome(target_of[record[ROW_ORDER_COL]]).reasons
         )
@@ -493,13 +500,26 @@ def _withhold_failed_repairs(frame: pd.DataFrame, result: ProtectionResult, targ
         frame.loc[withheld, COL_REWRITTEN_TEXT] = None
 
 
-def _repaired(iterations: Any) -> bool:
-    return not pd.isna(iterations) and int(iterations) > 0
+def _none_for_missing_text(frame: pd.DataFrame) -> None:
+    """Give a withheld or missing rewritten text as ``None`` in both modes.
+
+    Combined mode's column has a string dtype, which stores ``None`` as ``pd.NA``; an object column keeps ``None``.
+    """
+    column = frame[COL_REWRITTEN_TEXT]
+    if column.isna().any():
+        frame[COL_REWRITTEN_TEXT] = column.astype(object).where(column.notna(), None)
+
+
+def _unavailable_if(outcome: TargetOutcome, withheld: bool) -> TargetOutcome:
+    """``outcome`` with ``available`` False when the row's rewritten text was withheld after the final checks."""
+    return replace(outcome, available=False) if withheld and outcome.available else outcome
 
 
 def _needs_review(result: ProtectionResult, target: Datum) -> bool:
     metrics = result.value(target, "metrics") or {}
-    return result.outcome(target).qualification != "met" or bool(metrics.get("undetected_value_kept"))
+    return result.outcome(target).qualification != "met" or bool(
+        metrics.get("undetected_value_kept") or metrics.get("placeholder_in_text")
+    )
 
 
 def _rewrite_lowered(
@@ -534,6 +554,7 @@ def _rewrite_lowered(
     warn_kept_without_response(frame)
     _withhold_unassessed(frame)
     _withhold_failed_repairs(frame, result, target_of)
+    _none_for_missing_text(frame)
     _apply_passthrough_defaults(passthrough_rows)
     return RewriteResult(
         dataframe=merge_and_reorder(frame, passthrough_rows),
@@ -700,6 +721,7 @@ class RewriteWorkflow:
             warn_kept_without_response(frame)
             _withhold_unassessed(frame)
             _withhold_failed_repairs(frame, result, target_of)
+            _none_for_missing_text(frame)
             output = merge_and_reorder(frame, passthrough_rows)
         record_stage(
             stage,
@@ -711,7 +733,8 @@ class RewriteWorkflow:
             failed_record_count=len(rows.failed),
         )
         positions = tuple(sorted([*frame[ROW_ORDER_COL], *passthrough_rows[ROW_ORDER_COL]]))
-        outcomes = tuple(result.outcome(state.owners[order]) for order in positions)
+        withheld = set() if entity_rows.empty else set(frame.loc[frame[COL_REWRITTEN_TEXT].isna(), ROW_ORDER_COL])
+        outcomes = tuple(_unavailable_if(result.outcome(state.owners[order]), order in withheld) for order in positions)
         failed = [*state.failures, *rows.failed]
         return RewriteResult(output, failed, positions, detection, detection_elapsed, outcomes)
 

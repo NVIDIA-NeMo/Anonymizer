@@ -15,7 +15,7 @@ from data_designer.engine.models.parsers.errors import ParserException
 from data_designer.engine.models.recipes.response_recipes import StructuredResponseRecipe
 from data_designer.engine.processing.utils import deserialize_json_values
 
-from anonymizer.engine.ndd.model_response import ask_with_trace, no_response
+from anonymizer.engine.ndd.model_response import ResponseCheckError, ask_with_trace, no_response
 from anonymizer.engine.workflow_columns.response.config import ResponseColumnConfig
 
 logger = logging.getLogger("anonymizer.ndd.response")
@@ -42,23 +42,27 @@ class ResponseColumnGenerator(ColumnGeneratorWithModelChatCompletion[ResponseCol
         kwargs = self._prepare_generation_kwargs(data)
         parse = kwargs.pop("parser")
         check = self.config.response_check
+        check_cause: str | None = None  # the last response's check failure, when the check can name it
 
         def checked(response: str) -> tuple[Any, bool]:
+            nonlocal check_cause
+            check_cause = None
             value = parse(response)
             if check is not None:
                 try:
                     check(value, data)
                 except ValueError as exc:
+                    check_cause = exc.cause if isinstance(exc, ResponseCheckError) else None
                     raise ParserException(str(exc), source=response) from None
             return value, False
 
-        response, trace = await ask_with_trace(self.model, checked, **kwargs)
+        response, trace = await ask_with_trace(self.model, checked, step=self.config.name, **kwargs)
         if response.state == "unavailable":
             logger.warning(
                 "%s unavailable after %d responses (%s); keeping the row.",
                 self.config.name,
                 response.requests,
-                response.cause,
+                check_cause or response.cause,
             )
             return self._unavailable(data)
         data = self._process_generation_result(data, response.value, trace)

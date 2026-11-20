@@ -1,0 +1,134 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# Set limits, budget requests and cancel
+
+After reading this page you can bound the size of a run, declare and cap the external requests your steps make,
+and stop a run that is in progress.
+
+!!! warning "Provisional"
+
+    The graph SDK is provisional. Names, signatures and default values may change in a later release.
+
+## Limits
+
+`Limits` bounds one run. `prepare` checks it before anything runs, and `protect` checks it again before the first
+step. Pass it as `prepare(graph, workflow, limits=g.Limits(...))`; without it the defaults apply.
+
+| Field | Default | Bounds | Refused with |
+|---|---|---|---|
+| `max_operations` | 32 | Steps after nested workflows are flattened | `over_limit` |
+| `max_targets` | 1000 | Targets in the graph | `over_limit` |
+| `max_mentions` | 10000 | Declared mentions, plus mentions detectors return during the run | `over_limit` |
+| `max_context_items` | 256 | Static context items plus every source's `max_items` | `over_limit` |
+| `max_text_bytes` | None (no ceiling) | UTF-8 size of each target's text | `over_byte_ceiling` |
+| `max_context_bytes` | None (no ceiling) | UTF-8 size of all context in the run | `over_byte_ceiling` |
+
+The default values are provisional. The rejection's `detail` names the field:
+
+```python
+from anonymizer import graph as g
+
+scope = g.GraphScope()
+graph = g.ProtectionGraph(scope, tuple(scope.datum(f"Message {i} from Dana.") for i in range(5)))
+workflow = g.Workflow("w", (g.Operation("redact", lambda text: text.replace("Dana", "[NAME]")),))
+for limits in (g.Limits(max_targets=3), g.Limits(max_text_bytes=10)):
+    try:
+        g.prepare(graph, workflow, limits=limits)
+    except g.GraphRejection as exc:
+        print(exc.code, "|", exc.detail)
+```
+
+```text
+over_limit | max_targets
+over_byte_ceiling | max_text_bytes
+```
+
+## Declare requests
+
+Each operation declares the external requests (model calls, service calls) it makes per call with `requests=`:
+
+| Declaration | Meaning | Counts toward the plan as |
+|---|---|---|
+| `Requests.none()` (default) | No external requests. | 0 |
+| `Requests.exact(n)` | Exactly `n` per call. | `n` |
+| `Requests.at_most(n)` | At most `n` per call. | `n`, and the plan becomes an upper bound |
+| `Requests.unknown()` | Some, number not known in advance. | Plan becomes unknown |
+| `Requests.opaque(n=None)` | Requests the step can neither show nor control, such as a library that retries internally. | Plan becomes unknown |
+
+A per-target step's count is multiplied by the number of targets; a phase-scoped step's count is added once.
+
+```python
+from anonymizer import graph as g
+
+scope = g.GraphScope()
+graph = g.ProtectionGraph(scope, (scope.datum("a"), scope.datum("b")))
+workflow = g.Workflow(
+    "w",
+    (
+        g.Operation("per-target", lambda text: text, requests=g.Requests.at_most(2)),
+        g.Operation.phase_scoped("batch", lambda text: list(text), requests=g.Requests.exact(1)),
+    ),
+)
+print(g.prepare(graph, workflow).summary().planned_requests)
+```
+
+```text
+upper 5
+```
+
+Two targets times at most 2, plus 1 for the batch: at most 5.
+
+## Cap the plan with a budget
+
+`prepare(..., request_budget=n)` refuses the workflow if its planned requests could exceed `n`
+(`over_request_budget`), or if the plan is unknown, since an unknown plan cannot be shown to fit
+(`hard_budget_without_visibility`). The budget is checked only at `prepare`; nothing counts or stops requests
+while the workflow runs. See [Process all targets in one call](guide-batch-targets.md#declare-the-requests) for an
+example.
+
+After a run, `result.summary()` compares what the steps reported with the plan in its `observed` row and `budget`
+field. There is currently no public way for a step to report the requests it actually made, so for any workflow
+that declares requests, the observed request counts and `budget` read `unknown`; only `binding`, the number of
+context sources called, stays exact. When every step that ran declared no requests, the request counts are exact
+and `budget` reads `within`.
+
+## Cancel a run
+
+Pass a `CancelToken` to `protect` and call its `cancel()` method from any thread, or from inside a step. The run
+stops before the next call: steps already finished keep their results, and targets that had not finished get the
+terminal `cancelled`.
+
+```python
+from anonymizer import graph as g
+
+scope = g.GraphScope()
+graph = g.ProtectionGraph(scope, tuple(scope.datum(f"Message {i} from Dana.") for i in range(5)))
+cancel = g.CancelToken()
+done = []
+
+
+def redact_then_maybe_stop(text: str) -> str:
+    done.append(text)
+    if len(done) == 2:
+        cancel.cancel()
+    return text.replace("Dana", "[NAME]")
+
+
+workflow = g.Workflow("w", (g.Operation("redact", redact_then_maybe_stop),))
+result = g.protect(g.prepare(graph, workflow), cancel=cancel)
+print([o.terminal for o in result.outcomes])
+print(result.ledger()[2][1:])
+```
+
+```text
+['success', 'success', 'cancelled', 'cancelled', 'cancelled']
+('redact', 'cancelled')
+```
+
+Cancellation is checked between calls, never inside one: a long model call runs to its end. A phase-scoped step
+is one call, so it is either not started or completed for every target it received. A context source not yet
+called when the run is cancelled has the retrieval status `not_started`.
+
+A run started inside a step of another run (for example, a step that itself calls `protect`) inherits the outer
+run's cancellation.
