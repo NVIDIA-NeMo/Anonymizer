@@ -2138,6 +2138,19 @@ def test_placeholder_with_a_non_ascii_digit_does_not_raise(route: str, tmp_path:
     assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False]
 
 
+def test_placeholder_number_is_matched_as_written() -> None:
+    """The number is matched as minted: ``_01`` and ``_1`` do not match each other, and ``_1`` does not match ``_10``."""
+
+    def flags(text: str, placeholder: str) -> bool:
+        return _placeholder_in_text(text, {"replacements": [{"label": "first_name", "synthetic": placeholder}]})
+
+    assert flags("SUBSTITUTE_FIRST_NAME_01 here", "[SUBSTITUTE_FIRST_NAME_01]")
+    assert not flags("SUBSTITUTE_FIRST_NAME_1 here", "[SUBSTITUTE_FIRST_NAME_01]")
+    assert flags("SUBSTITUTE_FIRST_NAME_1 here", "[SUBSTITUTE_FIRST_NAME_1]")
+    assert not flags("SUBSTITUTE_FIRST_NAME_01 here", "[SUBSTITUTE_FIRST_NAME_1]")
+    assert not flags("SUBSTITUTE_FIRST_NAME_10 here", "[SUBSTITUTE_FIRST_NAME_1]")
+
+
 def test_substitute_shaped_like_a_placeholder_for_another_label_is_not_flagged() -> None:
     """Only a placeholder built for the entry's own label counts; ordinary substitutes never do."""
     text = "[SUBSTITUTE_CITY_1] and Clara, substitute teacher 1"

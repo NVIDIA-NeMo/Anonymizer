@@ -317,7 +317,7 @@ def _placeholder_pattern(placeholder: str) -> re.Pattern[str]:
     """The loose casefolded pattern of ``placeholder``, an ``is_placeholder`` substitute. Its words are the minted
     token's own, split at each ``_`` with empty items kept, so a label's punctuation runs match as minted."""
     token, number = placeholder.casefold()[1:-1].rsplit("_", 1)
-    number = f"0*{int(number)}" if number.isascii() and number.isdecimal() else re.escape(number)
+    number = re.escape(number)
     separator = r"[_\- ]"
     body = separator.join(re.escape(word) for word in token.split("_"))
     return re.compile(rf"(?<![^\W_]){body}{separator}?{number}(?!\d)")
