@@ -588,11 +588,10 @@ def protect(
     _admit(prepared.graph, prepared.workflow.flatten(), prepared.limits, prepared.capabilities)
     if _session_mode(session) != prepared.session_mode:
         raise k.GraphRejection("session_mismatch")
-    # Without a Session, ``_protect`` gets the prepared value alone and creates a private off/off Session.
-    args = (prepared,) if session is None else (prepared, session)
-    held = contextlib.nullcontext() if session is None else session._hold()
-    with held, _measure("graph_protect", **_counts(prepared)) as m:
-        result = k.run_in_frame(_protect, *args, token=cancel)
+    # Without a Session, a fresh private off/off one: nothing else can hold it, and it accepts nothing.
+    session = Session() if session is None else session
+    with session._hold(), _measure("graph_protect", **_counts(prepared)) as m:
+        result = k.run_in_frame(_protect, prepared, session, token=cancel)
         m["terminal_counts"] = dict(Counter(o.terminal for o in result.outcomes))
     return result
 
@@ -617,9 +616,7 @@ def _counts(p: PreparedProtection) -> dict[str, int]:
     return {"operation_count": len(p.names), "target_count": len(p.graph.targets)}
 
 
-def _protect(p: PreparedProtection, session: Session | None = None) -> ProtectionResult:
-    if session is None:
-        session = Session()
+def _protect(p: PreparedProtection, session: Session) -> ProtectionResult:
     token = k.current_token()
     cancelled = (lambda: token.cancelled) if token is not None else (lambda: False)
     g = p.graph

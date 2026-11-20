@@ -368,9 +368,9 @@ def scripted(case: Case) -> Generator[tuple[Script, list[int]]]:
     script, invocations = Script(case), [0]
     original = execution._protect
 
-    def counted(prepared: Any) -> Any:
+    def counted(*args: Any, **kwargs: Any) -> Any:
         invocations[0] += 1
-        return original(prepared)
+        return original(*args, **kwargs)
 
     def run_workflow(adapter: NddAdapter, df: pd.DataFrame, **kwargs: Any) -> WorkflowRunResult:
         return script.run_workflow(adapter, df, **kwargs)
