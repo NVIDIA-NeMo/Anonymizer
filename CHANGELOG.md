@@ -167,8 +167,9 @@ DataDesigner workflow, and DataDesigner dropped a record when any of its columns
 response emptied every judge's score for that record. Now each active judge runs as its own workflow, one after
 another. A judge that fails for a record leaves only its own score empty, and each failing judge adds its own entry to
 `failed_records`. `evaluate()` takes the sum of the judge times instead of the longest.
-- What to do: nothing. Expect `failed_records` to name the judge that failed, and a longer `evaluate()` on Substitute
-  results.
+- What to do: nothing. Expect one `failed_records` entry per failing judge and row; its `reason` names the judge's
+  column when the cause was recorded. Expect a longer `evaluate()` whenever more than one judge is active (always for
+  Substitute).
 - Changed in: #434.
 
 **Judges read only the columns they need, and a failed judge is logged.** Each evaluation judge sends DataDesigner only
@@ -207,9 +208,10 @@ the column and a fixed summary of the cause. Detection and map failures have the
   `anonymizer.interface.results`; its defining module moved.
 - Changed in: #349, #392, #396.
 
-**Results from custom runners have no outcomes.** A `replace_runner` or `rewrite_runner` whose class overrides `run()`
-keeps the older detect-then-run path. Its `run()` and `preview()` results carry no outcomes, and
-`result.outcome(row)` raises `IndexError`. An `evaluate()` result carries one outcome per row, as the next entry says.
+**Custom-runner `run()` and `preview()` results have no outcomes.** A `replace_runner` or `rewrite_runner` whose class
+overrides `run()` keeps the older detect-then-run path. Its `run()` and `preview()` results carry no outcomes, and
+`result.outcome(row)` raises `IndexError`. An `evaluate()` result carries one outcome per row, as the next entry
+says.
 - What to do: use the built-in runners to get outcomes from `run()` and `preview()`.
 - Changed in: #319.
 
@@ -221,13 +223,14 @@ appended. The advisory's `check` and `verifier` name the judge (`coverage`, `rew
 rewrite judge skips a row with no detected entities). A judge never changes qualification or release, so
 `qualification` and `protected` still say what the run decided. The evaluate frame does not change.
 - Matching: judge rows and the run's outcomes are matched to records only by a non-null `_anonymizer_record_id` that
-  occurs once in the evaluated result and once among the judge's rows. Row order and text are never used. A row without
-  such an id is `not_assessed` and unprotected, and each judge reads `could_not_assess` with cause `unplaced`.
+  occurs once in the evaluated result, once among the judge's rows and once among the run's own outcomes. Row order
+  and text are never used. A row without such an id is `not_assessed` and unprotected, and each judge reads
+  `could_not_assess` with cause `unplaced`.
   Outcomes are looked up by id, so reordering or filtering the result's rows before `evaluate()` keeps each row's own
   outcome. A result with no outcomes, such as one from a custom runner, gives `not_assessed` and unprotected rows.
-- What to do: a custom `replace_runner` or `rewrite_runner` must keep each row's `_anonymizer_record_id` in its
-  `evaluate()` output. Every built-in runner does. A row a custom runner gives another record's id is reported as that
-  record.
+- What to do: a custom `replace_runner` or `rewrite_runner` must keep each row's `_anonymizer_record_id` in the
+  trace it returns and in its `evaluate()` output. Every built-in runner does. A row a custom runner gives another
+  record's id is reported as that record.
 - Changed in: #387.
 
 **A detector that changes the text loses per-row outcomes.** When a custom detector returns a row whose text differs
@@ -281,8 +284,8 @@ an `Error: ...` line. It ends the command with its traceback, as a wiring fault.
 These change no public name and no behaviour for supported input.
 
 - **Unused private code is removed.** The private structured-column subclass in the detection workflow, the adapter
-  branch that converted it, and `Anonymizer._resolve_model_providers`, which only forwarded to `parse_model_providers`.
-  Nothing created the subclass after #305 (#433).
+  branch that converted it, and `_resolve_model_providers` in `anonymizer.interface.anonymizer`, which only forwarded
+  to `parse_model_providers`. Nothing created the subclass after #305 (#433).
 - **Nested cells have one reader.** Six parse functions in `anonymizer.engine.rewrite.parsers` and four hand-written
   replacement-map parsers read cells through `read_cell` and `EntityReplacementMapSchema.from_raw`. The sensitivity
   disposition parser's error message uses the wording of the other parsers (#412).
