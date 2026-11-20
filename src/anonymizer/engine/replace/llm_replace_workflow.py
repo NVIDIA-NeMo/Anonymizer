@@ -425,13 +425,12 @@ def _fold_replacement_maps(
     ``("records_with_placeholder",)``.
 
     With a stable Session's ``view`` (``"run"`` mode only), a key the run has not mapped yet takes the Session's
-    assignment, re-cased against its normalized original. A substitute also collides when the view's
+    assignment as held for its first spelling in the call; later spellings are re-cased against that one. A substitute also collides when the view's
     ``assigned_to_other_value`` finds it assigned to another subject or normalized value, or to a fallback entry; the
     key's own slot and the same normalized value under any other label do not count, so a value under two labels can
     keep one substitute. A record-local fallback also collides when the view's ``assigned_elsewhere`` finds it
     assigned to any other slot, the same value's other labels included, since the Session then holds it as a fallback
-    too. Unless
-    it is the key's own held substitute, it also collides when it is a value the Session holds.
+    too. Unless it is the key's own held substitute, it also collides when it is a value the Session holds.
     A placeholder is never one the Session assigns to another key. ``decisions`` then gets one tuple per map: a
     decision for each key first used in that map, holding the key's run-wide substitute, and one for each record-local
     substitute not marked before, under the fallback subject and keyed by that substitute, so later calls treat it as
@@ -446,7 +445,7 @@ def _fold_replacement_maps(
 
     def held(key: tuple[str, str], own: tuple[str, str]) -> tuple[str, str]:
         if view is not None and key not in run_wide and (assigned := view.lookup((BY_VALUE, *key))) is not None:
-            run_wide[key] = (key[1], assigned)
+            run_wide[key] = (own[0], assigned)
         return run_wide.get(key, own)
 
     # Under a view, what the call emitted so far, by normalized substitute: each key's own run-wide substitute

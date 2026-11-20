@@ -157,8 +157,9 @@ def test_a_stable_session_reuses_substitutes_across_calls(tmp_path: Path, previe
     proposals = {"ALICE": "Zed", "Carol": "Dana", "Paris": "Nice"}
     second = _protect(tmp_path, ["ALICE met Carol in Paris."], proposals, session, results, preview=preview)
     assert list(first["text_replaced"]) == ["Bob lives in Lyon."]
-    # The retained substitutes win over the new proposals, re-cased against the normalized original.
-    assert list(second["text_replaced"]) == ["BOB met Dana in Lyon."]
+    # The retained substitutes win over the new proposals; the call's first spelling of a value takes its held
+    # substitute as held, so ALICE gets "Bob", not "BOB".
+    assert list(second["text_replaced"]) == ["Bob met Dana in Lyon."]
     assert results == [SessionCallChanges(added=2), SessionCallChanges(added=1, reused=2)]
     assert _slots(session) == {
         ("first_name", "alice"): "Bob",
@@ -1063,6 +1064,19 @@ def test_a_value_under_two_labels_is_never_both_a_fallback_and_an_assignment(
         assert restored.snapshot().to_bytes() == before
     assert replayed[0] == replayed[1]
     assert [r.added for r in results] == [0, 0]
+
+
+def test_a_replay_keeps_the_first_calls_spelling_of_each_substitute(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every replay matches the first call's text, for an upper-case and a lower-case substitute."""
+    monkeypatch.setitem(LABELS, "Acme", "organization")
+    session, texts = Session(stable_replacements=True), ["Acme hired Alice.", "ALICE met Carol."]
+    answers = [{"Acme": "IBM", "Alice": "bob", "ALICE": "Zed", "Carol": "dana lee"}]
+    first = list(_scripted(tmp_path, texts, answers, session)["text_replaced"])
+    assert first == ["IBM hired bob.", "BOB met dana lee."]
+    for _ in range(2):
+        assert list(_scripted(tmp_path, texts, answers, session)["text_replaced"]) == first
 
 
 def test_a_row_that_needs_a_fallback_gets_a_new_placeholder_on_each_replay(
