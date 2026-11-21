@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -17,6 +18,7 @@ from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.models import ModelConfig
 from data_designer.interface.data_designer import DataDesigner
 
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
 from anonymizer.config.models import EvaluateModelSelection, ReplaceModelSelection, RewriteModelSelection
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 from anonymizer.engine.constants import (
@@ -26,6 +28,9 @@ from anonymizer.engine.constants import (
     COL_DETECTION_VALID,
     COL_DOMAIN,
     COL_ENTITIES_BY_VALUE,
+    COL_ENTITY_CLASSIFICATION,
+    COL_FINAL_ENTITIES,
+    COL_FULL_REWRITE,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
     COL_LEAKED_PRIVACY_ITEMS,
@@ -38,18 +43,35 @@ from anonymizer.engine.constants import (
     COL_RAW_SENSITIVITY_DISPOSITION,
     COL_REPAIR_ITERATIONS,
     COL_REPLACEMENT_APPLICATION,
+    COL_REPLACEMENT_MAP,
+    COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
+    COL_SENSITIVITY_DISPOSITION,
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
     RECORD_ID_COLUMN,
 )
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
+from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.replace.llm_replace_workflow import _fold_replacement_maps
 from anonymizer.engine.rewrite.repair import RepairWorkflow
-from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow, _detection_valid_fraction, _join_new_columns
+from anonymizer.engine.rewrite.rewrite_workflow import (
+    RewriteWorkflow,
+    _detection_valid_fraction,
+    _join_new_columns,
+    _leftover_metrics,
+    _placeholder_in_text,
+)
+from anonymizer.engine.spans import Span
+from anonymizer.engine.value_matching import format_cause
+from anonymizer.interface.anonymizer import Anonymizer
+from anonymizer.interface.errors import AnonymizerWorkflowError
+from anonymizer.interface.results import AnonymizerResult
 
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
 
@@ -63,6 +85,13 @@ _PRIVACY_GOAL = PrivacyGoal(
 )
 
 _EVALUATION = EvaluationCriteria()
+
+
+def _positional(dataframe: pd.DataFrame, failed_records: list) -> WorkflowRunResult:
+    """An adapter result that reports one source position per returned row, in input order."""
+    return WorkflowRunResult(
+        dataframe=dataframe, failed_records=failed_records, source_positions=tuple(range(len(dataframe)))
+    )
 
 
 def test_join_new_columns_preserves_surviving_target_order() -> None:
@@ -84,6 +113,27 @@ def test_join_new_columns_preserves_surviving_target_order() -> None:
     assert result[RECORD_ID_COLUMN].tolist() == ["turn-2", "turn-1"]
     assert result["existing"].tolist() == [2, 1]
     assert result["new"].tolist() == [20, 10]
+
+
+def _disposition(*entries: tuple[str, str, str]) -> dict[str, Any]:
+    """A sensitivity disposition from ``(value, method, source)`` triples."""
+    return {
+        "sensitivity_disposition": [
+            {
+                "id": i,
+                "sensitivity": "high",
+                "protection_method_suggestion": method,
+                "source": source,
+                "category": "latent_identifier" if source == "latent" else "direct_identifier",
+                "entity_label": "label",
+                "entity_value": value,
+            }
+            for i, (value, method, source) in enumerate(entries, start=1)
+        ]
+    }
+
+
+_ALICE_POLICY = _disposition(("Alice", "replace", "tagged"))
 
 
 @pytest.fixture
@@ -163,6 +213,7 @@ def stub_pipeline_df(stub_pre_gen_df: pd.DataFrame) -> pd.DataFrame:
     """Result of the combined rewrite-pipeline adapter call."""
     df = stub_pre_gen_df.copy()
     df[COL_REWRITTEN_TEXT] = "Maria works"
+    df[COL_SENSITIVITY_DISPOSITION] = [_ALICE_POLICY]
     df[COL_REPAIR_ITERATIONS] = 0
     return df
 
@@ -194,14 +245,16 @@ def _standard_side_effect(
     The final-judge no longer runs inside run() — it only runs via evaluate().
     """
     return [
-        WorkflowRunResult(dataframe=pipeline_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
+        _positional(dataframe=pipeline_df, failed_records=[]),
+        _positional(dataframe=eval_df, failed_records=[]),
     ]
 
 
 def _mock_replace(mock_cls: Mock, replace_df: pd.DataFrame) -> None:
     """Configure a patched LlmReplaceWorkflow class to return replace_df."""
-    mock_cls.return_value.generate_map_only.return_value = Mock(dataframe=replace_df, failed_records=[])
+    mock_cls.return_value.generate_map_only.return_value = Mock(
+        dataframe=replace_df, failed_records=[], source_positions=tuple(range(len(replace_df)))
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -379,13 +432,14 @@ def test_failed_records_accumulated_across_steps(
 
     adapter = Mock()
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=stub_pipeline_df, failed_records=[failed_pipeline]),
-        WorkflowRunResult(dataframe=stub_eval_df, failed_records=[failed_eval]),
+        _positional(dataframe=stub_pipeline_df, failed_records=[failed_pipeline]),
+        _positional(dataframe=stub_eval_df, failed_records=[failed_eval]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
         mock_replace_cls.return_value.generate_map_only.return_value = Mock(
             dataframe=stub_replace_df,
+            source_positions=tuple(range(len(stub_replace_df))),
             failed_records=[FailedRecord(record_id="d", step="replace-map-generation", reason="timeout")],
         )
         wf = RewriteWorkflow(adapter=adapter)
@@ -431,6 +485,45 @@ def test_judge_failure_does_not_propagate(
 
     assert len(result.dataframe) == 1
     assert result.dataframe[COL_JUDGE_EVALUATION].iloc[0] is None
+
+
+@pytest.mark.parametrize("cancel_at", ["before-first-stage", "between-stages"])
+def test_evaluate_in_cancelled_frame_raises_and_skips_later_stages(
+    stub_model_configs: list[ModelConfig],
+    stub_evaluate_model_selection,
+    stub_eval_df: pd.DataFrame,
+    cancel_at: str,
+) -> None:
+    token = CancelToken()
+    adapter = Mock()
+    wf = RewriteWorkflow(adapter=adapter)
+    wf._detection_judge_wf = Mock()
+
+    def detection_judge(*args, **kwargs) -> Mock:
+        token.cancel()
+        det_df = stub_eval_df.copy()
+        det_df[COL_DETECTION_VALID] = True
+        det_df[COL_DETECTION_INVALID_ENTITIES] = [[]]
+        return Mock(dataframe=det_df, failed_records=[], source_positions=None)
+
+    wf._detection_judge_wf.evaluate.side_effect = detection_judge
+    if cancel_at == "before-first-stage":
+        token.cancel()
+
+    with pytest.raises(AnonymizerWorkflowError):
+        run_in_frame(
+            wf.evaluate,
+            stub_eval_df,
+            model_configs=stub_model_configs,
+            selected_models=stub_evaluate_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            compute_detection_validity=True,
+            token=token,
+        )
+
+    # Before the first stage neither judge runs; between stages only the detection judge ran.
+    assert wf._detection_judge_wf.evaluate.call_count == (0 if cancel_at == "before-first-stage" else 1)
+    adapter.run_workflow.assert_not_called()
 
 
 def test_judge_partial_row_loss_preserves_all_rows(
@@ -515,6 +608,7 @@ def test_detection_judge_partial_row_loss_preserves_all_rows(
     wf._detection_judge_wf.evaluate.return_value = Mock(
         dataframe=det_df,
         failed_records=[FailedRecord(record_id="rec-1", step="rewrite-detection-judge", reason="timeout")],
+        source_positions=None,
     )
     adapter.run_workflow.return_value = WorkflowRunResult(dataframe=judge_df, failed_records=[])
 
@@ -599,17 +693,17 @@ def test_repair_loop_runs_up_to_max_iterations(
 
     adapter.run_workflow.side_effect = [
         # pipeline (domain + disposition + QA + rewrite)
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
         # evaluate-0 -> needs repair
-        WorkflowRunResult(dataframe=eval_needs_repair, failed_records=[]),
+        _positional(dataframe=eval_needs_repair, failed_records=[]),
         # repair-0
-        WorkflowRunResult(dataframe=repaired_df, failed_records=[]),
+        _positional(dataframe=repaired_df, failed_records=[]),
         # evaluate-1 -> still needs repair
-        WorkflowRunResult(dataframe=eval_needs_repair, failed_records=[]),
+        _positional(dataframe=eval_needs_repair, failed_records=[]),
         # repair-1
-        WorkflowRunResult(dataframe=repaired_df, failed_records=[]),
+        _positional(dataframe=repaired_df, failed_records=[]),
         # evaluate-final (after loop exhaustion)
-        WorkflowRunResult(dataframe=eval_needs_repair, failed_records=[]),
+        _positional(dataframe=eval_needs_repair, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -639,8 +733,18 @@ class _ScriptedAdapter:
     Repair ``N`` returns ``"<record id> repaired N"`` so every iteration's output is distinct.
     """
 
-    def __init__(self, repairs_needed: dict[str, int]) -> None:
+    def __init__(
+        self,
+        repairs_needed: dict[str, int],
+        *,
+        initial: str = "{} initial",
+        repaired: str = "{} repaired {}",
+        policy: object = _ALICE_POLICY,
+        replacement_map: object = None,
+    ) -> None:
         self.repairs_needed = repairs_needed
+        self.initial, self.repaired, self.policy = initial, repaired, policy
+        self.replacement_map = replacement_map
         self.seeds: dict[str, pd.DataFrame] = {}
 
     def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **_: object) -> WorkflowRunResult:
@@ -649,7 +753,14 @@ class _ScriptedAdapter:
         record_ids = output[RECORD_ID_COLUMN].astype(str)
         iteration = int(workflow_name.rsplit("-", 1)[1]) if workflow_name[-1].isdigit() else 0
         if workflow_name == "rewrite-pipeline":
-            output[COL_REWRITTEN_TEXT] = [f"{record_id} initial" for record_id in record_ids]
+            output[COL_REWRITTEN_TEXT] = [self.initial.format(record_id) for record_id in record_ids]
+            output[COL_REWRITE_REPLACEMENT_READY] = True
+            # The map omits the policy's values unless a test supplies one: the final text decides regardless.
+            output[COL_REPLACEMENT_MAP_FOR_PROMPT] = [self.replacement_map for _ in record_ids]
+            if self.replacement_map is not None:
+                output[COL_REPLACEMENT_MAP] = [self.replacement_map for _ in record_ids]
+            if self.policy is not None:
+                output[COL_SENSITIVITY_DISPOSITION] = [self.policy for _ in record_ids]
             output[COL_PRIVACY_QA] = [dict(_PRIVACY_QA) for _ in record_ids]
         elif workflow_name.startswith("rewrite-evaluate-"):
             needs_repair = [iteration < self.repairs_needed[record_id] for record_id in record_ids]
@@ -661,7 +772,7 @@ class _ScriptedAdapter:
             output[COL_NEEDS_REPAIR] = needs_repair
         elif workflow_name.startswith("rewrite-repair-"):
             output[COL_LEAKED_PRIVACY_ITEMS] = f"leaked items {iteration}"
-            output[COL_REWRITTEN_TEXT_NEXT] = [f"{record_id} repaired {iteration}" for record_id in record_ids]
+            output[COL_REWRITTEN_TEXT_NEXT] = [self.repaired.format(record_id, iteration) for record_id in record_ids]
         return WorkflowRunResult(dataframe=output, failed_records=[])
 
     @property
@@ -826,7 +937,7 @@ def _deterministic_evaluation(row: dict[str, Any]) -> dict[str, Any]:
     row[COL_PRIVACY_QA_REANSWER] = {"answers": []}
     row[COL_QUALITY_QA_COMPARE] = {"per_item": []}
     row[COL_UTILITY_SCORE] = 0.9
-    row[COL_LEAKAGE_MASS] = 2.0 if needs_repair else 0.0
+    row[COL_LEAKAGE_MASS] = 3.0 if needs_repair else 0.0
     row[COL_WEIGHTED_LEAKAGE_RATE] = 0.0
     row[COL_ANY_HIGH_LEAKED] = False
     row[COL_NEEDS_REPAIR] = needs_repair
@@ -840,9 +951,10 @@ def _deterministic_repair(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-def test_repair_loop_through_real_adapter_keeps_each_repair(
+def test_repair_loop_through_run_returns_each_rows_last_repair(
     tmp_path: Path,
     stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
     adapter = NddAdapter(DataDesigner(artifact_path=tmp_path / "artifacts", auto_configure_logging=False))
     workflow = RewriteWorkflow(adapter)
@@ -866,29 +978,42 @@ def test_repair_loop_through_real_adapter_keeps_each_repair(
             ]
         )
     )
-    dataframe = pd.DataFrame(
+    # The input frame already carries the pipeline outputs, so the model-backed pre-loop steps do nothing.
+    workflow._replacement_map = Mock(return_value=None)
+    workflow._pipeline = Mock(return_value=None)
+    entities = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
+    df = pd.DataFrame(
         {
             RECORD_ID_COLUMN: ["twice", "exhausted"],
             COL_TEXT: ["Alice works at Acme", "Bob works at Beta"],
+            COL_ENTITIES_BY_VALUE: [entities, entities],
             COL_REWRITTEN_TEXT: ["twice-0", "exhausted-0"],
             COL_PRIVACY_QA: [dict(_PRIVACY_QA), dict(_PRIVACY_QA)],
             _REPAIRS_NEEDED: [2, 5],
+            COL_SENSITIVITY_DISPOSITION: [_ALICE_POLICY, _ALICE_POLICY],
         }
     )
 
-    result, failed = workflow._run_evaluate_repair_loop(
-        dataframe,
+    result = workflow.run(
+        df,
         model_configs=[],
         selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
         privacy_goal=_PRIVACY_GOAL,
         evaluation=EvaluationCriteria(max_repair_iterations=3),
-        preview_num_records=None,
     )
 
-    assert failed == []
-    assert _by_id(result, COL_REWRITTEN_TEXT) == {"twice": "twice-2", "exhausted": "exhausted-3"}
-    assert _by_id(result, COL_REPAIR_ITERATIONS) == {"twice": 2, "exhausted": 3}
-    assert _by_id(result, COL_PRIVACY_QA) == {"twice": _PRIVACY_QA, "exhausted": _PRIVACY_QA}
+    out = result.dataframe
+    assert result.failed_records == []
+    # The exhausted row still leaks after its last repair, so its text is withheld; the trace keeps the candidate.
+    texts = _by_id(out, COL_REWRITTEN_TEXT)
+    assert texts["twice"] == "twice-2"
+    assert pd.isna(texts["exhausted"])
+    assert _by_id(out, COL_REWRITTEN_TEXT_NEXT)["exhausted"] == "exhausted-3"
+    assert _by_id(out, COL_REPAIR_ITERATIONS) == {"twice": 2, "exhausted": 3}
+    assert _by_id(out, COL_LEAKAGE_MASS) == {"twice": 0.0, "exhausted": 3.0}
+    assert {k: bool(v) for k, v in _by_id(out, COL_NEEDS_HUMAN_REVIEW).items()} == {"twice": False, "exhausted": True}
+    assert _by_id(out, COL_PRIVACY_QA) == {"twice": _PRIVACY_QA, "exhausted": _PRIVACY_QA}
 
 
 def test_replacement_unavailable_can_be_repaired(
@@ -921,10 +1046,10 @@ def test_replacement_unavailable_can_be_repaired(
     replace_df["_replacement_map"] = [{"replacements": []}]
     adapter = Mock()
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pipeline_df, failed_records=[]),
-        WorkflowRunResult(dataframe=initial_eval, failed_records=[]),
-        WorkflowRunResult(dataframe=repaired, failed_records=[]),
-        WorkflowRunResult(dataframe=passing_eval, failed_records=[]),
+        _positional(dataframe=pipeline_df, failed_records=[]),
+        _positional(dataframe=initial_eval, failed_records=[]),
+        _positional(dataframe=repaired, failed_records=[]),
+        _positional(dataframe=passing_eval, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -990,10 +1115,10 @@ def test_only_failing_rows_sent_to_repair(
     replace_df["_replacement_map"] = [{"replacements": []}, {"replacements": []}]
 
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
-        WorkflowRunResult(dataframe=repaired_row, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_after_repair, failed_records=[]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=eval_df, failed_records=[]),
+        _positional(dataframe=repaired_row, failed_records=[]),
+        _positional(dataframe=eval_after_repair, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1053,10 +1178,10 @@ def test_repair_iterations_tracked_per_row(
     replace_df["_replacement_map"] = [{"replacements": []}]
 
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_needs_repair, failed_records=[]),
-        WorkflowRunResult(dataframe=repaired_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_pass, failed_records=[]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=eval_needs_repair, failed_records=[]),
+        _positional(dataframe=repaired_df, failed_records=[]),
+        _positional(dataframe=eval_pass, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1140,8 +1265,8 @@ def test_evaluate_dropping_rows_degrades_gracefully(
     eval_failed = FailedRecord(record_id="rec-1", step="rewrite-evaluate-0", reason="LLM timeout")
 
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[eval_failed]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=eval_df, failed_records=[eval_failed]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1205,13 +1330,13 @@ def test_repair_dropping_rows_degrades_gracefully(
     replace_df["_replacement_map"] = [{"replacements": []}, {"replacements": []}]
 
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
         # initial evaluate
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
+        _positional(dataframe=eval_df, failed_records=[]),
         # repair (drops rec-1)
-        WorkflowRunResult(dataframe=repaired_df, failed_records=[repair_failed]),
+        _positional(dataframe=repaired_df, failed_records=[repair_failed]),
         # re-evaluate
-        WorkflowRunResult(dataframe=eval_after, failed_records=[]),
+        _positional(dataframe=eval_after, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1267,8 +1392,8 @@ def test_passthrough_rows_get_defaults(
     replace_df["_replacement_map"] = [{"replacements": []}]
 
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=eval_df, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1295,6 +1420,51 @@ def test_passthrough_rows_get_defaults(
 # ---------------------------------------------------------------------------
 # Tests: evaluate() — happy path and column presence
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("positions", [(1, 0), None], ids=["explicit-positions", "unreported"])
+def test_rewrite_pipeline_rows_join_by_declared_correspondence(
+    positions: tuple[int, ...] | None,
+    stub_model_configs: list[ModelConfig],
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """Pipeline rows returned in reverse join to their own records, or fail as ``uncorrelated_output``."""
+    stub_entities = {"entities_by_value": [{"value": "Ann", "labels": ["first_name"]}]}
+    dataframe = pd.DataFrame({COL_TEXT: ["Ann called", "Bob called"], COL_ENTITIES_BY_VALUE: [stub_entities] * 2})
+
+    def run_workflow(df: pd.DataFrame, *, workflow_name: str, **_: object) -> WorkflowRunResult:
+        out = df.drop(columns=[RECORD_ID_COLUMN], errors="ignore").copy()
+        if workflow_name == "rewrite-pipeline":
+            out = out.iloc[::-1].reset_index(drop=True)
+            out[COL_REWRITTEN_TEXT] = ["rewrite of " + text for text in out[COL_TEXT]]
+            out[COL_REPAIR_ITERATIONS] = 0
+            return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=positions)
+        out[COL_NEEDS_REPAIR] = False
+        out[COL_UTILITY_SCORE] = 0.9
+        out[COL_LEAKAGE_MASS] = 0.0
+        out[COL_ANY_HIGH_LEAKED] = False
+        return _positional(dataframe=out, failed_records=[])
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = run_workflow
+    replace_df = dataframe.assign(_replacement_map=[{"replacements": []}] * 2)
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, replace_df)
+        run = lambda: RewriteWorkflow(adapter=adapter).run(
+            dataframe,
+            model_configs=stub_model_configs,
+            selected_models=stub_rewrite_model_selection,
+            replace_model_selection=stub_replace_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=_EVALUATION,
+        )
+        if positions is None:
+            with pytest.raises(AnonymizerWorkflowError, match="uncorrelated_output"):
+                run()
+            return
+        df = run().dataframe
+    assert df[COL_REWRITTEN_TEXT].tolist() == ["rewrite of " + text for text in df[COL_TEXT]]
 
 
 def test_evaluate_produces_judge_evaluation_column(
@@ -1596,3 +1766,792 @@ def test_run_needs_human_review_not_overwritten_by_evaluate(
     )
 
     assert bool(result.dataframe[COL_NEEDS_HUMAN_REVIEW].iloc[0]) is True
+
+
+@pytest.mark.parametrize("combined", [False, True])
+def test_label_categories_reach_disposition_as_a_row_column(
+    combined: bool,
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
+
+    def entities(*labels: str) -> dict:
+        return {"entities_by_value": [{"value": label, "labels": [label]} for label in labels]}
+
+    frame = pd.DataFrame({COL_TEXT: ["a", "b"], COL_ENTITIES_BY_VALUE: [entities("first_name"), entities("city")]})
+
+    class Stop(Exception):
+        pass
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = Stop
+    kind = CombinedRewriteWorkflow if combined else RewriteWorkflow
+    with patch(_REPLACE_PATCH) as replacement, pytest.raises(Stop):
+        _mock_replace(replacement, frame)
+        kind(adapter).run(
+            frame,
+            model_configs=[],
+            selected_models=stub_rewrite_model_selection,
+            replace_model_selection=stub_replace_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=EvaluationCriteria(max_repair_iterations=0),
+        )
+    seed = adapter.run_workflow.call_args.args[0]
+    assert [json.loads(value) for value in seed[COL_ENTITY_CLASSIFICATION]] == [
+        {"first_name": "direct_identifier"},
+        {"city": "quasi_identifier"},
+    ]
+    names = [column.name for column in adapter.run_workflow.call_args.kwargs["columns"]]
+    assert COL_ENTITY_CLASSIFICATION not in names
+    assert COL_SENSITIVITY_DISPOSITION in names
+
+
+def test_combined_runner_overriding_build_graph_with_release_signature_runs(
+    stub_df_with_entities: pd.DataFrame,
+    stub_eval_df: pd.DataFrame,
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """A caller's CombinedRewriteWorkflow may override build_graph with 0.4.0's six keyword arguments."""
+    from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteGraph, CombinedRewriteWorkflow
+
+    calls = []
+
+    class GraphOverride(CombinedRewriteWorkflow):
+        def build_graph(  # 0.4.0 public signature
+            self,
+            *,
+            selected_models: RewriteModelSelection,
+            replace_model_selection: ReplaceModelSelection,
+            privacy_goal: PrivacyGoal,
+            evaluation: EvaluationCriteria,
+            data_summary: str | None = None,
+            strict_entity_protection: bool = False,
+        ) -> CombinedRewriteGraph:
+            calls.append(True)
+            return super().build_graph(
+                selected_models=selected_models,
+                replace_model_selection=replace_model_selection,
+                privacy_goal=privacy_goal,
+                evaluation=evaluation,
+                data_summary=data_summary,
+                strict_entity_protection=strict_entity_protection,
+            )
+
+    from data_designer.config.column_configs import CustomColumnConfig
+
+    def run(kind: type[CombinedRewriteWorkflow]) -> tuple[pd.DataFrame, CustomColumnConfig]:
+        adapter = Mock()
+        adapter.run_workflow.side_effect = [_positional(stub_eval_df, [])]
+        with patch(_REPLACE_PATCH) as replacement:
+            _mock_replace(replacement, stub_df_with_entities)
+            result = kind(adapter).run(
+                stub_df_with_entities,
+                model_configs=[],
+                selected_models=stub_rewrite_model_selection,
+                replace_model_selection=stub_replace_model_selection,
+                privacy_goal=_PRIVACY_GOAL,
+                evaluation=EvaluationCriteria(max_repair_iterations=0),
+            )
+        (finalizer,) = [
+            column
+            for column in adapter.run_workflow.call_args.kwargs["columns"]
+            if isinstance(column, CustomColumnConfig) and column.name == COL_REWRITTEN_TEXT
+        ]
+        return result.dataframe, finalizer
+
+    expected, builtin_finalizer = run(CombinedRewriteWorkflow)
+    observed, override_finalizer = run(GraphOverride)
+    assert calls == [True]
+    pd.testing.assert_frame_equal(observed, expected)
+    assert observed[COL_REWRITTEN_TEXT].tolist() == ["Maria works"]
+    # Both runs are opaque here (a Mock adapter); the override's finalizer projects exactly like the builtin's.
+    graph = CombinedRewriteWorkflow(Mock()).build_graph(
+        selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(max_repair_iterations=0),
+    )
+    state = graph.evaluation_states[0]
+    row = {
+        state.rewritten_text: "observed",
+        state.quality_reanswer: {"answers": []},
+        state.privacy_reanswer: {"answers": []},
+        state.quality_compare: {"per_item": []},
+        state.utility_score: 0.9,
+        state.leakage_mass: 0.0,
+        state.weighted_leakage_rate: 0.0,
+        state.any_high_leaked: False,
+        state.needs_repair: False,
+    }
+    assert builtin_finalizer.generator_function(dict(row)) == override_finalizer.generator_function(dict(row))
+
+
+def test_run_reports_each_rows_protection_outcome(tmp_path: Path) -> None:
+    """Through ``Anonymizer.run()``, a row that passes its final checks is ``met`` and one still leaking is not."""
+    entities = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{RECORD_ID_COLUMN: ["clean", "leaky"], COL_ENTITIES_BY_VALUE: [entities] * 2}),
+        failed_records=[],
+        source_positions=(0, 1),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": ["Alice works at Acme", "Alice works at Beta"]}).to_csv(csv_path, index=False)
+    adapter = _ScriptedAdapter({"clean": 0, "leaky": 99})
+    anonymizer = Anonymizer(detection_workflow=detector, rewrite_runner=RewriteWorkflow(adapter=Mock(wraps=adapter)))
+
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        mock_replace_cls.return_value.generate_map_only.side_effect = lambda frame, **_: Mock(
+            dataframe=frame, failed_records=[], source_positions=tuple(range(len(frame)))
+        )
+        result = anonymizer.run(
+            config=AnonymizerConfig(
+                rewrite=Rewrite(privacy_goal=_PRIVACY_GOAL, risk_tolerance="minimal"), emit_telemetry=False
+            ),
+            data=AnonymizerInput(source=str(csv_path), text_column="text"),
+        )
+
+    assert [result.outcome(row).qualification for row in range(2)] == ["met", "not_met"]
+    assert [reason.check for reason in result.outcome(1).reasons] == ["leakage_within_threshold"]
+
+
+def _run_one(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
+    """Run one ``Alice`` row through ``Anonymizer.run()`` with ``adapter`` and return the result."""
+    return _run_result(adapter, tmp_path)
+
+
+def _span(text: str, value: str, start: int = 0, label: str = "first_name") -> dict:
+    begin = text.index(value, start)
+    return {"value": value, "label": label, "start_position": begin, "end_position": begin + len(value)}
+
+
+def _run_result(
+    adapter: _ScriptedAdapter, tmp_path: Path, text: str = "Alice works at Acme", spans: list[dict] | None = None
+) -> Any:
+    """Run one row through ``Anonymizer.run()`` with ``adapter``; ``spans`` default to ``Alice`` at the start, and an
+    empty list leaves ``final_entities`` out."""
+    spans = [_span(text, "Alice")] if spans is None else spans
+    values = sorted({span["value"] for span in spans} or {"Alice"})
+    entities = {"entities_by_value": [{"value": value, "labels": ["first_name"]} for value in values]}
+    columns: dict[str, list[object]] = {RECORD_ID_COLUMN: ["rec"], COL_ENTITIES_BY_VALUE: [entities]}
+    if spans:
+        columns[COL_FINAL_ENTITIES] = [{"entities": spans}]
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**columns), failed_records=[], source_positions=(0,)
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": [text]}).to_csv(csv_path, index=False)
+    anonymizer = Anonymizer(detection_workflow=detector, rewrite_runner=RewriteWorkflow(adapter=Mock(wraps=adapter)))
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        mock_replace_cls.return_value.generate_map_only.side_effect = lambda frame, **_: Mock(
+            dataframe=frame, failed_records=[], source_positions=tuple(range(len(frame)))
+        )
+        return anonymizer.run(
+            config=AnonymizerConfig(
+                rewrite=Rewrite(privacy_goal=_PRIVACY_GOAL, risk_tolerance="minimal", max_repair_iterations=1),
+                emit_telemetry=False,
+            ),
+            data=AnonymizerInput(source=str(csv_path), text_column="text"),
+        )
+
+
+def _run_outcome(adapter: _ScriptedAdapter, tmp_path: Path) -> Any:
+    """Run one ``Alice`` row through ``Anonymizer.run()`` with ``adapter`` and return its outcome."""
+    return _run_result(adapter, tmp_path).outcome(0)
+
+
+@pytest.mark.parametrize(
+    ("replacements", "requested", "text"),
+    [
+        pytest.param(
+            [
+                {"original": "Elena", "label": "first_name", "synthetic": "Clara"},
+                {"original": "Maya", "label": "first_name", "synthetic": "Elena"},
+            ],
+            {"Elena", "Maya"},
+            "[SUBSTITUTE_FIRST_NAME_1] studied with Clara.",
+            id="proposal-is-another-name",
+        ),
+        pytest.param(
+            [{"original": "North Carolina", "label": "state", "synthetic": "North Carolina"}],
+            {"North Carolina"},
+            "She moved to [SUBSTITUTE_STATE_1] in 2019.",
+            id="proposal-is-itself",
+        ),
+        pytest.param(
+            [
+                {"original": "Elena", "label": "first_name", "synthetic": "Clara"},
+                {"original": "MAYA", "label": "first_name", "synthetic": "ELENA"},
+                {"original": "Maya", "label": "first_name", "synthetic": "Elena"},
+            ],
+            {"Elena", "MAYA", "Maya"},
+            "[Substitute_First_Name_1] studied with Clara.",
+            id="re-cased-for-a-variant",
+        ),
+    ],
+)
+def test_placeholder_in_released_text_flags_the_row(
+    replacements: list[dict[str, str]], requested: set[str], text: str, tmp_path: Path
+) -> None:
+    """A substitute that folds to a value in its record becomes a placeholder; text that keeps it stays met and is
+    flagged for review."""
+    (folded,) = _fold_replacement_maps([{"replacements": replacements}], "record", [requested])
+    assert any(entry["synthetic"] in text for entry in folded["replacements"])
+
+    result = _run_result(_ScriptedAdapter({"rec": 0}, initial=text, replacement_map=folded), tmp_path)
+
+    outcome = result.outcome(0)
+    assert outcome.qualification == "met"
+    assert outcome.reasons == ()
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [True]
+
+
+_PLACEHOLDER_MAP = {
+    "replacements": [{"original": "Alice", "label": "first_name", "synthetic": "[SUBSTITUTE_FIRST_NAME_1]"}]
+}
+_PLACEHOLDER_FORMS = [
+    pytest.param("[SUBSTITUTE_FIRST_NAME_1] studied here.", id="exact"),
+    pytest.param("SUBSTITUTE_FIRST_NAME_1 studied here.", id="no-brackets"),
+    pytest.param("[SUBSTITUTE FIRST NAME 1] studied here.", id="spaces"),
+    pytest.param("SUBSTITUTE FIRST NAME 1 studied here.", id="spaces-no-brackets"),
+    pytest.param("substitute_first_name_1 studied here.", id="lowercase"),
+    pytest.param("[SUBSTITUTE-FIRST-NAME-1] studied here.", id="hyphens"),
+    pytest.param("SUBSTITUTE_FIRST_NAME1 studied here.", id="no-separator-before-number"),
+    pytest.param("(SUBSTITUTE_FIRST_NAME_1) studied here.", id="parentheses"),
+]
+_NOT_PLACEHOLDER_FORMS = [
+    pytest.param("Substitute teacher 1 studied here.", id="other-label"),
+    pytest.param("[SUBSTITUTE_FIRST_NAME] studied here.", id="number-dropped"),
+    pytest.param("[FIRST_NAME_1] studied here.", id="label-alone"),
+    pytest.param("[FIRST_NAME] studied here.", id="bare-label"),
+    pytest.param("[SUBSTITUTE_FIRST_NAME_10] studied here.", id="other-number"),
+    pytest.param("Maria studied here.", id="no-placeholder"),
+]
+
+
+def _combined_run_result(text: str, tmp_path: Path, replacement_map: dict = _PLACEHOLDER_MAP) -> Any:
+    """Run one ``Alice`` row through ``Anonymizer.run()`` on the combined route, whose adapter returns ``text`` as the
+    rewrite with ``replacement_map``."""
+    from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
+
+    source = "Alice works at Acme"
+    policy = [
+        {"id": 1, "sensitivity": "high", "protection_method_suggestion": "replace", "source": "tagged"}
+        | {"category": "direct_identifier", "entity_label": "first_name", "entity_value": "Alice"}
+    ]
+
+    def run_workflow(seed: pd.DataFrame, **_: object) -> WorkflowRunResult:
+        out = seed.copy()
+        out[COL_REPLACEMENT_MAP] = [replacement_map] * len(out)
+        out[COL_REWRITTEN_TEXT] = text
+        out[COL_SENSITIVITY_DISPOSITION] = [{"sensitivity_disposition": policy}] * len(out)
+        out[COL_UTILITY_SCORE] = 0.9
+        out[COL_LEAKAGE_MASS] = 0.0
+        out[COL_WEIGHTED_LEAKAGE_RATE] = 0.0
+        out[COL_ANY_HIGH_LEAKED] = False
+        out[COL_NEEDS_REPAIR] = False
+        out[COL_REPAIR_ITERATIONS] = 0
+        out[COL_NEEDS_HUMAN_REVIEW] = False
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = run_workflow
+    columns = {
+        RECORD_ID_COLUMN: ["rec"],
+        COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
+        COL_FINAL_ENTITIES: [{"entities": [_span(source, "Alice")]}],
+    }
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**columns), failed_records=[], source_positions=(0,)
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": [source]}).to_csv(csv_path, index=False)
+    anonymizer = Anonymizer(
+        detection_workflow=detector, combined_rewrite_runner=CombinedRewriteWorkflow(adapter=adapter)
+    )
+    with patch(_REPLACE_PATCH):
+        return anonymizer.run(
+            config=AnonymizerConfig(
+                rewrite=Rewrite(
+                    privacy_goal=_PRIVACY_GOAL,
+                    risk_tolerance="minimal",
+                    max_repair_iterations=0,
+                    use_combined_graph=True,
+                ),
+                emit_telemetry=False,
+            ),
+            data=AnonymizerInput(source=str(csv_path), text_column="text"),
+        )
+
+
+def _staged_or_combined(route: str, text: str, tmp_path: Path, replacement_map: dict | None = None) -> Any:
+    replacement_map = _PLACEHOLDER_MAP if replacement_map is None else replacement_map
+    if route == "combined":
+        return _combined_run_result(text, tmp_path, replacement_map)
+    return _run_result(_ScriptedAdapter({"rec": 0}, initial=text, replacement_map=replacement_map), tmp_path)
+
+
+@pytest.mark.parametrize("route", ["staged", "combined"])
+@pytest.mark.parametrize("text", _PLACEHOLDER_FORMS)
+def test_own_placeholder_in_any_form_flags_a_met_row(route: str, text: str, tmp_path: Path) -> None:
+    """The row's own placeholder, exact or loosely reformatted, keeps the row met and flags it for review."""
+    result = _staged_or_combined(route, text, tmp_path)
+
+    outcome = result.outcome(0)
+    assert (outcome.qualification, outcome.protected, outcome.reasons) == ("met", True, ())
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [True]
+
+
+@pytest.mark.parametrize("route", ["staged", "combined"])
+@pytest.mark.parametrize("text", _NOT_PLACEHOLDER_FORMS)
+def test_text_that_is_not_the_rows_placeholder_is_not_flagged(route: str, text: str, tmp_path: Path) -> None:
+    """Another label, a dropped or different number, or the label alone is not the row's placeholder."""
+    result = _staged_or_combined(route, text, tmp_path)
+
+    outcome = result.outcome(0)
+    assert (outcome.qualification, outcome.protected) == ("met", True)
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False]
+
+
+@pytest.mark.parametrize("route", ["staged", "combined"])
+@pytest.mark.parametrize(
+    ("label", "placeholder"),
+    [
+        pytest.param("name, surname", "[SUBSTITUTE_NAME__SURNAME_1]", id="punctuation-run"),
+        pytest.param("kimlik numarası", "[SUBSTITUTE_KIMLIK_NUMARASI_1]", id="dotless-i"),
+        pytest.param("first_name", "[SUBSTITUTE_FIRST_NAME_01]", id="leading-zero"),
+    ],
+)
+def test_exact_placeholder_of_any_label_flags_a_met_row(
+    route: str, label: str, placeholder: str, tmp_path: Path
+) -> None:
+    """The exact placeholder is matched from its minted token, whatever punctuation or casing its label has."""
+    replacement_map = {"replacements": [{"original": "Alice", "label": label, "synthetic": placeholder}]}
+    result = _staged_or_combined(route, f"{placeholder} studied here.", tmp_path, replacement_map)
+
+    outcome = result.outcome(0)
+    assert (outcome.qualification, outcome.protected, outcome.reasons) == ("met", True, ())
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [True]
+
+
+@pytest.mark.parametrize("route", ["staged", "combined"])
+def test_placeholder_with_a_non_ascii_digit_does_not_raise(route: str, tmp_path: Path) -> None:
+    """A placeholder whose number is not ASCII decimal is matched as written, not parsed."""
+    placeholder = "[SUBSTITUTE_FIRST_NAME_\u00b2]"
+    replacement_map = {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": placeholder}]}
+    result = _staged_or_combined(route, "Maria studied here.", tmp_path, replacement_map)
+
+    assert result.outcome(0).qualification == "met"
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False]
+
+
+def test_placeholder_number_is_matched_as_written() -> None:
+    """The number is matched as minted: ``_01`` and ``_1`` do not match each other, and ``_1`` does not match ``_10``."""
+
+    def flags(text: str, placeholder: str) -> bool:
+        return _placeholder_in_text(text, {"replacements": [{"label": "first_name", "synthetic": placeholder}]})
+
+    assert flags("SUBSTITUTE_FIRST_NAME_01 here", "[SUBSTITUTE_FIRST_NAME_01]")
+    assert not flags("SUBSTITUTE_FIRST_NAME_1 here", "[SUBSTITUTE_FIRST_NAME_01]")
+    assert flags("SUBSTITUTE_FIRST_NAME_1 here", "[SUBSTITUTE_FIRST_NAME_1]")
+    assert not flags("SUBSTITUTE_FIRST_NAME_01 here", "[SUBSTITUTE_FIRST_NAME_1]")
+    assert not flags("SUBSTITUTE_FIRST_NAME_10 here", "[SUBSTITUTE_FIRST_NAME_1]")
+
+
+def test_substitute_shaped_like_a_placeholder_for_another_label_is_not_flagged() -> None:
+    """Only a placeholder built for the entry's own label counts; ordinary substitutes never do."""
+    text = "[SUBSTITUTE_CITY_1] and Clara, substitute teacher 1"
+    assert not _placeholder_in_text(
+        text, {"replacements": [{"label": "first_name", "synthetic": "[SUBSTITUTE_CITY_1]"}]}
+    )
+    assert not _placeholder_in_text(text, {"replacements": [{"label": "first_name", "synthetic": "Clara"}]})
+    assert _placeholder_in_text(
+        text, json.dumps({"replacements": [{"label": "city", "synthetic": "[SUBSTITUTE_CITY_1]"}]})
+    )
+    assert _placeholder_in_text(text, {"replacements": [{"label": "teacher", "synthetic": "[SUBSTITUTE_TEACHER_1]"}]})
+    assert not _placeholder_in_text(text, None)
+
+
+@pytest.mark.parametrize(
+    ("adapter", "reasons"),
+    [
+        pytest.param(
+            _ScriptedAdapter({"rec": 0}, initial="ALICE  works there"),
+            [("failed", "replacements_applied", "e0:N1,D1,O1")],
+            id="kept-by-generation",
+        ),
+        pytest.param(
+            _ScriptedAdapter({"rec": 1}, repaired="Alice is back ({})"),
+            [("failed", "replacements_applied", "e0:N1,D1,O1")],
+            id="reintroduced-by-repair",
+        ),
+        pytest.param(
+            _ScriptedAdapter({"rec": 0}, policy=None),
+            [("could_not_assess", "replacements_applied", "replacement_policy_unavailable")],
+            id="policy-unavailable",
+        ),
+        pytest.param(_ScriptedAdapter({"rec": 0}), [], id="gone-without-map"),
+        pytest.param(
+            _ScriptedAdapter({"rec": 0}, initial="Alice stays", replacement_map={"replacements": []}),
+            [("failed", "replacements_applied", "e0:N1,D1,O1")],
+            id="kept-with-empty-map",
+        ),
+    ],
+)
+def test_replacements_applied_assesses_the_final_text(
+    adapter: _ScriptedAdapter, reasons: list[tuple[str, str, str]], tmp_path: Path
+) -> None:
+    """The readiness flag is True and the map omits the value, yet the final text decides the check."""
+    outcome = _run_outcome(adapter, tmp_path)
+
+    assert outcome.qualification == ("not_met" if reasons else "met")
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == reasons
+    assert outcome.advisories == ()
+
+
+def test_a_value_the_source_also_holds_outside_the_detected_spans_is_met_and_flagged(tmp_path: Path) -> None:
+    """The source's text and detected spans reach the final checks: an undetected homograph is allowed once."""
+    text = "May loves the month of May."
+    adapter = _ScriptedAdapter(
+        {"rec": 0}, initial="Jane loves the month of May.", policy=_disposition(("May", "replace", "tagged"))
+    )
+    result = _run_result(adapter, tmp_path, text, [_span(text, "May")])
+    outcome = result.outcome(0)
+
+    assert (outcome.qualification, outcome.reasons, outcome.advisories) == ("met", (), ())
+    assert result.dataframe["needs_human_review"].tolist() == [True]
+
+
+def test_an_undetected_occurrence_the_rewrite_drops_is_met_and_not_flagged(tmp_path: Path) -> None:
+    """Detection missed one ``Alice``, but the rewritten text holds none: nothing is kept, so nothing is flagged."""
+    text = "Call Alice. Alice will answer."
+    adapter = _ScriptedAdapter(
+        {"rec": 0}, initial="Call Sara. Sara will answer.", policy=_disposition(("Alice", "replace", "tagged"))
+    )
+    result = _run_result(adapter, tmp_path, text, [_span(text, "Alice")])
+    outcome = result.outcome(0)
+
+    assert (outcome.qualification, outcome.reasons, outcome.advisories) == ("met", (), ())
+    assert result.dataframe["needs_human_review"].tolist() == [False]
+    assert [(x.in_source, x.detected, x.in_output, x.undetected_kept) for x in result.leftovers(0)] == [
+        (2, 1, 0, False)
+    ]
+
+
+def test_a_value_copied_beyond_its_source_count_is_not_met(tmp_path: Path) -> None:
+    text = "Alice met Bob."
+    policy = _disposition(("Alice", "replace", "tagged"), ("Bob", "replace", "tagged"))
+    adapter = _ScriptedAdapter({"rec": 0}, initial="Sara met Tom; Bob agreed.", policy=policy)
+    result = _run_result(adapter, tmp_path, text, [_span(text, "Alice"), _span(text, "Bob")])
+    outcome = result.outcome(0)
+
+    assert outcome.qualification == "not_met"
+    assert format_cause(x for x in result.leftovers(0) if x.over_bound) == outcome.reasons[0].cause
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [("failed", "replacements_applied", "e1:N1,D1,O1")]
+
+
+def test_without_detected_spans_any_occurrence_fails(tmp_path: Path) -> None:
+    """No ``final_entities``: every source occurrence counts as detected, so the presence rule applies."""
+    adapter = _ScriptedAdapter({"rec": 0}, initial="Sara called; Alice answered.")
+    outcome = _run_result(adapter, tmp_path, "Alice called; Alice answered.", []).outcome(0)
+
+    assert outcome.qualification == "not_met"
+
+
+def _leftover(
+    text: str, policy: object, source: str = "", spans: list[tuple[int, int]] | None = None
+) -> dict[str, bool | str | None]:
+    entities = [
+        {"value": source[a:b], "label": "first_name", "start_position": a, "end_position": b} for a, b in spans or []
+    ]
+    row = {
+        COL_REWRITTEN_TEXT: text,
+        COL_TEXT: source,
+        COL_FINAL_ENTITIES: {"entities": entities},
+        COL_SENSITIVITY_DISPOSITION: policy,
+    }
+    return _leftover_metrics(row)
+
+
+@pytest.mark.parametrize(
+    ("text", "original", "expected"),
+    [
+        ("maria met alice", "Alice", False),
+        ("met  Alice\n Smith today", "Alice Smith", False),
+        ("Alicea and Malice", "Alice", True),
+        ("order #W1234567.", "#W1234567", False),
+        ("order X#W1234567", "#W1234567", True),
+        ("mail a.b@x.org!", "a.b@x.org", False),
+        ("mail aa.b@x.org", "a.b@x.org", True),
+        ("Jose called", "José", False),
+        ("from istanbul", "İstanbul", False),
+        ("Herr Muller", "Müller", False),
+        ("Herr Müller", "Muller", False),
+        ("sign in here", "IN", True),
+        ("sign IN here", "IN", False),
+        ("SIGNED BY ALICE", "Alice", False),
+        ("张伟在北京工作", "张伟", False),
+        ("王先生在北京", "王", True),
+        ("김철수씨가 왔다", "김철수", True),
+        ("김철수 씨가 왔다", "김철수", False),
+    ],
+)
+def test_leftover_metrics_matching(text: str, original: str, expected: bool) -> None:
+    """Without detected spans the rule is presence, matched as before."""
+    policy = _disposition((original, "replace", "tagged"))
+    assert _leftover(text, policy, original)["replacements_applied"] is expected
+
+
+def test_leftover_metrics_read_the_policy_not_the_map() -> None:
+    """Values come from the policy's replace entries; kept values are not checked; no map is involved."""
+    policy = _disposition(("Bob", "replace", "tagged"), ("Acme", "generalize", "tagged"))
+    assert _leftover("Maria met Bob at Acme", policy)["replacements_applied"] is False
+    assert _leftover("Maria met Ana at Acme", policy)["replacements_applied"] is True
+
+
+def test_leftover_metrics_unavailable_policy() -> None:
+    assert _leftover("text", None)["replacements_applied"] is None
+    assert _leftover("text", {"sensitivity_disposition": [{"entity_value": "x"}]})["replacements_applied"] is None
+    assert _leftover("text", ["not a dict"])["replacements_applied"] is None
+
+
+def test_leftover_metrics_skip_latent_entities() -> None:
+    """A latent value the policy replaces is not checked; an explicit one still is."""
+    latent = _disposition(("Maria", "replace", "tagged"), ("a company", "replace", "latent"))
+    assert _leftover("Ana works at a company", latent)["replacements_applied"] is True
+    assert _leftover("Maria works at a company", latent)["replacements_applied"] is False
+
+
+def test_leftover_metrics_count_against_the_detected_spans() -> None:
+    policy = _disposition(("Alice", "replace", "tagged"))
+    source = "Call Alice. Alice will answer."
+    assert _leftover("Call Sara. Alice will answer.", policy, source, [(5, 10)]) == {
+        "replacements_applied": True,
+        "replacements_applied_cause": "",
+        "undetected_value_kept": True,
+    }
+    assert _leftover("Alice and Alice.", policy, source, [(5, 10)])["replacements_applied"] is False
+    assert _leftover("Alice.", policy, source, [(5, 10), (12, 17)]) == {
+        "replacements_applied": False,
+        "replacements_applied_cause": "e0:N2,D2,O1",
+        "undetected_value_kept": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("rewritten", "kept"),
+    [
+        ("Call Sara. Sara will answer.", False),  # the undetected occurrence is dropped
+        ("Call Sara. Alice will answer.", True),  # kept, within the bound
+        ("Call Alice. Sara will answer.", True),  # kept at the detected place, within the bound
+        ("Alice and Alice.", True),  # over the bound
+        ("Call Sara; alice will answer.", True),  # case-folded
+    ],
+)
+def test_leftover_metrics_fail_or_flag_exactly_when_a_value_is_kept(rewritten: str, kept: bool) -> None:
+    """Failed or flagged exactly when the rewritten text holds a replaced value at all; the bound decides which."""
+    policy = _disposition(("Alice", "replace", "tagged"))
+    metrics = _leftover(rewritten, policy, "Call Alice. Alice will answer.", [(5, 10)])
+    assert (metrics["replacements_applied"] is False or metrics["undetected_value_kept"]) is kept
+
+
+def test_leftover_metrics_name_a_value_by_its_own_span() -> None:
+    policy = _disposition(("John Smith", "replace", "tagged"), ("John", "replace", "tagged"))
+    source, spans = "John Smith called. John said hi.", [(0, 10), (19, 23)]
+    metrics = _leftover("[A] called. [B] said hi.", policy, source, spans)
+    assert (metrics["replacements_applied"], metrics["undetected_value_kept"]) == (True, False)
+    assert _leftover("[A] called. John said hi.", policy, source, spans)["replacements_applied"] is False
+
+
+@pytest.mark.parametrize(
+    ("text", "values", "rewritten", "cause"),
+    [
+        pytest.param(
+            "May loves the month of May.", ["May"], "Jane loves the month of May.", "e0:N2,D1,O1", id="homograph"
+        ),
+        pytest.param(
+            "Emma Kovacs wrote; user emma_kovacs_9839 logged in.",
+            ["Emma", "Kovacs"],
+            "Anna Novak wrote; user emma_kovacs_9839 logged in.",
+            "e0:N2,D1,O1;e1:N2,D1,O1",
+            id="handle",
+        ),
+        pytest.param(
+            "Call Alice. Alice will answer.", ["Alice"], "Call Sara. Alice will answer.", "e0:N2,D1,O1", id="repeat"
+        ),
+    ],
+)
+def test_leftovers_explain_a_flagged_row(
+    text: str, values: list[str], rewritten: str, cause: str, tmp_path: Path
+) -> None:
+    """A met row flagged for review: its leftovers name each kept undetected value, with the spans that explain it."""
+    policy = _disposition(*((value, "replace", "tagged") for value in values))
+    adapter = _ScriptedAdapter({"rec": 0}, initial=rewritten, policy=policy)
+    result = _run_result(adapter, tmp_path, text, [_span(text, value) for value in values])
+
+    assert (result.outcome(0).qualification, result.dataframe["needs_human_review"].tolist()) == ("met", [True])
+    leftovers = result.leftovers(0)
+    assert format_cause(leftovers) == cause
+    assert all(x.undetected_kept and not x.over_bound for x in leftovers)
+    first = leftovers[0]
+    assert (first.value, first.label, first.span) == (
+        values[0],
+        "first_name",
+        Span(text.index(values[0]), text.index(values[0]) + len(values[0])),
+    )
+    assert [rewritten[s.slice].casefold() for s in first.output_spans] == [values[0].casefold()] * first.in_output
+    assert [text[s.slice].casefold() for s in first.undetected_spans] == [values[0].casefold()] * (
+        first.in_source - first.detected
+    )
+
+
+def test_leftovers_reject_a_result_without_the_trace() -> None:
+    result = AnonymizerResult(
+        dataframe=pd.DataFrame(),
+        trace_dataframe=pd.DataFrame({"text": ["x"]}),
+        resolved_text_column="text",
+        failed_records=[],
+    )
+    with pytest.raises(ValueError, match="no leftover trace"):
+        result.leftovers(0)
+
+
+def test_leftovers_reject_a_row_whose_rewritten_text_was_withheld(tmp_path: Path) -> None:
+    """The last repair keeps ``Alice`` and still leaks, so its text is withheld: the audit must not count it as clean."""
+    adapter = _ScriptedAdapter({"rec": 99}, repaired="Alice repaired {1}")
+    result = _run_result(adapter, tmp_path)
+
+    assert pd.isna(result.dataframe["text_rewritten"].iloc[0])
+    assert ("failed", "replacements_applied", "e0:N1,D1,O1") in [
+        (r.code, r.check, r.cause) for r in result.outcome(0).reasons
+    ]
+    with pytest.raises(ValueError, match="withheld"):
+        result.leftovers(0)
+
+
+def test_a_name_with_marks_out_of_canonical_order_copied_verbatim_is_not_met(tmp_path: Path) -> None:
+    """The value and both texts are matched in one normalized form, so marks NFKD reorders still match."""
+    name = "Mira\U0001d157\U0001d16d\U0001d16e"
+    text = f"{name} called."
+    adapter = _ScriptedAdapter({"rec": 0}, initial=text, policy=_disposition((name, "replace", "tagged")))
+    result = _run_result(adapter, tmp_path, text, [_span(text, name)])
+    outcome = result.outcome(0)
+
+    assert outcome.qualification == "not_met"
+    assert result.dataframe["needs_human_review"].tolist() == [True]
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [("failed", "replacements_applied", "e0:N1,D1,O1")]
+    assert format_cause(x for x in result.leftovers(0) if x.over_bound) == outcome.reasons[0].cause
+
+
+def test_a_name_whose_marks_reorder_after_a_dropped_mark_is_counted(tmp_path: Path) -> None:
+    """Normalizing this name twice reorders its marks; it is normalized once, so the run completes and counts it."""
+    name = "Mira\U0001d16d\u093a\u1b44"
+    text = f"{name} called."
+    adapter = _ScriptedAdapter({"rec": 0}, initial=text, policy=_disposition((name, "replace", "tagged")))
+    result = _run_result(adapter, tmp_path, text, [_span(text, name)])
+
+    assert [(r.code, r.check, r.cause) for r in result.outcome(0).reasons] == [
+        ("failed", "replacements_applied", "e0:N1,D1,O1")
+    ]
+    assert format_cause(result.leftovers(0)) == "e0:N1,D1,O1"
+
+
+class _NoPrivacyResponseAdapter(_ScriptedAdapter):
+    """Evaluation has no privacy response: the response and its metrics are missing, typed as DataDesigner returns them."""
+
+    def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **kwargs: object) -> WorkflowRunResult:
+        result = super().run_workflow(seed, workflow_name=workflow_name, **kwargs)
+        if workflow_name.startswith("rewrite-evaluate-"):
+            frame, missing = result.dataframe, [None] * len(result.dataframe)
+            frame[COL_PRIVACY_QA_REANSWER] = None
+            for column in (COL_LEAKAGE_MASS, COL_WEIGHTED_LEAKAGE_RATE):
+                frame[column] = pd.array(missing, dtype="double[pyarrow]")
+            frame[COL_ANY_HIGH_LEAKED] = pd.array(missing, dtype="bool[pyarrow]")
+            frame[COL_NEEDS_REPAIR] = pd.array([False] * len(frame), dtype="bool[pyarrow]")
+        return result
+
+
+def test_row_without_a_privacy_response_is_kept_withheld_and_flagged(tmp_path: Path) -> None:
+    result = _run_one(_NoPrivacyResponseAdapter({"rec": 0}), tmp_path)
+
+    assert result.failed_records == []
+    assert len(result.dataframe) == 1
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row["text_rewritten"])
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [
+        ("could_not_assess", "high_leak", "metric_unavailable"),
+        ("could_not_assess", "leakage_within_threshold", "metric_unavailable"),
+    ]
+
+
+class _NoRewriteResponseAdapter(_NoPrivacyResponseAdapter):
+    """The rewrite response never parsed: no rewritten text, so evaluation asks nothing and every metric is missing."""
+
+    def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **kwargs: object) -> WorkflowRunResult:
+        result = super().run_workflow(seed, workflow_name=workflow_name, **kwargs)
+        if workflow_name == "rewrite-pipeline":
+            result.dataframe[COL_REWRITTEN_TEXT] = None
+            result.dataframe[COL_FULL_REWRITE] = None
+        elif workflow_name.startswith("rewrite-evaluate-"):
+            result.dataframe[COL_UTILITY_SCORE] = pd.array([None] * len(result.dataframe), dtype="double[pyarrow]")
+        return result
+
+
+def test_row_without_a_rewrite_response_is_kept_without_text_and_flagged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.responses"):
+        result = _run_one(_NoRewriteResponseAdapter({"rec": 0}), tmp_path)
+
+    assert result.failed_records == []
+    assert len(result.dataframe) == 1
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row["text_rewritten"])
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert not outcome.available
+    assert not outcome.protected
+    assert [record.getMessage() for record in caplog.records if record.name == "anonymizer.rewrite.responses"] == [
+        "Rows kept without a usable model response after their retries, by step: rewrite=1. "
+        "If most rows are listed, check that step's model."
+    ]
+
+
+class _NoDispositionResponseAdapter(_NoRewriteResponseAdapter):
+    """No disposition response had the right entry count: no disposition, so neither the rewrite nor evaluation asks."""
+
+    def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **kwargs: object) -> WorkflowRunResult:
+        result = super().run_workflow(seed, workflow_name=workflow_name, **kwargs)
+        if workflow_name == "rewrite-pipeline":
+            result.dataframe[COL_SENSITIVITY_DISPOSITION] = None
+        return result
+
+
+def test_row_without_a_disposition_response_is_kept_without_text_and_flagged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.responses"):
+        result = _run_one(_NoDispositionResponseAdapter({"rec": 0}), tmp_path)
+
+    assert result.failed_records == []
+    assert len(result.dataframe) == 1
+    row = result.dataframe.iloc[0]
+    assert pd.isna(row["text_rewritten"])
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    assert not outcome.available
+    assert not outcome.protected
+    assert [(r.code, r.check, r.cause) for r in outcome.reasons] == [("raised", "", "")]
+    assert [record.getMessage() for record in caplog.records if record.name == "anonymizer.rewrite.responses"] == [
+        "Rows kept without a usable model response after their retries, by step: sensitivity disposition=1. "
+        "If most rows are listed, check that step's model."
+    ]

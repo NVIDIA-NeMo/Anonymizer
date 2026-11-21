@@ -39,6 +39,7 @@ Common patterns and what they mean:
 | `Replacement map incomplete after one retry` | Substitute still lacks one or more exact requested mappings after its missing-pair retry | See [Incomplete Substitute mappings](#incomplete-substitute-mappings) below; this is separate from schema validation retries |
 | `Replacement map retry failed` | The missing-pair generation workflow failed before returning a complete map | Inspect the workflow logs for schema, provider, or request errors; already-complete records are retained |
 | `Record missing from workflow output` with no other cause, at `step="entity-detection"`, `step="replace-map-generation"` or `step="rewrite-*"` | Often rate limiting (429s) exhausting the retry budget of the model pool | See [Rate limits / dropped rows](#rate-limits-dropped-rows) below |
+| `stopped_early (<step>)` | A Rewrite step stopped early: over its last `shutdown_error_window` rows, at least `shutdown_error_rate` of them had no usable model response, so the step sent no further requests and this row was not run. In combined mode each evaluation and repair step name carries a suffix for its round, starting from `__iteration_0`: `_privacy_qa_reanswer__iteration_0` is the first evaluation and `_rewritten_text__next__iteration_0` the first repair. A row cancelled before any step refused it lists every stopped step, as in `stopped_early (<a>, <b>)` | Check that step's model; the run's warning names the step, the rate, the window and the threshold. To run every row anyway, set `disable_early_shutdown=True` in `data_designer_run_config` |
 | `Output is missing required tracking column` | Internal; file an issue | None |
 
 If `failed_records` is non-empty, **investigate those records first**. Provider failures need model/provider configuration changes; incomplete substitution maps need the [Substitute validation and retry checks](concepts/replace.md#substitute). Treat the reported step and reason as the starting point rather than assuming every failure is an infrastructure problem.
@@ -209,7 +210,7 @@ Symptom: every record uses all `max_repair_iterations` and still ends up flagged
 
 1. The leakage threshold for your `risk_tolerance` may be unreachable for your data. Look at the *floor* of `leakage_mass` across repair iterations — if it plateaus above the threshold, the data has more sensitive content than the threshold permits given current detection coverage.
 2. Loosen `risk_tolerance` one step, **only after** confirming detection has caught everything you can see. Loosening before detection is solid just hides the leak.
-3. Set `max_repair_iterations=0` for an audit pass. You'll get the metrics without paying for repair attempts that won't succeed, which makes it easy to see how far off you are.
+3. Set `max_repair_iterations=0` for an audit pass. You'll get the metrics without paying for repair attempts that won't succeed, which makes it easy to see how far off you are. Records that fail a privacy check have their rewritten text withheld (null); `trace_dataframe` keeps it in `_full_rewrite`.
 
 ---
 
@@ -249,9 +250,9 @@ Symptoms: every "Alice" becomes "Maya," every city becomes "Springfield," every 
 
 ### Hash output isn't stable across runs
 
-The digest is deterministic given the same `algorithm`, `digest_length`, and *input text*. The label is **not** part of the digest — but it *is* templated into the output wrapper (default `format_template="<HASH_{label}_{digest}>"`). So:
+The digest is deterministic given the same `key`, `digest_length`, and *input text* (casefolded, with runs of whitespace collapsed). The label is **not** part of the digest — but it *is* templated into the output wrapper (default `format_template="<HASH_{label}_{digest}>"`). So:
 
-- **Digest differs across runs**: the detected entity text changed (whitespace, casing, surrounding context). Check the `<your_text_column>_with_spans` column to confirm.
+- **Digest differs across runs**: the key changed, or the detected entity text changed beyond casing and whitespace. Check that every run reads the same key, and check the `<your_text_column>_with_spans` column for the entity text.
 - **Only the wrapper differs** (digest is the same, but e.g. `<HASH_FIRST_NAME_abc>` becomes `<HASH_NAME_abc>`): the label changed between runs. The digest is still stable; only the wrapper text moved. To avoid label drift in the output, set `format_template="<HASH_{digest}>"` to drop the label entirely.
 
 ### Validation passed but `preview` errors at LLM call

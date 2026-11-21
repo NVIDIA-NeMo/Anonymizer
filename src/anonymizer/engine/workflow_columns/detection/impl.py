@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import cached_property
 from typing import Any
 
 from data_designer.config.column_configs import GenerationStrategy
@@ -20,7 +21,11 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     RECORD_ID_COLUMN,
 )
-from anonymizer.engine.detection.augmentation import augment_row_async
+from anonymizer.engine.detection.augmentation import (
+    _ResponseFormatSwitch,
+    augment_row_async,
+    build_response_format_switch,
+)
 from anonymizer.engine.detection.chunked_validation import (
     ChunkedValidationParams,
     chunked_validate_row_async,
@@ -115,6 +120,16 @@ class AugmentationGenerator(ColumnGeneratorWithModelRegistry[AugmentationConfig]
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         raise NotImplementedError("AugmentationGenerator is async-only; use agenerate().")
 
+    @cached_property
+    def _response_format(self) -> _ResponseFormatSwitch:
+        """Built on first use and kept for this generator's DataDesigner call."""
+        alias = self.config.model_alias
+        provider = self.model_registry.get_model_provider(model_alias=alias)
+        return build_response_format_switch(
+            provider_type=provider.provider_type,
+            extra_bodies=(self.get_model_config(alias).inference_parameters.extra_body, provider.extra_body),
+        )
+
     async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         return await augment_row_async(
             row=data,
@@ -124,8 +139,11 @@ class AugmentationGenerator(ColumnGeneratorWithModelRegistry[AugmentationConfig]
             allowed_entity_labels=self.config.allowed_entity_labels,
             excluded_entity_labels=self.config.excluded_entity_labels,
             system_prompt=self.config.system_prompt,
+            max_conversation_restarts=self.resource_provider.run_config.max_conversation_restarts,
+            max_correction_steps=self.resource_provider.run_config.max_conversation_correction_steps,
             enabled=self.config.enabled,
             regex_constrained_entity_labels=self.config.regex_constrained_entity_labels,
+            response_format=self._response_format if self.config.enabled else None,
         )
 
 

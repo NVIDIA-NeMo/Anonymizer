@@ -8,11 +8,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from anonymizer.config.entity_labels import normalize_entity_label
 from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
-from anonymizer.config.replace_strategies import ReplaceMethod
+from anonymizer.config.replace_strategies import HASH_KEY_REQUIRED_MESSAGE, Hash, ReplaceMethod
 from anonymizer.config.rewrite import (
     DEFAULT_PRESERVE_TEXT,
     DEFAULT_PROTECT_TEXT,
@@ -131,6 +131,22 @@ class TextRecordsInput(BaseModel):
         return self
 
 
+class DetectionScope(BaseModel):
+    """The detection scope a run used. Finding no entities describes the result under this scope only."""
+
+    model_config = ConfigDict(frozen=True)
+
+    effective_labels: tuple[str, ...] = Field(description="Labels detection looked for, after exclusions.")
+    allowed_labels: tuple[str, ...] | None = Field(
+        description=(
+            "Labels final entities are restricted to (effective_labels when entity_labels is set). "
+            "None when entity_labels is unset: final entities may then carry labels outside effective_labels."
+        )
+    )
+    excluded_labels: tuple[str, ...] = Field(description="Configured exclusions (normalized).")
+    gliner_threshold: float = Field(description="GLiNER detection confidence threshold.")
+
+
 class Detect(BaseModel):
     """Configuration for the entity detection stage."""
 
@@ -194,7 +210,10 @@ class Detect(BaseModel):
     )
     regex_limits: RegexLimits = Field(
         default_factory=RegexLimits,
-        description="Per-record, per-rule validated-match cap and character-scaled timeout for all regex rules.",
+        description=(
+            "Per-record, per-rule validated-match cap and character-scaled timeout, in CPU seconds, "
+            "for all regex rules."
+        ),
     )
 
     @field_validator("entity_labels")
@@ -233,13 +252,13 @@ class Detect(BaseModel):
         if duplicate_keys:
             logger.warning(
                 "entity_label_examples contained label names that normalize to the same label; "
-                "merged automatically: %s",
-                duplicate_keys,
+                "merged automatically (%d labels).",
+                len(duplicate_keys),
             )
         if duplicate_value_labels:
             logger.warning(
-                "entity_label_examples contained duplicate examples; removed automatically for labels: %s",
-                duplicate_value_labels,
+                "entity_label_examples contained duplicate examples; removed automatically for %d labels.",
+                len(duplicate_value_labels),
             )
         return normalized
 
@@ -250,8 +269,8 @@ class Detect(BaseModel):
         excluded_examples = sorted(example_labels & excluded_set)
         if excluded_examples:
             logger.warning(
-                "entity_label_examples configured excluded labels; their examples will be ignored: %s",
-                excluded_examples,
+                "entity_label_examples configured excluded labels; their examples will be ignored (%d labels).",
+                len(excluded_examples),
             )
 
         active_example_labels = example_labels - excluded_set
@@ -267,8 +286,8 @@ class Detect(BaseModel):
             overlap = sorted(entity_labels_set & excluded_set)
             if overlap:
                 logger.warning(
-                    "entity_labels and excluded_entity_labels share labels that will never be detected: %s",
-                    overlap,
+                    "entity_labels and excluded_entity_labels share %d labels that will never be detected.",
+                    len(overlap),
                 )
         else:
             entity_labels_set = set(DEFAULT_ENTITY_LABELS)
@@ -381,7 +400,7 @@ class AnonymizerConfig(BaseModel):
     detect: Detect = Field(default_factory=Detect, description="Entity detection configuration.")
     replace: ReplaceMethod | None = Field(
         default=None,
-        description="Replacement method (Substitute(), Redact(), Annotate(), or Hash()).",
+        description="Replacement method (Substitute(), Redact(), Annotate(), or Hash(key=...)).",
     )
     rewrite: Rewrite | None = Field(default=None, description="Optional rewrite-mode parameters. ")
     emit_telemetry: bool = Field(
@@ -392,16 +411,31 @@ class AnonymizerConfig(BaseModel):
         ),
     )
 
+    # The two-mode and keyless-Hash checks are field-level: a model-level error carries the whole input, a Hash key
+    # included, in ``errors()`` and ``json()``. ``replace`` is declared before ``rewrite``, so ``info.data`` has it.
+
+    @field_validator("replace")
+    @classmethod
+    def validate_replace_has_key(cls, value: ReplaceMethod | None) -> ReplaceMethod | None:
+        if isinstance(value, Hash) and value.key is None:
+            raise ValueError(HASH_KEY_REQUIRED_MESSAGE)
+        return value
+
+    @field_validator("rewrite")
+    @classmethod
+    def validate_not_both_modes(cls, value: Rewrite | None, info: ValidationInfo) -> Rewrite | None:
+        if value is not None and info.data.get("replace") is not None:
+            raise ValueError(
+                "Cannot use both replace and rewrite — choose one mode."
+                " Use replace=Redact() for entity replacement, or rewrite=Rewrite() for LLM rewriting."
+            )
+        return value
+
     @model_validator(mode="after")
     def validate_exactly_one_mode(self) -> AnonymizerConfig:
         if self.replace is None and self.rewrite is None:
             raise ValueError(
                 "Exactly one of replace or rewrite must be provided."
-                " Use replace=Redact() for entity replacement, or rewrite=Rewrite() for LLM rewriting."
-            )
-        if self.replace is not None and self.rewrite is not None:
-            raise ValueError(
-                "Cannot use both replace and rewrite — choose one mode."
                 " Use replace=Redact() for entity replacement, or rewrite=Rewrite() for LLM rewriting."
             )
         return self

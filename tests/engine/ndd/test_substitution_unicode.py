@@ -111,7 +111,7 @@ def test_real_adapter_recovers_unicode_original_without_retry_or_source_changes(
         "targeted_span_count": 1,
         "applied_span_count": 1,
         "skipped_span_count": 0,
-        "skipped_span_label_counts": {},
+        "skipped_span_label_counts": "{}",
     }
     assert dataframe[COL_TEXT].iloc[0] == _NARROW
     assert result.dataframe[COL_TEXT].iloc[0] == _NARROW
@@ -145,8 +145,11 @@ def test_real_adapter_does_not_guess_between_unicode_equivalent_requested_origin
     assert dataframe[COL_TEXT].iloc[0] == f"{_NARROW} | {_PLAIN}"
     if recover_on_retry:
         assert result.failed_records == []
-        assert result.dataframe[COL_REPLACED_TEXT].tolist() == ["Nova Labs | Summit Press"]
-        assert result.dataframe[COL_REPLACEMENT_MAP].iloc[0] == {"replacements": exact}
+        # Both originals are whitespace variants of one value, so the fold gives them one substitute.
+        assert result.dataframe[COL_REPLACED_TEXT].tolist() == ["Nova Labs | Nova Labs"]
+        assert result.dataframe[COL_REPLACEMENT_MAP].iloc[0] == {
+            "replacements": [{**entry, "synthetic": "Nova Labs"} for entry in exact]
+        }
     else:
         assert result.dataframe.empty
         assert len(result.failed_records) == 1

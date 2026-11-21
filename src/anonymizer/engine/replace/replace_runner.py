@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import cast
 
 import pandas as pd
@@ -21,19 +22,23 @@ from anonymizer.config.replace_strategies import (
 from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
-    COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
     RECORD_ID_COLUMN,
 )
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
+from anonymizer.engine.graph_core.execution import TargetOutcome
+from anonymizer.engine.graph_core.session import Session, SessionChanges
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.ndd.workflow_utils import run_columns
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
-from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
+from anonymizer.engine.replace.strategies import apply_local_replace_strategy
+from anonymizer.engine.row_partitioning import restore_diagnostic_columns
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.measurement import stage_timer
 
@@ -46,6 +51,11 @@ class ReplacementResult:
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    detection: EntityDetectionResult | None = None  # set when detection ran in the same invocation
+    detection_elapsed: float = 0.0
+    outcomes: tuple[TargetOutcome, ...] | None = None  # one per output row, when the rows ran as one invocation
+    session_changes: SessionChanges = SessionChanges()
+    placeholder_counts: dict[str, int] = field(default_factory=dict)  # Substitute placeholders minted, by cause
 
 
 def _drop_malformed_entities(dataframe: pd.DataFrame) -> tuple[pd.DataFrame, list[FailedRecord]]:
@@ -92,6 +102,7 @@ class ReplacementWorkflow:
         model_configs: list[ModelConfig],
         selected_models: ReplaceModelSelection,
         preview_num_records: int | None = None,
+        session: Session | None = None,
     ) -> ReplacementResult:
         """Apply the replacement strategy (no LLM judges).
 
@@ -99,37 +110,83 @@ class ReplacementWorkflow:
         dataframe when you want the Judge Agreement scores.
         """
         strategy = type(replace_method).__name__
-        with stage_timer(
-            "ReplacementWorkflow.run",
-            strategy=strategy,
-            input_row_count=len(dataframe),
-        ) as measurement:
-            logger.debug("replacement strategy: %s on %d records", strategy, len(dataframe))
+        with stage_timer("ReplacementWorkflow.run", strategy=strategy, input_row_count=len(dataframe)) as measurement:
+            logger.debug("replacement starting on %d records", len(dataframe))
             dataframe, failed_records = _drop_malformed_entities(dataframe)
-
+            changes, placeholders = SessionChanges(), {}
             if isinstance(replace_method, (Annotate, Redact, Hash)):
                 local_df = apply_local_replace_strategy(dataframe, strategy=replace_method)
             elif isinstance(replace_method, Substitute):
                 if self._llm_workflow is None:
                     raise ValueError("Substitute requires an llm_workflow, but none was provided.")
-                map_result = self._llm_workflow.generate_validated_maps(
+                from anonymizer.engine.replace.route import run_substitute_route
+
+                substituted = run_substitute_route(
                     dataframe,
-                    model_configs=model_configs,
-                    selected_models=selected_models,
-                    instructions=replace_method.instructions,
-                    preview_num_records=preview_num_records,
+                    llm_workflow=self._llm_workflow,
+                    replace_method=replace_method,
+                    map_arguments=dict(
+                        model_configs=model_configs,
+                        selected_models=selected_models,
+                        preview_num_records=preview_num_records,
+                    ),
+                    session=session,
                 )
-                local_df = apply_replacement_map(map_result.dataframe)
-                failed_records.extend(map_result.failed_records)
+                local_df, changes = substituted.dataframe, substituted.session_changes
+                placeholders = substituted.placeholder_counts
+                failed_records.extend(substituted.failed_records)
             else:
                 raise ValueError(f"Unsupported replace method: {type(replace_method).__name__}")
 
-            result = ReplacementResult(dataframe=local_df, failed_records=failed_records)
+            result = ReplacementResult(
+                dataframe=local_df,
+                failed_records=failed_records,
+                session_changes=changes,
+                placeholder_counts=placeholders,
+            )
             measurement.update(
                 output_row_count=len(result.dataframe),
                 failed_record_count=len(result.failed_records),
             )
             return result
+
+    def run_with_detection(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        detect: Callable[[pd.DataFrame], EntityDetectionResult],
+        replace_method: ReplaceMethod,
+        model_configs: list[ModelConfig],
+        selected_models: ReplaceModelSelection,
+        preview_num_records: int | None = None,
+        session: Session | None = None,
+        unspanned_check: bool = False,
+    ) -> ReplacementResult:
+        """Detect entities with ``detect`` and apply the replacement strategy as one graph invocation; ``session``
+        goes to that invocation and to ``run`` when detection output must be rerouted.
+
+        With ``unspanned_check``, a row whose reported value occurs outside every kept span fails at ``detect``."""
+        from anonymizer.engine.replace.route import run_replace_pipeline
+
+        return run_replace_pipeline(
+            dataframe,
+            detect=detect,
+            replace_method=replace_method,
+            llm_workflow=self._llm_workflow,
+            map_arguments=dict(
+                model_configs=model_configs, selected_models=selected_models, preview_num_records=preview_num_records
+            ),
+            reroute=lambda detected: self.run(
+                detected,
+                replace_method=replace_method,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                preview_num_records=preview_num_records,
+                session=session,
+            ),
+            session=session,
+            unspanned_check=unspanned_check,
+        )
 
     def evaluate(
         self,
@@ -150,7 +207,7 @@ class ReplacementWorkflow:
         Entity coverage always runs for every replace strategy. Substitute also
         runs type fidelity, relational consistency, and attribute fidelity.
         Detection validity runs only when ``compute_detection_validity=True``.
-        All active judges are submitted as columns of one DataDesigner workflow.
+        Each active judge runs as its own DataDesigner workflow, one after another.
 
         ``entity_labels`` and ``excluded_entity_labels`` together define the label
         scope passed to the coverage judge — only entities whose labels were in
@@ -183,7 +240,7 @@ class ReplacementWorkflow:
             data_summary=data_summary,
         )
         failed_records: list[FailedRecord] = []
-        judged_df = self._run_merged_judges(
+        judged_df = self._run_judges(
             dataframe,
             is_substitute=is_substitute,
             entity_coverage_judge=entity_coverage_judge,
@@ -196,10 +253,10 @@ class ReplacementWorkflow:
         return ReplacementResult(dataframe=judged_df, failed_records=failed_records)
 
     # ---------------------------------------------------------------------------
-    # Merged-judge dispatch (DataDesigner parallelizes the columns internally)
+    # Judge dispatch (one DataDesigner workflow per judge)
     # ---------------------------------------------------------------------------
 
-    def _run_merged_judges(
+    def _run_judges(
         self,
         dataframe: pd.DataFrame,
         *,
@@ -211,12 +268,12 @@ class ReplacementWorkflow:
         preview_num_records: int | None,
         failed_records: list[FailedRecord],
     ) -> pd.DataFrame:
-        """Run all active replace judges as columns of a single DD workflow.
+        """Run each active replace judge as its own DD workflow.
 
         Each judge owns its own ``prepare()`` (adds intermediate columns),
         ``column_config()`` (the DD column spec), and ``postprocess()`` (flatten
-        + apply passthrough defaults). The adapter sees one workflow with N
-        columns and lets DD schedule them in parallel.
+        + apply passthrough defaults). A row one judge cannot answer keeps the
+        other judges' scores, and each failing judge adds its own failed record.
         """
         active: list[_BaseJudgeWorkflow] = [entity_coverage_judge]
         if compute_detection_validity and self._detection_judge is not None:
@@ -237,45 +294,39 @@ class ReplacementWorkflow:
         prepared = dataframe
         for judge in active:
             prepared = judge.prepare(prepared)
-        # Attach record IDs upfront so we can join (possibly row-shrunken) judge
-        # output back onto the full prepared frame. The adapter would attach
-        # these itself; doing it here lets us treat evaluation as non-critical:
-        # rows the LLM drops still appear in the result with "Unavailable"
-        # verdicts instead of disappearing from a previously successful run.
+        # Retain the adapter's record-ID column in the public trace. Diagnostic
+        # correspondence uses source positions, including when IDs repeat.
         adapter = cast(NddAdapter, self._adapter)
         prepared = adapter._attach_record_ids(prepared)
 
-        try:
-            # Replacement application telemetry can contain an all-empty nested
-            # ``skipped_span_label_counts`` mapping. PyArrow cannot represent that
-            # as a Parquet struct with no child fields, and the judges do not read
-            # this diagnostic column. Keep it on ``prepared`` for the returned
-            # trace, but omit it from DataDesigner's temporary seed dataframe.
-            workflow_input = prepared.drop(columns=[COL_REPLACEMENT_APPLICATION], errors="ignore")
-            run_result = adapter.run_workflow(
-                workflow_input,
-                model_configs=model_configs,
-                columns=[judge.column_config(selected_models) for judge in active],
-                workflow_name="replace-judges",
-                preview_num_records=preview_num_records,
-            )
-            failed_records.extend(run_result.failed_records)
-            # Left-join the judge output columns onto the full prepared frame.
-            # Rows missing from run_result.dataframe (LLM parse failures,
-            # timeouts, etc.) keep NaN for the raw judge columns; each judge's
-            # postprocess() converts that to *_valid=None ("Unavailable").
-            new_cols = [c for c in run_result.dataframe.columns if c not in prepared.columns]
-            if new_cols:
-                judged_df = prepared.merge(
-                    run_result.dataframe[[RECORD_ID_COLUMN, *new_cols]],
-                    on=RECORD_ID_COLUMN,
-                    how="left",
+        judged_df = prepared
+        # One workflow per judge: DataDesigner drops a row when any of its
+        # columns fails, so a shared workflow would discard the other judges'
+        # answers for that row along with the failing one.
+        for judge in active:
+            try:
+                run_result, _ = run_columns(
+                    adapter,
+                    prepared,
+                    [judge.column_config(selected_models)],
+                    model_configs=model_configs,
+                    workflow_name="replace-judges",
+                    preview_num_records=preview_num_records,
                 )
-            else:
-                judged_df = prepared
-        except Exception:
-            logger.debug("Replace judges workflow failed; evaluation scores may be unavailable.", exc_info=True)
-            judged_df = prepared
+                failed_records.extend(run_result.failed_records)
+                new_cols = [c for c in run_result.dataframe.columns if c not in judged_df.columns]
+                judged_df = restore_diagnostic_columns(
+                    judged_df,
+                    run_result.dataframe,
+                    dict.fromkeys(new_cols),
+                    source_positions=run_result.source_positions,
+                ).reset_index(drop=True)
+            except Exception as exc:
+                logger.warning(
+                    "Replace judges workflow failed (%s); judge scores are unavailable for %d row(s).",
+                    type(exc).__name__,
+                    len(prepared),
+                )
 
         for judge in active:
             judged_df = judge.postprocess(judged_df)

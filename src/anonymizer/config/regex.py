@@ -14,8 +14,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_valid
 from anonymizer.config.entity_labels import normalize_entity_label
 
 MAX_REGEX_PATTERN_LENGTH = 4096
+# The per-rule CPU-time floor. Garbage collection is not charged against it (see regex_detection._rule_cpu_time);
+# the alternative to that exclusion is a floor of about 0.2 s, above the longest full collections measured (150 ms).
 DEFAULT_REGEX_TIMEOUT_SECONDS = 0.05
 DEFAULT_REGEX_TIMEOUT_SECONDS_PER_MILLION_CHARACTERS = 1.0
+# A record whose regex scan has not finished after this many times its CPU budget in wall-clock time fails as starved.
+REGEX_WALL_CEILING_FACTOR = 20
 DEFAULT_MAX_MATCHES_PER_RULE = 10_000
 BUILTIN_REGEX_LABELS: tuple[str, ...] = (
     "credit_debit_card",
@@ -58,14 +62,28 @@ RegexValidatorCallable: TypeAlias = Callable[[RegexCandidate], RegexValidatorRet
 
 
 class RegexLimits(BaseModel):
-    """Per-record, per-rule bounds shared by built-in and custom regex rules."""
+    """Per-record, per-rule bounds shared by built-in and custom regex rules.
+
+    The timeout is a budget of CPU seconds used by the scanning thread; waiting for other threads and garbage
+    collection are not charged.
+    A wall-clock ceiling of ``REGEX_WALL_CEILING_FACTOR`` times that budget also fails a record whose scan the
+    process was too busy to run.
+    """
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     max_matches_per_rule: int = Field(default=DEFAULT_MAX_MATCHES_PER_RULE, gt=0, strict=True)
-    min_timeout_seconds: float = Field(default=DEFAULT_REGEX_TIMEOUT_SECONDS, gt=0, allow_inf_nan=False)
+    min_timeout_seconds: float = Field(
+        default=DEFAULT_REGEX_TIMEOUT_SECONDS,
+        gt=0,
+        allow_inf_nan=False,
+        description="Smallest per-rule, per-record budget, in CPU seconds of the scanning thread.",
+    )
     timeout_seconds_per_million_characters: float = Field(
-        default=DEFAULT_REGEX_TIMEOUT_SECONDS_PER_MILLION_CHARACTERS, gt=0, allow_inf_nan=False
+        default=DEFAULT_REGEX_TIMEOUT_SECONDS_PER_MILLION_CHARACTERS,
+        gt=0,
+        allow_inf_nan=False,
+        description="Per-rule budget in CPU seconds per million Unicode code points of the record.",
     )
 
 

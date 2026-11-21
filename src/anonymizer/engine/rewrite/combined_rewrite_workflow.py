@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,6 +23,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_FOR_REPLACE,
     COL_ENTITIES_FOR_REPLACE_JSON,
     COL_ENTITY_EXAMPLES,
+    COL_EVALUATION_UNAVAILABLE,
     COL_LEAKAGE_MASS,
     COL_LEAKED_PRIVACY_ITEMS,
     COL_NEEDS_HUMAN_REVIEW,
@@ -41,25 +43,28 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
     RECORD_ID_COLUMN,
 )
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.ndd.model_response import step_names
+from anonymizer.engine.ndd.workflow_utils import run_columns
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
     _create_entity_examples,
     _enrich_entities_for_template,
     _filter_replacement_map_to_input_entities,
+    _fold_replacement_maps,
     _get_replacement_mapping_prompt,
+    _requested_values,
 )
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
-from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
-from anonymizer.engine.rewrite.findings import needs_human_review
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
+from anonymizer.engine.rewrite.response_summary import evaluation_unavailable
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
-    restore_empty_skipped_span_label_counts,
 )
 from anonymizer.engine.rewrite.rewrite_workflow import (
     RewriteResult,
@@ -67,10 +72,11 @@ from anonymizer.engine.rewrite.rewrite_workflow import (
     _apply_passthrough_defaults,
     _has_entities,
     _join_new_columns,
+    _rewrite_lowered,
+    _Rows,
 )
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
-from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
-from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
+from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 from anonymizer.measurement import stage_timer
 
@@ -150,11 +156,13 @@ def _prepare_replacement_inputs(row: dict[str, Any]) -> dict[str, Any]:
     side_effect_columns=[COL_REPLACEMENT_MAP_SOURCE],
 )
 def _filter_replacement_map(row: dict[str, Any]) -> dict[str, Any]:
-    row[COL_REPLACEMENT_MAP] = _filter_replacement_map_to_input_entities(
+    parsed = EntitiesByValueSchema.from_raw(row.get(COL_ENTITIES_BY_VALUE))
+    filtered = _filter_replacement_map_to_input_entities(
         raw_map=row.get(COL_REPLACEMENT_MAP_RAW, {"replacements": []}),
-        parsed_entities=EntitiesByValueSchema.from_raw(row.get(COL_ENTITIES_BY_VALUE)),
+        parsed_entities=parsed,
         record_id=str(row.get(RECORD_ID_COLUMN, "")),
     )
+    row[COL_REPLACEMENT_MAP] = _fold_replacement_maps([filtered], "record", [_requested_values(parsed)])[0]
     row[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
     return row
 
@@ -222,7 +230,8 @@ def _remap_custom_column(
             model_aliases=model_aliases,
         )
         async def remapped_generator(row: dict[str, Any], generator_params: Any, models: dict) -> dict[str, Any]:
-            generated = await generator(_canonical_row(row, mapping), generator_params, models)
+            with step_names(mapping):  # each round's requests count in that round's window
+                generated = await generator(_canonical_row(row, mapping), generator_params, models)
             return _copy_remapped_outputs(row, generated, outputs, mapping)
 
     elif column.generator_params is not None:
@@ -312,10 +321,7 @@ def _repair_columns(
     ]
 
 
-def _finalization_column(
-    states: list[EvaluationState],
-    evaluation: EvaluationCriteria,
-) -> CustomColumnConfig:
+def _finalization_column(states: list[EvaluationState]) -> CustomColumnConfig:
     required_columns = list(
         dict.fromkeys(
             column
@@ -335,6 +341,7 @@ def _finalization_column(
     )
     required_columns.append(COL_REWRITE_REPLACEMENT_READY)
     side_effect_columns = [
+        COL_EVALUATION_UNAVAILABLE,
         COL_QUALITY_QA_REANSWER,
         COL_PRIVACY_QA_REANSWER,
         COL_QUALITY_QA_COMPARE,
@@ -345,17 +352,30 @@ def _finalization_column(
         COL_NEEDS_REPAIR,
         COL_REPAIR_ITERATIONS,
         COL_NEEDS_HUMAN_REVIEW,
+        COL_REWRITTEN_TEXT_NEXT,
     ]
 
     @custom_column_generator(
         required_columns=required_columns,
         side_effect_columns=side_effect_columns,
     )
-    def finalize(row: dict[str, Any], generator_params: EvaluationCriteria) -> dict[str, Any]:
+    def finalize(row: dict[str, Any]) -> dict[str, Any]:
         state = next(
             (candidate for candidate in reversed(states) if row.get(candidate.needs_repair) is not None),
             states[0],
         )
+        # The rounds before the chosen one are dropped with the internal columns: keep which steps had no response.
+        # ``_quality_qa`` is not required: the evaluation columns already wait for it, and a graph may lack it.
+        unavailable = 0
+        for earlier in states[: states.index(state) + 1]:
+            unavailable |= evaluation_unavailable(
+                row,
+                rewritten_text=earlier.rewritten_text,
+                quality_reanswer=earlier.quality_reanswer,
+                quality_compare=earlier.quality_compare,
+                privacy_reanswer=earlier.privacy_reanswer,
+            )
+        row[COL_EVALUATION_UNAVAILABLE] = unavailable
         row[COL_REWRITTEN_TEXT] = row.get(state.rewritten_text)
         row[COL_QUALITY_QA_REANSWER] = normalize_payload(row.get(state.quality_reanswer))
         row[COL_PRIVACY_QA_REANSWER] = normalize_payload(row.get(state.privacy_reanswer))
@@ -366,13 +386,15 @@ def _finalization_column(
         row[COL_ANY_HIGH_LEAKED] = row.get(state.any_high_leaked)
         row[COL_NEEDS_REPAIR] = row.get(state.needs_repair)
         row[COL_REPAIR_ITERATIONS] = state.iteration
-        row[COL_NEEDS_HUMAN_REVIEW] = needs_human_review(row, generator_params)
+        # As staged keeps ``_rewritten_text__next``: the candidate of the round chosen above, None before any repair.
+        row[COL_REWRITTEN_TEXT_NEXT] = row.get(state.rewritten_text) if state.iteration > 0 else None
+        # A placeholder that keeps the column's place and type: ``_flag_review`` assigns the flag after the final checks.
+        row[COL_NEEDS_HUMAN_REVIEW] = False
         return row
 
     return CustomColumnConfig(
         name=COL_REWRITTEN_TEXT,
         generator_function=finalize,
-        generator_params=evaluation,
         propagate_skip=False,
     )
 
@@ -392,14 +414,10 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
         evaluation: EvaluationCriteria,
         data_summary: str | None = None,
         strict_entity_protection: bool = False,
-        label_categories: dict[str, str] | None = None,
     ) -> CombinedRewriteGraph:
         columns = _replacement_columns(replace_model_selection)
         columns.extend(
             DomainClassificationWorkflow().columns(selected_models=selected_models, data_summary=data_summary)
-        )
-        columns.extend(
-            EntityClassificationWorkflow().columns(selected_models=selected_models, label_categories=label_categories)
         )
         columns.extend(
             SensitivityDispositionWorkflow().columns(
@@ -458,7 +476,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 )
             )
 
-        columns.append(_finalization_column(evaluation_states, evaluation))
+        columns.append(_finalization_column(evaluation_states))
         internal_columns = [
             COL_ENTITY_EXAMPLES,
             COL_ENTITIES_FOR_REPLACE,
@@ -500,12 +518,58 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
             )
             if entity_rows.empty:
                 _apply_passthrough_defaults(passthrough_rows)
-                result = RewriteResult(dataframe=merge_and_reorder(passthrough_rows), failed_records=[])
+                result = RewriteResult(
+                    dataframe=merge_and_reorder(passthrough_rows),
+                    failed_records=[],
+                    source_positions=tuple(sorted(passthrough_rows[ROW_ORDER_COL])),
+                )
                 measurement.update(output_row_count=len(result.dataframe), failed_record_count=0)
                 return result
 
-            label_categories = self._entity_classification_wf.classify_dataset(
-                entity_rows, adapter=self._adapter, model_configs=model_configs, selected_models=selected_models
+            rows = _Rows(entity_rows)
+            produce = self._produce(
+                rows,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                replace_model_selection=replace_model_selection,
+                privacy_goal=privacy_goal,
+                evaluation=evaluation,
+                data_summary=data_summary,
+                preview_num_records=preview_num_records,
+                strict_entity_protection=strict_entity_protection,
+            )
+            result = _rewrite_lowered(entity_rows, passthrough_rows, rows, produce, evaluation)
+            measurement.update(
+                output_row_count=len(result.dataframe),
+                failed_record_count=len(result.failed_records),
+            )
+            return result
+
+    def run_with_detection(
+        self, dataframe: pd.DataFrame, *, detect: Callable[[pd.DataFrame], EntityDetectionResult], **options: Any
+    ) -> RewriteResult:
+        """``RewriteWorkflow.run_with_detection`` with the combined graph; ``options`` are ``run``'s keywords."""
+        return self._run_detected(dataframe, detect, "CombinedRewriteWorkflow.run", options)
+
+    def _produce(
+        self,
+        rows: _Rows,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: RewriteModelSelection,
+        replace_model_selection: ReplaceModelSelection,
+        privacy_goal: PrivacyGoal,
+        evaluation: EvaluationCriteria,
+        data_summary: str | None = None,
+        preview_num_records: int | None = None,
+        strict_entity_protection: bool = False,
+    ) -> Callable[[], None]:
+        """Label classification, then one combined workflow call over ``rows``, leaving the final candidates in
+        ``rows.frame``."""
+
+        def generate() -> None:
+            self._entity_classification_wf.classify_rows(
+                rows.frame, adapter=self._adapter, model_configs=model_configs, selected_models=selected_models
             )
             graph = self.build_graph(
                 selected_models=selected_models,
@@ -514,26 +578,18 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 evaluation=evaluation,
                 data_summary=data_summary,
                 strict_entity_protection=strict_entity_protection,
-                label_categories=label_categories,
             )
-            seed = select_seed_cols(entity_rows, derive_seed_columns(graph.columns, entity_rows))
-            run_result = self._adapter.run_workflow(
-                seed,
+            run_result, _ = run_columns(
+                self._adapter,
+                rows.frame,
+                graph.columns,
                 model_configs=model_configs,
-                columns=graph.columns,
                 workflow_name="rewrite-combined",
                 preview_num_records=preview_num_records,
             )
-            restore_empty_skipped_span_label_counts(run_result.dataframe)
-            entity_rows = _join_new_columns(entity_rows, run_result.dataframe)
-            entity_rows = entity_rows.drop(columns=graph.internal_columns, errors="ignore")
-            _apply_passthrough_defaults(passthrough_rows)
-            result = RewriteResult(
-                dataframe=merge_and_reorder(entity_rows, passthrough_rows),
-                failed_records=run_result.failed_records,
-            )
-            measurement.update(
-                output_row_count=len(result.dataframe),
-                failed_record_count=len(result.failed_records),
-            )
-            return result
+            rows.frame = _join_new_columns(
+                rows.frame, run_result.dataframe, source_positions=run_result.source_positions
+            ).drop(columns=graph.internal_columns, errors="ignore")
+            rows.failed.extend(run_result.failed_records)
+
+        return generate

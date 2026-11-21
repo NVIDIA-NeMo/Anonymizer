@@ -1087,7 +1087,7 @@ class TestChunkedValidateRowFailurePropagation:
         """With failover enabled, a chunk only fails when *every* pool member raises.
 
         Downstream DD reporting then turns that row into a FailedRecord via
-        ``NddAdapter._detect_missing_records`` — no unscrubbed passthrough.
+        ``NddAdapter.run_workflow`` source-position accounting — no unscrubbed passthrough.
         """
         spans = [
             _lifecycle_observation("a", "Alice", "first_name", 0, 5),
@@ -1114,7 +1114,7 @@ def test_dispatch_requires_assigned_aliases() -> None:
 
 
 @pytest.mark.parametrize("recover", [False, True])
-def test_failover_logs_exception_type_without_source_text(recover: bool, caplog: pytest.LogCaptureFixture) -> None:
+def test_failover_logs_carry_no_exception_alias_or_source_text(recover: bool, caplog: pytest.LogCaptureFixture) -> None:
     secret = "sensitive-exception-message"
 
     def fail(_prompt: str) -> dict[str, Any]:
@@ -1140,8 +1140,9 @@ def test_failover_logs_exception_type_without_source_text(recover: bool, caplog:
             with pytest.raises(RuntimeError, match=secret):
                 run()
 
-    assert "RuntimeError" in caplog.text
-    assert secret not in caplog.text
+    for private in (secret, "RuntimeError", "primary", "Alice"):
+        assert private not in caplog.text
+    assert "request failed" in caplog.text
 
 
 class TestChunkedValidateRowCrossAliasFailover:

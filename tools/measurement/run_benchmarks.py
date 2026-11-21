@@ -9,6 +9,7 @@ Usage:
 """
 
 import logging
+import os
 import platform
 import shutil
 import subprocess
@@ -958,7 +959,8 @@ def build_replace(raw: str | ReplaceSpec) -> Redact | Hash | Annotate | Substitu
                     "algorithm": spec.algorithm,
                     "digest_length": spec.digest_length,
                 }
-            )
+            ),
+            key=os.environ.get("ANONYMIZER_HASH_KEY"),
         )
     if spec.strategy == ReplaceKind.annotate:
         return Annotate(**_present({"format_template": spec.format_template}))

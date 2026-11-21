@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+import dataclasses
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any, Literal
 from unittest.mock import Mock
 
 import numpy as np
@@ -10,6 +14,7 @@ import pandas as pd
 import pytest
 from data_designer.config.models import ModelConfig
 
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.models import EvaluateModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Hash, Redact, Substitute
 from anonymizer.engine.constants import (
@@ -30,15 +35,22 @@ from anonymizer.engine.constants import (
     COL_TYPE_FIDELITY_VALID,
     RECORD_ID_COLUMN,
 )
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
+from anonymizer.engine.graph_core.authoring import ProtectionGraph, Workflow
+from anonymizer.engine.graph_core.execution import PreparedProtection, ProtectionResult
+from anonymizer.engine.ndd import backend
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
+from anonymizer.engine.replace import route
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult, LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
-from anonymizer.engine.replace.strategies import apply_replacement_map
 from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.spans import Span, Spans
+from anonymizer.engine.value_matching import format_cause
+from anonymizer.interface.anonymizer import Anonymizer
 
 
 def _build_entities_payload(payload_kind: str) -> object:
@@ -88,6 +100,42 @@ def test_local_replace_runner_with_custom_format_template(
     assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == "*** works at ***"
 
 
+@pytest.mark.parametrize(("consistency", "expected"), [("record", ["Maya", "Nora"]), ("run", ["Maya", "Maya"])])
+def test_substitute_consistency_shares_values_across_records_only_for_run(
+    consistency: Literal["record", "run"],
+    expected: list[str],
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    def generate(dataframe: pd.DataFrame, **_: object) -> WorkflowRunResult:
+        out = dataframe.copy()
+        out[COL_REPLACEMENT_MAP] = [
+            {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": name}]}
+            for name in ["Maya", "Nora"]
+        ]
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=(0, 1))
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = generate
+    entities = {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
+    frame = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice called", "Alice wrote"],
+            COL_FINAL_ENTITIES: [entities, entities],
+            COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}] * 2,
+        }
+    )
+    result = ReplacementWorkflow(llm_workflow=LlmReplaceWorkflow(adapter=adapter)).run_with_detection(
+        frame,
+        detect=lambda df: EntityDetectionResult(df, [], tuple(range(len(df)))),
+        replace_method=Substitute(consistency=consistency),
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+    assert adapter.run_workflow.call_count == 1
+    assert result.dataframe[COL_REPLACED_TEXT].tolist() == [f"{expected[0]} called", f"{expected[1]} wrote"]
+
+
 def test_substitute_runner_applies_generated_map(
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
@@ -110,10 +158,11 @@ def test_substitute_runner_applies_generated_map(
             }
         ),
         failed_records=[FailedRecord(record_id="r1", step="replace-map-generation", reason="none")],
+        source_positions=(0,),
     )
     runner = ReplacementWorkflow(llm_workflow=llm_workflow)
     result = runner.run(
-        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
+        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": stub_entities}]}),
         replace_method=Substitute(),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
@@ -125,7 +174,7 @@ def test_substitute_runner_applies_generated_map(
         "targeted_span_count": 2,
         "applied_span_count": 2,
         "skipped_span_count": 0,
-        "skipped_span_label_counts": {},
+        "skipped_span_label_counts": "{}",
     }
 
 
@@ -151,15 +200,11 @@ def test_malformed_entities_row_fails_while_others_are_replaced(
 
     llm_workflow = Mock()
     llm_workflow.generate_validated_maps.side_effect = _generate_validated_maps
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice works at Acme", "Bob works at Acme"],
-            COL_FINAL_ENTITIES: [{"entities": stub_entities[:1]}, malformed],
-            RECORD_ID_COLUMN: ["r0", "r1"],
-        }
-    )
-    result = ReplacementWorkflow(llm_workflow=llm_workflow).run(
+    dataframe = pd.DataFrame({COL_TEXT: ["Alice works at Acme", "Bob works at Acme"], RECORD_ID_COLUMN: ["r0", "r1"]})
+    detected = dataframe.assign(**{COL_FINAL_ENTITIES: [{"entities": stub_entities[:1]}, malformed]})
+    result = ReplacementWorkflow(llm_workflow=llm_workflow).run_with_detection(
         dataframe,
+        detect=lambda _frame: EntityDetectionResult(dataframe=detected, failed_records=[]),
         replace_method=replace_method,
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
@@ -168,69 +213,6 @@ def test_malformed_entities_row_fails_while_others_are_replaced(
     assert "Bob" not in result.failed_records[0].reason
     assert result.dataframe[RECORD_ID_COLUMN].tolist() == ["r0"]
     assert "Alice" not in result.dataframe[COL_REPLACED_TEXT].iloc[0]
-
-
-@pytest.mark.parametrize("replace_method", [Redact(), Substitute()], ids=["redact", "substitute"])
-def test_all_malformed_rows_fail_without_calling_the_model(
-    replace_method: Redact | Substitute,
-    stub_model_configs: list[ModelConfig],
-    stub_replace_model_selection: ReplaceModelSelection,
-) -> None:
-    adapter = Mock()
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["Bob works at Acme", "Eve works at Beta"],
-            COL_FINAL_ENTITIES: ["{not json", 42],
-            COL_ENTITIES_BY_VALUE: [{"entities_by_value": []}] * 2,
-            RECORD_ID_COLUMN: ["r0", "r1"],
-        }
-    )
-    result = ReplacementWorkflow(llm_workflow=LlmReplaceWorkflow(adapter=adapter)).run(
-        dataframe,
-        replace_method=replace_method,
-        model_configs=stub_model_configs,
-        selected_models=stub_replace_model_selection,
-    )
-    assert [(f.record_id, f.step) for f in result.failed_records] == [("r0", "replace"), ("r1", "replace")]
-    assert result.dataframe.empty
-    assert COL_REPLACED_TEXT in result.dataframe.columns
-    adapter.run_workflow.assert_not_called()
-
-
-def test_apply_replacement_map_reports_invalid_and_overlapping_spans() -> None:
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice Bob"],
-            COL_FINAL_ENTITIES: [
-                {
-                    "entities": [
-                        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
-                        {"value": "lice ", "label": "alias", "start_position": 1, "end_position": 6},
-                        {"value": "Bob", "label": "first_name", "start_position": 99, "end_position": 102},
-                    ]
-                }
-            ],
-            COL_REPLACEMENT_MAP: [
-                {
-                    "replacements": [
-                        {"original": "Alice", "label": "first_name", "synthetic": "Maria"},
-                        {"original": "lice ", "label": "alias", "synthetic": "X"},
-                        {"original": "Bob", "label": "first_name", "synthetic": "Robert"},
-                    ]
-                }
-            ],
-        }
-    )
-
-    result = apply_replacement_map(dataframe)
-
-    assert result[COL_REPLACED_TEXT].iloc[0] == "Maria Bob"
-    assert result[COL_REPLACEMENT_APPLICATION].iloc[0] == {
-        "targeted_span_count": 3,
-        "applied_span_count": 1,
-        "skipped_span_count": 2,
-        "skipped_span_label_counts": {"alias": 1, "first_name": 1},
-    }
 
 
 def test_substitute_without_workflow_raises(
@@ -247,12 +229,12 @@ def test_substitute_without_workflow_raises(
         )
 
 
-def test_evaluate_uses_merged_dd_workflow_for_judges(
+def test_evaluate_runs_one_dd_workflow_per_judge(
     stub_model_configs: list[ModelConfig],
     stub_evaluate_model_selection: EvaluateModelSelection,
 ) -> None:
-    """``evaluate()`` runs all 4 judges as columns of a SINGLE DD workflow call
-    (DataDesigner parallelizes the columns internally — no Python threads)."""
+    """``evaluate()`` runs each judge as its own DD workflow call, so a row one
+    judge cannot answer does not take the other judges' answers with it."""
 
     # Trace-shaped input: simulates a dataframe returned by a prior ``run()``.
     saved_trace = pd.DataFrame(
@@ -281,7 +263,7 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
                     "targeted_span_count": 2,
                     "applied_span_count": 2,
                     "skipped_span_count": 0,
-                    "skipped_span_label_counts": {},
+                    "skipped_span_label_counts": "{}",
                 }
             ],
         }
@@ -327,10 +309,10 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
         selected_models=stub_evaluate_model_selection,
     )
 
-    # Exactly ONE adapter call for the judges step (proves merge, not 4 separate workflows).
-    assert adapter.run_workflow.call_count == 1
-    call_columns = adapter.run_workflow.call_args.kwargs["columns"]
-    assert {c.name for c in call_columns} == set(judge_defaults)
+    # One adapter call per judge, each with exactly that judge's column.
+    call_columns = [call.kwargs["columns"] for call in adapter.run_workflow.call_args_list]
+    assert all(len(columns) == 1 for columns in call_columns)
+    assert sorted(columns[0].name for columns in call_columns) == sorted(judge_defaults)
 
     # And each judge's output column ended up on the result.
     # Entity coverage is a float (1.0 = full coverage); replace judges use bool True.
@@ -340,7 +322,7 @@ def test_evaluate_uses_merged_dd_workflow_for_judges(
         "targeted_span_count": 2,
         "applied_span_count": 2,
         "skipped_span_count": 0,
-        "skipped_span_label_counts": {},
+        "skipped_span_label_counts": "{}",
     }
     for col in (
         COL_TYPE_FIDELITY_VALID,
@@ -493,9 +475,9 @@ def test_evaluate_preserves_all_rows_when_llm_drops_some(
     assert result.dataframe[COL_TYPE_FIDELITY_VALID].iloc[1] is None
     assert result.dataframe[COL_RELATIONAL_CONSISTENCY_VALID].iloc[1] is None
     assert result.dataframe[COL_ATTRIBUTE_FIDELITY_VALID].iloc[1] is None
-    # The drop is still visible via failed_records for downstream observability.
-    assert len(result.failed_records) == 1
-    assert result.failed_records[0].record_id == "id-1"
+    # The drop is still visible via failed_records, once per judge that dropped it.
+    assert len(result.failed_records) == len(judge_payload)
+    assert {record.record_id for record in result.failed_records} == {"id-1"}
 
 
 def test_runner_does_not_invoke_judges(
@@ -524,6 +506,7 @@ def test_runner_does_not_invoke_judges(
             }
         ),
         failed_records=[],
+        source_positions=(0,),
     )
     detection_judge = Mock()
     type_fidelity_judge = Mock()
@@ -540,7 +523,7 @@ def test_runner_does_not_invoke_judges(
     )
 
     result = runner.run(
-        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
+        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": stub_entities}]}),
         replace_method=Substitute(),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
@@ -584,68 +567,6 @@ def test_evaluate_raises_on_missing_required_columns(
         )
 
 
-def test_apply_replacement_map_handles_string_map() -> None:
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["abc Alice xyz"],
-            COL_FINAL_ENTITIES: [
-                {"entities": [{"value": "Alice", "label": "first_name", "start_position": 4, "end_position": 9}]}
-            ],
-            COL_REPLACEMENT_MAP: ['{"replacements":[{"original":"Alice","label":"first_name","synthetic":"Elena"}]}'],
-        }
-    )
-    output_df = apply_replacement_map(dataframe)
-    assert output_df[COL_REPLACED_TEXT].iloc[0] == "abc Elena xyz"
-
-
-def test_apply_replacement_map_does_not_cascade_synthetic_values() -> None:
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice and Maria"],
-            COL_FINAL_ENTITIES: [
-                {
-                    "entities": [
-                        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
-                        {"value": "Maria", "label": "first_name", "start_position": 10, "end_position": 15},
-                    ]
-                }
-            ],
-            COL_REPLACEMENT_MAP: [
-                {
-                    "replacements": [
-                        {"original": "Alice", "label": "first_name", "synthetic": "Maria"},
-                        {"original": "Maria", "label": "first_name", "synthetic": "Elena"},
-                    ]
-                }
-            ],
-        }
-    )
-    assert apply_replacement_map(dataframe)[COL_REPLACED_TEXT].iloc[0] == "Maria and Elena"
-
-
-@pytest.mark.parametrize(
-    "payload_kind",
-    ["dict_wrapper", "numpy_wrapped_dict_wrapper", "entities_schema"],
-)
-def test_apply_replacement_map_handles_entity_payload_shapes(payload_kind: str) -> None:
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice works at Acme"],
-            COL_FINAL_ENTITIES: [_build_entities_payload(payload_kind)],
-            COL_REPLACEMENT_MAP: [
-                {
-                    "replacements": [
-                        {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
-                        {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
-                    ]
-                }
-            ],
-        }
-    )
-    output_df = apply_replacement_map(dataframe)
-    assert output_df[COL_REPLACED_TEXT].iloc[0] == "Maya works at NovaCorp"
-
-
 def test_hash_strategy_executes(
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
@@ -661,12 +582,12 @@ def test_hash_strategy_executes(
     )
     result = runner.run(
         input_df,
-        replace_method=Hash(),
+        replace_method=Hash(key="s3cr3t"),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
     )
     assert result.failed_records == []
-    assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == "<HASH_FIRST_NAME_3bc51062973c>"
+    assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == Hash(key="s3cr3t").replace(text="Alice", label="first_name")
 
 
 def test_redact_none_replaces_all(
@@ -780,3 +701,385 @@ def test_detection_output_with_numpy_entities_flows_through_redact(
     replaced = result.dataframe[COL_REPLACED_TEXT].iloc[0]
     assert "Alice" not in replaced
     assert "[REDACTED_FIRST_NAME]" in replaced
+
+
+@pytest.mark.parametrize("omit_bob", [True, False], ids=["map-omits-bob", "map-complete"])
+def test_run_reports_each_rows_protection_outcome(omit_bob: bool, tmp_path: Path, stub_entities: list[dict]) -> None:
+    """A Substitute map that omits a detected entity leaves its row ``not_met``; the frame is unchanged."""
+    replacements = [
+        {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
+        {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
+        *([] if omit_bob else [{"original": "Bob", "label": "first_name", "synthetic": "Ravi"}]),
+    ]
+
+    def _generate_validated_maps(dataframe: pd.DataFrame, **_: object) -> LlmReplaceResult:
+        maps = [{"replacements": replacements}] * len(dataframe)
+        frame = dataframe.assign(**{COL_REPLACEMENT_MAP: maps})
+        return LlmReplaceResult(dataframe=frame, failed_records=[], source_positions=tuple(range(len(frame))))
+
+    llm_workflow = Mock()
+    llm_workflow.generate_validated_maps.side_effect = _generate_validated_maps
+    texts = ["Alice works at Acme", "Bob works at Acme"]
+    bob = [{"value": "Bob", "label": "first_name", "start_position": 0, "end_position": 3}, dict(stub_entities[1])]
+    bob[1].update(start_position=13, end_position=17)
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": stub_entities}, {"entities": bob}]}),
+        failed_records=[],
+        source_positions=(0, 1),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": texts}).to_csv(csv_path, index=False)
+    anonymizer = Anonymizer(detection_workflow=detector, replace_runner=ReplacementWorkflow(llm_workflow=llm_workflow))
+
+    result = anonymizer.run(
+        config=AnonymizerConfig(replace=Substitute(), emit_telemetry=False),
+        data=AnonymizerInput(source=str(csv_path), text_column="text"),
+    )
+
+    assert result.dataframe["text_replaced"].tolist() == [
+        "Maya works at NovaCorp",
+        "Bob works at NovaCorp" if omit_bob else "Ravi works at NovaCorp",
+    ]
+    assert result.outcome(0).qualification == "met"
+    second = result.outcome(1)
+    assert second.qualification == ("not_met" if omit_bob else "met")
+    assert any(reason.check == "replacements_applied" for reason in second.reasons) is omit_bob
+    assert [(v.check, v.status) for v in result.outcome(0).advisories] == [("no_detected_value_added", "passed")]
+    second_status = "failed" if omit_bob else "passed"
+    assert [(v.check, v.status) for v in second.advisories] == [("no_detected_value_added", second_status)]
+    with pytest.raises(IndexError):
+        result.outcome(2)
+
+
+def _ent(value: str, start: int, label: str = "first_name") -> dict:
+    return {"value": value, "label": label, "start_position": start, "end_position": start + len(value)}
+
+
+_ALICE = {("Alice", "first_name"): "Maya"}
+
+
+@pytest.mark.parametrize(
+    ("text", "entities", "patches", "advisory"),
+    [
+        pytest.param("Alice met Alice", [_ent("Alice", 0)], _ALICE, ("passed", ""), id="value-repeated-in-kept-text"),
+        pytest.param('{"Alice": 1} Alice', [_ent("Alice", 13)], _ALICE, ("passed", ""), id="json-key-in-kept-text"),
+        pytest.param(
+            "Alice met Alice", [_ent("Alice", 0), _ent("Alice", 10)], _ALICE, ("passed", ""), id="all-patched"
+        ),
+        pytest.param(
+            "Alice Smith and Alice",
+            [_ent("Alice Smith", 0, "full_name"), _ent("Alice", 16)],
+            {("Alice Smith", "full_name"): "Ravi Rao", **_ALICE},
+            ("passed", ""),
+            id="value-only-inside-patches",
+        ),
+        pytest.param(
+            "Alice and Bob",
+            [_ent("Alice", 0), _ent("Bob", 10)],
+            {("Alice", "first_name"): "Bob", ("Bob", "first_name"): "Alice Jr"},
+            ("failed", "e0:N1,D1,O1;e1:N1,D1,O1"),
+            id="substitute-equals-another-original",
+        ),
+        pytest.param("Alice met ALICE", [_ent("Alice", 0)], _ALICE, ("passed", ""), id="case-insensitive"),
+        pytest.param(
+            "IN and in", [_ent("IN", 0, "state")], {("IN", "state"): "OH"}, ("passed", ""), id="short-code-case"
+        ),
+        pytest.param(
+            "IN and IN", [_ent("IN", 0, "state")], {("IN", "state"): "OH"}, ("passed", ""), id="short-code-kept"
+        ),
+        pytest.param("Alice met Alicea", [_ent("Alice", 0)], _ALICE, ("passed", ""), id="letter-boundary"),
+        pytest.param("Alice met x_Alice_y", [_ent("Alice", 0)], _ALICE, ("passed", ""), id="underscore-boundary"),
+        pytest.param(
+            "José met Jose", [_ent("José", 0)], {("José", "first_name"): "Luis"}, ("passed", ""), id="accent-folded"
+        ),
+        pytest.param(
+            "Alice is alice_smith_42", [_ent("Alice", 0)], _ALICE, ("passed", ""), id="inside-unpatched-user-id"
+        ),
+        pytest.param(
+            "Alice met Bob", [_ent("Alice", 0), _ent("Bob", 10)], _ALICE, ("failed", "e1:N1,D1,O1"), id="map-omits"
+        ),
+        pytest.param(
+            "Alice met Bob",
+            [_ent("Alice", 0)],
+            {("Alice", "last_name"): "Maya"},
+            ("passed", ""),
+            id="value-only-fallback",
+        ),
+        pytest.param("nobody here", [], {}, ("passed", ""), id="no-mentions"),
+        pytest.param(
+            "Alice met José",
+            [_ent("Alice", 0), _ent("José", 10)],
+            {("Alice", "first_name"): "Jose Ruiz", ("José", "first_name"): "Tom"},
+            ("failed", "e1:N1,D1,O1"),
+            id="substitute-holds-another-original",
+        ),
+        pytest.param(
+            "Mayfield and May",
+            [_ent("field", 3, "street"), _ent("May", 13)],
+            {("field", "street"): "XYZ", ("May", "first_name"): "Ann"},
+            ("passed", ""),
+            id="letter-substitute-at-seam",
+        ),
+        pytest.param(
+            "John Smith called. John said hi.",
+            [_ent("John Smith", 0, "full_name"), _ent("John", 19)],
+            {("John Smith", "full_name"): "[A]", ("John", "first_name"): "John"},
+            ("failed", "e1:N2,D2,O1"),
+            id="value-inside-another-names-its-own-span",
+        ),
+    ],
+)
+def test_replace_reports_detected_values_added(
+    text: str, entities: list[dict], patches: dict, advisory: tuple[str, str]
+) -> None:
+    """The advisory bounds each detected value by its count outside the detected spans, under Rewrite's matching rule
+    over the whole replaced text, and never touches the row's outcome."""
+
+    def build_map(index: int, rows: object) -> dict:
+        return {"replacements": [{"original": o, "label": lab, "synthetic": s} for (o, lab), s in patches.items()]}
+
+    frame = pd.DataFrame({COL_TEXT: [text], COL_FINAL_ENTITIES: [{"entities": entities}]})
+    graph = route._lower(frame, COL_TEXT, COL_FINAL_ENTITIES)
+    with_check = route._protect_rows(graph, "redact", build_map, False)
+    outcome = with_check.outcome(graph.targets[0])
+
+    assert [(a.check, a.verifier, a.status, a.cause) for a in outcome.advisories] == [
+        ("no_detected_value_added", "verify-no-original", *advisory)
+    ]
+    without = _without_advisory_verifier(graph, build_map)
+    base = without.outcome(graph.targets[0])
+    assert (outcome.terminal, outcome.qualification, outcome.protected, outcome.reasons) == (
+        base.terminal,
+        base.qualification,
+        base.protected,
+        base.reasons,
+    )
+    assert with_check.content() == without.content()
+    assert with_check.protected == without.protected
+
+
+def _without_advisory_verifier(graph: ProtectionGraph, build_map: Callable[..., dict]) -> ProtectionResult:
+    """The same rows run with the advisory verifier removed: the outcome the check must not change."""
+    real_prepare = backend.prepare
+
+    def drop_advisory(g: ProtectionGraph, workflow: Workflow, **kwargs: Any) -> PreparedProtection:
+        steps = tuple(op for op in workflow.steps if op.name != "verify-no-original")
+        return real_prepare(g, dataclasses.replace(workflow, steps=steps), **kwargs)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(backend, "prepare", drop_advisory)
+        return route._protect_rows(graph, "redact", build_map, False)
+
+
+def test_replace_advisory_error_is_could_not_assess(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A matcher error gives could_not_assess with a code; the row stays met and released; no text leaks."""
+    canary = "canary-rpc-41"
+
+    def boom(*args: object) -> object:
+        raise ValueError(canary)
+
+    monkeypatch.setattr(route, "count_values", boom)
+    frame = pd.DataFrame({COL_TEXT: ["Alice met Alice"], COL_FINAL_ENTITIES: [{"entities": [_ent("Alice", 0)]}]})
+    graph = route._lower(frame, COL_TEXT, COL_FINAL_ENTITIES)
+    complete = {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]}
+    result = route._protect_rows(graph, "redact", lambda i, rows: complete, False)
+    outcome = result.outcome(graph.targets[0])
+
+    assert (outcome.qualification, outcome.protected, outcome.reasons) == ("met", True, ())
+    assert [(a.status, a.cause) for a in outcome.advisories] == [("could_not_assess", "check_error")]
+    assert canary not in repr(outcome) and "Alice" not in repr(outcome.advisories)
+
+
+def test_annotate_has_no_advisory() -> None:
+    frame = pd.DataFrame({COL_TEXT: ["Alice met Alice"], COL_FINAL_ENTITIES: [{"entities": [_ent("Alice", 0)]}]})
+    graph = route._lower(frame, COL_TEXT, COL_FINAL_ENTITIES)
+    result = route._protect_rows(graph, "annotate", lambda i, rows: {"replacements": []}, True)
+
+    assert "verify-no-original" not in result.prepared.names
+    assert result.outcome(graph.targets[0]).advisories == ()
+
+
+def _agrees(result: Any, row: int, cause: str) -> None:
+    """Every ``e<i>:N..,D..,O..`` entry of ``cause`` is the helper's entry ``i`` with the same counts."""
+    entries = {
+        f"e{'-' if x.position is None else x.position}": f"N{x.in_source},D{x.detected},O{x.in_output}"
+        for x in result.leftovers(row)
+    }
+    assert cause
+    for part in cause.split(";"):
+        key, counts = part.split(":")
+        assert entries[key] == counts
+
+
+def test_leftovers_explain_a_substitute_that_brings_a_value_back(tmp_path: Path) -> None:
+    text = "Alice met José."
+    entities = [_ent("Alice", 0), _ent("José", 10)]
+    replacements = [
+        {"original": "Alice", "label": "first_name", "synthetic": "Jose Ruiz"},
+        {"original": "José", "label": "first_name", "synthetic": "Tom"},
+    ]
+    llm_workflow = Mock()
+    llm_workflow.generate_validated_maps.side_effect = lambda frame, **_: LlmReplaceResult(
+        dataframe=frame.assign(**{COL_REPLACEMENT_MAP: [{"replacements": replacements}]}),
+        failed_records=[],
+        source_positions=(0,),
+    )
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": entities}]}),
+        failed_records=[],
+        source_positions=(0,),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": [text]}).to_csv(csv_path, index=False)
+    anonymizer = Anonymizer(detection_workflow=detector, replace_runner=ReplacementWorkflow(llm_workflow=llm_workflow))
+    result = anonymizer.run(
+        config=AnonymizerConfig(replace=Substitute(), emit_telemetry=False),
+        data=AnonymizerInput(source=str(csv_path), text_column="text"),
+    )
+
+    (advisory,) = result.outcome(0).advisories
+    assert (advisory.check, advisory.status, advisory.cause) == ("no_detected_value_added", "failed", "e1:N1,D1,O1")
+    _agrees(result, 0, advisory.cause)
+    jose = result.leftovers(0)[1]
+    assert (jose.value, jose.label, jose.span, jose.undetected_spans, jose.output_spans) == (
+        "José",
+        "first_name",
+        Span(10, 14),
+        Spans(),
+        Spans([Span(0, 4)]),
+    )
+    with pytest.raises(IndexError):
+        result.leftovers(1)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("Mira\U0001d157\U0001d16d\U0001d16e", id="marks-out-of-canonical-order"),
+        pytest.param("Mira\U0001d16d\u093a\u1b44", id="marks-reordered-after-a-dropped-mark"),
+    ],
+)
+def test_a_redact_template_that_brings_back_a_name_with_reordered_marks_fails_the_advisory(
+    tmp_path: Path, name: str
+) -> None:
+    text = f"{name} called."
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": [_ent(name, 0)]}]}),
+        failed_records=[],
+        source_positions=(0,),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": [text]}).to_csv(csv_path, index=False)
+    result = Anonymizer(detection_workflow=detector).run(
+        config=AnonymizerConfig(replace=Redact(format_template=f"[X] {name}"), emit_telemetry=False),
+        data=AnonymizerInput(source=str(csv_path), text_column="text"),
+    )
+
+    (advisory,) = result.outcome(0).advisories
+    assert (advisory.status, advisory.cause) == ("failed", "e0:N1,D1,O1")
+    _agrees(result, 0, advisory.cause)
+
+
+@pytest.mark.parametrize(
+    ("columns", "entities", "method", "preview"),
+    [
+        pytest.param(
+            {"text": ["Alice met Bob"]}, [[_ent("Alice", 0)]], Redact(format_template="Alice"), False, id="str"
+        ),
+        pytest.param(
+            {"text": ["Alice met Bob"], "text_rewritten": ["note"]},
+            [[_ent("Alice", 0)]],
+            Redact(format_template="Alice"),
+            False,
+            id="metadata-column-named-like-the-rewrite-output",
+        ),
+        pytest.param(
+            {"text": ["Alice met Bob"], "text_rewritten": ["note"]},
+            [[_ent("Alice", 0)]],
+            Redact(format_template="Alice"),
+            True,
+            id="metadata-column-preview",
+        ),
+        pytest.param(
+            {"text": [123456]}, [[_ent("123456", 0)]], Redact(format_template="123456 archived"), False, id="int"
+        ),
+        pytest.param(
+            {"text": [123456, None]},
+            [[_ent("123456", 0)], []],
+            Redact(format_template="123456 archived"),
+            False,
+            id="float-with-a-blank-row",
+        ),
+        pytest.param({"text": [True]}, [[_ent("True", 0)]], Redact(format_template="True"), False, id="bool"),
+        pytest.param({"text": [123456]}, [[_ent("123456", 0)]], Hash(key="s3cr3t"), False, id="int-hash-passes"),
+    ],
+)
+def test_leftovers_are_what_the_replace_advisory_counted(
+    tmp_path: Path, columns: dict[str, list[object]], entities: list[list[dict]], method: Any, preview: bool
+) -> None:
+    """For every row, passing ones included, the audit holds one entry per detected value and its over-bound entries
+    are the advisory's cause, whatever the source cell's type and whatever the other columns are named."""
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": e} for e in entities]}),
+        failed_records=[],
+        source_positions=tuple(range(len(entities))),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame(columns).to_csv(csv_path, index=False)
+    anonymizer = Anonymizer(detection_workflow=detector)
+    config = AnonymizerConfig(replace=method, emit_telemetry=False)
+    data = AnonymizerInput(source=str(csv_path), text_column="text")
+    result = (
+        anonymizer.preview(config=config, data=data, num_records=len(entities))
+        if preview
+        else anonymizer.run(config=config, data=data)
+    )
+
+    for row, row_entities in enumerate(entities):
+        (advisory,) = result.outcome(row).advisories
+        leftovers = result.leftovers(row)
+        assert format_cause(x for x in leftovers if x.over_bound) == advisory.cause
+        assert [x.in_source for x in leftovers] == [1] * len(row_entities)
+    first = result.outcome(0).advisories[0]
+    assert first.status == ("passed" if isinstance(method, Hash) else "failed")
+
+
+def test_leftovers_name_a_value_by_its_own_span(tmp_path: Path) -> None:
+    """John matches inside "John Smith" first, yet its entry is John's own span."""
+    text = "John Smith called. John said hi."
+    entities = [_ent("John Smith", 0, "full_name"), _ent("John", 19)]
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": entities}]}),
+        failed_records=[],
+        source_positions=(0,),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": [text]}).to_csv(csv_path, index=False)
+    result = Anonymizer(detection_workflow=detector).run(
+        config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
+        data=AnonymizerInput(source=str(csv_path), text_column="text"),
+    )
+
+    smith, john = result.leftovers(0)
+    assert (smith.position, smith.value, smith.label, smith.span, smith.in_source, smith.detected) == (
+        0,
+        "John Smith",
+        "full_name",
+        Span(0, 10),
+        1,
+        1,
+    )
+    assert (john.position, john.value, john.label, john.span, john.in_source, john.detected, john.in_output) == (
+        1,
+        "John",
+        "first_name",
+        Span(19, 23),
+        2,
+        2,
+        0,
+    )

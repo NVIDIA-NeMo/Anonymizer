@@ -38,12 +38,12 @@ after the retry is excluded from successful output and reported in
 of the same pair need only one mapping, and records without entities need no
 replacement-generator call.
 
-Anonymizer compares retry proposals with detected originals ignoring case,
-trimming surrounding whitespace, and collapsing internal whitespace. A match
-receives a placeholder. New retry placeholders use the same comparison to avoid
-original values, accepted substitutions, other retry proposals, and placeholders
-already created in that retry. Different entities can still share an ordinary
-model-generated substitute.
+Retry proposals then follow the same `consistency` rules as the first
+attempt's (see the parameter table below). A substitute that matches a detected
+original, ignoring case and whitespace, becomes a `[SUBSTITUTE_<LABEL>_<n>]`
+placeholder. With the default `"record"`, different entities of a record can
+still share an ordinary model-generated substitute; with `"run"`, they never
+do, and placeholders are numbered across the run.
 
 Before discarding a mapping, Substitute can reconcile a copied original that
 differs only in no-break spaces (`U+00A0`), thin spaces (`U+2009`), narrow no-break
@@ -86,6 +86,9 @@ AnonymizerConfig(replace=Substitute(
 | Field | Default | Description |
 |-------|---------|-------------|
 | `instructions` | `None` | Additional instructions for the LLM replacement generator. |
+| `consistency` | `"record"` | `"record"` gives each value (with its case and whitespace variants) one substitute within its record; two different values of a record can get the same substitute. `"run"` gives each value one substitute across the whole run, and two different values never share one. A substitute equal to a real value of the record is replaced by `[SUBSTITUTE_<LABEL>_<n>]`; in `"run"`, so is a substitute another value already uses. A mention can still get a different substitute where the shared one would clash with another value, or another value's substitute, in the same record; in `"record"` this happens only to case or whitespace variants. |
+
+Values match on label plus text, ignoring case and whitespace differences. The default `"record"` keeps each record's substitutes independent of other records. `"run"` makes records linkable across the output and preserves how often each value occurs. In `"run"` mode two different values never share a substitute. Use it only for datasets where joins across related documents are needed and unlinkability is not. Otherwise, use [Hash](#hash) for joins.
 
 !!! note "Model role"
 
@@ -118,8 +121,10 @@ AnonymizerConfig(replace=Redact(format_template="[{label}]"))
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `format_template` | `[REDACTED_{label}]` | Template with optional `{label}` placeholder. |
+| `format_template` | `[REDACTED_{label}]` | Nonempty replacement template with optional `{label}` placeholder. |
 | `normalize_label` | `True` | Uppercase and clean the label before substitution. |
+
+Empty templates and statically empty renders, such as `{label:.0}`, raise a configuration error. If a label-dependent template renders an empty string during replacement, Redact raises `ValueError` instead of silently keeping the entity. Whitespace replacements remain valid.
 
 ---
 
@@ -149,26 +154,147 @@ AnonymizerConfig(replace=Annotate(format_template="[{label}: {text}]"))
 
 ## Hash
 
-Replaces entities with a deterministic hash digest. The same entity text always produces the same hash, enabling consistent de-identification across records.
+Replaces entities with a keyed hash digest: HMAC-SHA256 of the entity text with a secret `key` you supply. With the same key, the same entity text always produces the same token, enabling consistent de-identification across records and runs.
 
 ```python
+import os
+
 from anonymizer import AnonymizerConfig, Hash
 
-# Default: <HASH_FIRST_NAME_3bc51062973c>
-AnonymizerConfig(replace=Hash())
+# Key from the environment; the CLI reads the same variable for --replace hash
+AnonymizerConfig(replace=Hash(key=os.environ["ANONYMIZER_HASH_KEY"]))
 
-# Short digest with SHA-1
-AnonymizerConfig(replace=Hash(algorithm="sha1", digest_length=8))
+# Short digest, label left out of the token
+AnonymizerConfig(replace=Hash(key=os.environ["ANONYMIZER_HASH_KEY"], digest_length=8, format_template="<HASH_{digest}>"))
 ```
+
+!!! warning "Hash requires a secret key"
+
+    The key is required. Without one, anyone with the output could recover dates of birth, phone numbers, ZIP codes and similar low-entropy values by hashing candidates ([#348](https://github.com/NVIDIA-NeMo/Anonymizer/issues/348)), so `Hash()` without a key raises an error that says how to pass one. Keep the key secret, and reuse it when tokens must match across runs; a new key gives new tokens. Before hashing, the text is casefolded and runs of whitespace become one space, the same fold Substitute uses to match variants of a value, so "Acme Corp" and "ACME  corp" get the same token. An empty or whitespace-only key is rejected. JSON dumps of a config mask the key, so a config loaded back from JSON fails validation until you pass the key again; a pickled config, or a `model_dump()` in Python mode, keeps the key, as any object that holds a secret does. Results keep the strategy without its key, so a saved or pickled result holds no key material, and a config built from a result's strategy is refused. Generate a key once, for example with `python -c "import secrets; print(secrets.token_hex(32))"`, store it as a secret, and never write it into a script.
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `algorithm` | `sha256` | Hash algorithm (`sha256`, `sha1`, or `md5`). |
+| `key` | required | Secret key, not empty. The digest is HMAC-SHA256 of the case- and whitespace-folded text. |
+| `algorithm` | `sha256` | Only `sha256` is accepted. |
 | `digest_length` | `12` | Number of hex characters to keep (6--64). |
 | `format_template` | `<HASH_{label}_{digest}>` | Template with `{digest}` required; `{label}` optional. |
+
+---
+
+## Keeping substitutes across calls (provisional)
+
+To give a value the same substitute in several calls, for example across the parts of one long document, pass one
+`Session` to each call with `session=`. `Anonymizer.run` and `Anonymizer.preview` both take it. The Session is
+provisional and may change.
+
+```python
+from anonymizer import AnonymizerConfig, Substitute
+from anonymizer.graph import Session, SessionSnapshot
+
+session = Session(stable_replacements=True)
+config = AnonymizerConfig(replace=Substitute())
+for part in parts:  # each part is an AnonymizerInput or TextRecordsInput
+    result = anonymizer.run(config=config, data=part, session=session)
+
+saved = session.snapshot().to_bytes()  # to continue later, or in another process
+session = Session.restore(SessionSnapshot.from_bytes(saved))
+```
+
+- Under a stable Session, Substitute works as `consistency="run"` across every call that uses the Session. A value
+  keeps one substitute per label across calls; one value under two labels can get two substitutes. The outputs of those
+  calls are linkable. Limit linkage by how widely you use one
+  Session. Each call logs its changes to the Session as counts at INFO, and the result carries them as
+  `result.session_changes`: `added`, `reused`, `revised` and `ignored` assignments, new record-local `fallbacks`,
+  and the placeholders the call created, by cause (`placeholders_protected`: the model proposed a value from the
+  record; `placeholders_taken`: another value, or another label of the same value, in the call holds it;
+  `placeholders_session`: only the Session rules it out). It is `None` without a stable Session.
+- Two different values never share a substitute across those calls, and a new substitute never equals a value an
+  earlier call replaced.
+- A value the Session already holds needs no new mapping from the model: a returned record that omits it takes the
+  held substitute, is not retried for it and does not fail for it. A record the model does not return at all still
+  fails, held values or not, and a record can still fail for a value the Session does not hold.
+  If the model omits a held value whose substitute equals a value detected in the new record, that value gets a
+  placeholder in that record.
+- Redact, Annotate and Hash run unchanged and leave the Session unchanged. Hash is stable across calls only when
+  every call uses the same hash configuration.
+- Rewrite, and a custom replace runner that overrides `run()`, `run_with_detection()` or its map workflow's
+  `generate_validated_maps()`, reject a stable Session with `InvalidConfigError` before detection starts. Anonymizer
+  cannot verify that an override passes the Session on, so an override that forwards `**kwargs` or `session` is
+  rejected too.
+- Custom workflows and runners passed to `Anonymizer` (`detection_workflow`, `replace_runner`, `rewrite_runner`,
+  `combined_rewrite_runner`) are an advanced and testing seam: Anonymizer keeps calling an override the way its base
+  method was called, and when a call needs something an override cannot be shown to support, the call fails with an
+  error instead of running without it.
+- The snapshot bytes hold original values in plain text. Protecting them is your responsibility.
+- The Session also holds record-local fallback entries: a substitute used in one record in place of a value's shared
+  one is recorded so no other value, and no other label of the same value, takes it later. Within a call too, a
+  substitute is either a value's shared one or a record-local fallback, never both, so replaying the same rows, when
+  their values all take their shared substitutes, gives the same text and leaves the snapshot unchanged, whatever
+  order the model returns its entries or the detector its rows in. Each spelling's letter case follows the value's
+  spelling at its earliest mention, in row order; a re-cased substitute that would become another value (`Işıl` upper
+  cased is `IŞIL`) is used as assigned. A call whose earliest spelling of a value differs can get another letter case
+  of its substitute. A row that itself needs a record-local fallback gets a new placeholder each time it is
+  replayed, because fallbacks are not reused. These entries are bookkeeping, not assignments.
+- `Session()` without `stable_replacements=True` retains nothing, and the call behaves as it does without
+  `session=`. A custom replace runner is called as it is without `session=`, so an override written before `session`
+  existed keeps working.
+
+See [Graph SDK reference](graph-sdk/reference.md#session-provisional) for the Session itself.
+
+To read what a row was given, `result.replacement_map(row)` returns its entries as `Replacement(original, label,
+synthetic, placeholder)`. `placeholder` is a token-shape check tied to the entry's label: it is true when the substitute
+has the form of a placeholder for that label, such as `[SUBSTITUTE_FIRST_NAME_1]` for `first_name`, in any letter
+case (`[substitute_first_name_1]` too); a token shaped for another label reads false. It holds whether Anonymizer minted
+it in this call, the Session held it from an earlier call, or the model proposed it. `result.session_changes` counts
+only the placeholders minted in the call.
 
 ---
 
 ## Evaluating replace output
 
 After running `replace`, you can score detection recall and the quality of substitutions using LLM-as-judge evaluation. See [Evaluation](evaluation.md) for details on the always-on entity coverage judge, the three Substitute quality judges (type fidelity, attribute fidelity, relational consistency), the opt-in detection validity judge, and how to call `Anonymizer.evaluate()`.
+
+---
+
+## Reading each row's outcome
+
+`run()` and `preview()` return one outcome per output row: `result.outcome(row)` is a `TargetOutcome`, the type the
+[graph SDK](graph-sdk.md) uses. Three of its fields answer separate questions:
+
+| Field | Question | Values |
+|---|---|---|
+| `terminal` | Did every step run for the row? | `success`, `failed`, `cancelled`, `blocked` |
+| `qualification` | Did every required check pass on the final text? | `met`, `not_met`, `not_assessed` |
+| `protected` | May the row's output be released? | `True`, `False` |
+
+A row that is not released stays in the output frame, so read its outcome before you use the row. `reasons` says
+why a row is `not_met`, and `advisories` holds checks that are reported but never change release. A row index
+outside the result raises `IndexError`, as does a result from a custom `replace_runner` or `rewrite_runner`, which
+carries no outcomes.
+
+In Replace mode, `not_met` means the row's replacements did not all land: its required `replacements_applied` check
+failed, for example because the replacement map omitted a detected entity.
+
+Redact, Hash and Substitute rows (not Annotate) also carry the advisory `no_detected_value_added`. The replaced text
+is scanned whole, replacements included:
+
+- `failed`: the text holds a detected value more often than the source holds that value outside the detected spans.
+- `passed`: it does not.
+- `could_not_assess`: the check could not run.
+
+A `failed` advisory's `cause` lists each value over that bound as `e<i>:N<n>,D<d>,O<o>`, joined by `;`: `i` is the
+position, among the row's entities sorted by start, of the value's own detected span, else of the first
+detected span that contains one of its matches, or `-` (`e-`) when no detected span holds it; `n` the value's occurrences
+in the source, `d` those inside a detected span, and `o` its occurrences in the replaced text. It holds no record
+text. To see which value an entry names and where it occurs, `result.leftovers(row)` returns one `Leftover` for
+every detected value, in the order `cause` uses (`cause` lists only those over the bound), with its `position`, `value`, `label`, `span`, `in_source`, `undetected_spans` and
+`output_spans`; unlike `cause`, it returns record text. For example:
+
+```python
+[(x.position, x.value, x.output_spans) for x in result.leftovers(0)]
+```
+
+The check matches words, not meanings: an ordinary word spelled like a detected value, such as "will" when the name
+"Will" was detected, passes when the source already held it outside the detected spans, and a replacement that
+equals or contains another detected value is reported. Like every advisory, it never changes the row's
+qualification or release.

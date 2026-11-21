@@ -21,12 +21,12 @@
     "expected_skill": "anonymizer",
     "should_trigger": true,
     "expected_script": null,
-    "ground_truth": "The agent loads the anonymizer skill and recommends Replace mode with Hash for stable cross-record replacement. It must not promise cross-record stability from Substitute, which is only consistent within a row. It should mention previewing before a full run and that Hash is deterministic rather than realistic-looking.",
+    "ground_truth": "The agent loads the anonymizer skill and recommends Replace mode with Hash for stable cross-record replacement. It must not promise cross-record stability from default Substitute, which is only consistent within a row; Substitute(consistency=\"run\") is an acceptable alternative when linking records across the output is acceptable. It should mention previewing before a full run and that Hash is deterministic rather than realistic-looking.",
     "expected_behavior": [
       "The agent read skills/anonymizer/SKILL.md before answering",
       "The answer recommends Hash for stable cross-record consistency",
-      "The answer does not recommend Substitute for cross-record consistency",
-      "The answer states that Substitute is only row-local for consistency",
+      "The answer does not recommend default Substitute for cross-record consistency",
+      "The answer states that default Substitute is only row-local for consistency",
       "The answer frames Hash as deterministic and useful for joins",
       "The answer keeps the standard preview-before-full-run workflow"
     ]

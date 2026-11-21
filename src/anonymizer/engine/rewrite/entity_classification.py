@@ -15,7 +15,6 @@ from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig
 from data_designer.engine.models.parsers.errors import ParserException
 from data_designer.engine.models.recipes.response_recipes import PydanticResponseRecipe
-from pydantic import BaseModel
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.engine.constants import (
@@ -210,18 +209,6 @@ def _merge_entity_classifications(row: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-class LabelClassificationParams(BaseModel):
-    categories: dict[str, str]
-
-
-@custom_column_generator(required_columns=[COL_ENTITIES_BY_VALUE])
-def _apply_dataset_classifications(row: dict[str, Any], generator_params: LabelClassificationParams) -> dict[str, Any]:
-    row[COL_ENTITY_CLASSIFICATION] = {
-        label: generator_params.categories[label] for label in _unique_labels(row.get(COL_ENTITIES_BY_VALUE))
-    }
-    return row
-
-
 class EntityClassificationWorkflow:
     """Classifies each non-latent entity label as direct or quasi-identifier.
 
@@ -262,17 +249,23 @@ class EntityClassificationWorkflow:
         categories = normalize_payload(result.dataframe.iloc[0][COL_ENTITY_CLASSIFICATION])
         return {label: categories[label] for label in labels}
 
-    def columns(
-        self, *, selected_models: RewriteModelSelection, label_categories: dict[str, str] | None = None
-    ) -> list[ColumnConfigT]:
-        if label_categories is not None:
-            return [
-                CustomColumnConfig(
-                    name=COL_ENTITY_CLASSIFICATION,
-                    generator_function=_apply_dataset_classifications,
-                    generator_params=LabelClassificationParams(categories=label_categories),
-                )
-            ]
+    def classify_rows(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        adapter: NddAdapter,
+        model_configs: list[ModelConfig],
+        selected_models: RewriteModelSelection,
+    ) -> None:
+        """Write COL_ENTITY_CLASSIFICATION onto *dataframe*: each row's own labels with their dataset categories."""
+        categories = self.classify_dataset(
+            dataframe, adapter=adapter, model_configs=model_configs, selected_models=selected_models
+        )
+        dataframe[COL_ENTITY_CLASSIFICATION] = [
+            {label: categories[label] for label in _unique_labels(raw)} for raw in dataframe[COL_ENTITIES_BY_VALUE]
+        ]
+
+    def columns(self, *, selected_models: RewriteModelSelection) -> list[ColumnConfigT]:
         classifier_alias = resolve_model_alias("entity_classifier", selected_models)
         return [
             CustomColumnConfig(

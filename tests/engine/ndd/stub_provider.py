@@ -10,12 +10,15 @@ import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
 
 from data_designer.config.models import ModelProvider
 
 # (model name, prompt text, number of earlier requests with the same prompt and model) -> reply
 Reply = tuple[int, str, str]  # (http status, content, finish_reason)
 Script = Callable[[str, str, int], Reply]
+# Optional: sees each request body first; returning None defers to the Script.
+BodyScript = Callable[[dict[str, Any]], Reply | None]
 
 COMPLETE = (200, '{"label": "ok", "score": 1}', "stop")
 
@@ -26,7 +29,9 @@ def cut_off(prefix: str = "") -> Reply:
 
 
 @contextmanager
-def stub_provider(script: Script) -> Generator[ModelProvider]:
+def stub_provider(
+    script: Script, *, bodies: list[dict[str, Any]] | None = None, body_script: BodyScript | None = None
+) -> Generator[ModelProvider]:
     seen: dict[tuple[str, str], int] = {}
     lock = threading.Lock()
 
@@ -38,7 +43,10 @@ def stub_provider(script: Script) -> Generator[ModelProvider]:
                 key = (body["model"], prompt)
                 earlier = seen.get(key, 0)
                 seen[key] = earlier + 1
-            status, content, finish_reason = script(body["model"], prompt, earlier)
+                if bodies is not None:
+                    bodies.append(body)
+            reply = body_script(body) if body_script is not None else None
+            status, content, finish_reason = reply or script(body["model"], prompt, earlier)
             if status == 200:
                 payload = {
                     "id": "stub",

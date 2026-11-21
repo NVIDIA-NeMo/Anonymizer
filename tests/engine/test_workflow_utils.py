@@ -4,14 +4,36 @@
 from __future__ import annotations
 
 import json
+import random
+from pathlib import Path
+from unittest.mock import Mock
 
+import numpy as np
 import pandas as pd
+import pytest
 from data_designer.config import custom_column_generator
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from pydantic import BaseModel
 
-from anonymizer.engine.constants import RECORD_ID_COLUMN
-from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
+from anonymizer.config.models import RewriteModelSelection
+from anonymizer.config.rewrite import PrivacyGoal
+from anonymizer.engine.constants import (
+    COL_ENTITIES_BY_VALUE,
+    COL_ENTITY_CLASSIFICATION,
+    COL_FINAL_ENTITIES,
+    COL_LATENT_ENTITIES,
+    COL_PRIVACY_QA,
+    COL_PRIVACY_QA_REANSWER,
+    COL_QUALITY_QA,
+    COL_REPLACEMENT_MAP,
+    COL_SENSITIVITY_DISPOSITION,
+    COL_TEXT,
+    RECORD_ID_COLUMN,
+)
+from anonymizer.engine.ndd.adapter import NddAdapter, WorkflowRunResult
+from anonymizer.engine.ndd.workflow_utils import derive_seed_columns, run_columns, select_seed_cols
+from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
+from anonymizer.engine.schemas import EntitiesByValueSchema
 
 
 class _StubOutput(BaseModel):
@@ -135,3 +157,125 @@ def test_select_seed_cols_filters_to_present() -> None:
     df = pd.DataFrame({RECORD_ID_COLUMN: ["r1"], "a": [1]})
     seed = select_seed_cols(df, [RECORD_ID_COLUMN, "a", "missing_col"])
     assert list(seed.columns) == [RECORD_ID_COLUMN, "a"]
+
+
+_NESTED_SEED_CELLS = {
+    COL_ENTITIES_BY_VALUE: {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]},
+    COL_ENTITY_CLASSIFICATION: {"first_name": "direct_identifier", "city": "quasi_identifier"},
+    COL_FINAL_ENTITIES: {
+        "entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]
+    },
+    COL_LATENT_ENTITIES: {"latent_entities": [{"label": "employer", "value": "Acme", "confidence": 0.8}]},
+    COL_REPLACEMENT_MAP: {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]},
+    COL_PRIVACY_QA: {"items": [{"id": 1, "question": "Who?", "sensitivity": "high", "entity_values": ["Alice"]}]},
+    COL_PRIVACY_QA_REANSWER: {"answers": [{"id": 1, "answer": "unknown"}]},
+    COL_QUALITY_QA: {"items": [{"id": 1, "question": "What role?", "reference_answer": "engineer"}]},
+}
+
+
+@pytest.mark.parametrize("column", sorted(_NESTED_SEED_CELLS))
+def test_select_seed_cols_equal_after_parquet_reload(column: str, tmp_path: Path) -> None:
+    """A frame saved to parquet and reloaded seeds exactly like the frame built in process."""
+    frame = pd.DataFrame({RECORD_ID_COLUMN: ["r1"], column: [_NESTED_SEED_CELLS[column]]})
+    path = tmp_path / "frame.parquet"
+    frame.to_parquet(path)
+    reloaded = pd.read_parquet(path)
+    assert isinstance(reloaded[column].iloc[0], dict)
+    pd.testing.assert_frame_equal(
+        select_seed_cols(reloaded, [RECORD_ID_COLUMN, column]), select_seed_cols(frame, [RECORD_ID_COLUMN, column])
+    )
+
+
+def test_select_seed_cols_writes_models_and_numpy_values_as_plain_json() -> None:
+    df = pd.DataFrame({"model": [_StubOutput(result="x")], "array": [{"ids": np.array([1, 2])}]})
+    seed = select_seed_cols(df, ["model", "array"])
+    assert json.loads(seed["model"].iloc[0]) == {"result": "x"}
+    assert json.loads(seed["array"].iloc[0]) == {"ids": [1, 2]}
+
+
+_PAIRS = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
+_PAIRS_JSON = json.dumps(_PAIRS)
+
+
+def _alone(cell: object) -> object:
+    """``cell`` as a one-cell column seeds it: the reference for the same cell in a mixed column."""
+    return select_seed_cols(pd.DataFrame({"c": pd.Series([cell], dtype=object)}), ["c"])["c"].iloc[0]
+
+
+@pytest.mark.parametrize(
+    "cells",
+    [
+        [_PAIRS, _PAIRS_JSON],
+        [_PAIRS_JSON, _PAIRS],
+        [None, _PAIRS_JSON, _PAIRS],
+        [float("nan"), _PAIRS],
+        [pd.NA, _PAIRS_JSON, _StubOutput(result="x")],
+    ],
+    ids=["dict_str", "str_dict", "none_str_dict", "nan_dict", "na_str_model"],
+)
+def test_select_seed_cols_encodes_each_cell_of_a_mixed_column_on_its_own(cells: list[object]) -> None:
+    seed = select_seed_cols(pd.DataFrame({"c": pd.Series(cells, dtype=object)}), ["c"])
+    for got, cell in zip(seed["c"], cells):
+        want = _alone(cell)
+        assert got == want if isinstance(want, str) else pd.isna(got) and pd.isna(want)
+    assert seed["c"].map(lambda v: isinstance(v, str)).tolist() == [
+        not (c is None or c is pd.NA or isinstance(c, float)) for c in cells
+    ]
+
+
+def test_select_seed_cols_keeps_every_by_value_cell_whatever_the_mix_and_order() -> None:
+    """Every seeded by-value cell reads back as its own cell's pairs, for random mixes of encodings in any order."""
+    rng = random.Random(432)
+    payloads = [{"entities_by_value": [{"value": f"v{i}", "labels": [f"l{i}", "x"]}]} for i in range(4)]
+    kinds = ["dict", "str", "none", "nan", "array"]
+    for _ in range(200):
+        cells: list[object] = []
+        for _ in range(rng.randint(1, 6)):
+            payload = rng.choice(payloads)
+            cells.append(
+                {
+                    "dict": payload,
+                    "str": json.dumps(payload),
+                    "none": None,
+                    "nan": float("nan"),
+                    "array": {"entities_by_value": np.array(payload["entities_by_value"], dtype=object)},
+                }[rng.choice(kinds)]
+            )
+        seed = select_seed_cols(
+            pd.DataFrame({COL_ENTITIES_BY_VALUE: pd.Series(cells, dtype=object)}), [COL_ENTITIES_BY_VALUE]
+        )
+        for got, cell in zip(seed[COL_ENTITIES_BY_VALUE], cells):
+            assert EntitiesByValueSchema.from_raw(got) == EntitiesByValueSchema.from_raw(cell), cells
+
+
+def test_run_columns_runs_sensitivity_disposition_columns(stub_rewrite_model_selection: RewriteModelSelection) -> None:
+    columns = SensitivityDispositionWorkflow().columns(
+        selected_models=stub_rewrite_model_selection,
+        privacy_goal=PrivacyGoal(
+            protect="All direct identifiers including names", preserve="Career trajectory and skills overall"
+        ),
+    )
+    frame = pd.DataFrame(
+        {
+            RECORD_ID_COLUMN: ["r1", "r2"],
+            COL_TEXT: ["Alice works at Acme.", "Bob lives in Paris."],
+            "unrelated": ["a", "b"],
+            **{col: [cell, cell] for col, cell in _NESTED_SEED_CELLS.items()},
+        }
+    )
+    adapter = Mock(spec=NddAdapter)
+    adapter.run_workflow.side_effect = lambda seed, **_: WorkflowRunResult(
+        dataframe=seed.iloc[[1]].assign(**{COL_SENSITIVITY_DISPOSITION: ["{}"]}).reset_index(drop=True),
+        failed_records=[],
+        source_positions=(1,),
+    )
+
+    run, seed_cols = run_columns(adapter, frame, columns, model_configs=[], workflow_name="disposition")
+
+    assert seed_cols == derive_seed_columns(columns, frame)
+    assert "unrelated" not in seed_cols
+    seed = adapter.run_workflow.call_args.args[0]
+    assert list(seed.columns) == seed_cols
+    assert adapter.run_workflow.call_args.kwargs["workflow_name"] == "disposition"
+    assert run.source_positions == (1,)
+    assert run.dataframe[COL_SENSITIVITY_DISPOSITION].tolist() == ["{}"]

@@ -11,36 +11,35 @@ from typing import TypeVar
 
 from anonymizer.config.entity_labels import normalize_entity_label as normalize_label
 from anonymizer.engine.schemas import DetectionResult
+from anonymizer.engine.spans import Span
 
 VALIDATION_CONTEXT_WINDOW = 32
-_SpanT = TypeVar("_SpanT")
+_ItemT = TypeVar("_ItemT")
 
 
 def group_overlapping_spans(
-    ordered_spans: Iterable[_SpanT],
+    ordered_items: Iterable[_ItemT],
     *,
-    start_position: Callable[[_SpanT], int],
-    end_position: Callable[[_SpanT], int],
-) -> list[tuple[_SpanT, ...]]:
-    """Group start-ordered half-open spans into connected overlap components.
+    span: Callable[[_ItemT], Span],
+) -> list[tuple[_ItemT, ...]]:
+    """Group start-ordered items into connected components of overlapping spans.
 
-    Callers supply spans sorted by start position and choose their own tie
-    ordering. Touching spans remain separate; nested and transitively
-    overlapping spans stay together.
+    Callers supply items sorted by span start and choose their own tie
+    ordering. An item joins the current group when its span starts before
+    the group's furthest end, so touching spans remain separate while nested
+    and transitively overlapping spans stay together.
     """
-    groups: list[tuple[_SpanT, ...]] = []
-    current: list[_SpanT] = []
-    current_end = -1
-    for span in ordered_spans:
-        if current and start_position(span) >= current_end:
-            groups.append(tuple(current))
-            current = []
-            current_end = -1
-        current.append(span)
-        current_end = max(current_end, end_position(span))
-    if current:
-        groups.append(tuple(current))
-    return groups
+    groups: list[list[_ItemT]] = []
+    reach = 0  # the current group's furthest end; unread until the first item starts a group
+    for item in ordered_items:
+        item_span = span(item)
+        if groups and item_span.start < reach:
+            groups[-1].append(item)
+            reach = max(reach, item_span.end)
+        else:
+            groups.append([item])
+            reach = item_span.end
+    return [tuple(group) for group in groups]
 
 
 @dataclass(frozen=True)
@@ -54,6 +53,10 @@ class EntitySpan:
     end_position: int
     score: float
     source: str
+
+    @property
+    def span(self) -> Span:
+        return Span(self.start_position, self.end_position)
 
     def as_dict(self) -> dict[str, str | int | float]:
         return {
@@ -180,11 +183,7 @@ def build_conflict_aware_tagged_text(text: str, entities: list[EntitySpan]) -> s
             entity.entity_id,
         ),
     )
-    groups = group_overlapping_spans(
-        ordered,
-        start_position=lambda entity: entity.start_position,
-        end_position=lambda entity: entity.end_position,
-    )
+    groups = group_overlapping_spans(ordered, span=lambda entity: entity.span)
 
     markers: list[EntitySpan] = []
     next_group_id = 1
@@ -192,17 +191,16 @@ def build_conflict_aware_tagged_text(text: str, entities: list[EntitySpan]) -> s
         if len(group) == 1:
             markers.append(group[0])
             continue
-        start = min(entity.start_position for entity in group)
-        end = max(entity.end_position for entity in group)
+        bounds = Span.cover(entity.span for entity in group)
         group_id = f"g{next_group_id}"
         next_group_id += 1
         markers.append(
             EntitySpan(
                 entity_id=group_id,
-                value=text[start:end],
+                value=text[bounds.slice],
                 label=f"NAGROUP_{group_id}",
-                start_position=start,
-                end_position=end,
+                start_position=bounds.start,
+                end_position=bounds.end,
                 score=0.0,
                 source="prompt_marker",
             )

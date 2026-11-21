@@ -228,7 +228,6 @@ class DetectionJudgeWorkflow(_BaseJudgeWorkflow):
             except Exception:
                 logger.warning(
                     "Could not parse entities_by_value for a row; treating as no entities.",
-                    exc_info=True,
                 )
                 return EntitiesByValueSchema(entities_by_value=[])
 

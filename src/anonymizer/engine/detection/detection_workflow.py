@@ -6,9 +6,9 @@ from __future__ import annotations
 import json
 import logging
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar, cast
+from typing import cast
 
 import pandas as pd
 from data_designer.config.base import SkipConfig
@@ -16,7 +16,6 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTe
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
-from pydantic import Field
 
 from anonymizer.config.anonymizer_config import Detect as AnonymizerDetectConfig
 from anonymizer.config.anonymizer_config import resolve_effective_detection_labels
@@ -59,9 +58,12 @@ from anonymizer.engine.detection.regex_detection import (
     resolve_regex_rules,
     validate_exportable_regex_rules,
 )
+from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.ndd.backend import raise_if_cancelled
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
 from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.row_partitioning import resolve_source_positions, try_resolve_source_positions
 from anonymizer.engine.schemas import (
     EntitiesByValueSchema,
     EntitiesSchema,
@@ -79,13 +81,6 @@ from anonymizer.measurement import stage_timer
 logger = logging.getLogger("anonymizer.detection")
 
 
-class _PrivatePromptLLMStructuredColumnConfig(LLMStructuredColumnConfig):
-    """Structured column config whose prompt is omitted from repr-based setup logs."""
-
-    _normalize_for_data_designer: ClassVar[bool] = True
-    prompt: str = Field(repr=False)
-
-
 # Defaults for the two chunked-validation knobs. Sourced from the Detect config
 # so there is a single source of truth; the workflow method defaults exist so
 # internal tests and ad-hoc callers do not have to wire plumbing by hand.
@@ -101,6 +96,16 @@ _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS: int = AnonymizerDetectConfig.model_fie
 class EntityDetectionResult:
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    source_positions: tuple[int, ...] = ()
+
+
+@dataclass
+class _DetectionRows:
+    """The frame the detection stages work on, the source rows it came from, and the failures so far."""
+
+    frame: pd.DataFrame
+    positions: tuple[int, ...] = ()
+    failed: list[FailedRecord] = field(default_factory=list)
 
 
 class EntityDetectionWorkflow:
@@ -161,7 +166,11 @@ class EntityDetectionWorkflow:
             preview_num_records=preview_num_records,
         )
         detected_df = detection_result.dataframe.copy()
-        return EntityDetectionResult(dataframe=detected_df, failed_records=detection_result.failed_records)
+        return EntityDetectionResult(
+            dataframe=detected_df,
+            failed_records=detection_result.failed_records,
+            source_positions=resolve_source_positions(dataframe, detected_df, detection_result.source_positions),
+        )
 
     def _build_detection_spec(
         self,
@@ -226,10 +235,8 @@ class EntityDetectionWorkflow:
         validator_aliases = resolve_model_aliases("entity_validator", selected_models)
         augmenter_alias = resolve_model_alias("entity_augmenter", selected_models)
         logger.debug(
-            "detection aliases: detector=%s, validator_pool=%s, augmenter=%s",
-            detection_alias,
-            validator_aliases,
-            augmenter_alias,
+            "detection models configured: validator_pool_size=%d",
+            len(validator_aliases),
         )
         # ModelConfig.max_parallel_requests caps concurrency *per alias*. When
         # the pool has multiple validators each gets its own cap, so total
@@ -238,12 +245,11 @@ class EntityDetectionWorkflow:
         # alias's cap accordingly.
         if len(validator_aliases) > 1:
             logger.warning(
-                "entity validation runs across a pool of %d aliases (%s). "
+                "entity validation runs across a pool of %d aliases. "
                 "max_parallel_requests is enforced per alias, so the pool "
                 "multiplies total in-flight validator calls; budget provider "
                 "TPM/RPM accordingly.",
                 len(validator_aliases),
-                validator_aliases,
             )
 
         columns = cast(
@@ -501,7 +507,11 @@ class EntityDetectionWorkflow:
             latent_df[COL_LATENT_ENTITIES] = latent_df[COL_LATENT_ENTITIES].apply(
                 lambda raw: _filter_excluded_latent_entities(raw, excluded_entity_labels)
             )
-        return EntityDetectionResult(dataframe=latent_df, failed_records=latent_result.failed_records)
+        return EntityDetectionResult(
+            dataframe=latent_df,
+            failed_records=latent_result.failed_records,
+            source_positions=resolve_source_positions(dataframe, latent_df, latent_result.source_positions),
+        )
 
     def run(
         self,
@@ -551,28 +561,37 @@ class EntityDetectionWorkflow:
                 entity_label_examples=entity_label_examples,
             )
             label_config.strict_labels = entity_labels is not None
-            detected_result = self.detect_and_validate_entities(
-                dataframe,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                gliner_detection_threshold=gliner_detection_threshold,
-                validation_max_entities_per_call=validation_max_entities_per_call,
-                validation_excerpt_window_chars=validation_excerpt_window_chars,
-                validation_single_chunk_full_text=validation_single_chunk_full_text,
-                entity_labels=entity_labels,
-                excluded_entity_labels=excluded_entity_labels,
-                entity_label_examples=entity_label_examples,
-                builtin_regexes=builtin_regexes,
-                regex_rules=regex_rules,
-                data_summary=data_summary,
-                regex_limits=regex_limits,
-                preview_num_records=preview_num_records,
-                _resolved_label_config=label_config,
-            )
+            rows = _DetectionRows(dataframe)
 
-            if tag_latent_entities:
+            def detect() -> None:
+                detected_result = self.detect_and_validate_entities(
+                    dataframe,
+                    model_configs=model_configs,
+                    selected_models=selected_models,
+                    gliner_detection_threshold=gliner_detection_threshold,
+                    validation_max_entities_per_call=validation_max_entities_per_call,
+                    validation_excerpt_window_chars=validation_excerpt_window_chars,
+                    validation_single_chunk_full_text=validation_single_chunk_full_text,
+                    entity_labels=entity_labels,
+                    excluded_entity_labels=excluded_entity_labels,
+                    entity_label_examples=entity_label_examples,
+                    builtin_regexes=builtin_regexes,
+                    regex_rules=regex_rules,
+                    data_summary=data_summary,
+                    regex_limits=regex_limits,
+                    preview_num_records=preview_num_records,
+                    _resolved_label_config=label_config,
+                )
+                rows.frame = detected_result.dataframe
+                # The older two-argument result reports no positions; unique record IDs can still resolve them.
+                rows.positions = detected_result.source_positions or (
+                    try_resolve_source_positions(dataframe, detected_result.dataframe, None) or ()
+                )
+                rows.failed = detected_result.failed_records
+
+            def tag_latent() -> None:
                 latent_result = self.identify_latent_entities(
-                    detected_result.dataframe,
+                    rows.frame,
                     model_configs=model_configs,
                     selected_models=selected_models,
                     gliner_detection_threshold=gliner_detection_threshold,
@@ -584,30 +603,46 @@ class EntityDetectionWorkflow:
                     preview_num_records=preview_num_records,
                     _resolved_label_config=label_config,
                 )
-                final_df = latent_result.dataframe.copy()
-                final_failures = [*detected_result.failed_records, *latent_result.failed_records]
-            else:
-                final_df = detected_result.dataframe.copy()
-                final_failures = detected_result.failed_records
-
-            # When entity_labels is explicitly provided (even if it matches DEFAULT_ENTITY_LABELS),
-            # the augmenter is strict and out-of-scope labels are filtered.
-            # entity_labels=None is the only way to get permissive augmentation.
-            if COL_DETECTED_ENTITIES in final_df.columns:
-                allowed = set(label_config.labels) if label_config.strict_labels else None
-                excluded_entity_labels_set = set(excluded_entity_labels) if excluded_entity_labels else None
-                final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
-                    lambda raw: _materialize_final_entities(
-                        raw,
-                        allowed_labels=allowed,
-                        excluded_entity_labels=excluded_entity_labels_set,
-                    )
+                rows.frame = latent_result.dataframe
+                # Positions the first stage could not resolve stay unreported; the caller falls back to record IDs.
+                rows.positions = rows.positions and tuple(
+                    rows.positions[position] for position in latent_result.source_positions
                 )
-                if compute_grouped:
-                    final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
+                rows.failed = [*rows.failed, *latent_result.failed_records]
+
+            def finalize() -> None:
+                final_df = rows.frame.copy()
+                # When entity_labels is explicitly provided (even if it matches DEFAULT_ENTITY_LABELS),
+                # the augmenter is strict and out-of-scope labels are filtered.
+                # entity_labels=None is the only way to get permissive augmentation.
+                if COL_DETECTED_ENTITIES in final_df.columns:
+                    allowed = set(label_config.labels) if label_config.strict_labels else None
+                    excluded_entity_labels_set = set(excluded_entity_labels) if excluded_entity_labels else None
+                    final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
+                        lambda raw: _materialize_final_entities(
+                            raw,
+                            allowed_labels=allowed,
+                            excluded_entity_labels=excluded_entity_labels_set,
+                        )
+                    )
+                    if compute_grouped:
+                        final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
+                rows.frame = final_df
+
+            raise_if_cancelled(
+                run_stages(
+                    "detection",
+                    [
+                        ("detect", detect),
+                        *([("tag-latent", tag_latent)] if tag_latent_entities else []),
+                        ("finalize", finalize),
+                    ],
+                )
+            )
             result = EntityDetectionResult(
-                dataframe=final_df,
-                failed_records=final_failures,
+                dataframe=rows.frame,
+                failed_records=rows.failed,
+                source_positions=rows.positions,
             )
             measurement.update(
                 output_row_count=len(result.dataframe),

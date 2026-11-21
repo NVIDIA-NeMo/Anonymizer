@@ -46,26 +46,30 @@ Public-API changes (re-exports, signatures, kwargs, default values) may require 
 
 ```
 input_df
-  → EntityDetectionWorkflow.run()              # engine/detection/detection_workflow.py
-        GLiNER detection
-        → parse + tag
-        → LLM validation    (keep / drop candidates)
-        → LLM augmentation  (add entities GLiNER missed)
-        → merge + finalize  → COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES
-  → ReplacementWorkflow.run()                  # engine/replace/replace_runner.py
-        Redact / Annotate / Hash  → applied locally, no LLM
-        Substitute                → LlmReplaceWorkflow → NddAdapter
+  → one graph invocation: run_replace_pipeline()   # engine/replace/route.py
+      detect (phase-scoped step)              → mentions per row
+        EntityDetectionWorkflow.run()              # engine/detection/detection_workflow.py
+            GLiNER detection
+            → parse + tag
+            → LLM validation    (keep / drop candidates)
+            → LLM augmentation  (add entities GLiNER missed)
+            → merge + finalize  → COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES
+      substitute-map (Substitute only)             → LlmReplaceWorkflow → NddAdapter
+      replace → verify-patches (per row)           # Redact / Annotate / Hash apply locally, no LLM
+        → verify-no-original (not Annotate)        # advisory check, not required
   → output: {text_col}_replaced, {text_col}_with_spans, final_entities
 ```
 
-Validation runs before augmentation, not after: GLiNER is high-recall/low-precision, so its candidates need an LLM validation pass; the augmenter is itself an LLM finding what GLiNER missed, so its output is already high-precision and is not re-validated. Augmented entities are appended straight onto the validated set in `apply_augmented_entities` — see `resolve_overlaps()` in `engine/detection/postprocess.py` for how conflicting spans between the two are resolved.
+Validation runs before augmentation, not after: GLiNER is high-recall/low-precision, so its candidates need an LLM validation pass; the augmenter is itself an LLM finding what GLiNER missed, so its output is already high-precision and is not re-validated. Augmented candidates are merged with the validated ones in `merge_and_build_candidates` (`engine/detection/custom_columns.py`); `reconcile_candidates()` in `engine/detection/candidates.py` resolves conflicting spans between the two (longer spans first, then earlier starts; a later overlapping candidate is discarded).
 
 ### Rewrite mode — `AnonymizerConfig(rewrite=...)`
 
 ```
 input_df
-  → EntityDetectionWorkflow.run()              # same as above, plus latent entity tagging
-  → RewriteWorkflow.run()                      # engine/rewrite/rewrite_workflow.py
+  → one graph invocation: RewriteWorkflow.run_with_detection()   # engine/rewrite/rewrite_workflow.py
+      detect (phase-scoped step)          # engine/detection/detect_step.py; EntityDetectionWorkflow.run(),
+                                          # same as above, plus latent entity tagging
+      rewrite (rows with entities only; the rest keep default metrics)
         LlmReplaceWorkflow.generate_map_only() # build replacement map for prompt
         → single NDD adapter call (pipeline_columns):
               DomainClassificationWorkflow    → _domain, _domain_supplement
@@ -84,7 +88,7 @@ Later, `Anonymizer.evaluate()` runs the non-critical judge steps:
                                               (only when EvaluateConfig.compute_detection_validity=True)
 ```
 
-Records with no detected entities skip all LLM sub-workflows and pass through with default metrics (utility=1.0, leakage=0.0).
+Records with no detected entities skip all LLM sub-workflows and pass through with default metrics (utility=1.0, leakage=0.0). A runner that overrides `run()` keeps the older path: the facade calls `EntityDetectionWorkflow.run()` and then that `run()` with the detection frame.
 
 ## Config Pattern
 
@@ -111,6 +115,23 @@ One pipeline-specific fact worth knowing: `COL_TEXT` is the internal name for th
 - **Don't use string literals for column names** — use `COL_*` constants from `engine/constants.py`
 - **Don't add a domain to only one supplement map** — see `engine/rewrite/domain_classification.py` for the sync invariant
 - **Don't hardcode `gliner_threshold`** — it belongs in `Detect` config (default 0.3)
+
+## Graph SDK preview branch (PR1)
+
+These rules apply when this checkout is on `aagonzales/graph-sdk/feat/main` (draft
+[PR #319](https://github.com/NVIDIA-NeMo/Anonymizer/pull/319), formerly #302):
+
+- **Do not push to this branch.** Writes land only via the implementation campaign's reviewed
+  pipeline; work in your own branch or worktree.
+- **Do not fix problems you find under `anonymizer/engine/**`** — report them instead; an
+  uncoordinated fix will collide with in-flight work and be discarded.
+- **Never modify compat-marked tests, fixtures, or expected-output files.** They are frozen
+  oracles: a wrong oracle is a finding, not an edit.
+
+Review scope, current status, known-open items, and accepted behavior deltas live in the PR #319
+description — read it before testing or reporting. Report findings as comments on PR #319: one
+finding per comment, with the exact SHA, route/surface, smallest repro (provider-free if possible),
+and expected vs actual.
 
 ## Development
 

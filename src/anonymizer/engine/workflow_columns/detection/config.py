@@ -16,6 +16,7 @@ from anonymizer.engine.constants import (
     COL_AUGMENTATION_ADMISSION_RESULTS,
     COL_AUGMENTATION_ATTEMPTS,
     COL_AUGMENTATION_DETECTION_RESULT,
+    COL_AUGMENTATION_RESPONSE_FORMAT,
     COL_AUGMENTED_CANDIDATES,
     COL_INITIAL_TAGGED_TEXT,
     COL_RAW_DETECTED,
@@ -69,6 +70,7 @@ class AugmentationConfig(SingleColumnConfig):
             COL_AUGMENTATION_ADMISSION_RESULTS,
             COL_AUGMENTATION_ATTEMPTS,
             COL_AUGMENTED_CANDIDATES,
+            COL_AUGMENTATION_RESPONSE_FORMAT,
         ]
 
     def get_model_aliases(self) -> list[str]:
@@ -196,9 +198,14 @@ class RegexDetectionConfig(SingleColumnConfig):
 
     column_type: Literal["anonymizer-regex-detection"] = "anonymizer-regex-detection"  # ty: ignore[invalid-mutable-override]
     rules: list[ResolvedRegexRule]
-    timeout_seconds: float = Field(gt=0, allow_inf_nan=False)
+    timeout_seconds: float = Field(
+        gt=0, allow_inf_nan=False, description="Smallest per-rule, per-record budget, in CPU seconds."
+    )
     timeout_seconds_per_million_characters: float = Field(
-        default=DEFAULT_REGEX_TIMEOUT_SECONDS_PER_MILLION_CHARACTERS, gt=0, allow_inf_nan=False
+        default=DEFAULT_REGEX_TIMEOUT_SECONDS_PER_MILLION_CHARACTERS,
+        gt=0,
+        allow_inf_nan=False,
+        description="Per-rule budget in CPU seconds per million Unicode code points of the record.",
     )
     max_matches_per_rule: int = Field(gt=0)
 

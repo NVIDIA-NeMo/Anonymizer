@@ -17,9 +17,11 @@ import pandas as pd
 import pytest
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
+from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.custom_column import custom_column_generator
-from data_designer.config.models import ModelConfig
+from data_designer.config.models import ModelConfig, ModelProvider
 from data_designer.config.run_config import RunConfig
+from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 from data_designer.engine.column_generators.generators.custom import CustomColumnGenerator
@@ -78,6 +80,7 @@ from anonymizer.measurement import (
     stage_timer,
 )
 from anonymizer.measurement.metrics.rewrite import _output_contains_original_value
+from tests.conftest import stub_run_with_detection
 
 
 class _FailingSink:
@@ -120,6 +123,12 @@ def trace_input_df() -> pd.DataFrame:
     return pd.DataFrame({"text": ["Alice works at Acme"], RECORD_ID_COLUMN: ["record-a"]})
 
 
+def _seed_frame(builder: object, count: int) -> pd.DataFrame:
+    seed = cast(DataDesignerConfigBuilder, builder).get_seed_config()
+    assert seed is not None and isinstance(seed.source, LocalFileSeedSource)
+    return pd.read_parquet(seed.source.path).iloc[:count].copy()
+
+
 def _trace_model_configs() -> list[ModelConfig]:
     return [ModelConfig(alias="alias", model="dummy-model", provider="provider")]
 
@@ -150,7 +159,7 @@ def test_ndd_adapter_records_workflow_measurement_without_raw_text() -> None:
         }
     )
     mock_dd = Mock(spec=DataDesigner)
-    mock_dd.preview.return_value = SimpleNamespace(dataset=input_df.iloc[[0]].copy())
+    mock_dd.preview.side_effect = lambda builder, **kwargs: SimpleNamespace(dataset=_seed_frame(builder, 1))
     adapter = NddAdapter(data_designer=mock_dd)
     collector = MeasurementCollector(record_hash_key="test-key")
 
@@ -221,7 +230,7 @@ def test_ndd_adapter_records_datadesigner_model_usage() -> None:
 
         def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
             self._create_resource_provider("preview-dataset", _config_builder)
-            return SimpleNamespace(dataset=input_df.iloc[:num_records].copy())
+            return SimpleNamespace(dataset=_seed_frame(_config_builder, num_records))
 
     adapter = NddAdapter(data_designer=cast(DataDesigner, UsageDataDesigner()))
     collector = MeasurementCollector(record_hash_key="test-key")
@@ -316,7 +325,7 @@ def test_ndd_adapter_records_datadesigner_model_usage_by_alias_for_shared_model_
 
         def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
             self._create_resource_provider("preview-dataset", _config_builder)
-            return SimpleNamespace(dataset=input_df.iloc[:num_records].copy())
+            return SimpleNamespace(dataset=_seed_frame(_config_builder, num_records))
 
     adapter = NddAdapter(data_designer=cast(DataDesigner, UsageDataDesigner()))
     collector = MeasurementCollector(record_hash_key="test-key")
@@ -426,6 +435,7 @@ def test_anonymizer_records_per_record_measurement_without_raw_pii(tmp_path: Pat
         failed_records=[],
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
+    stub_run_with_detection(replace_runner)
     replace_runner.run.return_value = ReplacementResult(
         dataframe=pd.DataFrame(
             {
@@ -438,6 +448,7 @@ def test_anonymizer_records_per_record_measurement_without_raw_pii(tmp_path: Pat
         failed_records=[],
     )
     rewrite_runner = Mock(spec=RewriteWorkflow)
+    stub_run_with_detection(rewrite_runner)
     rewrite_runner.run.return_value = RewriteResult(dataframe=pd.DataFrame(), failed_records=[])
     anonymizer = Anonymizer(
         detection_workflow=detection_workflow,
@@ -581,6 +592,7 @@ def test_anonymizer_measurement_config_writes_jsonl(tmp_path: Path) -> None:
         failed_records=[],
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
+    stub_run_with_detection(replace_runner)
     replace_runner.run.return_value = ReplacementResult(
         dataframe=pd.DataFrame(
             {
@@ -912,7 +924,7 @@ def test_ndd_adapter_writes_native_dd_message_trace_and_strips_trace_columns(
         def preview(self, config_builder: object, *, num_records: int) -> SimpleNamespace:
             traced_column = cast(Any, config_builder).get_column_config("raw_detected")
             captured_columns.append(traced_column)
-            output = input_df.iloc[:num_records].copy()
+            output = _seed_frame(config_builder, num_records)
             output["raw_detected"] = "[]"
             output[f"raw_detected{TRACE_COLUMN_POSTFIX}"] = [
                 np.array(
@@ -996,11 +1008,19 @@ class _TraceModelRegistry:
     def get_model(self, *, model_alias: str) -> _TraceModelFacade:
         return self._models[model_alias]
 
+    def get_model_config(self, *, model_alias: str) -> ModelConfig:
+        return ModelConfig(alias=model_alias, model="dummy-model", provider="provider")
+
+    def get_model_provider(self, *, model_alias: str) -> ModelProvider:
+        return ModelProvider(name="provider", endpoint="http://provider/v1")
+
 
 class _CustomTraceDataDesigner:
-    def __init__(self, input_df: pd.DataFrame, *, facade: Any | None = None) -> None:
-        self.input_df = input_df
-        self.resource_provider = SimpleNamespace(model_registry=_TraceModelRegistry(facade))
+    def __init__(self, *, facade: Any | None = None) -> None:
+        self.resource_provider = SimpleNamespace(
+            model_registry=_TraceModelRegistry(facade),
+            run_config=RunConfig(max_conversation_restarts=0, max_conversation_correction_steps=0),
+        )
 
     def _create_resource_provider(self, *_args: Any, **_kwargs: Any) -> SimpleNamespace:
         return self.resource_provider
@@ -1011,7 +1031,7 @@ class _CustomTraceDataDesigner:
 
     async def _preview(self, config_builder: object, *, num_records: int) -> SimpleNamespace:
         resource_provider = self.resource_provider
-        output = self.input_df.iloc[:num_records].copy()
+        output = _seed_frame(config_builder, num_records)
         for column in cast(Any, config_builder).get_column_configs():
             generator = CustomColumnGenerator(column, resource_provider=cast(Any, resource_provider))
             for row_index, row in output.iterrows():
@@ -1024,12 +1044,10 @@ class _CustomTraceDataDesigner:
 class _TaskTraceDataDesigner:
     def __init__(
         self,
-        input_df: pd.DataFrame,
         *,
         task_traces: list[Any] | None = None,
         error: Exception | None = None,
     ) -> None:
-        self.input_df = input_df
         self.task_traces = task_traces or []
         self.error = error
         self.run_config = RunConfig(async_trace=False)
@@ -1039,11 +1057,14 @@ class _TaskTraceDataDesigner:
         self.async_trace_values.append(run_config.async_trace)
         self.run_config = run_config
 
+    def _create_resource_provider(self, *_args: Any, **_kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(run_config=self.run_config)
+
     def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
-        assert self.run_config.async_trace is True
+        assert self._create_resource_provider("preview-dataset", _config_builder).run_config.async_trace is True
         if self.error is not None:
             raise self.error
-        return SimpleNamespace(dataset=self.input_df.iloc[:num_records].copy(), task_traces=self.task_traces)
+        return SimpleNamespace(dataset=_seed_frame(_config_builder, num_records), task_traces=self.task_traces)
 
 
 class _AugmentationTraceFacade(_TraceModelFacade):
@@ -1082,7 +1103,7 @@ class _AugmentationTraceFacade(_TraceModelFacade):
 class _PluginTraceDataDesigner(_CustomTraceDataDesigner):
     def preview(self, config_builder: object, *, num_records: int) -> SimpleNamespace:
         provider = self._create_resource_provider()
-        output = self.input_df.iloc[:num_records].copy()
+        output = _seed_frame(config_builder, num_records)
         for column in cast(Any, config_builder).get_column_configs():
             for row_index, row in output.iterrows():
                 token = runtime_correlation_provider.set(
@@ -1153,7 +1174,7 @@ def test_ndd_adapter_traces_augmentation_plugin_calls(
             "text": ["Alice works at Acme"],
         }
     )
-    designer = _PluginTraceDataDesigner(input_df, facade=facade)
+    designer = _PluginTraceDataDesigner(facade=facade)
     adapter = NddAdapter(data_designer=cast(DataDesigner, designer))
     trace_path = tmp_path / "trace.jsonl"
     measurement_path = tmp_path / "measurement.jsonl"
@@ -1286,7 +1307,7 @@ def test_ndd_adapter_writes_custom_column_private_model_facade_dd_trace(
     trace_input_df: pd.DataFrame,
     async_columns: bool,
 ) -> None:
-    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner(trace_input_df)))
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner()))
     trace_path = tmp_path / "trace.jsonl"
 
     with configured_measurement_session(
@@ -1351,7 +1372,7 @@ def test_ndd_adapter_reports_untraced_custom_columns_in_dd_trace_coverage(
     tmp_path: Path,
     trace_input_df: pd.DataFrame,
 ) -> None:
-    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner(trace_input_df)))
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner()))
     trace_path = tmp_path / "trace.jsonl"
 
     with configured_measurement_session(
@@ -1381,7 +1402,7 @@ def test_ndd_adapter_reports_untraced_custom_columns_in_dd_trace_coverage(
 def test_ndd_adapter_private_model_facade_trace_write_error_is_not_wrapped(
     trace_input_df: pd.DataFrame,
 ) -> None:
-    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner(trace_input_df)))
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner()))
     collector = MeasurementCollector(
         dd_trace_mode="all_messages",
         dd_trace_sink=_FailingSink("private trace sidecar unavailable"),
@@ -1405,9 +1426,7 @@ def test_ndd_adapter_flushes_private_model_facade_error_trace_when_workflow_fail
             raise RuntimeError("custom model call failed")
 
     trace_path = tmp_path / "trace.jsonl"
-    adapter = NddAdapter(
-        data_designer=cast(DataDesigner, _CustomTraceDataDesigner(trace_input_df, facade=FailingTraceModelFacade()))
-    )
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner(facade=FailingTraceModelFacade())))
 
     with pytest.raises(AnonymizerWorkflowError, match="Workflow failed"):
         with configured_measurement_session(
@@ -1443,9 +1462,7 @@ def test_ndd_adapter_private_model_facade_trace_write_error_does_not_mask_workfl
         def completion(self, _messages: list[dict[str, Any]]) -> SimpleNamespace:
             raise RuntimeError("custom model call failed")
 
-    adapter = NddAdapter(
-        data_designer=cast(DataDesigner, _CustomTraceDataDesigner(trace_input_df, facade=FailingTraceModelFacade()))
-    )
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner(facade=FailingTraceModelFacade())))
     collector = MeasurementCollector(
         dd_trace_mode="all_messages",
         dd_trace_sink=_FailingSink("private trace sidecar unavailable"),
@@ -1460,7 +1477,7 @@ def test_ndd_adapter_private_model_facade_trace_write_error_does_not_mask_workfl
         )
 
 
-def test_ndd_adapter_writes_sanitized_dd_task_traces_and_restores_run_config(
+def test_ndd_adapter_writes_sanitized_dd_task_traces_and_leaves_designer_run_config(
     tmp_path: Path,
     trace_input_df: pd.DataFrame,
 ) -> None:
@@ -1475,7 +1492,7 @@ def test_ndd_adapter_writes_sanitized_dd_task_traces_and_restores_run_config(
         status="error",
         error="raw secret token Alice",
     )
-    data_designer = _TaskTraceDataDesigner(trace_input_df, task_traces=[task_trace])
+    data_designer = _TaskTraceDataDesigner(task_traces=[task_trace])
     adapter = NddAdapter(data_designer=cast(DataDesigner, data_designer))
     task_trace_path = tmp_path / "task-trace.jsonl"
 
@@ -1488,7 +1505,7 @@ def test_ndd_adapter_writes_sanitized_dd_task_traces_and_restores_run_config(
             [_raw_detected_text_column()],
         )
 
-    assert data_designer.async_trace_values == [True, False]
+    assert data_designer.async_trace_values == []
     assert data_designer.run_config.async_trace is False
     task_trace = json.loads(task_trace_path.read_text(encoding="utf-8").strip())
     assert task_trace["record_type"] == "dd_task_trace"
@@ -1546,9 +1563,7 @@ def test_ndd_adapter_task_trace_handles_mapping_and_invalid_timestamps(
         },
     ]
     task_trace_path = tmp_path / "task-trace.jsonl"
-    adapter = NddAdapter(
-        data_designer=cast(DataDesigner, _TaskTraceDataDesigner(trace_input_df, task_traces=task_traces))
-    )
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _TaskTraceDataDesigner(task_traces=task_traces)))
 
     with configured_measurement_session(
         MeasurementConfig(output_path=tmp_path / "measurements.jsonl", dd_task_trace_path=task_trace_path)
@@ -1601,9 +1616,7 @@ def test_ndd_adapter_task_trace_write_error_is_not_wrapped_as_workflow_error(
         status="completed",
         error=None,
     )
-    adapter = NddAdapter(
-        data_designer=cast(DataDesigner, _TaskTraceDataDesigner(trace_input_df, task_traces=[task_trace]))
-    )
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _TaskTraceDataDesigner(task_traces=[task_trace])))
     collector = MeasurementCollector(
         dd_task_trace_sink=_FailingSink("task trace sidecar unavailable"),
         fail_on_write_error=True,
@@ -1622,7 +1635,7 @@ def test_ndd_adapter_trace_write_error_is_not_wrapped_as_workflow_error(
 ) -> None:
     class TraceDataDesigner:
         def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
-            output = trace_input_df.iloc[:num_records].copy()
+            output = _seed_frame(_config_builder, num_records)
             output["raw_detected"] = "[]"
             output[f"raw_detected{TRACE_COLUMN_POSTFIX}"] = [
                 [
@@ -1647,11 +1660,11 @@ def test_ndd_adapter_trace_write_error_is_not_wrapped_as_workflow_error(
         )
 
 
-def test_ndd_adapter_restores_run_config_when_task_traced_workflow_fails(
+def test_ndd_adapter_leaves_designer_run_config_when_task_traced_workflow_fails(
     tmp_path: Path,
     trace_input_df: pd.DataFrame,
 ) -> None:
-    data_designer = _TaskTraceDataDesigner(trace_input_df, error=RuntimeError("raw secret failure"))
+    data_designer = _TaskTraceDataDesigner(error=RuntimeError("raw secret failure"))
     adapter = NddAdapter(data_designer=cast(DataDesigner, data_designer))
 
     with pytest.raises(AnonymizerWorkflowError, match="Workflow failed"):
@@ -1664,7 +1677,7 @@ def test_ndd_adapter_restores_run_config_when_task_traced_workflow_fails(
                 [_raw_detected_text_column()],
             )
 
-    assert data_designer.async_trace_values == [True, False]
+    assert data_designer.async_trace_values == []
     assert data_designer.run_config.async_trace is False
 
 
@@ -1896,7 +1909,12 @@ def test_record_metrics_counts_missing_replacement_map_entries_without_raw_value
     assert "Maya" not in serialized
 
 
-def test_record_metrics_separates_map_entries_from_span_application() -> None:
+@pytest.mark.parametrize(
+    "label_counts",
+    [{"first_name": 1}, json.dumps({"first_name": 1}, sort_keys=True)],
+    ids=["dict", "json-text"],
+)
+def test_record_metrics_separates_map_entries_from_span_application(label_counts: object) -> None:
     dataframe = pd.DataFrame(
         {
             COL_TEXT: ["Alice met Alice and Alice"],
@@ -1918,7 +1936,7 @@ def test_record_metrics_separates_map_entries_from_span_application() -> None:
                     "targeted_span_count": 3,
                     "applied_span_count": 2,
                     "skipped_span_count": 1,
-                    "skipped_span_label_counts": {"first_name": 1},
+                    "skipped_span_label_counts": label_counts,
                 }
             ],
         }
