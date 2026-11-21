@@ -6,11 +6,9 @@ from __future__ import annotations
 import contextvars
 import dataclasses
 import functools
-import inspect
 import logging
 import os
 import re
-import sys
 import time
 import uuid
 from collections import Counter
@@ -61,7 +59,6 @@ from anonymizer.engine.constants import (
     COL_TYPE_FIDELITY_VALID,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
-    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
@@ -100,13 +97,15 @@ from anonymizer.engine.ndd.model_loader import (
     validate_model_alias_references,
     validate_model_configs_reference_providers,
 )
-from anonymizer.engine.protection_policy import FAIL_REASONS, UNPLACED_CAUSE, UNPLACED_OUTPUT
+from anonymizer.engine.protection_policy import FAIL_REASONS, UNPLACED_CAUSE
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
-from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
+from anonymizer.engine.replace.replace_runner import ReplacementWorkflow, require_detector_keyword
 from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import REWRITE_METRICS, RewriteWorkflow
+from anonymizer.engine.row_partitioning import placed_output, record_ids, source_positions, with_record_ids
 from anonymizer.engine.schemas import EntitiesByValueSchema
+from anonymizer.engine.signatures import accepts_keyword
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult, SessionCallChanges
 from anonymizer.logging import LOG_INDENT, configure_logging, reapply_log_levels
@@ -130,9 +129,6 @@ from anonymizer.telemetry import (
 
 if TYPE_CHECKING:
     from data_designer.config.config_builder import DataDesignerConfigBuilder
-
-if sys.version_info >= (3, 14):
-    import annotationlib
 
 logger = logging.getLogger("anonymizer")
 
@@ -189,7 +185,7 @@ def _evaluate_on_graph(
     """Run each judge body over the whole frame as one invocation, then the model-free verifiers per row.
 
     A row is a target whose datum is its candidate text; nothing reads it. Each body places its returned rows on
-    their targets by record id (``_source_positions``), so a row a judge dropped, could not score or returned
+    their targets by record id (``source_positions``), so a row a judge dropped, could not score or returned
     without a unique id carries ``None`` verdicts, never a failed target. The
     workflow requires no checks, so the verifiers report and qualify nothing. The output frame is the last body's, unfiltered; a body's own error is
     raised as 0.4.0 raised it.
@@ -208,7 +204,7 @@ def _evaluate_on_graph(
             rows = current[present].to_dict("records") if present else [{} for _ in range(len(current))]
             # Place each returned row on its own target by record id; a target no row was placed on is unavailable.
             placed: list[dict[str, Any]] = [{} for _ in target]
-            for row, p in zip(rows, _source_positions(frame, current)):
+            for row, p in zip(rows, source_positions(frame, current)):
                 if p is not None:
                     placed[p] = row or {}
             return placed
@@ -240,76 +236,6 @@ def _evaluate_on_graph(
     return current, failures, result
 
 
-def _require_detector_keyword(runner: object) -> None:
-    """Raise ``InvalidConfigError`` before detection when ``runner`` overrides ``run_with_detection`` without the
-    ``detector`` keyword (or ``**kwargs``): the facade passes it on every call."""
-    method = getattr(runner, "run_with_detection", None)  # an instance attribute counts, as the facade calls it
-    if method is None or getattr(method, "__func__", None) is ReplacementWorkflow.run_with_detection:
-        return
-    if not _accepts_keyword(method, "detector"):
-        raise InvalidConfigError(
-            f"{type(runner).__name__}.run_with_detection does not accept the detector keyword. Add "
-            '`detector: Literal["builtin", "custom"] = "builtin"` (or **kwargs) to the override and pass it on to '
-            "super().run_with_detection; it replaces unspanned_check."
-        )
-
-
-def _placed_output(
-    source: pd.DataFrame,
-    output: pd.DataFrame,
-    detection_failures: list[FailedRecord],
-    runner_failures: list[FailedRecord],
-    step: str,
-    mode: Literal["replace", "rewrite"],
-    detector: Literal["builtin", "custom"],
-) -> tuple[pd.DataFrame, list[FailedRecord]]:
-    """An override runner's ``output``, checked at the seam: only rows placed by a unique input record id are
-    released, and each ``source`` record that no placed row answers and no failure names fails at ``step`` with the
-    policy's ``unplaced_output`` reason. Returns the released rows and ``runner_failures`` plus those failures."""
-    positions = _source_positions(source, output)
-    placed = [i for i, p in enumerate(positions) if p is not None]
-    ids = _record_ids(source) or ()
-    answered = {ids[p] for p in positions if p is not None}
-    named = {f.record_id for f in (*detection_failures, *runner_failures)}
-    unplaced = [FailedRecord(i, step, UNPLACED_OUTPUT) for i in ids if i not in answered and i not in named]
-    released = output if len(placed) == len(output) else output.iloc[placed].reset_index(drop=True)
-    return released, [*runner_failures, *unplaced]
-
-
-def _with_record_ids(frame: pd.DataFrame) -> pd.DataFrame:
-    """``frame`` with an ``_anonymizer_record_id`` per row: its own column when present (``TextRecordsInput`` ids),
-    else the adapter's uuid5 of the row, so detection, every later stage and every failure name the same record."""
-    if RECORD_ID_COLUMN in frame.columns:
-        return frame
-    frame = frame.copy()
-    ids = [NddAdapter._compute_record_id(row) for _, row in frame.iterrows()]
-    frame[RECORD_ID_COLUMN] = pd.Series(ids, index=frame.index, dtype=object)
-    return frame
-
-
-def _record_ids(frame: pd.DataFrame) -> tuple[str, ...] | None:
-    """The record id of each row, ``None`` when the frame carries none."""
-    if RECORD_ID_COLUMN not in frame.columns:
-        return None
-    return tuple(str(i) for i in frame[RECORD_ID_COLUMN])
-
-
-def _source_positions(source: pd.DataFrame, returned: pd.DataFrame) -> tuple[int | None, ...]:
-    """The ``source`` position of each ``returned`` row, ``None`` for a row that cannot be placed.
-
-    A row is placed only by its record id, and only when that id occurs exactly once in ``source`` and once in
-    ``returned``. Row order and text are never read: records may share their text, and a judge may reorder rows.
-    A row without an id (missing column or a null), with an unknown id or with a repeated id cannot be placed. Ids
-    compare as text, so a judge that retypes an id onto another record's text (``"1"`` and ``1.0`` as ``"1.0"``)
-    relabels the row, which the id contract trusts."""
-    if RECORD_ID_COLUMN not in source.columns or RECORD_ID_COLUMN not in returned.columns:
-        return (None,) * len(returned)
-    source_ids, ids = (tuple(None if pd.isna(i) else str(i) for i in f[RECORD_ID_COLUMN]) for f in (source, returned))
-    in_source, in_returned = Counter(source_ids), Counter(ids)
-    where = {i: p for p, i in enumerate(source_ids) if i is not None and in_source[i] == 1}
-    return tuple(where.get(i) if i is not None and in_returned[i] == 1 else None for i in ids)
-
-
 def _reported_outcomes(
     result: ProtectionResult,
     source: pd.DataFrame,
@@ -319,7 +245,7 @@ def _reported_outcomes(
 ) -> tuple[TargetOutcome, ...]:
     """Each ``output`` row's outcome, one per row, even when no row can be placed in ``source``.
 
-    Each row is placed in ``source`` only by its unique record id (``_source_positions``), as ``_evaluate_on_graph``
+    Each row is placed in ``source`` only by its unique record id (``source_positions``), as ``_evaluate_on_graph``
     placed every judge's rows. A placed row's outcome is the evaluated result's outcome (``ran``) of the record with
     that id (``ran_ids``), or an unassessed outcome when the result carries no outcomes or no single row with that
     id, with each verifier appended as an advisory naming it, in verifier order, in place of any advisory an earlier
@@ -332,7 +258,7 @@ def _reported_outcomes(
     codes: dict[bool | None, AdvisoryStatus] = {True: "passed", False: "failed", None: "could_not_assess"}
     ungraded = _ASSESSMENTS[COL_JUDGE_EVALUATION][0]
     names = result.prepared.names
-    positions = _source_positions(source, output)
+    positions = source_positions(source, output)
     verifiers = [i for i, (_, op) in enumerate(result.prepared.workflow.flatten()) if op.is_verifier]
     errors = {(e.unit, e.node): e.reason for e in result.state.entries if e.status == Status.FAILED}
     ledger = result.ledger()  # target-major; a verifier that never ran is ``blocked``
@@ -341,7 +267,7 @@ def _reported_outcomes(
     if ran is not None and ran_ids is not None and len(ran) == len(ran_ids):
         counts = Counter(ran_ids)
         by_id = {i: outcome for i, outcome in zip(ran_ids, ran) if counts[i] == 1}
-    source_ids = _record_ids(source) or ()
+    source_ids = record_ids(source) or ()
 
     def advisory(p: int, i: int) -> Advisory:
         row = result.state.rows[p]
@@ -454,26 +380,8 @@ class _DetectionExampleKwargs(TypedDict, total=False):
     entity_label_examples: dict[str, list[str]]
 
 
-def _accepts_keyword(method: Callable[..., object], name: str) -> bool:
-    """Check keyword support; preserve forwarding when a callable cannot be inspected."""
-    try:
-        if sys.version_info >= (3, 14):
-            # Leave unresolvable lazy annotations (e.g. TYPE_CHECKING-only types) as forward references.
-            signature = inspect.signature(method, annotation_format=annotationlib.Format.FORWARDREF)
-        else:
-            signature = inspect.signature(method)
-        parameters = signature.parameters
-    except (TypeError, ValueError):
-        return True
-    parameter = parameters.get(name)
-    return any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()) or (
-        parameter is not None
-        and parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
-    )
-
-
 def _accepts_entity_label_examples(method: Callable[..., object]) -> bool:
-    return _accepts_keyword(method, "entity_label_examples")
+    return accepts_keyword(method, "entity_label_examples")
 
 
 class _DetectionRegexKwargs(TypedDict, total=False):
@@ -485,14 +393,14 @@ class _DetectionRegexKwargs(TypedDict, total=False):
 def _detection_regex_kwargs(method: Callable[..., object], detect: Detect) -> _DetectionRegexKwargs:
     """Forward supported regex options without dropping explicitly requested behavior."""
     kwargs: _DetectionRegexKwargs = {}
-    if _accepts_keyword(method, "regex_limits"):
+    if accepts_keyword(method, "regex_limits"):
         kwargs["regex_limits"] = detect.regex_limits
     elif detect.regex_limits != RegexLimits():
         raise InvalidConfigError(
             "The configured detection_workflow does not accept regex_limits. Update the workflow "
             "to accept this keyword or remove the non-default detect.regex_limits."
         )
-    if _accepts_keyword(method, "builtin_regexes") and _accepts_keyword(method, "regex_rules"):
+    if accepts_keyword(method, "builtin_regexes") and accepts_keyword(method, "regex_rules"):
         kwargs.update(builtin_regexes=detect.builtin_regexes, regex_rules=detect.regex_rules)
         return kwargs
     if detect.regex_rules or ("builtin_regexes" in detect.model_fields_set and detect.builtin_regexes):
@@ -1103,7 +1011,7 @@ class Anonymizer:
             excluded_entity_labels=excluded_entity_labels,
             data_summary=data_summary,
             _outcomes=outcomes,
-            _outcome_ids=_record_ids(judged_df),
+            _outcome_ids=record_ids(judged_df),
         )
         if result.failed_records:
             logger.debug("%d evaluation failed record(s).", len(result.failed_records))
@@ -1169,8 +1077,8 @@ class Anonymizer:
         session: Session | None = None,
     ) -> AnonymizerResult:
         if config.replace is not None:
-            _require_detector_keyword(self._replace_runner)
-        input_df = _with_record_ids(context.dataframe)
+            require_detector_keyword(self._replace_runner)
+        input_df = with_record_ids(context.dataframe)
         num_records = len(input_df)
         if preview_num_records is not None and preview_num_records != num_records:
             effective_records = min(preview_num_records, num_records)
@@ -1286,14 +1194,12 @@ class Anonymizer:
                 selected_models=self._selected_models.replace,
                 preview_num_records=preview_num_records,
             )
-            final_df, post_detection_failures = _placed_output(
+            final_df, post_detection_failures = placed_output(
                 detected_df,
                 replace_result.dataframe,
                 detection_failures,
                 list(replace_result.failed_records),
                 "replace",
-                "replace",
-                self._detector_kind,
             )
             replacement_elapsed = time.perf_counter() - t0
             outcomes = None
@@ -1353,14 +1259,12 @@ class Anonymizer:
                 t0 = time.perf_counter()
                 logger.info("✏️ Running rewrite pipeline")
                 rewrite_result = rewrite_runner.run(detected_df, **rewrite_options)
-                placed_df, post_detection_failures = _placed_output(
+                placed_df, post_detection_failures = placed_output(
                     detected_df,
                     rewrite_result.dataframe,
                     detection_failures,
                     list(rewrite_result.failed_records),
                     "rewrite",
-                    "rewrite",
-                    self._detector_kind,
                 )
                 final_df = placed_df
                 replacement_elapsed = time.perf_counter() - t0
@@ -1444,7 +1348,7 @@ class Anonymizer:
             data_summary=data.data_summary,
             _outcomes=outcomes,
             session_changes=session_changes,
-            _outcome_ids=None if outcomes is None else _record_ids(final_df),
+            _outcome_ids=None if outcomes is None else record_ids(final_df),
             effective_entity_labels=effective_labels,
         )
 

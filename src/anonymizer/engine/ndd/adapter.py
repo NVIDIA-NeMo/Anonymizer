@@ -687,11 +687,11 @@ class NddAdapter:
             return df.copy()
 
         dataframe = df.copy()
-        dataframe[RECORD_ID_COLUMN] = dataframe.apply(self._compute_record_id, axis=1)
+        dataframe[RECORD_ID_COLUMN] = dataframe.apply(self.compute_record_id, axis=1)
         return dataframe
 
     @staticmethod
-    def _compute_record_id(row: pd.Series) -> str:
+    def compute_record_id(row: pd.Series) -> str:
         # uuid5 is deterministic so input/output IDs match for missing-record tracking.
         # Include row index so duplicate rows get distinct IDs.
         # TODO: consider whether id_column from AnonymizerInput should be used here instead.

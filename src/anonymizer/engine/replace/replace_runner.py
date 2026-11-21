@@ -26,6 +26,7 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
+from anonymizer.engine.errors import InvalidConfigError
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
@@ -40,6 +41,7 @@ from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 from anonymizer.engine.row_partitioning import restore_diagnostic_columns
 from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.signatures import accepts_keyword
 from anonymizer.measurement import stage_timer
 
 logger = logging.getLogger("anonymizer.replace")
@@ -325,3 +327,17 @@ class ReplacementWorkflow:
         for judge in active:
             judged_df = judge.postprocess(judged_df)
         return judged_df
+
+
+def require_detector_keyword(runner: object) -> None:
+    """Raise ``InvalidConfigError`` before detection when ``runner`` overrides ``run_with_detection`` without the
+    ``detector`` keyword (or ``**kwargs``): the facade passes it on every call."""
+    method = getattr(runner, "run_with_detection", None)  # an instance attribute counts, as the facade calls it
+    if method is None or getattr(method, "__func__", None) is ReplacementWorkflow.run_with_detection:
+        return
+    if not accepts_keyword(method, "detector"):
+        raise InvalidConfigError(
+            f"{type(runner).__name__}.run_with_detection does not accept the detector keyword. Add "
+            '`detector: Literal["builtin", "custom"] = "builtin"` (or **kwargs) to the override and pass it on to '
+            "super().run_with_detection; it replaces unspanned_check."
+        )

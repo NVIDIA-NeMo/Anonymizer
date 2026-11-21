@@ -113,9 +113,9 @@ def as_detector_result(
 def input_record_ids(data: object, nrows: int | None = None) -> list[str]:
     """The record id the seam gives each input row of ``data``: the ``TextRecord`` id, else the row's uuid5."""
     from anonymizer.engine.io.reader import read_input
-    from anonymizer.interface.anonymizer import _with_record_ids
+    from anonymizer.engine.row_partitioning import with_record_ids
 
-    frame = _with_record_ids(read_input(data, nrows=nrows).dataframe)  # ty: ignore[invalid-argument-type]
+    frame = with_record_ids(read_input(data, nrows=nrows).dataframe)  # ty: ignore[invalid-argument-type]
     return [str(i) for i in frame[RECORD_ID_COLUMN]]
 
 
