@@ -496,7 +496,7 @@ class NddAdapter:
                     usage_probe,
                     _temporary_dd_task_trace(self._data_designer, collector=collector),
                     source_frame.bind_generators(self._data_designer),
-                    run_stop(stop),
+                    run_stop(stop) as refusals,
                 ):
                     if preview_num_records is None:
                         run_results = self._data_designer.create(
@@ -515,9 +515,9 @@ class NddAdapter:
                             output_df = preview_results.dataset
                     output_df, source_positions = source_frame.project(output_df, requested=record_count)
                     refused = {
-                        position: stop.refused[key]
+                        position: refusals[key]
                         for position, key in enumerate(source_frame.keys[:record_count])
-                        if key in stop.refused
+                        if key in refusals
                     }
                     if refused:
                         # A refused row completed in DataDesigner with empty cells; it is listed, not returned.

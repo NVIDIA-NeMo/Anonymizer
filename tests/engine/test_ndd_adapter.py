@@ -478,7 +478,7 @@ def _stop_refusing(monkeypatch: pytest.MonkeyPatch, refused: list[int], dropped:
         stop = _trip()
         seed = frames[-1].seed()
         for position in refused:
-            assert stop.refuses("_domain", seed.iloc[position].to_dict())
+            assert stop.refuses("_domain", seed.iloc[position][frames[-1].key_column])
         results = Mock()
         results.load_dataset.return_value = seed.drop(index=list(dropped)).assign(output="out")
         results.task_traces = [_trace(position, "_later", error) for position, error in dropped.items()]

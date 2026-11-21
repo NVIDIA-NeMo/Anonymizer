@@ -30,7 +30,14 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-from anonymizer.engine.ndd.model_response import STOPPED_EARLY, ModelResponse, RetryBudget, ask, no_response
+from anonymizer.engine.ndd.model_response import (
+    ModelResponse,
+    RetryBudget,
+    ask,
+    log_unavailable,
+    no_response,
+    row_key,
+)
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.findings import needs_repair
 from anonymizer.engine.rewrite.parsers import (
@@ -443,7 +450,7 @@ def _make_quality_reanswer_column(evaluator_alias: str) -> Any:
         prompt = recipe.apply_recipe_to_user_prompt(_render_quality_reanswer_prompt(row))
         parser = _make_quality_answer_parser(recipe, expected_ids)
         response = await ask(
-            models[evaluator_alias], prompt, parser, EVALUATE_BUDGET, step=COL_QUALITY_QA_REANSWER, row=row
+            models[evaluator_alias], prompt, parser, EVALUATE_BUDGET, step=COL_QUALITY_QA_REANSWER, key=row_key(row)
         )
         row[COL_QUALITY_QA_REANSWER] = _stored(response, COL_QUALITY_QA_REANSWER)
         return row
@@ -467,7 +474,7 @@ def _make_privacy_reanswer_column(evaluator_alias: str) -> Any:
         prompt = recipe.apply_recipe_to_user_prompt(_render_privacy_reanswer_prompt(row))
         parser = _make_privacy_answer_parser(recipe, expected_ids)
         response = await ask(
-            models[evaluator_alias], prompt, parser, EVALUATE_BUDGET, step=COL_PRIVACY_QA_REANSWER, row=row
+            models[evaluator_alias], prompt, parser, EVALUATE_BUDGET, step=COL_PRIVACY_QA_REANSWER, key=row_key(row)
         )
         row[COL_PRIVACY_QA_REANSWER] = _stored(response, COL_PRIVACY_QA_REANSWER)
         return row
@@ -491,7 +498,7 @@ def _make_quality_compare_column(evaluator_alias: str) -> Any:
         prompt = recipe.apply_recipe_to_user_prompt(_render_quality_compare_prompt(row))
         parser = _make_qa_compare_parser(recipe, expected_ids)
         response = await ask(
-            models[evaluator_alias], prompt, parser, EVALUATE_BUDGET, step=COL_QUALITY_QA_COMPARE, row=row
+            models[evaluator_alias], prompt, parser, EVALUATE_BUDGET, step=COL_QUALITY_QA_COMPARE, key=row_key(row)
         )
         row[COL_QUALITY_QA_COMPARE] = _stored(response, COL_QUALITY_QA_COMPARE)
         return row
@@ -502,10 +509,7 @@ def _make_quality_compare_column(evaluator_alias: str) -> Any:
 def _stored(response: ModelResponse[BaseModel], column: str) -> dict[str, Any] | None:
     """The column value for ``response``: its payload, or ``None`` when unavailable, which keeps the row."""
     if response.value is None:
-        if response.cause != STOPPED_EARLY:  # a refused row is listed as stopped early, not kept
-            logger.warning(
-                "%s unavailable after %d responses (%s); keeping the row.", column, response.requests, response.cause
-            )
+        log_unavailable(logger, column, response)
         return None
     if response.state == "defaulted":
         logger.debug("%s defaulted omitted items after %d responses.", column, response.requests)
