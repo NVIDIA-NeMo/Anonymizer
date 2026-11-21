@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from itertools import repeat
-from typing import Any, Literal, NewType, cast
+from typing import Any, NewType, cast
 
 import pandas as pd
 
@@ -34,7 +34,7 @@ from anonymizer.engine.graph_core.authoring import (
 )
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.backend import per_target
-from anonymizer.engine.protection_policy import UNSPANNED_VALUE
+from anonymizer.engine.protection_policy import UNSPANNED_VALUE, RepeatHandling
 from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.schemas.detection import EntitySchema
@@ -68,12 +68,72 @@ class DetectState:
     failures: list[FailedRecord] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class _RowCheck:
+    """What the detect step found for one returned row, beside its ``RowDetections``."""
+
+    detections: RowDetections
+    malformed: bool = False  # its entities payload does not parse: the record fails
+    unspanned: bool = False  # a reported value lies outside every kept span: the record fails ``unspanned_value``
+    covered: frozenset[int] = frozenset()  # the positions of the returned entities the collapse drops
+    rebuilt: bool = False  # its entities and by-value cells are rewritten (it lost entities or keeps spans)
+    appended: tuple[EntitySchema, ...] = ()  # its kept spans once repeat spans are added, when any were
+
+
+def _check_row(datum: Datum, record_id: RecordId, raw: object, listed: object, repeats: RepeatHandling) -> _RowCheck:
+    """Parse one returned row (``raw`` entities, ``listed`` by-value view), collapse its spans, check the span
+    contract, add repeat spans when ``repeats`` is ``"protect"``, and compute its view's extra pairs.
+
+    Every value the detector reported (its spans' values, collapsed spans included, and its pairs) must lie inside a
+    kept span wherever it occurs, unless ``repeats`` is ``"release"``. A span that breaks the contract fails the row
+    with its own reason first, so a row is checked for missed repeats only when its spans are sound.
+    """
+    try:  # the parse Replace applies, so a malformed payload fails its record in every mode
+        entities = EntitiesSchema.from_raw(raw, strict=True)
+    except ValueError:
+        return _RowCheck(RowDetections(record_id, EntitiesSchema()), malformed=True)
+    returned = list(entities.entities)  # before the collapse: a dropped span's value counts too
+    covered = covered_spans(datum, entities)
+    if covered:
+        entities = EntitiesSchema(entities=[e for i, e in enumerate(entities.entities) if i not in covered])
+    sound = not mention_problem(accepted_mentions(datum, entities))
+    pairs = _listed_pairs(listed)
+    values = [e.value for e in returned] + [value for value, _ in pairs]
+    detected = entities  # the kept spans before any repeat span is added
+    added: list[EntitySchema] = []
+    absorbed: list[EntitySchema] = []  # kept spans an added span contains
+    appended: tuple[EntitySchema, ...] = ()
+    if repeats == "protect" and sound:
+        added = _repeat_spans(datum.text, entities, values, _first_labels(returned, pairs))
+        if added:  # an added span that contains a kept span is the outer span: collapse again
+            merged = EntitiesSchema(entities=[*entities.entities, *added])
+            inner = covered_spans(datum, merged)
+            absorbed = [e for i, e in enumerate(merged.entities) if i in inner and e.source != "repeat"]
+            entities = EntitiesSchema(entities=[e for i, e in enumerate(merged.entities) if i not in inner])
+            appended = tuple(entities.entities)
+    # The view's extras are judged against the detected spans, before repeat spans were added, and a kept span an
+    # added span absorbed keeps its value: the Substitute map is asked for every value the base asked for, so a model
+    # that maps only an inner value (a card's last four digits) can still complete the map. Rewrite adds no spans, so
+    # for it ``detected`` is the kept set.
+    extras = _extra_pairs(datum.text, detected, listed, raw) + tuple((e.value, (e.label,)) for e in absorbed)
+    unspanned = repeats != "release" and sound and bool(values_outside_spans(datum.text, entities, values))
+    return _RowCheck(
+        RowDetections(record_id, entities, tuple(added), extras),
+        unspanned=unspanned,
+        covered=frozenset(covered),
+        # A row with spans gets the view of its kept spans plus its extras (see ``_with_entities``); a row without
+        # spans keeps the detector's view.
+        rebuilt=bool(covered) or bool(entities.entities),
+        appended=appended,
+    )
+
+
 def detect_step(
     dataframe: pd.DataFrame,
     detect: Callable[[pd.DataFrame], EntityDetectionResult],
     state: DetectState,
     *,
-    repeats: Literal["release", "fail", "protect"] = "release",
+    repeats: RepeatHandling = "release",
 ) -> Operation:
     """The ``detect`` operation over ``dataframe``: one ``detect`` call, its outcome recorded in ``state``.
 
@@ -98,56 +158,15 @@ def detect_step(
         surviving = [target[position] for position in positions]
         state.owners.extend(surviving)
         raw_entities = result.dataframe.get(COL_FINAL_ENTITIES, repeat({}, len(positions)))
-        rebuilt: dict[int, set[int]] = {}  # row -> the entities it loses
-        appended: dict[int, list[EntitySchema]] = {}  # row -> its kept spans once repeat spans are added
-        extras: dict[int, tuple[tuple[str, tuple[str, ...]], ...]] = {}  # row -> its view's extra pairs
-        malformed: set[Datum] = set()
-        unspanned: set[Datum] = set()
         by_value = result.dataframe.get(COL_ENTITIES_BY_VALUE, repeat(None, len(positions)))
-        for row, (datum, raw, listed) in enumerate(zip(surviving, raw_entities, by_value)):
-            try:  # the parse Replace applies, so a malformed payload fails its record in every mode
-                entities = EntitiesSchema.from_raw(raw, strict=True)
-            except ValueError:
-                malformed.add(datum)
-                state.rows[datum] = RowDetections(record_ids[row], EntitiesSchema())
-                continue
-            returned = list(entities.entities)  # before the collapse: a dropped span's value counts too
-            spanned = [e.value for e in returned]
-            if covered := covered_spans(datum, entities):
-                rebuilt[row] = covered
-                entities = EntitiesSchema(entities=[e for i, e in enumerate(entities.entities) if i not in covered])
-            # A span that breaks the contract fails the row with its own reason first.
-            sound = not mention_problem(accepted_mentions(datum, entities))
-            # Replace replaces spans only: every value the detector reported (its spans' values, collapsed spans
-            # included, and its pairs) must lie inside a kept span wherever it occurs.
-            pairs = _listed_pairs(listed)
-            values = spanned + [value for value, _ in pairs]
-            added: list[EntitySchema] = []
-            absorbed: list[EntitySchema] = []  # kept spans an added span contains
-            detected = entities  # the kept spans before any repeat span is added
-            if repeats == "protect" and sound:
-                added = _repeat_spans(datum.text, entities, values, _first_labels(returned, pairs))
-                if added:  # an added span that contains a kept span is the outer span: collapse again
-                    merged = EntitiesSchema(entities=[*entities.entities, *added])
-                    inner = covered_spans(datum, merged)
-                    absorbed = [e for i, e in enumerate(merged.entities) if i in inner and e.source != "repeat"]
-                    entities = EntitiesSchema(entities=[e for i, e in enumerate(merged.entities) if i not in inner])
-                    appended[row] = list(entities.entities)
-            # The view's extras are judged against the detected spans, before repeat spans were added, and a kept span
-            # an added span absorbed keeps its value: the Substitute map is asked for every value the base asked for,
-            # so a model that maps only an inner value (a card's last four digits) can still complete the map. Rewrite
-            # adds no spans, so for it ``detected`` is the kept set.
-            extras[row] = _extra_pairs(datum.text, detected, listed, raw) + tuple(
-                (e.value, (e.label,)) for e in absorbed
-            )
-            state.rows[datum] = RowDetections(record_ids[row], entities, tuple(added), extras[row])
-            if repeats != "release" and sound and values_outside_spans(datum.text, entities, values):
-                unspanned.add(datum)
-            # The by-value rule: a row with spans gets the view of its kept spans plus every detector pair, and every
-            # collapsed span's value, that occurs in its text outside them (see ``_with_entities``); a row without
-            # spans keeps the detector's view.
-            if entities.entities:
-                rebuilt.setdefault(row, set())
+        found = [
+            _check_row(datum, record_id, raw, listed, repeats)
+            for datum, record_id, raw, listed in zip(surviving, record_ids, raw_entities, by_value)
+        ]
+        state.rows.update((datum, row.detections) for datum, row in zip(surviving, found))
+        rebuilt = {i: set(row.covered) for i, row in enumerate(found) if row.rebuilt}  # row -> the entities it loses
+        appended = {i: list(row.appended) for i, row in enumerate(found) if row.appended}
+        extras = {i: row.detections.extras for i, row in enumerate(found)}
         # Later steps read the by-value column for every returned row, so it is added even when no row is rebuilt.
         frame = result.dataframe
         if rebuilt or COL_ENTITIES_BY_VALUE not in frame.columns:
@@ -160,11 +179,11 @@ def detect_step(
         # A non-mention entry fails the record with ``invalid_output``; a ``Refusal`` with its own reason.
         mentions: list[tuple[object, ...]] = [
             ("malformed",)
-            if d in malformed
+            if row.malformed
             else (Refusal(UNSPANNED_VALUE),)
-            if d in unspanned
-            else tuple(accepted_mentions(d, state.rows[d].entities))
-            for d in surviving
+            if row.unspanned
+            else tuple(accepted_mentions(d, row.detections.entities))
+            for d, row in zip(surviving, found)
         ]
         return per_target(mentions, positions, len(target))
 
