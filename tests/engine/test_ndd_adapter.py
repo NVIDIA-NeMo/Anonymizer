@@ -14,6 +14,7 @@ from data_designer.config.column_configs import LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
+from data_designer.config.preview_results import PreviewResults
 from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.engine.errors import DataDesignerRuntimeError
 from data_designer.errors import DataDesignerError
@@ -425,6 +426,24 @@ def test_run_workflow_on_no_rows_returns_the_declared_columns_without_running() 
     assert result.dataframe.empty
     assert {"text", RECORD_ID_COLUMN, "output"} <= set(result.dataframe.columns)
     assert result.failed_records == []
+
+
+def test_run_workflow_on_an_empty_preview_returns_the_declared_columns() -> None:
+    """A preview that returns no dataset gives the same empty frame as a run on no rows, declared columns included."""
+    mock_dd = Mock(spec=DataDesigner)
+    mock_dd.preview.side_effect = lambda builder, **_: PreviewResults(config_builder=builder, dataset=None)
+
+    result = NddAdapter(data_designer=mock_dd).run_workflow(
+        pd.DataFrame({"text": ["row-1"]}),
+        model_configs=[_make_model_config()],
+        columns=_make_columns(),
+        workflow_name="replace-workflow",
+        preview_num_records=1,
+    )
+
+    assert result.dataframe.empty
+    assert {"text", RECORD_ID_COLUMN, "output"} <= set(result.dataframe.columns)
+    assert [r.reason for r in result.failed_records] == ["Record missing from workflow output"]
 
 
 _BUG = "Custom generator function failed for column '_later': TypeError: bug in a later column"

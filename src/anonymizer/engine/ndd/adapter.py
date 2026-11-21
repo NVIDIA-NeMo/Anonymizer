@@ -445,7 +445,7 @@ class NddAdapter:
         """
         workflow_input_df = self._attach_record_ids(df=df)
         if workflow_input_df.empty:  # e.g. an earlier stage stopped early before any row finished
-            return WorkflowRunResult(_no_rows(workflow_input_df, columns), [], (), 0)
+            return WorkflowRunResult(_empty_output(workflow_input_df, columns), [], (), 0)
         source_frame = WorkflowSourceFrame.capture(workflow_input_df)
         logger.debug("NDD workflow starting with %d records", len(workflow_input_df))
         col_names = [c.name for c in columns]
@@ -510,7 +510,7 @@ class NddAdapter:
                         preview_results = self._data_designer.preview(config_builder, num_records=record_count)
                         task_traces = _task_traces_from_result(preview_results)
                         if preview_results.dataset is None:
-                            output_df = workflow_input_df.iloc[0:0].copy()
+                            output_df = _empty_output(workflow_input_df, columns)
                         else:
                             output_df = preview_results.dataset
                     output_df, source_positions = source_frame.project(output_df, requested=record_count)
@@ -700,8 +700,9 @@ class NddAdapter:
         return uuid.uuid5(uuid.NAMESPACE_URL, serialized).hex
 
 
-def _no_rows(frame: pd.DataFrame, columns: list[ColumnConfigT]) -> pd.DataFrame:
-    """No rows, with the columns a run would have added, so a later stage still finds the columns it reads."""
+def _empty_output(frame: pd.DataFrame, columns: list[ColumnConfigT]) -> pd.DataFrame:
+    """A workflow's output with no rows: ``frame``'s columns plus the ones ``columns`` declare, so a later stage
+    still finds the columns it reads. Used for a run on no rows and for a preview that returns no dataset."""
     declared = [name for c in columns for name in (c.name, *getattr(c, "side_effect_columns", []))]
     return frame.iloc[0:0].reindex(columns=list(dict.fromkeys([*frame.columns, *declared])))
 
