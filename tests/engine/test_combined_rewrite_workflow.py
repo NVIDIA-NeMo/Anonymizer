@@ -57,6 +57,7 @@ from anonymizer.engine.rewrite.combined_rewrite_workflow import (
 )
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.measurement import MeasurementCollector, measurement_session
+from tests.conftest import positional_run_result
 
 _PRIVACY_GOAL = PrivacyGoal(
     protect="All direct identifiers including names, locations, and contact details",
@@ -64,13 +65,6 @@ _PRIVACY_GOAL = PrivacyGoal(
 )
 _REPAIRS_NEEDED = "repairs_needed"
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
-
-
-def _positional(dataframe: pd.DataFrame, failed_records: list) -> WorkflowRunResult:
-    """An adapter result that reports one source position per returned row, in input order."""
-    return WorkflowRunResult(
-        dataframe=dataframe, failed_records=failed_records, source_positions=tuple(range(len(dataframe)))
-    )
 
 
 @custom_column_generator(required_columns=[_REPAIRS_NEEDED])
@@ -346,7 +340,7 @@ def test_run_executes_one_data_designer_workflow(
     output[COL_REPAIR_ITERATIONS] = 1
     output[COL_NEEDS_HUMAN_REVIEW] = False
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(dataframe=output, failed_records=[])
+    adapter.run_workflow.return_value = positional_run_result(dataframe=output, failed_records=[])
 
     collector = MeasurementCollector(record_hash_key="test-key")
     with measurement_session(collector):
@@ -397,7 +391,7 @@ def test_run_keeps_review_flag_for_unavailable_utility(
     # The finalizer's placeholder: the review step must flag the row whose utility is unavailable.
     output[COL_NEEDS_HUMAN_REVIEW] = [False, False]
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(dataframe=output, failed_records=[])
+    adapter.run_workflow.return_value = positional_run_result(dataframe=output, failed_records=[])
 
     result = CombinedRewriteWorkflow(adapter=adapter).run(
         dataframe,
@@ -445,7 +439,7 @@ def test_run_flags_a_placeholder_kept_in_the_rewritten_text(
     output[COL_REPAIR_ITERATIONS] = 0
     output[COL_NEEDS_HUMAN_REVIEW] = False
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(dataframe=output, failed_records=[])
+    adapter.run_workflow.return_value = positional_run_result(dataframe=output, failed_records=[])
 
     result = CombinedRewriteWorkflow(adapter=adapter).run(
         dataframe,
@@ -490,7 +484,7 @@ def test_run_keeps_skipped_span_label_counts_json_text(
         }
     ]
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(dataframe=output, failed_records=[])
+    adapter.run_workflow.return_value = positional_run_result(dataframe=output, failed_records=[])
 
     result = CombinedRewriteWorkflow(adapter=adapter).run(
         dataframe,
@@ -590,15 +584,15 @@ def test_combined_and_legacy_paths_return_equivalent_repaired_result(
     )
     legacy_adapter = Mock()
     legacy_adapter.run_workflow.side_effect = [
-        _positional(dataframe=pipeline, failed_records=[]),
-        _positional(dataframe=evaluation_before, failed_records=[]),
-        _positional(dataframe=pd.DataFrame({COL_REWRITTEN_TEXT_NEXT: ["rewrite-1"]}), failed_records=[]),
-        _positional(dataframe=evaluation_before.copy(), failed_records=[]),
-        _positional(dataframe=pd.DataFrame({COL_REWRITTEN_TEXT_NEXT: ["rewrite-2"]}), failed_records=[]),
-        _positional(dataframe=evaluation_after, failed_records=[]),
+        positional_run_result(dataframe=pipeline, failed_records=[]),
+        positional_run_result(dataframe=evaluation_before, failed_records=[]),
+        positional_run_result(dataframe=pd.DataFrame({COL_REWRITTEN_TEXT_NEXT: ["rewrite-1"]}), failed_records=[]),
+        positional_run_result(dataframe=evaluation_before.copy(), failed_records=[]),
+        positional_run_result(dataframe=pd.DataFrame({COL_REWRITTEN_TEXT_NEXT: ["rewrite-2"]}), failed_records=[]),
+        positional_run_result(dataframe=evaluation_after, failed_records=[]),
     ]
     with patch(_REPLACE_PATCH) as replace_workflow:
-        replace_workflow.return_value.generate_map_only.return_value = _positional(
+        replace_workflow.return_value.generate_map_only.return_value = positional_run_result(
             dataframe=dataframe.copy(),
             failed_records=[],
         )
@@ -721,7 +715,7 @@ def test_run_preserves_mixed_row_order_and_passthrough_defaults(
         output[COL_NEEDS_REPAIR] = False
         output[COL_REPAIR_ITERATIONS] = 0
         output[COL_NEEDS_HUMAN_REVIEW] = False
-        return _positional(dataframe=output, failed_records=[])
+        return positional_run_result(dataframe=output, failed_records=[])
 
     adapter.run_workflow.side_effect = run_workflow
 

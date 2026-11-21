@@ -75,13 +75,7 @@ from anonymizer.engine.workflow_columns.detection.config import (
     DetectionTransformOperation,
 )
 from anonymizer.interface.errors import AnonymizerWorkflowError
-
-
-def _positional(dataframe: pd.DataFrame, failed_records: list) -> WorkflowRunResult:
-    """An adapter result that reports one source position per returned row, in input order."""
-    return WorkflowRunResult(
-        dataframe=dataframe, failed_records=failed_records, source_positions=tuple(range(len(dataframe)))
-    )
+from tests.conftest import positional_run_result
 
 
 @pytest.fixture
@@ -92,7 +86,7 @@ def _detection_with_novel_augmented_label(
     """Workflow whose detector returns an entity with a label (server_name) outside the user's list."""
     input_df = pd.DataFrame({COL_TEXT: ["Connect to srv01.internal on 10.0.0.5"]})
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Connect to srv01.internal on 10.0.0.5"],
@@ -123,7 +117,7 @@ def test_run_with_latent_detection_calls_second_workflow(
 ) -> None:
     adapter = Mock()
     adapter.run_workflow.side_effect = [
-        _positional(
+        positional_run_result(
             dataframe=pd.DataFrame(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
@@ -133,7 +127,7 @@ def test_run_with_latent_detection_calls_second_workflow(
             ),
             failed_records=[],
         ),
-        _positional(
+        positional_run_result(
             dataframe=pd.DataFrame(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
@@ -188,7 +182,9 @@ def test_run_with_latent_detection_accepts_a_result_without_positions(
             return EntityDetectionResult(out, [])
 
     def latent(dataframe: pd.DataFrame, **_: object) -> WorkflowRunResult:
-        return _positional(dataframe.assign(**{COL_LATENT_ENTITIES: [{"latent_entities": []}] * len(dataframe)}), [])
+        return positional_run_result(
+            dataframe.assign(**{COL_LATENT_ENTITIES: [{"latent_entities": []}] * len(dataframe)}), []
+        )
 
     adapter = Mock()
     adapter.run_workflow.side_effect = latent
@@ -264,7 +260,7 @@ def test_identify_latent_entities_filters_excluded_labels(
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["The patient works at Acme."],
@@ -304,7 +300,7 @@ def test_run_without_latent_detection_materializes_final_entities(
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works in Seattle"],
@@ -338,7 +334,7 @@ def test_run_compute_grouped_entities_false_drops_grouped_column(
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works in Seattle"],
@@ -365,7 +361,7 @@ def test_run_with_latent_detection_merges_failures_in_order(
 ) -> None:
     adapter = Mock()
     adapter.run_workflow.side_effect = [
-        _positional(
+        positional_run_result(
             dataframe=pd.DataFrame(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
@@ -374,7 +370,7 @@ def test_run_with_latent_detection_merges_failures_in_order(
             ),
             failed_records=[FailedRecord(record_id="d1", step="entity-detection", reason="detected failure")],
         ),
-        _positional(
+        positional_run_result(
             dataframe=pd.DataFrame(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
@@ -411,7 +407,7 @@ def test_run_in_cancelled_frame_raises_and_skips_later_stages(
 
     def detect(*args, **kwargs) -> WorkflowRunResult:
         token.cancel()
-        return _positional(
+        return positional_run_result(
             dataframe=pd.DataFrame(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
@@ -1157,7 +1153,7 @@ def test_excluded_labels_are_removed_from_final_entities(
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works at Acme, her email is alice@example.com"],
@@ -1196,7 +1192,7 @@ def test_excluded_labels_do_not_affect_col_detected_entities(
 ) -> None:
     """COL_DETECTED_ENTITIES is the raw pre-filter output and must be untouched."""
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice, alice@example.com"],
@@ -1233,7 +1229,7 @@ def test_exclusions_combined_with_allowlist_preserve_other_allowed_labels(
 ) -> None:
     """entity_labels restricts to an allowlist; exclusions further remove from that set."""
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice in Houston, alice@example.com"],
@@ -1273,7 +1269,9 @@ def test_excluded_labels_are_removed_from_gliner_labels(
 ) -> None:
     """Denied labels must be absent from the label list injected into GLiNER."""
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(dataframe=pd.DataFrame({COL_TEXT: ["Alice"]}), failed_records=[])
+    adapter.run_workflow.return_value = positional_run_result(
+        dataframe=pd.DataFrame({COL_TEXT: ["Alice"]}), failed_records=[]
+    )
     workflow = EntityDetectionWorkflow(adapter=adapter)
 
     workflow.run(
@@ -1323,7 +1321,7 @@ def test_detection_workflow_uses_plugin_transform_columns(
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],
@@ -1379,7 +1377,7 @@ def test_detection_workflow_columns_are_json_serializable(
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],
@@ -1408,7 +1406,7 @@ def test_validation_column_is_chunked_validation_plugin(
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],
@@ -1449,7 +1447,7 @@ def test_validator_pool_kwargs_thread_through_to_plugin_config(
     """Explicit ``validation_max_entities_per_call`` and ``validation_excerpt_window_chars``
     propagate from ``run()`` to ``ChunkedValidationConfig``."""
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],
@@ -1479,7 +1477,7 @@ def test_validation_single_chunk_full_text_threads_to_config(
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],
@@ -1571,7 +1569,7 @@ def test_pool_size_greater_than_one_emits_warning(
         update={"entity_validator": [*stub_detection_model_selection.entity_validator, "extra-validator"]}
     )
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],
@@ -1608,7 +1606,7 @@ def test_pool_size_one_does_not_emit_warning(
 ) -> None:
     """Default single-alias configurations must not spam the warning: it's a pool caveat, not advice for everyone."""
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],

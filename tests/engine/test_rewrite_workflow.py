@@ -72,6 +72,7 @@ from anonymizer.engine.value_matching import format_cause
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.interface.results import AnonymizerResult
+from tests.conftest import positional_run_result
 from tests.detector_results import as_detector_result, returns_detector_result
 
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
@@ -86,13 +87,6 @@ _PRIVACY_GOAL = PrivacyGoal(
 )
 
 _EVALUATION = EvaluationCriteria()
-
-
-def _positional(dataframe: pd.DataFrame, failed_records: list) -> WorkflowRunResult:
-    """An adapter result that reports one source position per returned row, in input order."""
-    return WorkflowRunResult(
-        dataframe=dataframe, failed_records=failed_records, source_positions=tuple(range(len(dataframe)))
-    )
 
 
 def test_join_new_columns_preserves_surviving_target_order() -> None:
@@ -246,8 +240,8 @@ def _standard_side_effect(
     The final-judge no longer runs inside run() — it only runs via evaluate().
     """
     return [
-        _positional(dataframe=pipeline_df, failed_records=[]),
-        _positional(dataframe=eval_df, failed_records=[]),
+        positional_run_result(dataframe=pipeline_df, failed_records=[]),
+        positional_run_result(dataframe=eval_df, failed_records=[]),
     ]
 
 
@@ -433,8 +427,8 @@ def test_failed_records_accumulated_across_steps(
 
     adapter = Mock()
     adapter.run_workflow.side_effect = [
-        _positional(dataframe=stub_pipeline_df, failed_records=[failed_pipeline]),
-        _positional(dataframe=stub_eval_df, failed_records=[failed_eval]),
+        positional_run_result(dataframe=stub_pipeline_df, failed_records=[failed_pipeline]),
+        positional_run_result(dataframe=stub_eval_df, failed_records=[failed_eval]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -694,17 +688,17 @@ def test_repair_loop_runs_up_to_max_iterations(
 
     adapter.run_workflow.side_effect = [
         # pipeline (domain + disposition + QA + rewrite)
-        _positional(dataframe=rewrite_gen_df, failed_records=[]),
+        positional_run_result(dataframe=rewrite_gen_df, failed_records=[]),
         # evaluate-0 -> needs repair
-        _positional(dataframe=eval_needs_repair, failed_records=[]),
+        positional_run_result(dataframe=eval_needs_repair, failed_records=[]),
         # repair-0
-        _positional(dataframe=repaired_df, failed_records=[]),
+        positional_run_result(dataframe=repaired_df, failed_records=[]),
         # evaluate-1 -> still needs repair
-        _positional(dataframe=eval_needs_repair, failed_records=[]),
+        positional_run_result(dataframe=eval_needs_repair, failed_records=[]),
         # repair-1
-        _positional(dataframe=repaired_df, failed_records=[]),
+        positional_run_result(dataframe=repaired_df, failed_records=[]),
         # evaluate-final (after loop exhaustion)
-        _positional(dataframe=eval_needs_repair, failed_records=[]),
+        positional_run_result(dataframe=eval_needs_repair, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1047,10 +1041,10 @@ def test_replacement_unavailable_can_be_repaired(
     replace_df["_replacement_map"] = [{"replacements": []}]
     adapter = Mock()
     adapter.run_workflow.side_effect = [
-        _positional(dataframe=pipeline_df, failed_records=[]),
-        _positional(dataframe=initial_eval, failed_records=[]),
-        _positional(dataframe=repaired, failed_records=[]),
-        _positional(dataframe=passing_eval, failed_records=[]),
+        positional_run_result(dataframe=pipeline_df, failed_records=[]),
+        positional_run_result(dataframe=initial_eval, failed_records=[]),
+        positional_run_result(dataframe=repaired, failed_records=[]),
+        positional_run_result(dataframe=passing_eval, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1116,10 +1110,10 @@ def test_only_failing_rows_sent_to_repair(
     replace_df["_replacement_map"] = [{"replacements": []}, {"replacements": []}]
 
     adapter.run_workflow.side_effect = [
-        _positional(dataframe=rewrite_gen_df, failed_records=[]),
-        _positional(dataframe=eval_df, failed_records=[]),
-        _positional(dataframe=repaired_row, failed_records=[]),
-        _positional(dataframe=eval_after_repair, failed_records=[]),
+        positional_run_result(dataframe=rewrite_gen_df, failed_records=[]),
+        positional_run_result(dataframe=eval_df, failed_records=[]),
+        positional_run_result(dataframe=repaired_row, failed_records=[]),
+        positional_run_result(dataframe=eval_after_repair, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1179,10 +1173,10 @@ def test_repair_iterations_tracked_per_row(
     replace_df["_replacement_map"] = [{"replacements": []}]
 
     adapter.run_workflow.side_effect = [
-        _positional(dataframe=rewrite_gen_df, failed_records=[]),
-        _positional(dataframe=eval_needs_repair, failed_records=[]),
-        _positional(dataframe=repaired_df, failed_records=[]),
-        _positional(dataframe=eval_pass, failed_records=[]),
+        positional_run_result(dataframe=rewrite_gen_df, failed_records=[]),
+        positional_run_result(dataframe=eval_needs_repair, failed_records=[]),
+        positional_run_result(dataframe=repaired_df, failed_records=[]),
+        positional_run_result(dataframe=eval_pass, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1266,8 +1260,8 @@ def test_evaluate_dropping_rows_degrades_gracefully(
     eval_failed = FailedRecord(record_id="rec-1", step="rewrite-evaluate-0", reason="LLM timeout")
 
     adapter.run_workflow.side_effect = [
-        _positional(dataframe=rewrite_gen_df, failed_records=[]),
-        _positional(dataframe=eval_df, failed_records=[eval_failed]),
+        positional_run_result(dataframe=rewrite_gen_df, failed_records=[]),
+        positional_run_result(dataframe=eval_df, failed_records=[eval_failed]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1331,13 +1325,13 @@ def test_repair_dropping_rows_degrades_gracefully(
     replace_df["_replacement_map"] = [{"replacements": []}, {"replacements": []}]
 
     adapter.run_workflow.side_effect = [
-        _positional(dataframe=rewrite_gen_df, failed_records=[]),
+        positional_run_result(dataframe=rewrite_gen_df, failed_records=[]),
         # initial evaluate
-        _positional(dataframe=eval_df, failed_records=[]),
+        positional_run_result(dataframe=eval_df, failed_records=[]),
         # repair (drops rec-1)
-        _positional(dataframe=repaired_df, failed_records=[repair_failed]),
+        positional_run_result(dataframe=repaired_df, failed_records=[repair_failed]),
         # re-evaluate
-        _positional(dataframe=eval_after, failed_records=[]),
+        positional_run_result(dataframe=eval_after, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1393,8 +1387,8 @@ def test_passthrough_rows_get_defaults(
     replace_df["_replacement_map"] = [{"replacements": []}]
 
     adapter.run_workflow.side_effect = [
-        _positional(dataframe=rewrite_gen_df, failed_records=[]),
-        _positional(dataframe=eval_df, failed_records=[]),
+        positional_run_result(dataframe=rewrite_gen_df, failed_records=[]),
+        positional_run_result(dataframe=eval_df, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1445,7 +1439,7 @@ def test_rewrite_pipeline_rows_join_by_declared_correspondence(
         out[COL_UTILITY_SCORE] = 0.9
         out[COL_LEAKAGE_MASS] = 0.0
         out[COL_ANY_HIGH_LEAKED] = False
-        return _positional(dataframe=out, failed_records=[])
+        return positional_run_result(dataframe=out, failed_records=[])
 
     adapter = Mock()
     adapter.run_workflow.side_effect = run_workflow
@@ -1844,7 +1838,7 @@ def test_combined_runner_overriding_build_graph_with_release_signature_runs(
 
     def run(kind: type[CombinedRewriteWorkflow]) -> tuple[pd.DataFrame, CustomColumnConfig]:
         adapter = Mock()
-        adapter.run_workflow.side_effect = [_positional(stub_eval_df, [])]
+        adapter.run_workflow.side_effect = [positional_run_result(stub_eval_df, [])]
         with patch(_REPLACE_PATCH) as replacement:
             _mock_replace(replacement, stub_df_with_entities)
             result = kind(adapter).run(

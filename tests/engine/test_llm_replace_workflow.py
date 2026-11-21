@@ -26,13 +26,7 @@ from anonymizer.engine.replace.llm_replace_workflow import (
 )
 from anonymizer.engine.schemas.detection import EntitiesByValueSchema
 from anonymizer.measurement import measurement_session
-
-
-def _positional(dataframe: pd.DataFrame, failed_records: list) -> WorkflowRunResult:
-    """An adapter result that reports one source position per returned row, in input order."""
-    return WorkflowRunResult(
-        dataframe=dataframe, failed_records=failed_records, source_positions=tuple(range(len(dataframe)))
-    )
+from tests.conftest import positional_run_result
 
 
 def test_generate_map_only_returns_replacement_map(
@@ -100,7 +94,7 @@ def test_generate_map_only_filters_hallucinated_replacements(
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works at Acme"],
@@ -145,7 +139,7 @@ def test_generate_map_only_preserves_original_anonymizer_row_order_with_mixed_ro
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works at Acme"],
@@ -201,7 +195,7 @@ def test_generate_map_only_strips_internal_prompt_columns(
     downstream of this workflow consumes them.
     """
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works at Acme"],
@@ -606,7 +600,7 @@ def test_generate_map_only_records_fold_fallbacks(
     ]
     texts = [str(i) for i in range(len(maps))]
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: texts,
@@ -746,7 +740,7 @@ def test_generate_map_only_fills_every_label_of_a_value(
 ) -> None:
     text = "Jordan Jordan"
     adapter = Mock()
-    adapter.run_workflow.return_value = _positional(
+    adapter.run_workflow.return_value = positional_run_result(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: [text],
