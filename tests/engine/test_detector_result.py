@@ -104,6 +104,16 @@ def test_an_explicitly_passed_built_in_workflow_returns_its_frame() -> None:
     assert list(result.dataframe["text_replaced"]) == list(TEXTS.values())
 
 
+def test_a_built_in_workflow_returning_something_else_is_a_workflow_error_not_a_detector_error() -> None:
+    """Only a wiring fault can make the built-in class return anything but its frame: no user detector is at fault."""
+    with patch.object(NddAdapter, "run_workflow", side_effect=AssertionError("no model call")):
+        with pytest.raises(AnonymizerWorkflowError, match="EntityDetectionWorkflow.run returned DataFrame") as raised:
+            Anonymizer(detection_workflow=builtin_stub(lambda frame, **_: frame)).run(
+                config=AnonymizerConfig(replace=Redact()), data=DATA
+            )
+    assert not isinstance(raised.value, InvalidDetectorResultError)
+
+
 @pytest.mark.parametrize("make", [_Subclass, _spec_mock], ids=["subclass", "spec-mock"])
 def test_a_subclass_or_spec_mock_returning_a_frame_raises(make: Any) -> None:
     detector = make() if make is _spec_mock else make(adapter=Mock())

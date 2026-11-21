@@ -28,7 +28,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.detection.postprocess import EntitySpan, build_tagged_text, get_tag_notation
-from anonymizer.engine.errors import InvalidDetectorResultError
+from anonymizer.engine.errors import AnonymizerWorkflowError, InvalidDetectorResultError
 from anonymizer.engine.ndd.failed_record import FailedRecord
 from anonymizer.engine.protection_policy import DROPPED_OUTPUT
 from anonymizer.engine.row_partitioning import cell_text, resolve_source_positions
@@ -152,11 +152,12 @@ def render_detector_result(source: pd.DataFrame, result: DetectorResult) -> Enti
 def place_detection_frame(source: pd.DataFrame, result: object) -> EntityDetectionResult:
     """The built-in detector's ``result``, with every returned row placed at one distinct input position.
 
-    The built-in workflow returns the adapter's frame, which carries the input record ids; a frame that cannot be
-    placed raises ``AnonymizerWorkflowError``, as for any other workflow result.
+    The built-in workflow returns the adapter's frame, which carries the input record ids. Anything else, or a frame
+    that cannot be placed, is a wiring fault, not a user's detector: it raises ``AnonymizerWorkflowError``, as for any
+    other workflow result.
     """
     if not isinstance(result, EntityDetectionResult):
-        raise InvalidDetectorResultError(f"EntityDetectionWorkflow.run returned {type(result).__name__}")
+        raise AnonymizerWorkflowError(f"EntityDetectionWorkflow.run returned {type(result).__name__}")
     positions = resolve_source_positions(source, result.dataframe, result.source_positions or None)
     return dataclasses.replace(result, source_positions=positions)
 
