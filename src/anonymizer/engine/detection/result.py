@@ -36,6 +36,9 @@ from anonymizer.engine.row_partitioning import cell_text, resolve_source_positio
 from anonymizer.engine.schemas import EntitiesByValueSchema, LatentEntitySchema
 from anonymizer.engine.schemas.detection import EntityByValueSchema
 
+# The three types stay plain frozen dataclasses, like ``FailedRecord``: constructing one never raises, and the seam
+# (``validate_detector_result``) is the one place that checks them. Each type carries its own rules.
+
 
 @dataclass(frozen=True)
 class DetectedSpan:
@@ -47,6 +50,16 @@ class DetectedSpan:
     value: str
     score: float = 1.0
     source: str = "detector"
+
+    def _well_typed(self) -> bool:
+        """``start`` and ``end`` are ints, ``value``, ``label`` and ``source`` are strings and ``score`` is a number
+        (a bool is neither). Whether the span keeps the span contract is the detect step's check, per record."""
+        return (
+            _integer(self.start)
+            and _integer(self.end)
+            and all(isinstance(v, str) for v in (self.value, self.label, self.source))
+            and (_integer(self.score) or isinstance(self.score, float))
+        )
 
 
 @dataclass(frozen=True)
@@ -61,6 +74,23 @@ class DetectorRow:
     extra_values: tuple[tuple[str, str], ...] = ()
     latent: tuple[LatentEntitySchema, ...] = ()
 
+    def _problem(self, ids: set[str]) -> str:
+        """The first rule the row breaks, or "": its collections are tuples or lists, it names one of the input
+        ``ids``, each span is well typed, each latent entry is a ``LatentEntity`` and each extra value is a non-empty
+        ``(value, label)`` pair of strings."""
+        if not all(_sequence(part) for part in (self.spans, self.extra_values, self.latent)):
+            return f"record {self.record_id!r}: spans, extra_values and latent must each be a tuple or a list"
+        if problem := _id_problem(self.record_id, ids, "row"):
+            return problem
+        for span in self.spans:
+            if not (isinstance(span, DetectedSpan) and span._well_typed()):
+                return f"record {self.record_id!r} has a malformed span: {span!r}"
+        if any(not isinstance(entity, LatentEntitySchema) for entity in self.latent):
+            return f"record {self.record_id!r} has a latent entry that is not a LatentEntity"
+        if any(not _value_label_pair(pair) for pair in self.extra_values):
+            return f"record {self.record_id!r} has an extra value that is not a non-empty (value, label) pair"
+        return ""
+
 
 @dataclass(frozen=True)
 class DetectorResult:
@@ -69,14 +99,36 @@ class DetectorResult:
     rows: tuple[DetectorRow, ...] = ()
     failed: tuple[FailedRecord, ...] = ()
 
+    def _problem(self, ids: set[str]) -> str:
+        """The first rule the result breaks, or "": its collections are tuples or lists, each row keeps the row rules,
+        each failure is a ``FailedRecord`` with a string step and reason that names one of the input ``ids``, and no
+        id is answered twice or both answered and failed."""
+        if not _sequence(self.rows) or not _sequence(self.failed):
+            return "DetectorResult.rows and .failed must each be a tuple or a list"
+        seen: Counter[str] = Counter()
+        for row in self.rows:
+            if not isinstance(row, DetectorRow):
+                return f"DetectorResult.rows holds a {type(row).__name__}, not a DetectorRow"
+            if problem := row._problem(ids):
+                return problem
+            seen[row.record_id] += 1
+        for failure in self.failed:
+            if not isinstance(failure, FailedRecord) or not all(
+                isinstance(v, str) for v in (failure.step, failure.reason)
+            ):
+                return "DetectorResult.failed holds an entry that is not a FailedRecord"
+            if problem := _id_problem(failure.record_id, ids, "failure"):
+                return problem
+            seen[failure.record_id] += 1
+        if repeated := next((i for i, n in seen.items() if n > 1), None):
+            return f"record id {repeated!r} is answered or failed more than once"
+        return ""
+
 
 def validate_detector_result(source: pd.DataFrame, result: object) -> DetectorResult:
-    """``result`` when it can be placed against ``source``; else ``InvalidDetectorResultError``.
+    """``result`` when it can be placed against ``source``; else ``InvalidDetectorResultError`` with the first rule it
+    breaks (``DetectorResult._problem``).
 
-    Batch-level rules: the result is a ``DetectorResult``; every row and every failure names an input record id; no
-    id is answered twice or both answered and failed; every field is well typed: a span's ``start`` and ``end`` are
-    ints, ``value``, ``label`` and ``source`` are strings and ``score`` is a number; an extra value is a non-empty
-    ``(value, label)`` pair of strings; a latent entry is a ``LatentEntity``; a failure's step and reason are strings.
     A well-typed span that breaks the span contract (range, slice, an empty label, overlap) is not a batch error: it
     fails its own record at ``detect`` with that contract's reason.
     """
@@ -85,39 +137,8 @@ def validate_detector_result(source: pd.DataFrame, result: object) -> DetectorRe
             f"detection_workflow.run returned {type(result).__name__}; return a DetectorResult "
             '(see "Custom detection workflows")'
         )
-    if not _sequence(result.rows) or not _sequence(result.failed):
-        raise InvalidDetectorResultError("DetectorResult.rows and .failed must each be a tuple or a list")
-    ids = set(_input_ids(source))
-    seen: Counter[str] = Counter()
-    for row in result.rows:
-        if not isinstance(row, DetectorRow):
-            raise InvalidDetectorResultError(f"DetectorResult.rows holds a {type(row).__name__}, not a DetectorRow")
-        if not all(_sequence(part) for part in (row.spans, row.extra_values, row.latent)):
-            raise InvalidDetectorResultError(
-                f"record {row.record_id!r}: spans, extra_values and latent must each be a tuple or a list"
-            )
-        _check_id(row.record_id, ids, "row")
-        seen[row.record_id] += 1
-        for span in row.spans:
-            if not _well_typed(span):
-                raise InvalidDetectorResultError(f"record {row.record_id!r} has a malformed span: {span!r}")
-        for entity in row.latent:
-            if not isinstance(entity, LatentEntitySchema):
-                raise InvalidDetectorResultError(
-                    f"record {row.record_id!r} has a latent entry that is not a LatentEntity"
-                )
-        for pair in row.extra_values:
-            if not (isinstance(pair, tuple) and len(pair) == 2 and all(isinstance(v, str) and v for v in pair)):
-                raise InvalidDetectorResultError(
-                    f"record {row.record_id!r} has an extra value that is not a non-empty (value, label) pair"
-                )
-    for failure in result.failed:
-        if not isinstance(failure, FailedRecord) or not all(isinstance(v, str) for v in (failure.step, failure.reason)):
-            raise InvalidDetectorResultError("DetectorResult.failed holds an entry that is not a FailedRecord")
-        _check_id(failure.record_id, ids, "failure")
-        seen[failure.record_id] += 1
-    if repeated := next((i for i, n in seen.items() if n > 1), None):
-        raise InvalidDetectorResultError(f"record id {repeated!r} is answered or failed more than once")
+    if problem := result._problem(set(_input_ids(source))):
+        raise InvalidDetectorResultError(problem)
     return result
 
 
@@ -169,28 +190,22 @@ def _sequence(value: object) -> bool:
     return isinstance(value, (tuple, list))
 
 
-def _well_typed(span: object) -> bool:
-    def integer(v: object) -> bool:
-        return isinstance(v, int) and not isinstance(v, bool)
+def _integer(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
-    return (
-        isinstance(span, DetectedSpan)
-        and integer(span.start)
-        and integer(span.end)
-        and all(isinstance(v, str) for v in (span.value, span.label, span.source))
-        and (integer(span.score) or isinstance(span.score, float))
-    )
+
+def _value_label_pair(pair: object) -> bool:
+    return isinstance(pair, tuple) and len(pair) == 2 and all(isinstance(v, str) and v for v in pair)
 
 
 def _input_ids(source: pd.DataFrame) -> list[str]:
     return [str(i) for i in source[RECORD_ID_COLUMN]]
 
 
-def _check_id(record_id: object, ids: set[str], what: str) -> None:
+def _id_problem(record_id: object, ids: set[str], what: str) -> str:
     if not isinstance(record_id, str) or record_id not in ids:
-        raise InvalidDetectorResultError(
-            f"a DetectorResult {what} names {record_id!r}, which is not an input record id"
-        )
+        return f"a DetectorResult {what} names {record_id!r}, which is not an input record id"
+    return ""
 
 
 def _entity(span: DetectedSpan) -> dict[str, object]:
