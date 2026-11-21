@@ -114,6 +114,7 @@ def test_an_override_runners_unplaceable_rows_fail_their_records(mode: str) -> N
     config = AnonymizerConfig(replace=Redact()) if mode == "replace" else AnonymizerConfig(rewrite=Rewrite())
     result = anonymizer.run(config=config, data=DATA)
     assert result.failed_records == [FailedRecord(i, mode, "unplaced_output") for i in ("b", "c")]
+    assert {type(f.reason) for f in result.failed_records} == {str}  # plain strings, not enum members
     assert list(result.dataframe["text"]) == ["Alice a."]
 
 

@@ -173,6 +173,7 @@ def test_a_result_that_cannot_be_placed_is_a_batch_error(result: DetectorResult)
 def test_a_record_neither_answered_nor_failed_fails_with_dropped_output() -> None:
     rendered = render_detector_result(_source(), DetectorResult(rows=(DetectorRow("b"),)))
     assert rendered.failed_records == [FailedRecord("a", "detect", "dropped_output")]
+    assert type(rendered.failed_records[0].reason) is str  # a plain string, not an enum member
     assert list(rendered.dataframe[RECORD_ID_COLUMN]) == ["b"]
     assert rendered.source_positions == (1,)
 
@@ -460,6 +461,7 @@ def test_a_built_in_repeat_that_crosses_a_kept_span_fails_the_row() -> None:
     detector.run.side_effect = _shift_new_york(detector.run.side_effect)
     result = Anonymizer(detection_workflow=detector).run(config=AnonymizerConfig(replace=Redact()), data=data)
     assert result.failed_records == [FailedRecord("r", "detect", "unspanned_value")]
+    assert type(result.failed_records[0].reason) is str  # a plain string, not an enum member
     assert result.dataframe.empty
 
 

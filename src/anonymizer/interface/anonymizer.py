@@ -97,7 +97,7 @@ from anonymizer.engine.ndd.model_loader import (
     validate_model_alias_references,
     validate_model_configs_reference_providers,
 )
-from anonymizer.engine.protection_policy import FAIL_REASONS, UNPLACED_CAUSE
+from anonymizer.engine.protection_policy import FailureReason
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow, require_detector_keyword
 from anonymizer.engine.resolved_input import ResolvedInput
@@ -156,6 +156,10 @@ class _Judge(NamedTuple):
     columns: tuple[str, ...]
     run: Callable[[pd.DataFrame], tuple[pd.DataFrame, list[FailedRecord]]]
     context: tuple[str, ...] = ()
+
+
+_UNPLACED_CAUSE = "unplaced"
+"""The cause every verifier reports for a result row ``evaluate()`` cannot place; the row is unassessed."""
 
 
 def _verdict(
@@ -284,7 +288,7 @@ def _reported_outcomes(
 
     def reported(p: int | None) -> TargetOutcome:
         if p is None:
-            unplaced = (Advisory(names[i], names[i], "could_not_assess", UNPLACED_CAUSE) for i in verifiers)
+            unplaced = (Advisory(names[i], names[i], "could_not_assess", _UNPLACED_CAUSE) for i in verifiers)
             return replace(unassessed, advisories=tuple(unplaced))
         base = by_id.get(source_ids[p], unassessed)
         kept = (a for a in base.advisories if a.verifier not in judges)  # an earlier evaluation's judges
@@ -1745,7 +1749,7 @@ def _step_to_field(step: str) -> str:
 
 
 # The reasons a failed record can carry: the protection graph's own (an operation's failure or a rejected mention),
-# and every failure reason of the release policy (``FAIL_REASONS``).
+# and every failure reason of the release policy (``FailureReason``).
 _GRAPH_FAILURE_REASONS = frozenset(
     {
         "invalid_output",
@@ -1759,7 +1763,7 @@ _GRAPH_FAILURE_REASONS = frozenset(
         "raised",
     }
 )
-_KNOWN_FAILURE_REASONS = _GRAPH_FAILURE_REASONS | FAIL_REASONS
+_KNOWN_FAILURE_REASONS = _GRAPH_FAILURE_REASONS | frozenset(FailureReason)
 # Graph operation names a failed record can carry besides the workflow names ``_step_to_field`` knows.
 _KNOWN_FAILURE_STEPS = frozenset({"replace", "rewrite", "verify-no-original", "verify-patches"})
 

@@ -16,7 +16,7 @@ import pandas as pd
 from anonymizer.engine.errors import AnonymizerWorkflowError
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
 from anonymizer.engine.ndd.failed_record import FailedRecord
-from anonymizer.engine.protection_policy import UNPLACED_OUTPUT
+from anonymizer.engine.protection_policy import FailureReason
 
 warnings.filterwarnings(
     "ignore",
@@ -175,12 +175,14 @@ def placed_output(
 ) -> tuple[pd.DataFrame, list[FailedRecord]]:
     """An override runner's ``output``, checked at the seam: only rows placed by a unique input record id are
     released, and each ``source`` record that no placed row answers and no failure names fails at ``step`` with
-    ``UNPLACED_OUTPUT``. Returns the released rows and ``runner_failures`` plus those failures."""
+    ``FailureReason.UNPLACED_OUTPUT``. Returns the released rows and ``runner_failures`` plus those failures."""
     positions = source_positions(source, output)
     placed = [i for i, p in enumerate(positions) if p is not None]
     ids = record_ids(source) or ()
     answered = {ids[p] for p in positions if p is not None}
     named = {f.record_id for f in (*detection_failures, *runner_failures)}
-    unplaced = [FailedRecord(i, step, UNPLACED_OUTPUT) for i in ids if i not in answered and i not in named]
+    unplaced = [
+        FailedRecord(i, step, FailureReason.UNPLACED_OUTPUT.value) for i in ids if i not in answered and i not in named
+    ]
     released = output if len(placed) == len(output) else output.iloc[placed].reset_index(drop=True)
     return released, [*runner_failures, *unplaced]

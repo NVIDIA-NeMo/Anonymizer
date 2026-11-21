@@ -34,7 +34,7 @@ from anonymizer.engine.graph_core.authoring import (
 )
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.backend import per_target
-from anonymizer.engine.protection_policy import UNSPANNED_VALUE, RepeatHandling
+from anonymizer.engine.protection_policy import FailureReason, RepeatHandling
 from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.schemas.detection import EntitySchema
@@ -103,7 +103,7 @@ def _check_row(datum: Datum, record_id: RecordId, raw: object, listed: object, r
     added: list[EntitySchema] = []
     absorbed: list[EntitySchema] = []  # kept spans an added span contains
     appended: tuple[EntitySchema, ...] = ()
-    if repeats == "protect" and sound:
+    if repeats is RepeatHandling.PROTECT and sound:
         added = _repeat_spans(datum.text, entities, values, _first_labels(returned, pairs))
         if added:  # an added span that contains a kept span is the outer span: collapse again
             merged = EntitiesSchema(entities=[*entities.entities, *added])
@@ -116,7 +116,9 @@ def _check_row(datum: Datum, record_id: RecordId, raw: object, listed: object, r
     # that maps only an inner value (a card's last four digits) can still complete the map. Rewrite adds no spans, so
     # for it ``detected`` is the kept set.
     extras = _extra_pairs(datum.text, detected, listed, raw) + tuple((e.value, (e.label,)) for e in absorbed)
-    unspanned = repeats != "release" and sound and bool(values_outside_spans(datum.text, entities, values))
+    unspanned = (
+        repeats is not RepeatHandling.RELEASE and sound and bool(values_outside_spans(datum.text, entities, values))
+    )
     return _RowCheck(
         RowDetections(record_id, entities, tuple(added), extras),
         unspanned=unspanned,
@@ -133,7 +135,7 @@ def detect_step(
     detect: Callable[[pd.DataFrame], EntityDetectionResult],
     state: DetectState,
     *,
-    repeats: RepeatHandling = "release",
+    repeats: RepeatHandling = RepeatHandling.RELEASE,
 ) -> Operation:
     """The ``detect`` operation over ``dataframe``: one ``detect`` call, its outcome recorded in ``state``.
 
@@ -180,7 +182,7 @@ def detect_step(
         mentions: list[tuple[object, ...]] = [
             ("malformed",)
             if row.malformed
-            else (Refusal(UNSPANNED_VALUE),)
+            else (Refusal(FailureReason.UNSPANNED_VALUE.value),)
             if row.unspanned
             else tuple(accepted_mentions(d, row.detections.entities))
             for d, row in zip(surviving, found)

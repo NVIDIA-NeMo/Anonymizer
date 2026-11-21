@@ -64,7 +64,7 @@ from anonymizer.engine.ndd.backend import (
 )
 from anonymizer.engine.ndd.model_response import no_response
 from anonymizer.engine.ndd.workflow_utils import run_columns
-from anonymizer.engine.protection_policy import REVIEW_FLAGS, missed_repeat
+from anonymizer.engine.protection_policy import ReviewFlag, missed_repeat
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow, placeholder_in_text
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
@@ -481,7 +481,7 @@ def _unavailable_if(outcome: TargetOutcome, withheld: bool) -> TargetOutcome:
 
 def _needs_review(result: ProtectionResult, target: Datum) -> bool:
     metrics = result.value(target, "metrics") or {}
-    flagged = (bool(metrics.get(flag)) for flag in REVIEW_FLAGS)
+    flagged = (bool(metrics.get(flag)) for flag in ReviewFlag)
     return result.outcome(target).qualification != "met" or any(flagged)
 
 
