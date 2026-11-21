@@ -249,7 +249,7 @@ reason, and an error the stop did not cause still fails the run. A dataset small
 v0.5.0 DataDesigner's own shutdown ended the run and raised `AnonymizerWorkflowError` when no row had finished.
 - What to do: check the named step's model. To run every row anyway, set `disable_early_shutdown=True` in
   `data_designer_run_config`.
-- Changed in: #431, #<this PR>.
+- Changed in: #431, #446.
 
 **Rows that fail detection in Rewrite are failed records.** They are absent from the output and listed in
 `failed_records` with step `detect`. They used to be rewritten anyway.
