@@ -3,8 +3,15 @@
 
 # Graph SDK
 
-After reading this page you can run a small protection workflow of your own, read its result, and know which page
-to open next.
+This page is about building a custom protection workflow, for the cases where the normal Anonymizer flow does not
+fit. It is not a tutorial on running Anonymizer. After reading it you can run a small custom workflow, read its
+result, and know which page to open next.
+
+!!! warning "For advanced use"
+
+    The graph SDK is for advanced users who need to change how protection works in a way the `Anonymizer` class does
+    not allow. If you are new to Anonymizer, start with [Get Started](../index.md#get-started) and
+    [Choosing a strategy](choosing-a-strategy.md) instead.
 
 !!! warning "Provisional"
 
@@ -13,7 +20,7 @@ to open next.
 
 ## What the graph SDK is for
 
-The `Anonymizer` class runs fixed strategies: Redact, Hash, Substitute, Rewrite. The graph SDK, in the module
+The `Anonymizer` class runs fixed strategies: Substitute, Redact, Annotate, Hash, Rewrite. The graph SDK, in the module
 `anonymizer.graph`, lets you build your own strategy from Python functions and run it locally:
 
 - Write each step as an ordinary function: a regular expression, a call to your own model, a lookup.
@@ -30,8 +37,11 @@ Every external call happens inside a function you wrote.
 
 ## A first program
 
-This program protects two short texts. Its only step knows one of two names, and a separate check looks for both
-names. One text passes the check and is released; the other is withheld.
+This program protects two short texts. The first, "Alice uses alice@example.test", contains the name Alice. The
+second, "Bob uses bob@example.test", contains the name Bob. There are two names to protect, but the only step
+replaces Alice and knows nothing about Bob. A separate check then looks for both names in each text. The first text
+no longer contains either name, so it passes and is released. The second still contains Bob, so it fails the check
+and is withheld.
 
 ```python
 from anonymizer import graph as g
