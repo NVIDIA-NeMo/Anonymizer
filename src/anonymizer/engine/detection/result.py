@@ -29,6 +29,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.detection.postprocess import EntitySpan, build_tagged_text, get_tag_notation
 from anonymizer.engine.errors import AnonymizerWorkflowError, InvalidDetectorResultError
+from anonymizer.engine.graph_core.authoring import span_problem
 from anonymizer.engine.ndd.failed_record import FailedRecord
 from anonymizer.engine.protection_policy import DROPPED_OUTPUT
 from anonymizer.engine.row_partitioning import cell_text, resolve_source_positions
@@ -204,11 +205,13 @@ def _entity(span: DetectedSpan) -> dict[str, object]:
 
 
 def _tag_spans(text: str, spans: tuple[DetectedSpan, ...]) -> list[EntitySpan]:
-    """The sound, labelled spans to tag, outer first, less any span that overlaps one already taken: a span that
-    breaks the contract fails its record at ``detect``, so it only needs to leave the rendering well formed."""
+    """The spans to tag, outer first: those that keep the span rule (``span_problem``, which the detect step's check
+    also applies), less any that overlaps one already taken. A span that breaks the contract fails its record at
+    ``detect``, so it only needs to leave the rendering well formed."""
     taken: list[DetectedSpan] = []
     for s in sorted(spans, key=lambda s: (s.start, -s.end)):
-        sound = 0 <= s.start < s.end <= len(text) and text[s.start : s.end] == s.value and s.label
+        # The seam accepts any int offset; the rule wants the exact type.
+        sound = not span_problem(text, int(s.start), int(s.end), s.label, s.value)
         if sound and all(s.start >= t.end or s.end <= t.start for t in taken):
             taken.append(s)
     return [EntitySpan(f"e{i}", s.value, s.label, s.start, s.end, s.score, s.source) for i, s in enumerate(taken)]
