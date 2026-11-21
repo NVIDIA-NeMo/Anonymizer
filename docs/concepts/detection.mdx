@@ -341,12 +341,6 @@ is consumed across bounded matching batches; Python validation callbacks and tim
 between batches do not consume it. This is not a sandbox or execution timeout for
 validator code.
 
-<Note>
-The `main` branch measures this budget in wall-clock time until the graph SDK
-(#319) merges: the same settings there also charge time spent waiting for other
-threads, so more records time out under parallel load.
-</Note>
-
 ## Chunked validation
 
 When a row has many detected entities, Anonymizer splits validation across LLM calls using `validation_max_entities_per_call`. Detections that cover some of the same text stay together so the validator can compare them—for example, `San Diego` detected as a city and `Diego` detected as a first name. If keeping related detections together requires exceeding the limit, Anonymizer sends them in a separate call and logs a warning. The call must still fit the model's context window.
