@@ -33,6 +33,7 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
     _jinja,
 )
+from anonymizer.engine.errors import AnonymizerWorkflowError
 from anonymizer.engine.graph_core.session import BY_VALUE, FALLBACK, Decision, SessionView, Slot
 from anonymizer.engine.graph_core.session import normalize as _fold
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
@@ -41,7 +42,7 @@ from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema, EntityReplacementMapSchema
-from anonymizer.interface.errors import AnonymizerWorkflowError
+from anonymizer.engine.schemas.shared import normalize_payload
 from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
@@ -109,7 +110,7 @@ class LlmReplaceWorkflow:
         source = dataframe.copy()
         source[ROW_ORDER_COL] = range(len(source))
         if RECORD_ID_COLUMN not in source and not source.empty:
-            source[RECORD_ID_COLUMN] = source.apply(NddAdapter._compute_record_id, axis=1)
+            raise AnonymizerWorkflowError(f"The Substitute map step's input has no {RECORD_ID_COLUMN} column")
         expected = [EntitiesByValueSchema.from_raw(raw) for raw in source[entities_column]]
         missing = [_entity_pairs(entities) for entities in expected]
         accepted: list[dict[str, list[dict[str, str]]]] = [{"replacements": []} for _ in expected]
@@ -783,6 +784,38 @@ def is_placeholder(label: str, synthetic: str) -> bool:
     ``_collision_safe_synthetic`` mints: any ``str.isdigit`` digits are accepted, including a leading zero."""
     prefix, folded = _placeholder_prefix(label).casefold(), synthetic.casefold()
     return folded.startswith(prefix) and folded.endswith("]") and folded[len(prefix) : -1].isdigit()
+
+
+def placeholder_in_text(text: str, replacement_map: object) -> bool:
+    """Whether ``text`` holds a placeholder substitute of the row's replacement map; ``False`` without a map.
+
+    A placeholder stands in for a substitute that collided with a value in the record. It leaks nothing, so the row
+    stays met, but text that carries one needs review. The match is loose: any case, brackets optional, ``_``, ``-``
+    or one space between words, and the separator before the number optional. The number is required.
+    """
+    payload = normalize_payload(replacement_map)
+    entries = payload.get("replacements") if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        return False
+    folded = text.casefold()
+    return any(
+        _placeholder_pattern(entry["synthetic"]).search(folded)
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("label"), str)
+        and isinstance(entry.get("synthetic"), str)
+        and is_placeholder(entry["label"], entry["synthetic"])
+    )
+
+
+def _placeholder_pattern(placeholder: str) -> re.Pattern[str]:
+    """The loose casefolded pattern of ``placeholder``, an ``is_placeholder`` substitute. Its words are the minted
+    token's own, split at each ``_`` with empty items kept, so a label's punctuation runs match as minted."""
+    token, number = placeholder.casefold()[1:-1].rsplit("_", 1)
+    number = re.escape(number)
+    separator = r"[_\- ]"
+    body = separator.join(re.escape(word) for word in token.split("_"))
+    return re.compile(rf"(?<![^\W_]){body}{separator}?{number}(?!\d)")
 
 
 def _collision_safe_synthetic(label: str, *, index: int, protected_original_values: tuple[Container[str], ...]) -> str:

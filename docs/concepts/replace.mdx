@@ -50,6 +50,10 @@ placeholder. With the default `"record"`, different entities of a record can
 still share an ordinary model-generated substitute; with `"run"`, they never
 do, and placeholders are numbered across the run.
 
+Substitute results have a `placeholder_in_text` column. It is `True` when a row's replaced text keeps one of the
+`[SUBSTITUTE_<LABEL>_<n>]` placeholders of that row's own replacement map, so the row needs a reader. It is not a
+failure: the row is released and its outcome stays `met`. Redact, Hash and Annotate results have no such column.
+
 Before discarding a mapping, Substitute can reconcile a copied original that
 differs only in no-break spaces (`U+00A0`), thin spaces (`U+2009`), narrow no-break
 spaces (`U+202F`), or ASCII spaces. The label must match exactly and the comparison
@@ -239,8 +243,9 @@ session = Session.restore(SessionSnapshot.from_bytes(saved))
   of its substitute. A row that itself needs a record-local fallback gets a new placeholder each time it is
   replayed, because fallbacks are not reused. These entries are bookkeeping, not assignments.
 - `Session()` without `stable_replacements=True` retains nothing, and the call behaves as it does without
-  `session=`. A custom replace runner is called as it is without `session=`, so an override written before `session`
-  existed keeps working.
+  `session=`. A custom replace runner is called as it is without `session=`, so a `run()` or
+  `generate_validated_maps()` override written before `session` existed keeps working. A `run_with_detection()`
+  override must also accept `detector` (or `**kwargs`), or the run raises `InvalidConfigError` before detection.
 
 See [Graph SDK reference](/concepts/graph-sdk/reference#session-provisional) for the Session itself.
 

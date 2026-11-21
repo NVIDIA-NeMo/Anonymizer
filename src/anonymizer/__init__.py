@@ -7,10 +7,13 @@ from importlib import import_module
 from importlib.metadata import version
 from typing import TYPE_CHECKING
 
+from anonymizer.engine.constants import COL_TEXT as _COL_TEXT
 from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS as _DEFAULT_ENTITY_LABELS
 
 __version__ = version("nemo-anonymizer")
 DEFAULT_ENTITY_LABELS: tuple[str, ...] = tuple(_DEFAULT_ENTITY_LABELS)
+# The column that holds each record's text in the frame a custom ``detection_workflow`` receives.
+TEXT_COLUMN: str = _COL_TEXT
 
 if TYPE_CHECKING:
     from data_designer.config.models import ModelProvider as ModelProvider
@@ -37,11 +40,14 @@ if TYPE_CHECKING:
     )
     from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
     from anonymizer.config.rewrite import PrivacyGoal
+    from anonymizer.engine.detection.result import DetectedSpan, DetectorResult, DetectorRow
+    from anonymizer.engine.ndd.failed_record import FailedRecord
     from anonymizer.interface.anonymizer import Anonymizer as Anonymizer
     from anonymizer.interface.errors import (
         AnonymizerError,
         AnonymizerIOError,
         InvalidConfigError,
+        InvalidDetectorResultError,
         InvalidInputError,
     )
     from anonymizer.interface.factory import (
@@ -77,6 +83,11 @@ _EXPORTS = {
     "AnonymizerIOError": "anonymizer.interface.errors",
     "InvalidConfigError": "anonymizer.interface.errors",
     "InvalidInputError": "anonymizer.interface.errors",
+    "InvalidDetectorResultError": "anonymizer.interface.errors",
+    "DetectedSpan": "anonymizer.engine.detection.result",
+    "DetectorResult": "anonymizer.engine.detection.result",
+    "DetectorRow": "anonymizer.engine.detection.result",
+    "FailedRecord": "anonymizer.engine.ndd.failed_record",
     "LoggingConfig": "anonymizer.logging",
     "configure_logging": "anonymizer.logging",
     "ModelProvider": "data_designer.config.models",
@@ -116,10 +127,15 @@ __all__ = [
     "BuiltinRegex",
     "DEFAULT_ENTITY_LABELS",
     "Detect",
+    "DetectedSpan",
+    "DetectorResult",
+    "DetectorRow",
     "EvaluateConfig",
+    "FailedRecord",
     "GlinerEndpoint",
     "Hash",
     "InvalidConfigError",
+    "InvalidDetectorResultError",
     "InvalidInputError",
     "LoggingConfig",
     "ModelProvider",
@@ -135,6 +151,7 @@ __all__ = [
     "RiskTolerance",
     "RunConfig",
     "Substitute",
+    "TEXT_COLUMN",
     "TextRecord",
     "TextRecordsInput",
     "configure_logging",

@@ -90,7 +90,7 @@ member of its group, is withheld. Withholding spreads along dependencies and thr
 
 ## Records
 
-A record does not change release. It tells steps which targets belong together. `graph.record_of(target)` returns
+A record does not change release. For now each target is released on its own checks: use `OutputGroup` when the members must be released all or none. Releasing a complete record is planned as the default. A record tells steps which targets belong together. `graph.record_of(target)` returns
 a target's record; a target in no declared record is its own one-member record. `graph.all_records` lists every
 record once.
 

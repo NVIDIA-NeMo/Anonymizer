@@ -51,40 +51,63 @@ The final selection is deterministic and greedy: longer spans are considered fir
 
 ### Custom detection workflows
 
-The spans a custom `detection_workflow` returns in `final_entities` follow one contract. Each span is half-open
-(`start_position` inclusive, `end_position` exclusive), lies within the record's text, is non-empty, and the text
-slice it covers equals its `value` exactly. Each span needs a non-empty `label`: an unlabelled span never covers
-another, and one that is not identical to or inside a labelled span fails its record. The `_entities_by_value` column
-is optional. For a row with spans, it is the view of the kept spans plus every pair of the detector's view, and the
-value of every span the collapse dropped, that occurs in the row's text outside those spans; a row without spans keeps the detector's view. "Occurs" follows the
-leftover check's rule: whole words, with case and accents folded, so "Ann" does not occur in "Annual" and "Jose"
-occurs in "José". A one-character value in an unspaced script, such as 王, which that rule
-does not match, counts wherever it appears. The rule keeps one invariant: every value the detector reports for a row, from a span or a by-value
-pair, that occurs in the row's text is either in the replacement view or fails the row, so released text never holds
-such a value unflagged. The Replace modes (Redact, Hash, Annotate, Substitute) replace spans only, so with a custom
-detector a row whose view, after that derivation, holds a value that occurs in its text outside every kept span fails
-at the `detect` step with the reason `unspanned_value`. That includes a span's value repeated without a span, and a
-value that crosses two spans (`Paris/Rome` over spans on `Paris` and `Rome`). Built-in detection is not held to this
-check.
+A custom `detection_workflow` returns a `DetectorResult` (exported from `anonymizer`). It holds one `DetectorRow` per
+input record it answers, named by that record's `_anonymizer_record_id` (the `TextRecord` id for `TextRecordsInput`,
+a generated id for file input; the detector receives it as a column), plus the records it could not process as
+`FailedRecord`s (also exported from `anonymizer`) with step `detect`:
 
-Two overlap shapes are resolved at the `detect` step. Spans with identical bounds collapse into one, keeping the first
-labelled span in the detector's order with its label, and a span contained in a labelled span gives way to the outer
-span. Replacement, the Substitute map, rewriting and the result's `final_entities` all see the collapsed spans; a
-`tagged_text` the detector supplies is passed on as it is, not regenerated from them. Any other overlap, and any span
-that breaks the contract, fails its record at the `detect` step with the reason `overlapping_output_ownership`,
-`mention_out_of_range` (a zero-width span counts as out of range), `mention_slice_mismatch` or `mention_unlabelled`;
-in Rewrite, a `final_entities` payload that does not parse (for example a `null` label or a non-integer offset)
-fails it with `invalid_output`, and Replace rejects such a record at its `replace` step. The record is listed in
+```python
+from anonymizer import TEXT_COLUMN, DetectedSpan, DetectorResult, DetectorRow, FailedRecord
+
+def run(self, dataframe, **kwargs):
+    rows = []
+    for record_id, text in zip(dataframe["_anonymizer_record_id"], dataframe[TEXT_COLUMN]):
+        start = text.find("Alice")
+        spans = (DetectedSpan(start, start + 5, "first_name", "Alice"),) if start >= 0 else ()
+        rows.append(DetectorRow(record_id=record_id, spans=spans))
+    return DetectorResult(rows=tuple(rows))
+```
+
+`DetectorRow.extra_values` lists `(value, label)` pairs the detector reports without a span, and `DetectorRow.latent`
+carries latent entities for Rewrite. The engine renders `final_entities`, `_entities_by_value` and `tagged_text` from
+them; a detector no longer returns those columns. Any detector other than the built-in `EntityDetectionWorkflow`
+class itself, its subclasses included, returns a `DetectorResult`.
+
+A result that cannot be placed against the input raises `InvalidDetectorResultError` before any model is called: a
+return value that is not a `DetectorResult`, a row or failure naming an id that is not an input id, or an id answered
+or failed twice. An input record the result neither answers nor fails fails at `detect` with `dropped_output`.
+
+Each span is half-open (`start` inclusive, `end` exclusive), lies within the record's text, is non-empty, and the text
+slice it covers equals its `value` exactly. Each span needs a non-empty `label`: an unlabelled span never covers
+another, and one that is not identical to or inside a labelled span fails its record. Spans with identical bounds
+collapse into one, keeping the first labelled span in the detector's order with its label, and a span contained in a
+labelled span gives way to the outer span. Replacement, the Substitute map, rewriting and the result's
+`final_entities` all see the collapsed spans. Any other overlap, and any span that breaks the contract, fails its
+record at the `detect` step with the reason `overlapping_output_ownership`, `mention_out_of_range` (a zero-width span
+counts as out of range), `mention_slice_mismatch` or `mention_unlabelled`. The record is listed in
 `result.failed_records` and left out of the output, and the rest of the run continues.
 
-Custom workflows (`detection_workflow`, `replace_runner`, `rewrite_runner`) are an advanced and testing seam. Every row
-a custom detector or runner returns must name the input row it answers, by its source positions or, for
-`TextRecordsInput`, by keeping that row's unique `_anonymizer_record_id` (with `AnonymizerInput` the detector is given
-only the text column, so it must report positions); the rows a runner's `evaluate()` returns are matched by record id
-only. Anonymizer never matches rows by order or text. The checks above, and the derived `_entities_by_value` view,
-apply only to a detector result whose rows are named and whose text is unchanged. Any other detector result is used as
-returned, without these checks or per-record outcomes: it may stop the run (for example when it has no
-`_entities_by_value` column), and a record in it may be released with its spans unprotected.
+Every value the detector reports for a row, from a span or an extra value, that occurs in the row's text is either in
+Rewrite's replacement view or protected. "Occurs" follows the leftover check's rule: whole words, with case and
+accents folded, so "Ann" does not occur in "Annual" and "Jose" occurs in "José". A one-character value in an unspaced
+script, such as 王, which that rule does not match, counts wherever it appears. The Replace modes (Redact, Hash,
+Annotate, Substitute) replace spans only, so with a custom detector a row with a reported value that occurs in its
+text outside every kept span fails at the `detect` step with the reason `unspanned_value`. That includes a span's
+value repeated without a span, and a value that crosses two spans (`Paris/Rome` over spans on `Paris` and `Rome`).
+With built-in detection, the Replace modes instead add a span at each such occurrence (a missed repeat), with the
+label of the first detected span of the same value, so `final_entities` can hold spans the detector did not return
+(marked `"source": "repeat"`). An occurrence that partly overlaps a kept span (it crosses a span's edge, as the first
+"New York" does in "New York University is in New York." with spans on "York University" and the second "New York")
+gets no span: the row fails at the `detect` step with `unspanned_value`, as with a custom detector. The added span
+replaces the whole matched word, so text around a detected value, such as
+`#` in `order #W3916020`, is replaced with it. Rewrite passes a missed repeat to the rewriter in its replacement view,
+as before.
+
+Custom runners (`replace_runner`, `rewrite_runner`) are an advanced and testing seam. A runner that overrides `run()`
+must keep `_anonymizer_record_id` on every row it returns. A row with no id, an id that is not an input id, or an id
+returned twice is not released, and each input record that no released row answers fails at the runner's step with
+`unplaced_output`. The rows a runner's `evaluate()` returns are matched by record id only; Anonymizer never matches
+rows by order or text.
 
 ### Example: standard vs. latent entities
 

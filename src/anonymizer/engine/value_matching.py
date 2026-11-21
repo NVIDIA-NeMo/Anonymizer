@@ -72,12 +72,12 @@ def count_values(
     own: dict[str, int] = {}  # the first entity whose text is each normalized value
     for i, span in usable.items():
         position_of.setdefault(span, i)
-        own.setdefault(_normalized(source[span.slice]), i)
+        own.setdefault(normalized(source[span.slice]), i)
     if values is None:
         values = [source[span.slice] for span in usable.values()]
     given: dict[str, str] = {}  # each normalized value's first given form
     for value in values:
-        given.setdefault(_normalized(value), value)
+        given.setdefault(normalized(value), value)
     source_forms, output_forms = _mapped(source), _mapped(output)
     leftovers: list[tuple[str, Leftover]] = []
     for key, matcher in _compiled(given).items():
@@ -143,7 +143,7 @@ class _Matcher:
 
 
 def _compiled(keys: Iterable[str]) -> dict[str, _Matcher]:
-    """One matcher per distinct key, each already ``_normalized`` (normalizing is not idempotent: a dropped mark can
+    """One matcher per distinct key, each already ``normalized`` (normalizing is not idempotent: a dropped mark can
     leave marks out of canonical order, so a key is normalized once); a blank key and a one-character unspaced key
     get none."""
     matchers: dict[str, _Matcher] = {}
@@ -157,18 +157,18 @@ def _compiled(keys: Iterable[str]) -> dict[str, _Matcher]:
     return matchers
 
 
-def _normalized(text: str) -> str:
+def normalized(text: str) -> str:
     """NFKD with combining marks dropped and whitespace collapsed."""
     decomposed = unicodedata.normalize("NFKD", text)
     return " ".join("".join(c for c in decomposed if unicodedata.category(c) != "Mn").split())
 
 
 def _mapped(text: str) -> tuple[tuple[str, list[int]], tuple[str, list[int]]]:
-    """``_normalized(text)`` and its casefold, each with the index in ``text`` of every character's source character.
+    """``normalized(text)`` and its casefold, each with the index in ``text`` of every character's source character.
 
     Each source character is decomposed (NFKD) and every run of combining marks is put in canonical order, carrying
     the source indexes along, which is what NFKD does to the whole string; marks are dropped and whitespace collapsed
-    only after that, so the plain form equals ``_normalized(text)``. Inside a reordered run the indexes are not
+    only after that, so the plain form equals ``normalized(text)``. Inside a reordered run the indexes are not
     increasing.
     """
     decomposed = [
@@ -233,7 +233,7 @@ def _short_code(value: str) -> bool:
 
 
 def _occurs(value: str, text: str, folded: str) -> bool:
-    """Whether ``value`` occurs in ``text`` (both ``_normalized``; ``folded`` is ``text`` casefolded).
+    """Whether ``value`` occurs in ``text`` (both ``normalized``; ``folded`` is ``text`` casefolded).
 
     Case-insensitive unless ``_short_code``. A value whose first and last characters are in ``_UNSPACED`` matches as a
     substring when it has two or more characters, and never when it has one; any other value matches where no letter

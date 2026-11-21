@@ -15,7 +15,7 @@ import re
 from importlib.metadata import PackageNotFoundError, requires, version
 from typing import Any
 
-from anonymizer.interface.errors import AnonymizerWorkflowError
+from anonymizer.engine.errors import AnonymizerWorkflowError
 
 _ARTIFACT_STORAGE_MODULE = "data_designer.engine.storage.artifact_storage"
 

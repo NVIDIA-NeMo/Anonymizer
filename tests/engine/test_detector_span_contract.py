@@ -41,6 +41,7 @@ from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
     _build_entities_by_value,
 )
+from anonymizer.engine.detection.result import DetectorResult
 from anonymizer.engine.graph_core.authoring import GraphScope
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.engine.ndd.workflow_utils import select_seed_cols
@@ -51,6 +52,8 @@ from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.engine.value_matching import count_values, entity_spans
 from anonymizer.interface.anonymizer import Anonymizer
+from anonymizer.interface.errors import InvalidConfigError
+from tests.detector_results import as_detector_result, builtin_stub, input_record_ids
 
 TEXT = "Alice Smith lives in Paris."  # Alice 0-5, Smith 6-11, Alice Smith 0-11, Paris 21-26
 CONTROL = "Bob Jones lives in Rome."
@@ -109,11 +112,33 @@ SHAPES: dict[str, tuple[list[dict[str, Any]], str]] = {
 }
 
 
-class _Detector:
+def _rid(source: Path, row: int) -> str:
+    """The input record id of ``source``'s row ``row``: the seam's uuid5, as every failure names it."""
+    return input_record_ids(AnonymizerInput(source=str(source)))[row]
+
+
+def _as_builtin(detector: _FrameDetector) -> EntityDetectionWorkflow:
+    """``detector``'s frame returned by the built-in workflow: the frame-encoding and payload-parse rules below apply
+    to the built-in detector's frame only, since a ``DetectorResult`` has no encodings or payloads to get wrong."""
+    return builtin_stub(lambda dataframe, **_: detector.frame(dataframe))
+
+
+class _FrameDetector:
+    """A custom detector described by the frame it would have returned: ``run`` returns that frame's spans and
+    by-value pairs as a ``DetectorResult``."""
+
+    def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
+        raise NotImplementedError
+
+    def run(self, dataframe: pd.DataFrame, **_: object) -> DetectorResult:
+        return as_detector_result(dataframe, self.frame(dataframe))
+
+
+class _Detector(_FrameDetector):
     def __init__(self, entities: list[dict[str, Any]]) -> None:
         self.by_text = {TEXT: entities, CONTROL: CONTROL_ENTITIES}
 
-    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+    def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
         frame = dataframe.copy()
         entities = [{"entities": self.by_text[str(text)]} for text in frame[COL_TEXT]]
         frame[COL_FINAL_ENTITIES] = entities
@@ -136,7 +161,7 @@ def test_custom_detector_span_shape(shape: str, tmp_path: Path, caplog: pytest.L
         assert result.failed_records == []
     else:
         assert list(result.dataframe["text_replaced"]) == [control]
-        assert result.failed_records == [FailedRecord("0", "detect", expected)]
+        assert result.failed_records == [FailedRecord(_rid(source, 0), "detect", expected)]
         assert f"1 record(s) failed during pipeline processing: detect/{expected}=1." in caplog.text
         # A record failed at detect is counted under detection, not replacement.
         assert "across 1 records (1 failed)" in caplog.text and "Replacement complete (0 failed)" in caplog.text
@@ -263,8 +288,8 @@ def test_rewrite_sees_the_collapsed_spans_and_applies_its_replacements(shape: st
 class _StringDetector(_Detector):
     """A detector that returns its entity payloads as JSON strings, with a key of its own on every entity."""
 
-    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
-        result = super().run(dataframe)
+    def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
+        result = super().frame(dataframe)
         frame = result.dataframe
         tagged = [{"entities": [{**e, "note": "own"} for e in self.by_text[str(t)]]} for t in frame[COL_TEXT]]
         frame[COL_FINAL_ENTITIES] = [json.dumps(e) for e in tagged]
@@ -276,9 +301,7 @@ def _string_payload_anonymizer(tmp_path: Path, **kwargs: Any) -> tuple[Anonymize
     source = tmp_path / "in.csv"
     pd.DataFrame({"text": [TEXT, CONTROL]}).to_csv(source, index=False)  # the collapsed row comes first
     detector = _StringDetector(SHAPES["nested_inner_first"][0])
-    return Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, detector), **kwargs), AnonymizerInput(
-        source=str(source)
-    )
+    return Anonymizer(detection_workflow=_as_builtin(detector), **kwargs), AnonymizerInput(source=str(source))
 
 
 def _assert_own_encoding(cells: list[object], kept: list[list[tuple[int, int, str]]]) -> None:
@@ -362,7 +385,7 @@ def test_an_unlabelled_span_fails_its_record_under_substitute(tmp_path: Path) ->
     with patch.object(NddAdapter, "run_workflow", run_workflow):
         result = anonymizer.run(config=AnonymizerConfig(replace=Substitute()), data=AnonymizerInput(source=str(source)))
 
-    assert result.failed_records == [FailedRecord("0", "detect", "mention_unlabelled")]
+    assert result.failed_records == [FailedRecord(_rid(source, 0), "detect", "mention_unlabelled")]
     assert not [v for v in PROTECTED for text in result.dataframe["text_replaced"] if v in text]
 
 
@@ -373,8 +396,8 @@ class _NoByValueDetector(_Detector):
         super().__init__(entities)
         self.drop_column = drop_column
 
-    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
-        result = super().run(dataframe)
+    def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
+        result = super().frame(dataframe)
         if self.drop_column:
             result.dataframe.drop(columns=[COL_ENTITIES_BY_VALUE], inplace=True)
         else:
@@ -446,8 +469,8 @@ class _StaleByValueDetector(_Detector):
         super().__init__([NAME, CITY])
         self.cell = cell
 
-    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
-        result = super().run(dataframe)
+    def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
+        result = super().frame(dataframe)
         result.dataframe[COL_ENTITIES_BY_VALUE] = [self.cell, *result.dataframe[COL_ENTITIES_BY_VALUE].iloc[1:]]
         return result
 
@@ -522,11 +545,11 @@ def test_a_malformed_span_payload_fails_its_record_at_detect_in_rewrite(bad: str
             return produce
 
     anonymizer = Anonymizer(
-        detection_workflow=cast(EntityDetectionWorkflow, _Detector([NAME, broken])), rewrite_runner=StubRewrite(Mock())
+        detection_workflow=_as_builtin(_Detector([NAME, broken])), rewrite_runner=StubRewrite(Mock())
     )
     result = anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=AnonymizerInput(source=str(source)))
 
-    assert result.failed_records == [FailedRecord("0", "detect", "invalid_output")]
+    assert result.failed_records == [FailedRecord(_rid(source, 0), "detect", "invalid_output")]
     assert list(result.dataframe["text_rewritten"]) == ["rewritten"]
 
 
@@ -537,8 +560,8 @@ class _MixedByValueDetector(_Detector):
         super().__init__([NAME, CITY])
         self.missing = missing
 
-    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
-        result = super().run(dataframe)
+    def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
+        result = super().frame(dataframe)
         cells: list[object] = [json.dumps(cell) for cell in result.dataframe[COL_ENTITIES_BY_VALUE]]
         cells[self.missing] = None
         result.dataframe[COL_ENTITIES_BY_VALUE] = pd.Series(cells, index=result.dataframe.index, dtype=object)
@@ -600,7 +623,7 @@ class _MixedEncodingDetector(_Detector):
         super().__init__(first)
         self.by_text[THIRD] = THIRD_ENTITIES
 
-    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+    def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
         frame = dataframe.copy()
         entities = [{"entities": self.by_text[str(text)]} for text in frame[COL_TEXT]]
         frame[COL_FINAL_ENTITIES] = pd.Series(
@@ -657,11 +680,11 @@ NO_BY_VALUE_SHAPES: dict[str, Any] = {
 }
 
 
-class _ShapeWithoutByValueDetector:
+class _ShapeWithoutByValueDetector(_FrameDetector):
     def __init__(self, shape: str) -> None:
         self.shape = NO_BY_VALUE_SHAPES[shape]
 
-    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+    def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
         frame = dataframe.copy()
         if self.shape == "every_row_failed":
             failed = [FailedRecord(str(i), "entity-detection", "detector_error") for i in range(len(frame))]
@@ -673,14 +696,16 @@ class _ShapeWithoutByValueDetector:
         return EntityDetectionResult(frame, [], tuple(range(len(frame))))
 
 
-def _expected_without_by_value(shape: str, mode: str) -> tuple[list[str], list[FailedRecord]]:
+def _expected_without_by_value(shape: str, mode: str, ids: list[str]) -> tuple[list[str], list[FailedRecord]]:
     """The output texts and failed records: unparsable rows fail at ``replace`` in Replace, at ``detect`` in Rewrite."""
     malformed = {"all_malformed": ["0", "1"], "no_spans_plus_malformed": ["0"]}.get(shape, [])
     if shape == "every_row_failed":
         return [], [FailedRecord(i, "entity-detection", "detector_error") for i in ("0", "1")]
     replace = mode in ("redact", "substitute")
     failed = [
-        FailedRecord(i, "replace", MALFORMED_REASON) if replace else FailedRecord(i, "detect", "invalid_output")
+        FailedRecord(ids[int(i)], "replace", MALFORMED_REASON)
+        if replace
+        else FailedRecord(ids[int(i)], "detect", "invalid_output")
         for i in malformed
     ]
     return [t for i, t in enumerate([TEXT, CONTROL]) if str(i) not in malformed], failed
@@ -701,7 +726,7 @@ def test_a_detector_without_a_by_value_column_completes_whatever_its_rows(
         return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
 
     anonymizer = Anonymizer(
-        detection_workflow=cast(EntityDetectionWorkflow, _ShapeWithoutByValueDetector(shape)),
+        detection_workflow=_as_builtin(_ShapeWithoutByValueDetector(shape)),
         rewrite_runner=_capturing(RewriteWorkflow(Mock()), frames),
         combined_rewrite_runner=cast(CombinedRewriteWorkflow, _capturing(CombinedRewriteWorkflow(Mock()), frames)),
     )
@@ -714,7 +739,7 @@ def test_a_detector_without_a_by_value_column_completes_whatever_its_rows(
     with patch.object(NddAdapter, "run_workflow", run_workflow):
         result = anonymizer.run(config=config, data=AnonymizerInput(source=str(source)))
 
-    texts, failed = _expected_without_by_value(shape, mode)
+    texts, failed = _expected_without_by_value(shape, mode, [_rid(source, 0), _rid(source, 1)])
     assert result.failed_records == failed
     column = "text_replaced" if mode in ("redact", "substitute") else "text_rewritten"
     assert (list(result.dataframe[column]) if column in result.dataframe.columns else []) == texts
@@ -731,8 +756,8 @@ def test_a_by_value_view_keeps_the_extra_pairs_that_occur_in_the_text(shape: str
     view = {**view, "entities_by_value": [*view["entities_by_value"], {"value": pair[0], "labels": [pair[1]]}]}
 
     class ExtraPairDetector(_Detector):
-        def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
-            result = super().run(dataframe)
+        def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
+            result = super().frame(dataframe)
             result.dataframe[COL_ENTITIES_BY_VALUE] = [view, *result.dataframe[COL_ENTITIES_BY_VALUE].iloc[1:]]
             return result
 
@@ -777,7 +802,7 @@ def test_the_trace_of_a_rebuilt_by_value_cell_writes_to_parquet(mode: str, tmp_p
         return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=tuple(range(len(out))))
 
     anonymizer = Anonymizer(
-        detection_workflow=cast(EntityDetectionWorkflow, _MixedByValueDetector(0)),
+        detection_workflow=_as_builtin(_MixedByValueDetector(0)),
         rewrite_runner=_capturing(RewriteWorkflow(Mock()), []),
     )
     config = {
@@ -795,8 +820,8 @@ def test_the_trace_of_a_rebuilt_by_value_cell_writes_to_parquet(mode: str, tmp_p
 @pytest.mark.parametrize("mode", ["rewrite", "combined"])
 def test_a_missing_by_value_cell_on_a_malformed_row_fails_only_that_row(mode: str, tmp_path: Path) -> None:
     class NaByValueDetector(_Detector):
-        def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
-            result = super().run(dataframe)
+        def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
+            result = super().frame(dataframe)
             result.dataframe[COL_ENTITIES_BY_VALUE] = pd.Series(
                 [pd.NA, *result.dataframe[COL_ENTITIES_BY_VALUE].iloc[1:]], index=result.dataframe.index, dtype=object
             )
@@ -806,7 +831,7 @@ def test_a_missing_by_value_cell_on_a_malformed_row_fails_only_that_row(mode: st
     pd.DataFrame({"text": [TEXT, CONTROL]}).to_csv(source, index=False)
     frames: list[pd.DataFrame] = []
     anonymizer = Anonymizer(
-        detection_workflow=cast(EntityDetectionWorkflow, NaByValueDetector(NULL_LABEL)),
+        detection_workflow=_as_builtin(NaByValueDetector(NULL_LABEL)),
         rewrite_runner=_capturing(RewriteWorkflow(Mock()), frames),
         combined_rewrite_runner=cast(CombinedRewriteWorkflow, _capturing(CombinedRewriteWorkflow(Mock()), frames)),
     )
@@ -815,7 +840,7 @@ def test_a_missing_by_value_cell_on_a_malformed_row_fails_only_that_row(mode: st
         data=AnonymizerInput(source=str(source)),
     )
 
-    assert result.failed_records == [FailedRecord("0", "detect", "invalid_output")]
+    assert result.failed_records == [FailedRecord(_rid(source, 0), "detect", "invalid_output")]
     assert list(result.dataframe["text_rewritten"]) == ["rewritten"]
 
 
@@ -826,7 +851,7 @@ def test_a_spans_row_and_a_spans_free_row_in_one_batch_both_keep_their_reported_
     control_view = _build_entities_by_value({"entities": CONTROL_ENTITIES})
 
     class BothShapesDetector(_Detector):
-        def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+        def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
             frame = dataframe.copy()
             frame[COL_FINAL_ENTITIES] = [{"entities": [NAME, CITY]}, {"entities": []}]
             frame[COL_ENTITIES_BY_VALUE] = [with_extra, control_view]
@@ -867,7 +892,7 @@ class _UnspannedDetector(_Detector):
         super().__init__([])
         self.spans, self.view = UNSPANNED[shape]
 
-    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+    def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
         frame = dataframe.copy()
         texts = [str(t) for t in frame[COL_TEXT]]
         if self.spans is not None:
@@ -895,8 +920,8 @@ def test_replace_fails_a_row_whose_reported_value_has_no_span(shape: str, strate
         result = anonymizer.run(config=AnonymizerConfig(replace=replace), data=AnonymizerInput(source=str(source)))
 
     control_kept = shape != "no_entities_column"
-    assert result.failed_records == [FailedRecord("0", "detect", "unspanned_value")] + (
-        [] if control_kept else [FailedRecord("1", "detect", "unspanned_value")]
+    assert result.failed_records == [FailedRecord(_rid(source, 0), "detect", "unspanned_value")] + (
+        [] if control_kept else [FailedRecord(_rid(source, 1), "detect", "unspanned_value")]
     )
     assert not [v for v in PROTECTED for text in result.dataframe["text_replaced"] if v in text]
 
@@ -916,13 +941,17 @@ def _one_row_run(
     source = tmp_path / "in.csv"
     pd.DataFrame({"text": [text]}).to_csv(source, index=False)
 
-    class Detector:
-        def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+    class Detector(_FrameDetector):
+        def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
             frame = dataframe.copy()
             if spans is not None:
                 frame[COL_FINAL_ENTITIES] = [{"entities": spans}]
             frame[COL_ENTITIES_BY_VALUE] = pd.Series([view], index=frame.index, dtype=object)
             return EntityDetectionResult(frame, [], (0,))
+
+        def run(self, dataframe: pd.DataFrame, **kwargs: object) -> Any:
+            # The built-in leg returns its frame, as the built-in workflow does.
+            return super().run(dataframe) if custom else self.frame(dataframe)
 
     def run_workflow(self: NddAdapter, df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
         out = df.copy().reset_index(drop=True)
@@ -937,7 +966,7 @@ def _one_row_run(
         **({"replace_runner": replace_runner} if replace_runner is not None else {}),
     )
     if not custom:  # the built-in detection path, with this detector standing in for the built-in workflow
-        anonymizer._custom_detection = False
+        anonymizer._detector_kind = "builtin"
     config = {
         "redact": AnonymizerConfig(replace=Redact()),
         "hash": AnonymizerConfig(replace=Hash(key="s3cr3t")),
@@ -991,7 +1020,7 @@ def test_replace_fails_a_spans_unspanned_repeat_whatever_the_detectors_view(
     cell = {"complete": _view(("Bob", "first_name")), "absent": None, "stale": _view(("Zurich", "city"))}[view]
     result, _ = _one_row_run(tmp_path, text, [_at(text, "Bob", "first_name")], cell, strategy)
 
-    assert result.failed_records == [FailedRecord("0", "detect", "unspanned_value")]
+    assert result.failed_records == [FailedRecord(_rid(tmp_path / "in.csv", 0), "detect", "unspanned_value")]
 
 
 @pytest.mark.parametrize("strategy", ["redact", "hash", "annotate", "substitute"])
@@ -1012,15 +1041,19 @@ def test_a_value_inside_a_longer_word_is_not_an_unspanned_occurrence(
     assert result.failed_records == []
 
 
-@pytest.mark.parametrize(("custom", "builtin_checked"), [(True, False), (False, False), (False, True)])
-def test_the_replace_check_scope(custom: bool, builtin_checked: bool, tmp_path: Path) -> None:
-    """Custom detectors are always checked; built-in detection only when ``UNSPANNED_CHECK_BUILTIN`` is set."""
+@pytest.mark.parametrize("custom", [True, False], ids=["custom", "builtin"])
+def test_the_replace_check_scope(custom: bool, tmp_path: Path) -> None:
+    """A custom detector's missed repeat fails the row; the built-in detector's gets a span and is replaced."""
     text = "Bob met Bob's sister."
-    with patch("anonymizer.interface.anonymizer.UNSPANNED_CHECK_BUILTIN", builtin_checked):
-        result, _ = _one_row_run(tmp_path, text, [_at(text, "Bob", "first_name")], None, "redact", custom=custom)
+    result, _ = _one_row_run(tmp_path, text, [_at(text, "Bob", "first_name")], None, "redact", custom=custom)
 
-    checked = custom or builtin_checked
-    assert result.failed_records == ([FailedRecord("0", "detect", "unspanned_value")] if checked else [])
+    if custom:
+        assert result.failed_records == [FailedRecord(_rid(tmp_path / "in.csv", 0), "detect", "unspanned_value")]
+    else:
+        assert result.failed_records == []
+        assert list(result.dataframe["text_replaced"]) == ["[REDACTED_FIRST_NAME] met [REDACTED_FIRST_NAME]'s sister."]
+        spans = result.dataframe["final_entities"].iloc[0]["entities"]
+        assert [(e["start_position"], e["source"]) for e in spans] == [(0, "detector"), (8, "repeat")]
 
 
 # Tokens that collide: a value inside a longer word, repeats, a case and an accent variant, adjacent values.
@@ -1123,20 +1156,60 @@ def test_a_one_character_unspaced_value_is_kept_or_fails_the_row(mode: str, tmp_
     result, frames = _one_row_run(tmp_path, text, [_at(text, "李明", "full_name")], view, mode)
 
     if mode == "redact":
-        assert result.failed_records == [FailedRecord("0", "detect", "unspanned_value")]
+        assert result.failed_records == [FailedRecord(_rid(tmp_path / "in.csv", 0), "detect", "unspanned_value")]
     else:
         assert result.failed_records == []
         assert _seed_values(frames) == {"李明", "王"}
 
 
-def test_a_replace_runner_override_without_the_unspanned_keyword_still_runs(tmp_path: Path) -> None:
-    """The keyword is passed only when the check is on, so an override written before it keeps working."""
-    calls: list[str] = []
+class _OldRunner(ReplacementWorkflow):
+    """An override written for the earlier signature: no ``detector`` keyword and no ``**kwargs``."""
 
-    class OldRunner(ReplacementWorkflow):
+    def run_with_detection(  # ty: ignore[invalid-method-override]
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        detect: Any,
+        replace_method: Any,
+        model_configs: Any,
+        selected_models: Any,
+        preview_num_records: int | None = None,
+    ) -> Any:
+        raise AssertionError("not reached: the facade rejects the override before detection")
+
+
+@pytest.mark.parametrize("custom", [False, True], ids=["builtin", "custom"])
+def test_an_old_signature_run_with_detection_override_fails_early_naming_the_keyword(
+    custom: bool, tmp_path: Path
+) -> None:
+    """With a custom detector the facade passed ``unspanned_check=True`` and the override raised ``TypeError``
+    (a review on the line); the built-in leg ran. Both now fail before detection with an error that names
+    ``detector`` and how to update the override."""
+    text = "Bob met Ann."
+    spans = [_at(text, "Bob", "first_name"), _at(text, "Ann", "first_name")]
+    with pytest.raises(InvalidConfigError, match=r"_OldRunner\.run_with_detection does not accept the detector"):
+        _one_row_run(
+            tmp_path, text, spans, None, "redact", custom=custom, replace_runner=_OldRunner(llm_workflow=Mock())
+        )
+
+
+def test_an_instance_level_override_without_the_keyword_fails_early(tmp_path: Path) -> None:
+    """The facade calls ``runner.run_with_detection``, so a function set on the instance is checked too."""
+    runner = ReplacementWorkflow(llm_workflow=Mock())
+    runner.run_with_detection = _OldRunner.run_with_detection.__get__(runner)  # ty: ignore[invalid-assignment]
+    text = "Bob met Ann."
+    spans = [_at(text, "Bob", "first_name"), _at(text, "Ann", "first_name")]
+    with pytest.raises(InvalidConfigError, match="does not accept the detector"):
+        _one_row_run(tmp_path, text, spans, None, "redact", replace_runner=runner)
+
+
+def test_a_positional_only_detector_parameter_fails_early(tmp_path: Path) -> None:
+    class PositionalRunner(ReplacementWorkflow):
         def run_with_detection(  # ty: ignore[invalid-method-override]
             self,
             dataframe: pd.DataFrame,
+            detector: str = "builtin",
+            /,
             *,
             detect: Any,
             replace_method: Any,
@@ -1144,23 +1217,54 @@ def test_a_replace_runner_override_without_the_unspanned_keyword_still_runs(tmp_
             selected_models: Any,
             preview_num_records: int | None = None,
         ) -> Any:
-            calls.append("old")
-            return super().run_with_detection(
-                dataframe,
-                detect=detect,
-                replace_method=replace_method,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                preview_num_records=preview_num_records,
-            )
+            raise AssertionError("not reached")
 
     text = "Bob met Ann."
     spans = [_at(text, "Bob", "first_name"), _at(text, "Ann", "first_name")]
-    runner = OldRunner(llm_workflow=Mock())
-    result, _ = _one_row_run(tmp_path, text, spans, None, "redact", custom=False, replace_runner=runner)
+    with pytest.raises(InvalidConfigError, match="does not accept the detector"):
+        _one_row_run(tmp_path, text, spans, None, "redact", replace_runner=PositionalRunner(llm_workflow=Mock()))
 
-    assert calls == ["old"]
-    assert result.failed_records == []
+
+def test_an_override_that_takes_the_detector_keyword_receives_the_detector_kind(tmp_path: Path) -> None:
+    kinds: list[str] = []
+
+    class NewRunner(ReplacementWorkflow):
+        def run_with_detection(self, dataframe: pd.DataFrame, **kwargs: Any) -> Any:
+            kinds.append(kwargs["detector"])
+            return super().run_with_detection(dataframe, **kwargs)
+
+    text = "Bob met Ann."
+    spans = [_at(text, "Bob", "first_name"), _at(text, "Ann", "first_name")]
+    for custom in (False, True):
+        _one_row_run(
+            tmp_path, text, spans, None, "redact", custom=custom, replace_runner=NewRunner(llm_workflow=Mock())
+        )
+    assert kinds == ["builtin", "custom"]
+
+
+def test_a_rewrite_runner_override_receives_no_detector_keyword(tmp_path: Path) -> None:
+    """Rewrite names failures from the carried record ids, so its runner gets no detector keyword."""
+    seen: list[set[str]] = []
+
+    class Runner(RewriteWorkflow):
+        def run_with_detection(self, dataframe: pd.DataFrame, **kwargs: Any) -> Any:
+            seen.append(set(kwargs))
+            return super().run_with_detection(dataframe, **kwargs)
+
+    text = "Bob met Ann."
+    frames: list[pd.DataFrame] = []
+    source = tmp_path / "in.csv"
+    pd.DataFrame({"text": [text]}).to_csv(source, index=False)
+    anonymizer = Anonymizer(
+        detection_workflow=builtin_stub(
+            lambda df, **_: EntityDetectionResult(
+                df.assign(**{COL_FINAL_ENTITIES: [{"entities": []}] * len(df)}), [], tuple(range(len(df)))
+            )
+        ),
+        rewrite_runner=_capturing(Runner(Mock()), frames),
+    )
+    anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=AnonymizerInput(source=str(source)))
+    assert seen and "detector" not in seen[0]
 
 
 @pytest.mark.parametrize("view", ["absent", "outer_only"])
@@ -1177,7 +1281,7 @@ def test_a_collapsed_spans_value_outside_the_kept_spans_is_reported(view: str, m
         assert result.failed_records == []
         assert _seed_values(frames) == {"Alice Smith", "Alice"}
     else:
-        assert result.failed_records == [FailedRecord("0", "detect", "unspanned_value")]
+        assert result.failed_records == [FailedRecord(_rid(tmp_path / "in.csv", 0), "detect", "unspanned_value")]
 
 
 @pytest.mark.parametrize("mode", ["redact", "rewrite"])
@@ -1197,5 +1301,5 @@ def test_an_unspanned_value_is_named_in_the_failure_log(tmp_path: Path, caplog: 
     with caplog.at_level(logging.DEBUG, logger="anonymizer"):
         result, _ = _one_row_run(tmp_path, text, [_at(text, "Bob", "first_name")], None, "redact")
 
-    assert result.failed_records == [FailedRecord("0", "detect", "unspanned_value")]
+    assert result.failed_records == [FailedRecord(_rid(tmp_path / "in.csv", 0), "detect", "unspanned_value")]
     assert "1 record(s) failed during pipeline processing: detect/unspanned_value=1." in caplog.text

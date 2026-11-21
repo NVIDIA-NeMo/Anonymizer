@@ -32,6 +32,7 @@ from anonymizer.engine.ndd.adapter import WorkflowRunResult
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import InvalidInputError
+from tests.detector_results import as_detector_result, input_record_ids, returns_detector_result
 from tests.engine.test_rewrite_workflow import _PRIVACY_GOAL, _REPLACE_PATCH, _ScriptedAdapter
 
 
@@ -39,11 +40,14 @@ from tests.engine.test_rewrite_workflow import _PRIVACY_GOAL, _REPLACE_PATCH, _S
 def test_input_column_named_like_the_rewritten_text_is_rejected(method: str, tmp_path: Path) -> None:
     """An input column named ``_rewritten_text`` used to be released as the rewritten text, reported ``met``."""
     entities = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
-    detector = Mock(spec=EntityDetectionWorkflow)
-    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
-        dataframe=frame.assign(**{RECORD_ID_COLUMN: ["rec"], COL_ENTITIES_BY_VALUE: [entities]}),
-        failed_records=[],
-        source_positions=(0,),
+    detector = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
+    detector.run.side_effect = lambda frame, **_: as_detector_result(
+        frame,
+        EntityDetectionResult(
+            dataframe=frame.assign(**{RECORD_ID_COLUMN: ["rec"], COL_ENTITIES_BY_VALUE: [entities]}),
+            failed_records=[],
+            source_positions=(0,),
+        ),
     )
     csv_path = tmp_path / "input.csv"
     pd.DataFrame({"text": ["Alice works at Acme"], COL_REWRITTEN_TEXT: ["note"]}).to_csv(csv_path, index=False)
@@ -70,18 +74,21 @@ _FINAL = {"entities": [{"value": "Alice", "label": "first_name", "start_position
 
 
 def _detector() -> Mock:
-    detector = Mock(spec=EntityDetectionWorkflow)
-    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
-        dataframe=frame.assign(
-            **{
-                RECORD_ID_COLUMN: ["rec"],
-                COL_ENTITIES_BY_VALUE: [_ENTITIES],
-                COL_FINAL_ENTITIES: [_FINAL],
-                COL_DETECTED_ENTITIES: [_FINAL],
-            }
+    detector = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
+    detector.run.side_effect = lambda frame, **_: as_detector_result(
+        frame,
+        EntityDetectionResult(
+            dataframe=frame.assign(
+                **{
+                    RECORD_ID_COLUMN: ["rec"],
+                    COL_ENTITIES_BY_VALUE: [_ENTITIES],
+                    COL_FINAL_ENTITIES: [_FINAL],
+                    COL_DETECTED_ENTITIES: [_FINAL],
+                }
+            ),
+            failed_records=[],
+            source_positions=(0,),
         ),
-        failed_records=[],
-        source_positions=(0,),
     )
     return detector
 
@@ -117,7 +124,7 @@ def test_input_detection_valid_does_not_replace_the_detection_judge_verdict(tmp_
     pd.DataFrame({"text": ["Alice works at Acme"], COL_DETECTION_VALID: [1.0], COL_JUDGE_EVALUATION: ["input"]}).to_csv(
         csv_path, index=False
     )
-    adapter = _ScriptedAdapter({"rec": 0})
+    adapter = _ScriptedAdapter({input_record_ids(AnonymizerInput(source=str(csv_path), text_column="text"))[0]: 0})
     anonymizer = Anonymizer(detection_workflow=_detector(), rewrite_runner=RewriteWorkflow(adapter=Mock(wraps=adapter)))
     with patch(_REPLACE_PATCH) as mock_replace_cls:
         mock_replace_cls.return_value.generate_map_only.side_effect = lambda frame, **_: Mock(

@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Facade-level pins on detection: where dropped rows are reported, empty input, unresolved positions, and how a
-caller's detector is driven. Detection's stages are due to become graph operations; these pin today's behaviour."""
+"""Facade-level pins on detection: where dropped rows are reported, empty input, results that cannot be placed, and
+how a caller's detector is driven. Detection's stages are due to become graph operations; these pin today's behaviour."""
 
 from __future__ import annotations
 
@@ -37,7 +37,10 @@ from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
     _build_entities_by_value,
 )
+from anonymizer.engine.detection.result import DetectorResult, DetectorRow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+from anonymizer.interface.errors import InvalidDetectorResultError
+from tests.detector_results import as_detector_result
 from tests.parity.harness import RECORDS, Case, scripted
 
 _DATA = TextRecordsInput(records=[TextRecord(id=i, text=t) for i, t in RECORDS])
@@ -77,13 +80,13 @@ def _first_word_entities(text: str) -> dict:
     }
 
 
-def _detected(frame: pd.DataFrame, positions: tuple[int, ...] | None = None) -> EntityDetectionResult:
-    """Each row's first word as its one entity; ``positions=None`` reports none (the default ``()``)."""
+def _detected(frame: pd.DataFrame) -> DetectorResult:
+    """Each row's first word as its one entity."""
     out = frame.copy()
     entities = [_first_word_entities(str(t)) for t in out[COL_TEXT]]
     out[COL_FINAL_ENTITIES] = entities
     out[COL_ENTITIES_BY_VALUE] = [_build_entities_by_value(e) for e in entities]
-    return EntityDetectionResult(out, [], positions if positions is not None else ())
+    return as_detector_result(frame, out)
 
 
 # --- 1 and 2: rows dropped inside detection are reported at the dropping workflow, never at ``detect`` -----------
@@ -126,74 +129,34 @@ def test_empty_input_still_runs_the_built_in_detector(tmp_path: Path, mode: str)
     assert [(run["workflow"], run["seed_rows"]) for run in script.log if "detection" in run["workflow"]] == expected
 
 
-# --- 4: a detection result with unresolved positions reroutes over the frame as returned ----------------------------
+# --- 4: a custom detector's frame, or a result that names no input record, raises before any model call ------------
 
 
 @pytest.mark.parametrize("mode", list(_MODES))
-def test_unresolved_detection_positions_reroute_over_the_returned_frame(mode: str) -> None:
-    """No reported positions and no record IDs: positions cannot be resolved, so the route replaces or rewrites the
-    detection frame as returned (here reversed and missing its first row) instead of failing every row.
+@pytest.mark.parametrize("shape", ["frame", "unknown-id", "repeated-id"])
+def test_a_result_that_cannot_be_placed_raises_before_any_model_call(mode: str, shape: str) -> None:
+    """A custom detector returning a frame (it was rerouted over the returned frame, losing row ``a`` silently), or a
+    ``DetectorResult`` naming an id that is not an input id or naming one twice, raises; no workflow runs."""
 
-    This pins today's silent row loss: row ``a`` disappears with no failed record. Decision D4 keeps that until N1c,
-    so N1c updates this test on purpose."""
-    calls: list[int] = []
+    class Unplaceable:
+        def run(self, dataframe: pd.DataFrame, **_: object) -> object:
+            if shape == "frame":
+                out = dataframe.drop(columns=[c for c in dataframe.columns if c != COL_TEXT]).iloc[:0:-1]
+                return EntityDetectionResult(out.reset_index(drop=True), [])
+            rows = _detected(dataframe).rows
+            if shape == "unknown-id":
+                return DetectorResult(rows=(*rows[1:], DetectorRow(record_id="not-an-input-id")))
+            return DetectorResult(rows=(*rows, rows[0]))
 
-    class Unresolved:
-        def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
-            calls.append(len(dataframe))
-            returned = dataframe.drop(columns=[c for c in dataframe.columns if c != COL_TEXT]).iloc[:0:-1]
-            return _detected(returned.reset_index(drop=True))
-
-    detector: Any = Unresolved()
+    detector: Any = Unplaceable()
     anonymizer = Anonymizer(detection_workflow=detector, rewrite_runner=_StubRewrite(Mock()))
-    with scripted(Case("pin", lambda: _MODES[mode])):
-        result = anonymizer.run(config=_MODES[mode], data=_DATA)
-
-    returned = [t for _, t in RECORDS][:0:-1]
-    column, expected = (
-        ("text_replaced", [f"[REDACTED_FIRST_NAME] {t.split(' ', 1)[1]}" for t in returned])
-        if mode == "replace"
-        else ("text_rewritten", [f"R<{t}>" for t in returned])
-    )
-    assert calls == [len(RECORDS)]
-    assert list(result.dataframe["text"]) == returned
-    assert list(result.dataframe[column]) == expected
-    assert result.failed_records == []
+    with scripted(Case("pin", lambda: _MODES[mode])) as (script, _):
+        with pytest.raises(InvalidDetectorResultError):
+            anonymizer.run(config=_MODES[mode], data=_DATA)
+    assert script.log == []
 
 
-@pytest.mark.parametrize("mode", list(_MODES))
-@pytest.mark.parametrize(
-    ("given", "normalize"),
-    [("  Alice lives here.  ", str.strip), ("Alice lives here. SECRET", lambda t: t.removesuffix(" SECRET"))],
-    ids=["offsets-shift", "offsets-unchanged"],
-)
-def test_detector_returning_changed_text_reroutes_over_that_text(mode: str, given: str, normalize: Any) -> None:
-    """A detector that keeps record IDs but returns normalized text: its offsets are for the returned text, so the
-    route replaces or rewrites that text, as the frame-based path does, instead of mixing it with the input."""
-
-    class Normalizing:
-        def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
-            out = dataframe.copy()
-            out[COL_TEXT] = [normalize(str(t)) for t in out[COL_TEXT]]
-            return _detected(out)
-
-    detector: Any = Normalizing()
-    anonymizer = Anonymizer(detection_workflow=detector, rewrite_runner=_StubRewrite(Mock()))
-    data = TextRecordsInput(records=[TextRecord(id="r1", text=given)])
-    with scripted(Case("pin", lambda: _MODES[mode])):
-        result = anonymizer.run(config=_MODES[mode], data=data)
-
-    column, expected = (
-        ("text_replaced", "[REDACTED_FIRST_NAME] lives here.")
-        if mode == "replace"
-        else ("text_rewritten", "R<Alice lives here.>")
-    )
-    assert list(result.dataframe["text"]) == ["Alice lives here."]
-    assert list(result.dataframe[column]) == [expected]
-    assert result.failed_records == []
-
-
-# --- 5: a Mock(spec=EntityDetectionWorkflow) and a run-overriding subclass are driven through their run ---------------
+# --- 5: a Mock(spec=EntityDetectionWorkflow) and a run-overriding subclass are custom: they return a DetectorResult ---------------
 
 
 class _OverridingDetector(EntityDetectionWorkflow):
@@ -201,14 +164,14 @@ class _OverridingDetector(EntityDetectionWorkflow):
         super().__init__(adapter=Mock())
         self.calls: list[int] = []
 
-    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+    def run(self, dataframe: pd.DataFrame, **_: object) -> DetectorResult:  # ty: ignore[invalid-method-override]
         self.calls.append(len(dataframe))
-        return _detected(dataframe, tuple(range(len(dataframe))))
+        return _detected(dataframe)
 
 
 def _spec_mock() -> Mock:
     detector = Mock(spec=EntityDetectionWorkflow)
-    detector.run.side_effect = lambda frame, **_: _detected(frame, tuple(range(len(frame))))
+    detector.run.side_effect = lambda frame, **_: _detected(frame)
     return detector
 
 
@@ -236,19 +199,19 @@ def test_caller_detector_run_is_called_once_and_its_result_used(make: Any, mode:
 
 
 @pytest.mark.parametrize("mode", list(_MODES))
-def test_missing_text_cell_is_not_a_changed_text(tmp_path: Path, mode: str) -> None:
-    """An empty input cell comes back from detection as ``pd.NA``: missing on both sides is the same text, so the
-    call stays on the graph and every row keeps its protection outcome."""
+def test_a_missing_text_cell_keeps_its_protection_outcome(tmp_path: Path, mode: str) -> None:
+    """An empty input cell stays on the graph and every row keeps its protection outcome. The detector's own
+    spelling of the missing text (``pd.NA``) is not read: the output shows the input cell."""
 
     class MissingAsNA:
-        def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+        def run(self, dataframe: pd.DataFrame, **_: object) -> DetectorResult:
             out = dataframe.copy()
             out[COL_TEXT] = [pd.NA if pd.isna(t) else t for t in out[COL_TEXT]]
             out[COL_FINAL_ENTITIES] = [
                 {"entities": []} if pd.isna(t) else _first_word_entities(t) for t in out[COL_TEXT]
             ]
             out[COL_ENTITIES_BY_VALUE] = [_build_entities_by_value(e) for e in out[COL_FINAL_ENTITIES]]
-            return EntityDetectionResult(out, [], tuple(range(len(out))))
+            return as_detector_result(dataframe, out)
 
     csv_path = tmp_path / "input.csv"
     pd.DataFrame({"id": ["a", "b", "c"], "text": ["Alice works here.", None, "Bob lives there."]}).to_csv(
@@ -261,7 +224,7 @@ def test_missing_text_cell_is_not_a_changed_text(tmp_path: Path, mode: str) -> N
             config=_MODES[mode], data=AnonymizerInput(source=str(csv_path), text_column="text", id_column="id")
         )
 
-    assert [str(t) for t in result.dataframe["text"]] == ["Alice works here.", "<NA>", "Bob lives there."]
+    assert [str(t) for t in result.dataframe["text"]] == ["Alice works here.", "nan", "Bob lives there."]
     assert [result.outcome(row).terminal for row in range(3)] == ["success"] * 3
     if mode == "replace":
         assert list(result.dataframe["text_replaced"])[::2] == [

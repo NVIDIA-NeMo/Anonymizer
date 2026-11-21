@@ -117,17 +117,19 @@ overlapped an earlier span, and left any of its text that no earlier span covere
   `overlapping_output_ownership` (a partial overlap), `mention_out_of_range` (past the end of the text, negative or
   zero-width), `mention_slice_mismatch` (the text differs from `value`) or `mention_unlabelled` (no label, and no
   labelled span covers it).
-- In Rewrite, a `final_entities` payload that does not parse fails the record at `detect` with `invalid_output`;
-  Replace fails it at step `replace` (see Replace).
-- `_entities_by_value` may be left out. For a row with spans, it is rebuilt from the kept spans plus every value the
-  detector listed, and the value of every collapsed span, that still occurs in the text outside the kept spans. A value
-  occurs as a whole word, ignoring case and accents (a value of up to three uppercase characters matches with its case,
-  and a value of two or more characters in Han, Thai or a similar script matches anywhere); a one-character value in an
-  unspaced script, such as 王, counts wherever it appears. A row without spans keeps the detector's view.
+- In Rewrite, a built-in detector's `final_entities` payload that does not parse fails the record at `detect` with
+  `invalid_output`; Replace fails it at step `replace` (see Replace). A custom detector returns typed spans in a
+  `DetectorResult` instead, and a malformed one raises `InvalidDetectorResultError` (see "Detection contract").
+- A custom detector no longer returns `_entities_by_value`; the engine builds it. For a row with spans, it is built
+  from the kept spans plus every value the detector listed, and the value of every collapsed span, that still occurs
+  in the text outside the kept spans. A value occurs as a whole word, ignoring case and accents (a value of up to three
+  uppercase characters matches with its case, and a value of two or more characters in Han, Thai or a similar script
+  matches anywhere); a one-character value in an unspaced script, such as 王, counts wherever it appears. A row
+  without spans keeps the detector's view.
 - The built-in detector does not produce such spans.
 - What to do: a custom detector must report non-overlapping code-point offsets into the text it was given, and a
-  label for every span. These checks run only when the detector's rows name their input rows and keep the text
-  unchanged (see "A detector that changes the text").
+  label for every span. These checks run on every custom detector's result: it names its input rows by record id and
+  carries no text of its own (see "Detection contract").
 - Changed in: #305, #423, #319, #432.
 
 **The regex time budget is measured in CPU time.** Each rule's budget counts CPU seconds of its scanning thread, with
@@ -179,7 +181,8 @@ such advisory. A `not_met` row stays in the output frame.
 Hash, Annotate and Substitute fail a row at step `detect` with `unspanned_value` when a value the detector reports, in
 a span or in `_entities_by_value`, occurs in the text outside every kept span. That includes a span's value repeated
 without a span, and a value that crosses two spans. Replace changes spans only, so v0.5.0 returned such a value
-unreplaced. Built-in detection is not checked.
+unreplaced. Built-in detection protects such a repeat instead: Replace adds a span there (see "Detection contract"),
+and a repeat that crosses a kept span's edge fails the row with `unspanned_value`.
 - What to do: report a span for each occurrence, or read `failed_records`.
 - Changed in: #432.
 
@@ -348,12 +351,11 @@ rewrite judge skips a row with no detected entities). A judge never changes qual
   record's id is reported as that record.
 - Changed in: #387.
 
-**A detector that changes the text loses per-row outcomes.** When a custom detector returns a row whose text differs
-from its input, or rows that name no input row, the run replaces or rewrites the detector's frame as returned. That
-call has no per-row outcomes, and the span checks under Detection and the `unspanned_value` check under Replace do not
-run. In Replace, identical and contained spans still collapse, but any other broken span raises `GraphRejection` for
-the whole run instead of failing one record.
-- What to do: return the input text unchanged, and name each row's input row with source positions or record IDs.
+**A detector result that cannot be placed raises.** A custom detector returns a `DetectorResult` whose rows name
+their input rows by record id and carry no text, so the run never works over a detector's frame as returned. A result
+that names no input row, or names one twice, raises `InvalidDetectorResultError` before any model call (see "Detection
+contract"). On the #319 branch before the contract, such a result was rerouted without per-row outcomes or span checks.
+- What to do: return a `DetectorResult` (see "Detection contract").
 - Changed in: #319 (`845f4106`), #432.
 
 **`display_record` reads a null metric as "not available".** A null Utility, Leakage or Weighted Leakage Rate (`None`,
@@ -454,6 +456,54 @@ These are additions and break nothing.
 
 These are not on the #319 branch yet. Each lands with its change.
 
+### Detection contract
+
+**A custom `detection_workflow` returns a `DetectorResult`.** This replaces the frame with `final_entities` and
+`_entities_by_value` columns, and it applies to every detector other than the built-in `EntityDetectionWorkflow`
+class itself, including its subclasses and `Mock(spec=EntityDetectionWorkflow)`.
+- A `DetectorResult` holds one `DetectorRow(record_id, spans, extra_values, latent)` per answered input record, named
+  by its `_anonymizer_record_id`, and the records the detector failed. `DetectedSpan`, `DetectorRow`,
+  `DetectorResult`, `FailedRecord` (for `DetectorResult.failed`), `InvalidDetectorResultError` and `TEXT_COLUMN` (the
+  name of the text column a detector receives) are exported from `anonymizer`.
+- A result that cannot be placed against the input raises `InvalidDetectorResultError` before any model call: any
+  other return type, a malformed span, extra value or failure, an id that is not an input id, or an id answered or
+  failed twice. Before, each case went differently: a frame whose rows could not be placed was rerouted, and the run
+  worked over it as returned, without these checks; a return value that is not a frame, such as a dict, raised
+  `AttributeError`; and a span with a null label failed its record at `replace`.
+- A record the result neither answers nor fails fails at `detect` with `dropped_output`.
+- The engine renders `final_entities`, `_entities_by_value`, `tagged_text` and `_latent_entities` from the result. A
+  detector-supplied text column, `tagged_text` or `source_positions` is no longer read.
+- Failures from a custom `detection_workflow` are named by the input record's id (the `TextRecord` id, or a
+  generated id for file input), not by the returned row's index.
+- What to do: build one `DetectorRow` per input row from `dataframe["_anonymizer_record_id"]`, move each span from
+  the `final_entities` dict into `DetectedSpan(start, end, label, value)`, and move any value listed only in
+  `_entities_by_value` into `extra_values`. See "Custom detection workflows".
+
+**A custom runner's `run()` must keep `_anonymizer_record_id` on every row it returns.** This applies to a
+`replace_runner` or `rewrite_runner` that overrides `run()`.
+- A returned row with no record id, an id that is not an input id, or an id returned twice is not released, and each
+  input record that no released row answers fails at that runner's step with `unplaced_output`. Such rows were
+  released before.
+- What to do: keep the `_anonymizer_record_id` column of the frame the runner receives, unchanged, on every row it
+  returns, and return at most one row per record.
+
+**Other detection and Replace changes.**
+- The "Detection complete — N entities found" log line counts the final (kept) entities for every detector, the
+  built-in one included. Before, it counted the built-in detector's validated entities before label filtering, and 0
+  for a custom detector.
+- Built-in detection in the Replace modes now replaces a missed repeat: where a detected value occurs again without a
+  span, a span with the first detected span's label is added (`"source": "repeat"` in `final_entities`), and the
+  occurrence is replaced like the others. It was released unreplaced before. The added span covers the whole matched
+  word, so `order #W3916020` becomes `order [REDACTED_ORDER_ID]`. A repeat that crosses a kept span's edge gets no
+  span, and its row fails at `detect` with `unspanned_value`; such a row was released before. Rewrite is unchanged.
+- A `replace_runner` whose `run_with_detection` override does not accept the `detector` keyword (or `**kwargs`) now
+  raises `InvalidConfigError` before detection, naming the keyword. The facade passes
+  `detector="builtin" | "custom"` on every call. With a custom detector such an override raised `TypeError` on an
+  `unspanned_check` keyword, which `detector` replaces. A `rewrite_runner` override receives no new keyword.
+- Substitute rows gain a `placeholder_in_text` column, `True` when the replaced text keeps a placeholder substitute
+  (`[SUBSTITUTE_<LABEL>_<n>]`) of the row's own replacement map. The row is not failed and stays `met`, as in Rewrite,
+  where the same situation flags the row for review.
+
 ### #407: frozen config and one options object
 
 **Config fields cannot be reassigned.** `AnonymizerConfig`, `Detect`, `Rewrite`, `PrivacyGoal`, the replace
@@ -498,9 +548,10 @@ session and its snapshots are provisional.
   to give the second label a placeholder; for such a value, record-mode (default) output is unchanged from v0.5.0.
 - What to do: in run mode, if you relied on a placeholder for the second label, read `result.replacement_map(row)`,
   whose entries carry each label and its substitute.
-- Without a stable session, including `Session()`, a custom replace runner's `run_with_detection()` and its map
-  workflow's `generate_validated_maps()` are called as before `session` existed, so overrides with the older
-  signatures keep working.
+- Without a stable session, including `Session()`, a custom replace runner's `run()` and its map workflow's
+  `generate_validated_maps()` are called as before `session` existed, so overrides with the older signatures keep
+  working. A `run_with_detection()` override must also accept `detector` (or `**kwargs`); one that does not raises
+  `InvalidConfigError` before detection (see "Detection contract").
 - Under a stable session, a custom replace runner is also rejected before detection when it overrides
   `run_with_detection()` or its map workflow's `generate_validated_maps()`, even when the override forwards
   `**kwargs` or `session`, and when the stock method is bound to another object.

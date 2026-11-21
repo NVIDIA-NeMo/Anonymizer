@@ -24,6 +24,7 @@ from anonymizer.engine.constants import (
     COL_SENSITIVITY_DISPOSITION,
     COL_TEXT,
     COL_UTILITY_SCORE,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detect_step import resolve_positions
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
@@ -33,12 +34,18 @@ from anonymizer.engine.ndd.failed_record import FailedRecord
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow, _rewrite_lowered, _Rows
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL
+from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import measurement_session
 from tests.spec_programs._builder import Checks, graph, run
 
 TEXTS = ("alpha", "beta", "gamma")
 PASSES = (1, 2, 3)
 BAD = {(1, 1), (2, 3)}  # (target index, pass): the candidate carries the marker only at that pass
+
+
+def _ids(frame: pd.DataFrame) -> pd.DataFrame:
+    """``frame`` with the record id column the ``Anonymizer`` seam attaches before the detect step."""
+    return frame.assign(**{RECORD_ID_COLUMN: [f"r{i}" for i in range(len(frame))]})
 
 
 class _Loop:
@@ -345,28 +352,33 @@ def program() -> list[dict[str, str]]:
             ["a", "c", "d", "e"], entity_rows=(0, 1, 2), positions=(0, 2, 3, 4), failures=(_DETECTION_FAILURE,)
         )
         workflow = _stubbed(RewriteWorkflow(Mock()), fail_row=2, failure=_REWRITE_FAILURE)
-        result = workflow.run_with_detection(pd.DataFrame({COL_TEXT: texts}), detect=lambda _: detection, **_OPTIONS)
+        result = workflow.run_with_detection(
+            _ids(pd.DataFrame({COL_TEXT: texts})), detect=lambda _: detection, **_OPTIONS
+        )
         out = list(result.dataframe[COL_TEXT])
         return (
             result.failed_records == [_DETECTION_FAILURE, _REWRITE_FAILURE]
             and "b" not in out
             and "d" not in out
             and out == ["a", "c", "e"]
-            and result.detection is detection,
+            # The detection result is the detector's, with each row's input record id carried onto it.
+            and result.detection.failed_records == detection.failed_records
+            and list(result.detection.dataframe[RECORD_ID_COLUMN]) == ["r0", "r2", "r3", "r4"],
             f"failures={[f.step for f in result.failed_records]}, output texts={out}",
         )
 
     c.guard("E16.14", failure_order)
 
     def reroute_failures() -> tuple[bool, str]:
+        # A detection result that cannot be placed is no longer rerouted: it raises before any rewrite stage.
         detection = _detection(["c", "a", "b"], entity_rows=(0, 1, 2), failures=(_DETECTION_FAILURE,))
         workflow = _stubbed(RewriteWorkflow(Mock()), fail_row=1, failure=_REWRITE_FAILURE)
         frame = pd.DataFrame({COL_TEXT: ["a", "b", "c"]})
-        result = workflow.run_with_detection(frame, detect=lambda _: detection, **_OPTIONS)
-        return (
-            result.failed_records == [_DETECTION_FAILURE, _REWRITE_FAILURE] and result.detection is detection,
-            f"rerouted failures={[f.step for f in result.failed_records]}",
-        )
+        try:
+            workflow.run_with_detection(frame, detect=lambda _: detection, **_OPTIONS)
+        except AnonymizerWorkflowError as exc:
+            return True, f"raised: {exc}"
+        return False, "an unplaceable detection result was rerouted"
 
     c.guard("E16.15", reroute_failures)
 
@@ -377,11 +389,14 @@ def program() -> list[dict[str, str]]:
         missing_source = pd.DataFrame({COL_TEXT: ["a", None]})
         missing = _detection(["a", "b"], entity_rows=())
         missing.dataframe[COL_TEXT] = pd.Series(["a", np.nan], dtype=object)
-        got = (
-            resolve_positions(source, differs),
-            resolve_positions(source, same),
-            resolve_positions(missing_source, missing),
-        )
+
+        def placed(src: pd.DataFrame, result: object) -> object:
+            try:  # no row is placed by its text: an unplaceable result raises
+                return resolve_positions(src, result)  # ty: ignore[invalid-argument-type]
+            except AnonymizerWorkflowError:
+                return None
+
+        got = (placed(source, differs), placed(source, same), placed(missing_source, missing))
         return got == (None, None, None), f"differing text={got[0]}, equal text={got[1]}, missing values={got[2]}"
 
     c.guard("E16.16", position_resolution)
@@ -389,7 +404,7 @@ def program() -> list[dict[str, str]]:
     def positions_include_passthrough() -> tuple[bool, str]:
         detection = _detection(["a", "b", "c"], entity_rows=(0, 2), positions=(0, 1, 2))
         workflow = _stubbed(RewriteWorkflow(Mock()))
-        frame = pd.DataFrame({COL_TEXT: ["a", "b", "c"]})
+        frame = _ids(pd.DataFrame({COL_TEXT: ["a", "b", "c"]}))
         result = workflow.run_with_detection(frame, detect=lambda _: detection, **_OPTIONS)
         return result.source_positions == (0, 1, 2), f"source positions={result.source_positions}"
 
@@ -399,7 +414,9 @@ def program() -> list[dict[str, str]]:
         detection = _detection(["a", "b"], entity_rows=(0, 1), positions=(0, 1))
         workflow = _stubbed(CombinedRewriteWorkflow(Mock()))
         with measurement_session() as collector:
-            workflow.run_with_detection(pd.DataFrame({COL_TEXT: ["a", "b"]}), detect=lambda _: detection, **_OPTIONS)
+            workflow.run_with_detection(
+                _ids(pd.DataFrame({COL_TEXT: ["a", "b"]})), detect=lambda _: detection, **_OPTIONS
+            )
         stages = [r["stage"] for r in collector.records if not r.get("stage", "graph_").startswith("graph_")]
         return stages == ["CombinedRewriteWorkflow.run"], f"recorded stages={stages}"
 

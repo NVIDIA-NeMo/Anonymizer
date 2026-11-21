@@ -19,8 +19,10 @@ from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
     _build_entities_by_value,
 )
+from anonymizer.engine.detection.result import DetectorResult
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.interface.anonymizer import Anonymizer, AnonymizerResult
+from tests.detector_results import as_detector_result, input_record_ids
 
 REJECTED = "Alice Smith lives in Paris."  # partially overlapping spans: fails at detect
 VALID = "Bob lives in Paris."  # shares (city, Paris) with the rejected row
@@ -50,7 +52,10 @@ def _entities(text: str) -> dict[str, Any]:
 
 
 class _OverlappingDetector:
-    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+    def run(self, dataframe: pd.DataFrame, **kwargs: object) -> DetectorResult:
+        return as_detector_result(dataframe, self.frame(dataframe))
+
+    def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
         frame = dataframe.copy()
         entities = [_entities(str(text)) for text in frame[COL_TEXT]]
         frame[COL_FINAL_ENTITIES] = entities
@@ -93,7 +98,8 @@ def test_row_rejected_at_detect_stays_out_of_map_generation(
     tmp_path: Path, consistency: Literal["record", "run"]
 ) -> None:
     map_rows, result = _run(tmp_path, consistency)
-    assert result.failed_records == [FailedRecord("0", "detect", "overlapping_output_ownership")]
+    first = input_record_ids(AnonymizerInput(source=str(tmp_path / "in.csv")))[0]
+    assert result.failed_records == [FailedRecord(first, "detect", "overlapping_output_ownership")]
     # The valid row keeps its own substitutes; none was first chosen for the rejected row.
     assert list(result.dataframe["text_replaced"]) == ["Dave lives in Nice."]
     # The map request carries only the rows still ready after detect.

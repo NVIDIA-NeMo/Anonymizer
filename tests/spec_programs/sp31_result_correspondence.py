@@ -29,7 +29,10 @@ def program() -> list[dict[str, str]]:
         source = pd.DataFrame({COL_TEXT: ["Call Ann", "Call Ann"]})
         # Row 1's detection first, then row 0's: equal text, no reported positions.
         returned = pd.DataFrame({COL_TEXT: ["Call Ann", "Call Ann"], "who": ["row 1", "row 0"]})
-        got = resolve_positions(source, EntityDetectionResult(returned, []))
+        try:  # the detect step places no row by its text: an unplaceable result raises
+            got: object = resolve_positions(source, EntityDetectionResult(returned, []))
+        except AnonymizerWorkflowError:
+            got = None
         reason = _resolve(source, returned, None)
         return got is None and reason == "uncorrelated_output", f"positions={got}, reason={reason}"
 
