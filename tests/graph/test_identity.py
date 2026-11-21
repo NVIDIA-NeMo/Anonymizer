@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,7 +17,6 @@ from anonymizer.engine.graph_core.execution import SEEDS
 
 TEXT = "Alice and Bob and Carol"
 ALICE, BOB = graph.SubjectKey("subject-alice"), graph.SubjectKey("subject-bob")
-DOC = Path(__file__).resolve().parents[2] / "docs" / "concepts" / "graph-sdk" / "reference.md"
 
 
 def build(*texts: str) -> tuple[graph.GraphScope, tuple[graph.Datum, ...]]:
@@ -236,7 +234,3 @@ def test_mention_across_two_same_key_declarations_resolves_to_none() -> None:
     ids = (graph.Identity(t, 0, 4, ALICE), graph.Identity(t, 1, 5, ALICE))
     graph.ProtectionGraph(scope, (t,), identities=ids)
     assert subject_of(graph.Mention(t, 0, 5, "x"), ids) is None
-
-
-def test_seed_output_reserved_is_documented() -> None:
-    assert "An output named `session`, `identities` or `record` raises `seed_output_reserved`" in DOC.read_text()

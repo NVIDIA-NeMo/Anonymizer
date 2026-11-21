@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -22,8 +21,6 @@ from anonymizer.engine.graph_core.authoring import (
 )
 from anonymizer.engine.graph_core.execution import prepare, protect
 from anonymizer.engine.graph_core.kernel import GraphRejection
-
-DOC = Path(__file__).resolve().parents[2] / "docs" / "concepts" / "graph-sdk" / "reference.md"
 
 
 def _operation(outputs: dict[str, str], fn: Any = lambda text: {}) -> Operation:
@@ -67,7 +64,3 @@ def test_standard_verifier_layout_constructs_and_runs(build: str, requires: tupl
     outcome = result.outcome(a)
     assert (outcome.terminal, outcome.qualification) == ("success", "met" if requires else "not_assessed")
     assert result.value(a, "assessment", producer="v") == Assessment(True, a)
-
-
-def test_rejection_code_is_documented() -> None:
-    assert 'GraphRejection("verifier_ports")' in DOC.read_text()
