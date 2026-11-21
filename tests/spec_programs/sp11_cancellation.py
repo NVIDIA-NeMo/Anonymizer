@@ -57,7 +57,6 @@ def program() -> list[dict[str, str]]:
         r2 is not None and calls == [("first", "Alice one")] and not any(a.operation == "second" for a in r2.attempts),
         f"dispatches={[op for op, _ in calls]}",
     )
-    c.retired("E11.3", "retired 2026-10-22; superseded by E11.3'")
     o1 = r2.outcome(t1) if r2 else None
     dispatched = [a for a in r2.attempts if a.target == t1] if r2 else []
     c.check(

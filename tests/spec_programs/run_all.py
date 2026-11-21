@@ -39,7 +39,6 @@ PROGRAMS = [
     "sp33_records",
     "sp34_session",
 ]
-RETIRED_SP8 = [f"E8.{i}" for i in range(1, 6)]
 
 
 def collect() -> list[dict[str, str]]:
@@ -51,8 +50,6 @@ def collect() -> list[dict[str, str]]:
         # A crashed program is reported, not hidden.
         except Exception as exc:
             lines.append({"program": name, "check": "*", "result": "FAIL", "detail": f"crashed: {type(exc).__name__}"})
-        if name == "sp07_offsets":
-            lines += [{"program": "SP-8", "check": e, "result": "RETIRED", "detail": "retired"} for e in RETIRED_SP8]
     return lines
 
 

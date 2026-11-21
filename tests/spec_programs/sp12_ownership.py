@@ -44,7 +44,6 @@ def _with_resource(fail: bool) -> bool:
 
 def program() -> list[dict[str, str]]:
     c = Checks("SP-12")
-    c.retired("E12.1", "retired 2026-10-22")
     closed = [_with_resource(False), _with_resource(True)]
     c.check("E12.2", closed == [False, False], f"closed after success/failure={closed}")
     effects: list[str] = []

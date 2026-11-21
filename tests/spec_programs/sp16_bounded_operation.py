@@ -327,8 +327,6 @@ def program() -> list[dict[str, str]]:
 
     c.guard("E16.10", fan_out_order)
 
-    c.retired("E16.11", "retired 2026-11-13; the readiness flag no longer decides the check")
-
     def dropped_row() -> tuple[bool, str]:
         out = _lowered([{}, {}, {}], leak=0.5, util=0.1, drop=1).dataframe
         text = list(out[COL_REWRITTEN_TEXT])
