@@ -534,6 +534,16 @@ def test_run_workflow_lists_a_row_dropped_for_another_reason_by_its_own_cause(mo
     ]
 
 
+def test_run_workflow_lists_a_refused_row_by_its_recorded_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A row the stop refused while another step's request for it was already failing keeps that step's reason."""
+    result = _run_two_rows(_stop_refusing(monkeypatch, refused=[1], dropped={1: _BUG}))
+
+    assert result.dataframe["text"].tolist() == ["row-1"]
+    assert [(r.step, r.reason) for r in result.failed_records] == [
+        ("rewrite-pipeline", "Record missing from workflow output: _later: generation failed")
+    ]
+
+
 def _raise_after_stop(error: Exception) -> object:
     def create(*args: object, **kwargs: object) -> None:
         _trip()

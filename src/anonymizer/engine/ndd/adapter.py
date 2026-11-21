@@ -784,7 +784,7 @@ def _missing_records(
     """Fail each input row absent from the output, with the cause its own task traces recorded.
 
     A row at a position in ``refused`` was refused by a stopped step and is listed as ``stopped_early (<step>)``,
-    naming that step, whatever else its traces recorded.
+    naming that step, unless its traces recorded another failure, whose reason it keeps.
     """
     refused = refused or {}
     reasons = _failure_reasons_by_position(
@@ -804,9 +804,11 @@ def _missing_records(
         FailedRecord(
             record_id=record_ids[position],
             step=workflow_name,
-            reason=f"{STOPPED_EARLY} ({refused[position]})"
+            reason=reasons[position]
+            if position in reasons
+            else f"{STOPPED_EARLY} ({refused[position]})"
             if position in refused
-            else reasons.get(position, untraced_reason),
+            else untraced_reason,
         )
         for position in missing
     ]
