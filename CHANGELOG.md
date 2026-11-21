@@ -240,13 +240,13 @@ missing Rewrite text is `None` in the default staged mode and in the combined mo
 
 **A Rewrite step whose model keeps giving no usable response stops early.** When the share of a step's last
 `shutdown_error_window` rows without a usable response reaches `shutdown_error_rate` (by default 5 of 10), that step
-sends no further requests and logs one warning naming the step, the rate, the window and the threshold. Rows that
-had already passed the stopped step are not dropped with the rows not run: they finish and are returned. Only rows the
+sends no further requests and logs one warning naming the step, the rate, the window and the threshold. Rows that had
+already passed the stopped step are not dropped with the rows not run: they finish and are returned. Only rows the
 stopped step refused are listed in `failed_records`, each once, with the reason `stopped_early (<step>)` naming that
-step by its column name, for example `stopped_early (_domain)`. The stop does not raise, even when no row finished. Each repair round counts on its own, in
-the staged and the combined mode. A row that failed for another reason keeps that reason, and an error the stop did not
-cause still fails the run. A dataset smaller than the window never stops. In v0.5.0 DataDesigner's own shutdown ended
-the run and raised `AnonymizerWorkflowError` when no row had finished.
+step by its column name, for example `stopped_early (_domain)`. The stop does not raise, even when no row finished. Each
+repair round counts on its own, in the staged and the combined mode. A row that failed for another reason keeps that
+reason, and an error the stop did not cause still fails the run. A dataset smaller than the window never stops. In
+v0.5.0 DataDesigner's own shutdown ended the run and raised `AnonymizerWorkflowError` when no row had finished.
 - What to do: check the named step's model. To run every row anyway, set `disable_early_shutdown=True` in
   `data_designer_run_config`.
 - Changed in: #431, #<this PR>.
