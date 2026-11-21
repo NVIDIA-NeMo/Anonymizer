@@ -22,9 +22,19 @@ def test_no_engine_module_imports_the_interface_layer() -> None:
     importers = []
     for path in sorted(_ENGINE.rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            names = [node.module or ""] if isinstance(node, ast.ImportFrom) else []
-            names += [alias.name for alias in node.names] if isinstance(node, ast.Import) else []
-            if any(name == "anonymizer.interface" or name.startswith("anonymizer.interface.") for name in names):
+            names = []
+            if isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                names.append(module)
+                if module == "anonymizer":  # `from anonymizer import interface` or a re-exported error
+                    names += [f"anonymizer.{alias.name}" for alias in node.names]
+            elif isinstance(node, ast.Import):
+                names += [alias.name for alias in node.names]
+            public = {f"anonymizer.{name}" for name in interface_errors.__all__}
+            if any(
+                name == "anonymizer.interface" or name.startswith("anonymizer.interface.") or name in public
+                for name in names
+            ):
                 importers.append(path.relative_to(_ENGINE).as_posix())
     assert importers == []
 

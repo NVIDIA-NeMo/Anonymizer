@@ -4,7 +4,8 @@
 """The error types the engine raises and users catch, defined below both layers.
 
 Users import them from ``anonymizer`` or ``anonymizer.interface.errors``, which re-export these classes; each keeps
-``anonymizer.interface.errors`` as its ``__module__``, so tracebacks and pickles name them as before.
+``anonymizer.interface.errors`` as its ``__module__``, so tracebacks and pickles name them as before. The cost:
+``inspect.getsource`` on these classes looks in the wrong module, so it fails or returns the wrong lines.
 """
 
 from __future__ import annotations
