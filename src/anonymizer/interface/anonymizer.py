@@ -480,20 +480,11 @@ class Anonymizer:
                 support and otherwise raise ``InvalidConfigError``. Methods without
                 ``entity_label_examples`` remain supported when no examples are configured;
                 configuring unsupported examples raises ``InvalidConfigError`` too.
-                Its ``run`` returns a ``DetectorResult``: one ``DetectorRow`` per answered
-                input record, named by the record's ``_anonymizer_record_id``. Only the
-                built-in ``EntityDetectionWorkflow`` class itself returns a frame; its
-                subclasses return a ``DetectorResult`` like any other detector. A result
-                that cannot be placed against the input raises
-                ``InvalidDetectorResultError`` before any model call; a record neither
-                answered nor failed fails at ``detect`` with ``dropped_output``. Spans
-                must be half-open, within the text, non-empty, labelled, and slice to
-                their ``value`` exactly; identical spans collapse into the first labelled
-                one and a span inside a labelled span gives way to it. Any other overlap
-                or contract break fails the record at ``detect``. In the Replace modes a
-                row with a reported value that occurs in its text outside every kept span
-                fails at ``detect`` with ``unspanned_value``. See "Custom detection
-                workflows" in the detection concepts page.
+                Its ``run`` returns a ``DetectorResult`` (only the built-in
+                ``EntityDetectionWorkflow`` class itself returns a frame); a result that
+                cannot be placed against the input raises ``InvalidDetectorResultError``
+                before any model call. The span rules and the failures a record can get
+                are in "Custom detection workflows" on the detection concepts page.
             replace_runner: Custom replacement workflow (advanced/testing). Its ``evaluate()`` must keep each row's
                 record id: ``evaluate()`` matches judge rows to records only by id, reports a row without one
                 unassessed, and reports a row given another record's id as that record.
