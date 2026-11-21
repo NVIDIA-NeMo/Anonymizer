@@ -28,7 +28,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-from anonymizer.engine.ndd.model_response import RetryBudget, ask, no_response
+from anonymizer.engine.ndd.model_response import RetryBudget, ask, log_unavailable, no_response, row_key
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import (
     parse_privacy_answers,
@@ -224,15 +224,12 @@ def _make_repair_column(repairer_alias: str) -> Any:
         def parse(text: str) -> tuple[RewriteOutputSchema, bool]:
             return cast(RewriteOutputSchema, recipe.parse(text)), False
 
-        response = await ask(models[repairer_alias], prompt, parse, REPAIR_BUDGET, step=COL_REWRITTEN_TEXT_NEXT)
+        response = await ask(
+            models[repairer_alias], prompt, parse, REPAIR_BUDGET, step=COL_REWRITTEN_TEXT_NEXT, key=row_key(row)
+        )
         if response.value is None:
             # Keep the row with no next text: it is withheld and flagged, never released as the failing candidate.
-            logger.warning(
-                "%s unavailable after %d responses (%s); keeping the row and withholding its rewrite.",
-                COL_REWRITTEN_TEXT_NEXT,
-                response.requests,
-                response.cause,
-            )
+            log_unavailable(logger, COL_REWRITTEN_TEXT_NEXT, response, kept="the row and withholding its rewrite")
             row[COL_REWRITTEN_TEXT_NEXT] = None
             return row
         row[COL_REWRITTEN_TEXT_NEXT] = response.value.rewritten_text

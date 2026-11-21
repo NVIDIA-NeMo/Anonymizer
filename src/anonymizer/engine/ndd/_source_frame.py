@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Container, Generator, Mapping
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -74,8 +74,11 @@ class WorkflowSourceFrame:
         seed[self.key_column] = self.keys
         return seed
 
-    def project(self, returned: pd.DataFrame, *, requested: int | None = None) -> tuple[pd.DataFrame, tuple[int, ...]]:
-        """Validate one result per source and remove private transport identity."""
+    def project(
+        self, returned: pd.DataFrame, *, requested: int | None = None, excluded: Container[str] = ()
+    ) -> tuple[pd.DataFrame, tuple[int, ...]]:
+        """Validate one result per source and remove private transport identity; leave out the rows whose key is in
+        ``excluded``."""
         if len(returned) == 0:
             return returned.drop(columns=self.key_column, errors="ignore"), ()
         if list(returned.columns).count(self.key_column) != 1:
@@ -86,7 +89,8 @@ class WorkflowSourceFrame:
             raise AnonymizerWorkflowError("Workflow output has invalid source correspondence")
         if len(set(keys)) != len(keys):
             raise AnonymizerWorkflowError("Workflow output has duplicate source correspondence")
-        order = sorted(range(len(keys)), key=lambda index: source_positions[keys[index]])
+        kept = [index for index in range(len(keys)) if keys[index] not in excluded]
+        order = sorted(kept, key=lambda index: source_positions[keys[index]])
         positions = tuple(source_positions[keys[index]] for index in order)
         return returned.iloc[order].drop(columns=self.key_column).reset_index(drop=True), positions
 

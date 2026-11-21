@@ -14,6 +14,7 @@ from data_designer.config.column_configs import LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
+from data_designer.config.preview_results import PreviewResults
 from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.engine.errors import DataDesignerRuntimeError
 from data_designer.errors import DataDesignerError
@@ -27,8 +28,9 @@ from data_designer.interface.errors import (
 
 from anonymizer.engine.constants import RECORD_ID_COLUMN
 from anonymizer.engine.ndd import adapter as ndd_adapter
+from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
 from anonymizer.engine.ndd.adapter import NddAdapter
-from anonymizer.engine.ndd.model_response import _RUN_STOP
+from anonymizer.engine.ndd.model_response import _RUN_STOP, RunStop
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
 _FORBIDDEN_BACKEND_STRINGS = ("Data Designer", "DataDesigner", "data_designer", "DD")
@@ -426,7 +428,24 @@ def test_run_workflow_on_no_rows_returns_the_declared_columns_without_running() 
     assert result.failed_records == []
 
 
-_REFUSED = "Generator failed for column '_domain' during cell generation: stopped_early: _domain"
+def test_run_workflow_on_an_empty_preview_returns_the_declared_columns() -> None:
+    """A preview that returns no dataset gives the same empty frame as a run on no rows, declared columns included."""
+    mock_dd = Mock(spec=DataDesigner)
+    mock_dd.preview.side_effect = lambda builder, **_: PreviewResults(config_builder=builder, dataset=None)
+
+    result = NddAdapter(data_designer=mock_dd).run_workflow(
+        pd.DataFrame({"text": ["row-1"]}),
+        model_configs=[_make_model_config()],
+        columns=_make_columns(),
+        workflow_name="replace-workflow",
+        preview_num_records=1,
+    )
+
+    assert result.dataframe.empty
+    assert {"text", RECORD_ID_COLUMN, "output"} <= set(result.dataframe.columns)
+    assert [r.reason for r in result.failed_records] == ["Record missing from workflow output"]
+
+
 _BUG = "Custom generator function failed for column '_later': TypeError: bug in a later column"
 
 
@@ -434,48 +453,95 @@ def _trace(row: int, column: str, error: str, status: str = "error") -> SimpleNa
     return SimpleNamespace(status=status, row_group=0, row_index=row, column=column, error=error)
 
 
-def test_run_workflow_lists_rows_not_run_after_a_step_stopped_early(
-    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """DataDesigner's own shutdown raises when no row finished; after a stop that is not an error."""
-    caplog.set_level(logging.WARNING, logger="anonymizer.ndd")
-    refusals = [_trace(0, "_domain", _REFUSED), _trace(1, "_domain", _REFUSED)]
-    monkeypatch.setattr(ndd_adapter, "_builder_traces", lambda builders: refusals)
+def _trip() -> RunStop:
+    stop = _RUN_STOP.get()
+    assert stop is not None
+    for _ in range(stop.window):
+        stop.record("_domain", True)
+    return stop
+
+
+def _stop_refusing(monkeypatch: pytest.MonkeyPatch, refused: list[int], dropped: dict[int, str] | None = None) -> Mock:
+    """A designer whose run stops ``_domain`` and has it refuse the rows at ``refused``; DataDesigner keeps every row
+    but those in ``dropped``, whose traces record the given error."""
+    frames: list[WorkflowSourceFrame] = []
+    capture = WorkflowSourceFrame.capture
+
+    def capturing(dataframe: pd.DataFrame) -> WorkflowSourceFrame:
+        frames.append(capture(dataframe))
+        return frames[-1]
+
+    monkeypatch.setattr(ndd_adapter.WorkflowSourceFrame, "capture", capturing)
+    dropped = dropped or {}
+
+    def create(*args: object, **kwargs: object) -> Mock:
+        stop = _trip()
+        seed = frames[-1].seed()
+        for position in refused:
+            assert stop.refuses("_domain", seed.iloc[position][frames[-1].key_column])
+        results = Mock()
+        results.load_dataset.return_value = seed.drop(index=list(dropped)).assign(output="out")
+        results.task_traces = [_trace(position, "_later", error) for position, error in dropped.items()]
+        return results
+
     mock_dd = Mock(spec=DataDesigner)
+    mock_dd.create.side_effect = create
+    return mock_dd
 
-    def stop_then_shut_down(*args: object, **kwargs: object) -> None:
-        stop = _RUN_STOP.get()
-        assert stop is not None
-        for _ in range(stop.window):
-            stop.record("_domain", True)
-        raise DataDesignerEarlyShutdownError("early shutdown")
 
-    mock_dd.create.side_effect = stop_then_shut_down
-    adapter = NddAdapter(data_designer=mock_dd)
-
-    result = adapter.run_workflow(
+def _run_two_rows(mock_dd: Mock) -> ndd_adapter.WorkflowRunResult:
+    return NddAdapter(data_designer=mock_dd).run_workflow(
         pd.DataFrame({"text": ["row-1", "row-2"]}),
         model_configs=[_make_model_config()],
         columns=_make_columns(),
         workflow_name="rewrite-pipeline",
     )
 
+
+def test_run_workflow_returns_the_rows_past_a_stopped_step_and_lists_the_refused_ones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _run_two_rows(_stop_refusing(monkeypatch, refused=[1]))
+
+    assert result.dataframe["text"].tolist() == ["row-1"]
+    assert result.source_positions == (0,)
+    assert [(r.step, r.reason) for r in result.failed_records] == [("rewrite-pipeline", "stopped_early (_domain)")]
+    assert _RUN_STOP.get() is None  # the stop belongs to that run only
+
+
+def test_run_workflow_lists_every_row_when_the_stop_refused_them_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    result = _run_two_rows(_stop_refusing(monkeypatch, refused=[0, 1]))
+
     assert result.dataframe.empty
     assert "output" in result.dataframe.columns
-    assert [(r.step, r.reason) for r in result.failed_records] == [("rewrite-pipeline", "stopped_early (_domain)")] * 2
-    assert _RUN_STOP.get() is None  # the stop belongs to that run only
-    warnings = _unique_records(caplog, level=logging.WARNING, message_contains="after a step stopped early")
-    assert [r.getMessage() for r in warnings] == [
-        "The run ended with EarlyShutdownError after a step stopped early; no row finished, and every "
-        "row is listed in failed_records."
+    assert [r.reason for r in result.failed_records] == ["stopped_early (_domain)"] * 2
+
+
+def test_run_workflow_raises_when_no_row_is_returned_and_one_failed_for_another_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stop refused one row and a bug dropped the other: an error the stop did not cause still fails the run."""
+    with pytest.raises(AnonymizerWorkflowError, match="no row was returned"):
+        _run_two_rows(_stop_refusing(monkeypatch, refused=[0], dropped={1: _BUG}))
+
+
+def test_run_workflow_lists_a_row_dropped_for_another_reason_by_its_own_cause(monkeypatch: pytest.MonkeyPatch) -> None:
+    result = _run_two_rows(_stop_refusing(monkeypatch, refused=[], dropped={1: _BUG}))
+
+    assert result.dataframe["text"].tolist() == ["row-1"]
+    assert [r.reason for r in result.failed_records] == [
+        "Record missing from workflow output: _later: generation failed"
     ]
 
 
-def _trip() -> None:
-    stop = _RUN_STOP.get()
-    assert stop is not None
-    for _ in range(stop.window):
-        stop.record("_domain", True)
+def test_run_workflow_lists_a_refused_row_by_its_recorded_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A row the stop refused while another step's request for it was already failing keeps that step's reason."""
+    result = _run_two_rows(_stop_refusing(monkeypatch, refused=[1], dropped={1: _BUG}))
+
+    assert result.dataframe["text"].tolist() == ["row-1"]
+    assert [(r.step, r.reason) for r in result.failed_records] == [
+        ("rewrite-pipeline", "Record missing from workflow output: _later: generation failed")
+    ]
 
 
 def _raise_after_stop(error: Exception) -> object:
@@ -499,66 +565,13 @@ def _load_fails_after_stop(*args: object, **kwargs: object) -> object:
     [
         pytest.param(_raise_after_stop(ValueError("bug in a later column")), id="value-error"),
         pytest.param(_raise_after_stop(DataDesignerProfilingError("profiling failed")), id="profiling-error"),
+        pytest.param(_raise_after_stop(DataDesignerEarlyShutdownError("early shutdown")), id="shutdown"),
         pytest.param(_load_fails_after_stop, id="load-dataset-key-error"),
     ],
 )
 def test_run_workflow_raises_an_error_the_stop_did_not_cause(create: object) -> None:
     mock_dd = Mock(spec=DataDesigner)
     mock_dd.create.side_effect = create
-    adapter = NddAdapter(data_designer=mock_dd)
 
     with pytest.raises(AnonymizerWorkflowError):
-        adapter.run_workflow(
-            pd.DataFrame({"text": ["row-1", "row-2"]}),
-            model_configs=[_make_model_config()],
-            columns=_make_columns(),
-            workflow_name="rewrite-pipeline",
-        )
-
-
-def _shutdown_after_stop(monkeypatch: pytest.MonkeyPatch, traces: list[SimpleNamespace] | None) -> None:
-    """Run a stop that ends in DataDesigner's shutdown, with ``traces`` as the builder's task traces."""
-    monkeypatch.setattr(ndd_adapter, "_builder_traces", lambda builders: list(traces or []))
-    mock_dd = Mock(spec=DataDesigner)
-    mock_dd.create.side_effect = _raise_after_stop(DataDesignerEarlyShutdownError("early shutdown"))
-    NddAdapter(data_designer=mock_dd).run_workflow(
-        pd.DataFrame({"text": ["row-1", "row-2"]}),
-        model_configs=[_make_model_config()],
-        columns=_make_columns(),
-        workflow_name="rewrite-pipeline",
-    )
-
-
-@pytest.mark.parametrize(
-    "traces",
-    [
-        pytest.param(
-            [_trace(0, "_domain", _REFUSED), _trace(0, "_later", _BUG), _trace(1, "_domain", _REFUSED)],
-            id="refusal-then-bug",
-        ),
-        pytest.param(
-            [_trace(0, "_later", _BUG), _trace(0, "_domain", _REFUSED), _trace(1, "_domain", _REFUSED)],
-            id="bug-then-refusal",
-        ),
-    ],
-)
-def test_run_workflow_raises_a_shutdown_when_any_row_also_failed_for_another_reason(
-    monkeypatch: pytest.MonkeyPatch, traces: list[SimpleNamespace]
-) -> None:
-    with pytest.raises(AnonymizerWorkflowError):
-        _shutdown_after_stop(monkeypatch, traces)
-
-
-@pytest.mark.parametrize(
-    "traces",
-    [
-        pytest.param(None, id="no-builder"),
-        pytest.param([], id="no-traces"),
-        pytest.param([_trace(0, "_domain", "", "ok"), _trace(1, "_domain", "", "ok")], id="no-refusal"),
-    ],
-)
-def test_run_workflow_raises_a_shutdown_with_no_refusal_on_record(
-    monkeypatch: pytest.MonkeyPatch, traces: list[SimpleNamespace] | None
-) -> None:
-    with pytest.raises(AnonymizerWorkflowError):
-        _shutdown_after_stop(monkeypatch, traces)
+        _run_two_rows(mock_dd)
