@@ -100,7 +100,7 @@ from anonymizer.engine.ndd.model_loader import (
     validate_model_alias_references,
     validate_model_configs_reference_providers,
 )
-from anonymizer.engine.protection_policy import assess, assess_any, fail_reasons
+from anonymizer.engine.protection_policy import FAIL_REASONS, UNPLACED_CAUSE, UNPLACED_OUTPUT
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.resolved_input import ResolvedInput
@@ -271,8 +271,7 @@ def _placed_output(
     ids = _record_ids(source) or ()
     answered = {ids[p] for p in positions if p is not None}
     named = {f.record_id for f in (*detection_failures, *runner_failures)}
-    reason = assess("unplaced_output", mode, detector).reason
-    unplaced = [FailedRecord(i, step, reason) for i in ids if i not in answered and i not in named]
+    unplaced = [FailedRecord(i, step, UNPLACED_OUTPUT) for i in ids if i not in answered and i not in named]
     released = output if len(placed) == len(output) else output.iloc[placed].reset_index(drop=True)
     return released, [*runner_failures, *unplaced]
 
@@ -359,8 +358,7 @@ def _reported_outcomes(
 
     def reported(p: int | None) -> TargetOutcome:
         if p is None:
-            cause = assess_any("unplaced_result_row").reason
-            unplaced = (Advisory(names[i], names[i], "could_not_assess", cause) for i in verifiers)
+            unplaced = (Advisory(names[i], names[i], "could_not_assess", UNPLACED_CAUSE) for i in verifiers)
             return replace(unassessed, advisories=tuple(unplaced))
         base = by_id.get(source_ids[p], unassessed)
         kept = (a for a in base.advisories if a.verifier not in judges)  # an earlier evaluation's judges
@@ -1852,7 +1850,7 @@ def _step_to_field(step: str) -> str:
 
 
 # The reasons a failed record can carry: the protection graph's own (an operation's failure or a rejected mention),
-# and every failure reason of the release policy table.
+# and every failure reason of the release policy (``FAIL_REASONS``).
 _GRAPH_FAILURE_REASONS = frozenset(
     {
         "invalid_output",
@@ -1866,7 +1864,7 @@ _GRAPH_FAILURE_REASONS = frozenset(
         "raised",
     }
 )
-_KNOWN_FAILURE_REASONS = _GRAPH_FAILURE_REASONS | fail_reasons()
+_KNOWN_FAILURE_REASONS = _GRAPH_FAILURE_REASONS | FAIL_REASONS
 # Graph operation names a failed record can carry besides the workflow names ``_step_to_field`` knows.
 _KNOWN_FAILURE_STEPS = frozenset({"replace", "rewrite", "verify-no-original", "verify-patches"})
 

@@ -29,7 +29,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.detection.postprocess import EntitySpan, build_tagged_text, get_tag_notation
 from anonymizer.engine.ndd.adapter import FailedRecord
-from anonymizer.engine.protection_policy import assess_any
+from anonymizer.engine.protection_policy import DROPPED_OUTPUT
 from anonymizer.engine.row_partitioning import cell_text, resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema, LatentEntitySchema
 from anonymizer.engine.schemas.detection import EntityByValueSchema
@@ -145,8 +145,7 @@ def render_detector_result(source: pd.DataFrame, result: DetectorResult) -> Enti
         {"latent_entities": [entity.model_dump(mode="json") for entity in row.latent]} for row in rows
     ]
     named = {row.record_id for row in rows} | {failure.record_id for failure in result.failed}
-    reason = assess_any("dropped_record", detector="custom").reason
-    dropped = [FailedRecord(record_id, "detect", reason) for record_id in ids if record_id not in named]
+    dropped = [FailedRecord(record_id, "detect", DROPPED_OUTPUT) for record_id in ids if record_id not in named]
     return EntityDetectionResult(frame, [*result.failed, *dropped], positions)
 
 

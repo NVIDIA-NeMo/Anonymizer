@@ -63,10 +63,11 @@ from anonymizer.engine.ndd.backend import (
     register_plain_kind,
     run_invocation,
 )
-from anonymizer.engine.protection_policy import assess_any, placeholder_in_text, repeat_handling
+from anonymizer.engine.protection_policy import missed_repeat
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
     LlmReplaceWorkflow,
+    placeholder_in_text,
 )
 from anonymizer.engine.replace.replace_runner import ReplacementResult, _drop_malformed_entities
 from anonymizer.engine.replace.strategies import (
@@ -143,10 +144,9 @@ def run_substitute_route(
 
 def _flag_placeholders(output_df: pd.DataFrame) -> None:
     """Set ``placeholder_in_text`` on every Substitute output row: whether its replaced text keeps a placeholder of its
-    own map, when the policy flags that situation. Every Substitute route calls it once."""
-    flags = assess_any("placeholder_in_text", mode="replace").action == "flag"
+    own map. It flags the row and the row stays met. Every Substitute route calls it once."""
     output_df[COL_PLACEHOLDER_IN_TEXT] = [
-        flags and placeholder_in_text(str(text), rmap)
+        placeholder_in_text(str(text), rmap)
         for text, rmap in zip(output_df[COL_REPLACED_TEXT], output_df[COL_REPLACEMENT_MAP])
     ]
 
@@ -239,7 +239,7 @@ def run_replace_pipeline(
         positions = result.source_positions and tuple(result.source_positions[i] for i in kept.index)
         return dataclasses.replace(result, dataframe=kept.reset_index(drop=True), source_positions=positions)
 
-    detect_op = detect_step(dataframe, detect_replaceable, state, repeats=repeat_handling("replace", detector))
+    detect_op = detect_step(dataframe, detect_replaceable, state, repeats=missed_repeat("replace", detector))
     tracker = ProgressTracker(total=len(graph.targets), label="Replacement")
     map_step = build_map = None
     if isinstance(replace_method, Substitute):

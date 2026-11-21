@@ -58,8 +58,8 @@ from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
-from anonymizer.engine.protection_policy import placeholder_in_text as _placeholder_in_text
 from anonymizer.engine.replace.llm_replace_workflow import _fold_replacement_maps
+from anonymizer.engine.replace.llm_replace_workflow import placeholder_in_text as _placeholder_in_text
 from anonymizer.engine.rewrite.repair import RepairWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import (
     RewriteWorkflow,

@@ -33,7 +33,7 @@ from anonymizer.engine.graph_core.authoring import (
 )
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.backend import per_target
-from anonymizer.engine.protection_policy import assess
+from anonymizer.engine.protection_policy import UNSPANNED_VALUE
 from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.schemas.detection import EntitySchema
@@ -161,7 +161,7 @@ def detect_step(
         mentions: list[tuple[object, ...]] = [
             ("malformed",)
             if d in malformed
-            else (Refusal(assess("missed_repeat", "replace", "custom").reason),)
+            else (Refusal(UNSPANNED_VALUE),)
             if d in unspanned
             else tuple(accepted_mentions(d, state.rows[d].entities))
             for d in surviving

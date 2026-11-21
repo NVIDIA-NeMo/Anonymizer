@@ -64,8 +64,8 @@ from anonymizer.engine.ndd.backend import (
 )
 from anonymizer.engine.ndd.model_response import no_response
 from anonymizer.engine.ndd.workflow_utils import run_columns
-from anonymizer.engine.protection_policy import assess_any, placeholder_in_text, repeat_handling
-from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+from anonymizer.engine.protection_policy import REVIEW_FLAGS, missed_repeat
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow, placeholder_in_text
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
@@ -433,10 +433,7 @@ def _withhold_unassessed(frame: pd.DataFrame) -> None:
     The final checks have already run on the text and could not assess it; without a privacy verdict it is not
     released. Rows whose text is already null are left alone (see ``_withhold_rewritten_text`` on null columns).
     """
-    if (
-        COL_PRIVACY_QA_REANSWER not in frame.columns
-        or assess_any("privacy_unassessed", mode="rewrite").action != "withhold"
-    ):
+    if COL_PRIVACY_QA_REANSWER not in frame.columns:
         return
     unassessed = frame[COL_PRIVACY_QA_REANSWER].map(no_response).astype(bool) & frame[COL_REWRITTEN_TEXT].notna()
     if unassessed.any():
@@ -444,8 +441,8 @@ def _withhold_unassessed(frame: pd.DataFrame) -> None:
 
 
 _PRIVACY_CHECKS = frozenset({"high_leak", "leakage_within_threshold"})
-# Rewrite's runners take no detector kind: its verdicts are the same for both kinds, which the policy tests pin.
-_REWRITE_REPEATS = repeat_handling("rewrite", "builtin")
+# Rewrite's runners take no detector kind: Rewrite releases a missed repeat for both kinds.
+_REWRITE_REPEATS = missed_repeat("rewrite", "builtin")
 
 
 def _withhold_failed_repairs(frame: pd.DataFrame, result: ProtectionResult, target_of: Mapping[int, Datum]) -> None:
@@ -455,8 +452,6 @@ def _withhold_failed_repairs(frame: pd.DataFrame, result: ProtectionResult, targ
     ran out of rounds, the preset does not send the row to repair, or ``max_repair_iterations`` is 0. Call it after
     the summary, which counts a repaired row without text as an unparsed repair.
     """
-    if assess_any("privacy_check_failed", mode="rewrite").action != "withhold":
-        return
     failed = [
         any(
             reason.code == "failed" and reason.check in _PRIVACY_CHECKS
@@ -486,10 +481,7 @@ def _unavailable_if(outcome: TargetOutcome, withheld: bool) -> TargetOutcome:
 
 def _needs_review(result: ProtectionResult, target: Datum) -> bool:
     metrics = result.value(target, "metrics") or {}
-    flagged = (
-        bool(metrics.get(situation)) and assess_any(situation, mode="rewrite").action == "flag"
-        for situation in ("undetected_value_kept", "placeholder_in_text")
-    )
+    flagged = (bool(metrics.get(flag)) for flag in REVIEW_FLAGS)
     return result.outcome(target).qualification != "met" or any(flagged)
 
 
