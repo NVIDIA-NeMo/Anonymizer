@@ -21,11 +21,13 @@ from anonymizer.engine.spans import Span, Spans
 from anonymizer.engine.value_matching import (
     Leftover,
     _mapped,
-    _normalized,
     _occurs,
     count_values,
     entity_spans,
     format_cause,
+)
+from anonymizer.engine.value_matching import (
+    normalized as _normalized,
 )
 
 

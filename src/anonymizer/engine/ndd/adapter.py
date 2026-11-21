@@ -34,12 +34,12 @@ from data_designer.interface.errors import DataDesignerEarlyShutdownError
 
 from anonymizer.config.regex import REGEX_WALL_CEILING_FACTOR
 from anonymizer.engine.constants import COL_REGEX_ENTITIES, RECORD_ID_COLUMN
+from anonymizer.engine.errors import AnonymizerWorkflowError
 from anonymizer.engine.graph_core.observe import report_requests
 from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame, designer_hook
 from anonymizer.engine.ndd.failed_record import FailedRecord as FailedRecord
 from anonymizer.engine.ndd.model_response import STOPPED_EARLY, RunStop, StoppedEarly, run_stop
 from anonymizer.engine.ndd.storage import prepare_json_storage_column, prepare_json_storage_seed
-from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
 
 if TYPE_CHECKING:

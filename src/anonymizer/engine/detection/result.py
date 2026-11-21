@@ -28,12 +28,12 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.detection.postprocess import EntitySpan, build_tagged_text, get_tag_notation
-from anonymizer.engine.ndd.adapter import FailedRecord
+from anonymizer.engine.errors import InvalidDetectorResultError
+from anonymizer.engine.ndd.failed_record import FailedRecord
 from anonymizer.engine.protection_policy import DROPPED_OUTPUT
 from anonymizer.engine.row_partitioning import cell_text, resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema, LatentEntitySchema
 from anonymizer.engine.schemas.detection import EntityByValueSchema
-from anonymizer.interface.errors import InvalidDetectorResultError
 
 
 @dataclass(frozen=True)

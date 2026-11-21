@@ -26,12 +26,12 @@ from anonymizer.engine.constants import (
     DEFAULT_ENTITY_LABEL_CATEGORY,
     _jinja,
 )
+from anonymizer.engine.errors import AnonymizerWorkflowError
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityLabelClassificationsSchema
-from anonymizer.interface.errors import AnonymizerWorkflowError
 
 logger = logging.getLogger("anonymizer.rewrite.entity_classification")
 

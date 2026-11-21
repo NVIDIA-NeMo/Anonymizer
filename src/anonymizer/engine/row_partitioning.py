@@ -11,8 +11,8 @@ from typing import Any
 
 import pandas as pd
 
+from anonymizer.engine.errors import AnonymizerWorkflowError
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN
-from anonymizer.interface.errors import AnonymizerWorkflowError
 
 warnings.filterwarnings(
     "ignore",

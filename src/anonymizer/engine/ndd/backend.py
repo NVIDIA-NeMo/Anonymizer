@@ -15,13 +15,13 @@ from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig
 from pydantic_core import to_jsonable_python
 
+from anonymizer.engine.errors import AnonymizerWorkflowError
 from anonymizer.engine.graph_core.authoring import GraphScope, Limits, Operation, ProtectionGraph, Workflow
 from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.graph_core.session import Session
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.row_partitioning import resolve_source_positions
-from anonymizer.interface.errors import AnonymizerWorkflowError
 
 T = TypeVar("T")
 

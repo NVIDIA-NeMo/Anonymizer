@@ -21,6 +21,7 @@ import pandas as pd
 
 from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_FINAL_ENTITIES, RECORD_ID_COLUMN
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, _build_entities_by_value
+from anonymizer.engine.errors import AnonymizerWorkflowError
 from anonymizer.engine.graph_core.authoring import (
     DATUM,
     MENTIONS,
@@ -38,8 +39,7 @@ from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.schemas.detection import EntitySchema
 from anonymizer.engine.schemas.shared import to_python
-from anonymizer.engine.value_matching import _normalized, count_values, entity_spans
-from anonymizer.interface.errors import AnonymizerWorkflowError
+from anonymizer.engine.value_matching import count_values, entity_spans, normalized
 
 RecordId = NewType("RecordId", str)
 """The facade's label for one input record, from its ``_anonymizer_record_id``; it lives within one call."""
@@ -308,11 +308,11 @@ def values_outside_spans(text: str, entities: EntitiesSchema, values: Iterable[s
     fails closed: it is outside when a plain search finds it anywhere no kept span contains."""
     distinct = list(dict.fromkeys(values))
     spans = entity_spans(text, entities.entities)
-    judged = {_normalized(leftover.value): leftover for leftover in count_values(text, spans, "", distinct)}
+    judged = {normalized(leftover.value): leftover for leftover in count_values(text, spans, "", distinct)}
     kept = [(span.start, span.end) for span, _ in spans if span is not None]
     outside = set()
     for value in distinct:
-        leftover = judged.get(_normalized(value))
+        leftover = judged.get(normalized(value))
         if leftover is not None and leftover.undetected_spans:
             outside.add(value)
         elif leftover is None and value and _found_outside(value, text, kept):
@@ -363,10 +363,10 @@ def _first_labels(returned: list[EntitySchema], pairs: list[tuple[str, list[str]
     labels: dict[str, str] = {}
     for entity in returned:
         if entity.label:
-            labels.setdefault(_normalized(entity.value), entity.label)
+            labels.setdefault(normalized(entity.value), entity.label)
     for value, listed in pairs:
         if listed:
-            labels.setdefault(_normalized(value), listed[0])
+            labels.setdefault(normalized(value), listed[0])
     return labels
 
 
@@ -383,10 +383,10 @@ def _repeat_spans(text: str, kept: EntitiesSchema, values: list[str], labels: di
     found: list[tuple[int, int, str]] = []
     judged = set()
     for leftover in count_values(text, spans, "", distinct):
-        judged.add(_normalized(leftover.value))
+        judged.add(normalized(leftover.value))
         found.extend((u.start, u.end, leftover.value) for u in leftover.undetected_spans)
     for value in distinct:
-        if _normalized(value) not in judged:
+        if normalized(value) not in judged:
             start = text.find(value)
             while start >= 0:
                 end = start + len(value)
@@ -395,7 +395,7 @@ def _repeat_spans(text: str, kept: EntitiesSchema, values: list[str], labels: di
                 start = text.find(value, start + 1)
     added: list[EntitySchema] = []
     for start, end, value in sorted(set(found)):
-        label = labels.get(_normalized(value))
+        label = labels.get(normalized(value))
         crosses = any(s < end and start < e and not (start <= s and e <= end) for s, e in taken)
         if label and not crosses:
             taken.append((start, end))

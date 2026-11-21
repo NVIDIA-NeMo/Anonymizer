@@ -33,6 +33,7 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
     _jinja,
 )
+from anonymizer.engine.errors import AnonymizerWorkflowError
 from anonymizer.engine.graph_core.session import BY_VALUE, FALLBACK, Decision, SessionView, Slot
 from anonymizer.engine.graph_core.session import normalize as _fold
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
@@ -42,7 +43,6 @@ from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema, EntityReplacementMapSchema
 from anonymizer.engine.schemas.shared import normalize_payload
-from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
