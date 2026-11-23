@@ -51,6 +51,7 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
     COL_RAW_SENSITIVITY_DISPOSITION,
+    COL_REPAIR_ITERATIONS,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REWRITE_BASELINE_TEXT,
     COL_REWRITE_DISPOSITION_BLOCK,
@@ -74,6 +75,7 @@ from anonymizer.engine.rewrite import combined_rewrite_workflow as combined
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.domain_classification import _DOMAIN_BY_ENUM, DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
+from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.rewrite_generation import RewriteGenerationWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
@@ -835,8 +837,10 @@ def _scripted_models() -> dict[str, Any]:
     return {"model_configs": [_model(_EVALUATOR), _model(_REPAIRER)], "selected_models": selection}
 
 
-def _seeded_rows(rewritten_text: str | None = _EVAL_TEXT) -> pd.DataFrame:
-    """The record under test and a clean record, each with a rewrite and the columns its evaluation reads."""
+def _seeded_rows(rewritten_text: str | None = _EVAL_TEXT, privacy_qa: dict | None = None) -> pd.DataFrame:
+    """The record under test and a clean record, each with a rewrite and the columns its evaluation reads.
+
+    ``privacy_qa`` replaces the record under test's privacy questions; the clean record keeps the one it answers."""
     other_quality = {"items": [{**_EVAL_QUALITY_QA["items"][0], "reference_answer": _OTHER_TEXT}]}
     entities = {"entities_by_value": [{"value": "7312", "labels": ["card_last_four"]}]}
     return pd.DataFrame(
@@ -846,7 +850,7 @@ def _seeded_rows(rewritten_text: str | None = _EVAL_TEXT) -> pd.DataFrame:
             COL_REWRITTEN_TEXT: [rewritten_text, _OTHER_TEXT],
             COL_REWRITE_BASELINE_TEXT: [_EVAL_TEXT, _OTHER_TEXT],
             COL_QUALITY_QA: [_EVAL_QUALITY_QA, other_quality],
-            COL_PRIVACY_QA: [_EVAL_PRIVACY_QA, _EVAL_PRIVACY_QA],
+            COL_PRIVACY_QA: [privacy_qa or _EVAL_PRIVACY_QA, _EVAL_PRIVACY_QA],
             COL_SENSITIVITY_DISPOSITION: [{"sensitivity_disposition": []}] * 2,
             COL_REWRITE_REPLACEMENT_READY: [True, True],
         }
@@ -872,9 +876,10 @@ def _anonymizer_run(
     max_repair_iterations: int,
     rewritten_text: str | None = _EVAL_TEXT,
     risk_tolerance: str | None = None,
+    privacy_qa: dict | None = None,
 ) -> Any:
     """Run both records through ``Anonymizer.run()``: detection returns the seeded rows, and the loop evaluates."""
-    seeded = _seeded_rows(rewritten_text).drop(columns=[COL_TEXT])
+    seeded = _seeded_rows(rewritten_text, privacy_qa).drop(columns=[COL_TEXT])
     # The built-in detector, stubbed: its frame carries the seeded stage columns into the rewrite.
     detector = EntityDetectionWorkflow(adapter=Mock())
     detector.run = Mock(
@@ -1221,3 +1226,200 @@ def test_missing_rewrite_is_withheld_and_flagged_through_run(
     assert row[COL_NEEDS_HUMAN_REVIEW]
     assert result.outcome(0).qualification == "not_met"
     assert not result.dataframe.iloc[1][COL_NEEDS_HUMAN_REVIEW]
+
+
+# --- Privacy coverage: a privacy response that leaves a question unanswered leaves its candidate not met ---
+
+_COVERAGE_REASON = ("could_not_assess", "privacy_coverage", "assess-privacy_coverage", "privacy_items_omitted")
+_COVERAGE_WARNING = (
+    "Rows whose privacy evaluation omitted questions, each scored as leaked: 1. "
+    "A row whose final evaluation omitted one is not met."
+)
+
+
+def _coverage_qa(*sensitivities: str) -> dict:
+    """Privacy questions 1..n about the card, with the given sensitivities."""
+    item = _EVAL_PRIVACY_QA["items"][0]
+    return {"items": [{**item, "id": i, "sensitivity": s} for i, s in enumerate(sensitivities, start=1)]}
+
+
+def _privacy_answers(answers: dict[int, str | None]) -> str:
+    """A privacy response answering each id in ``answers``; an id left out is omitted, ``None`` is an explicit null."""
+    return json.dumps(
+        {
+            "answers": [
+                {"id": item_id, "answer": answer, "confidence": 0.9, "reason": "R.", "evidence": []}
+                for item_id, answer in answers.items()
+            ]
+        }
+    )
+
+
+def _reasons(outcome: Any) -> list[tuple[str, str, str, str]]:
+    return [(r.code, r.check, r.verifier, r.cause) for r in outcome.reasons]
+
+
+def _trace_answers(result: Any) -> list[tuple[str, float]]:
+    payload = normalize_payload(result.trace_dataframe.iloc[0][COL_PRIVACY_QA_REANSWER])
+    return [(a["answer"], a["confidence"]) for a in payload["answers"]]
+
+
+def _assert_clean_row_met(result: Any) -> None:
+    assert result.dataframe.iloc[1]["text_rewritten"] == _OTHER_TEXT
+    assert result.outcome(1).qualification == "met"
+    assert result.outcome(1).available
+
+
+@pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])
+@pytest.mark.parametrize(
+    "response",
+    [_privacy_answers({1: "no"}), _privacy_answers({1: "no", 2: None})],
+    ids=["omitted", "null-answer"],
+)
+def test_privacy_item_omitted_in_the_only_round_is_withheld_and_flagged(
+    tmp_path: Path,
+    repairer: tuple[dict[str, list[str]], dict[str, int]],
+    caplog: pytest.LogCaptureFixture,
+    workflow: type[RewriteWorkflow],
+    response: str,
+) -> None:
+    """C1: the imputed medium leak (0.6) is under the threshold, so the row used to be released."""
+    script, calls = repairer
+    script["privacy"] = [response]
+
+    with _captured(caplog):
+        result = _anonymizer_run(
+            tmp_path, workflow, 0, risk_tolerance="moderate", privacy_qa=_coverage_qa("high", "medium")
+        )
+
+    row = result.dataframe.iloc[0]
+    outcome = result.outcome(0)
+    assert calls["privacy"] == 1  # no correction turn: the omitted item is imputed, not asked again
+    assert outcome.qualification == "not_met"
+    assert _reasons(outcome) == [_COVERAGE_REASON]
+    assert row["text_rewritten"] is None
+    assert not outcome.available
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    assert row[COL_LEAKAGE_MASS] == pytest.approx(0.6)  # the worst-case default still scores the item as leaked
+    assert _trace_answers(result)[1] == ("yes", 1.0)
+    assert _summaries(caplog) == [_COVERAGE_WARNING]
+    _assert_clean_row_met(result)
+
+
+@pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])
+def test_privacy_item_omitted_after_a_repair_leaves_the_repaired_candidate_not_met(
+    tmp_path: Path,
+    repairer: tuple[dict[str, list[str]], dict[str, int]],
+    caplog: pytest.LogCaptureFixture,
+    workflow: type[RewriteWorkflow],
+) -> None:
+    """C2: the first candidate leaks item 1 and is repaired; the repair's evaluation omits item 2."""
+    script, calls = repairer
+    script["privacy"] = [_privacy_answers({1: "yes", 2: "no"}), _privacy_answers({1: "no"})]
+    script["repair"] = [json.dumps({"rewritten_text": _REPAIRED_TEXT})]
+
+    with _captured(caplog):
+        result = _anonymizer_run(
+            tmp_path, workflow, 1, risk_tolerance="moderate", privacy_qa=_coverage_qa("high", "medium")
+        )
+
+    row, trace = result.dataframe.iloc[0], result.trace_dataframe.iloc[0]
+    outcome = result.outcome(0)
+    assert calls["repair"] == 1
+    assert outcome.qualification == "not_met"
+    assert _reasons(outcome) == [_COVERAGE_REASON]
+    assert row["text_rewritten"] is None
+    assert not outcome.available
+    assert row[COL_NEEDS_HUMAN_REVIEW]
+    assert row[COL_LEAKAGE_MASS] == pytest.approx(0.6)
+    assert trace[COL_REPAIR_ITERATIONS] == 1
+    assert trace[COL_REWRITTEN_TEXT_NEXT] == _REPAIRED_TEXT
+    assert _summaries(caplog) == [_COVERAGE_WARNING]
+    _assert_clean_row_met(result)
+
+
+@pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])
+def test_privacy_item_omitted_before_a_complete_repair_does_not_count_against_it(
+    tmp_path: Path,
+    repairer: tuple[dict[str, list[str]], dict[str, int]],
+    caplog: pytest.LogCaptureFixture,
+    workflow: type[RewriteWorkflow],
+) -> None:
+    """C3: the first candidate leaks and omits; the repaired one answers every question cleanly, so it is met.
+
+    In combined mode this pins that ``finalize`` takes the chosen round's omission marker: reading an earlier round's
+    would carry the first round's omission onto the repaired candidate."""
+    script, _ = repairer
+    script["privacy"] = [_privacy_answers({1: "yes"}), _privacy_answers({1: "no", 2: "no"})]
+    script["repair"] = [json.dumps({"rewritten_text": _REPAIRED_TEXT})]
+
+    with _captured(caplog):
+        result = _anonymizer_run(
+            tmp_path, workflow, 1, risk_tolerance="moderate", privacy_qa=_coverage_qa("high", "medium")
+        )
+
+    row = result.dataframe.iloc[0]
+    outcome = result.outcome(0)
+    assert outcome.qualification == "met"
+    assert outcome.reasons == ()
+    assert outcome.available
+    assert row["text_rewritten"] == _REPAIRED_TEXT
+    assert not row[COL_NEEDS_HUMAN_REVIEW]
+    assert _summaries(caplog) == [_COVERAGE_WARNING]  # the earlier omission is still counted
+    _assert_clean_row_met(result)
+
+
+@pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])
+def test_privacy_items_omitted_under_the_minimal_preset_also_fail_the_threshold(
+    tmp_path: Path,
+    repairer: tuple[dict[str, list[str]], dict[str, int]],
+    workflow: type[RewriteWorkflow],
+) -> None:
+    """C4: two omitted medium items score 1.2, over the minimal preset's 1.0: both reasons are listed."""
+    script, _ = repairer
+    script["privacy"] = [_privacy_answers({1: "no"})]
+
+    result = _anonymizer_run(
+        tmp_path, workflow, 0, risk_tolerance="minimal", privacy_qa=_coverage_qa("high", "medium", "medium")
+    )
+
+    outcome = result.outcome(0)
+    assert outcome.qualification == "not_met"
+    reasons = _reasons(outcome)
+    assert _COVERAGE_REASON in reasons
+    assert ("failed", "leakage_within_threshold") in [(code, check) for code, check, _, _ in reasons]
+    assert result.dataframe.iloc[0]["text_rewritten"] is None
+    assert not outcome.available
+    _assert_clean_row_met(result)
+
+
+_ANSWER = {"confidence": 0.9, "reason": "R.", "evidence": []}
+
+
+@pytest.mark.parametrize("workflow", [_StagedLoop, _CombinedLoop], ids=["staged", "combined"])
+@pytest.mark.parametrize(
+    "extra",
+    [{"id": 3, "answer": None}, {"id": 2, "answer": None}],
+    ids=["null-for-an-id-not-asked", "null-in-a-duplicate"],
+)
+def test_null_answer_outside_the_questions_asked_does_not_withhold_the_row(
+    tmp_path: Path,
+    repairer: tuple[dict[str, list[str]], dict[str, int]],
+    workflow: type[RewriteWorkflow],
+    extra: dict[str, Any],
+) -> None:
+    """Every question asked was answered: a null for an id nobody asked about, or in a later copy of an answered
+    id, is dropped with that item and leaves the row met."""
+    script, _ = repairer
+    answers = [{"id": 1, "answer": "no", **_ANSWER}, {"id": 2, "answer": "no", **_ANSWER}, {**_ANSWER, **extra}]
+    script["privacy"] = [json.dumps({"answers": answers})]
+
+    result = _anonymizer_run(
+        tmp_path, workflow, 0, risk_tolerance="moderate", privacy_qa=_coverage_qa("high", "medium")
+    )
+
+    outcome = result.outcome(0)
+    assert outcome.qualification == "met"
+    assert outcome.reasons == ()
+    assert result.dataframe.iloc[0]["text_rewritten"] == _EVAL_TEXT
+    _assert_clean_row_met(result)

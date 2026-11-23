@@ -28,6 +28,7 @@ from anonymizer.engine.constants import (
     COL_LEAKED_PRIVACY_ITEMS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
+    COL_PRIVACY_ITEMS_OMITTED,
     COL_PRIVACY_QA_REANSWER,
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
@@ -89,6 +90,7 @@ class EvaluationState:
     rewritten_text: str
     quality_reanswer: str
     privacy_reanswer: str
+    privacy_omitted: str
     quality_compare: str
     utility_score: str
     leakage_mass: str
@@ -122,6 +124,7 @@ def _evaluation_state(iteration: int, rewritten_text: str) -> EvaluationState:
         rewritten_text=rewritten_text,
         quality_reanswer=_iteration_column(COL_QUALITY_QA_REANSWER, iteration),
         privacy_reanswer=_iteration_column(COL_PRIVACY_QA_REANSWER, iteration),
+        privacy_omitted=_iteration_column(COL_PRIVACY_ITEMS_OMITTED, iteration),
         quality_compare=_iteration_column(COL_QUALITY_QA_COMPARE, iteration),
         utility_score=_iteration_column(COL_UTILITY_SCORE, iteration),
         leakage_mass=_iteration_column(COL_LEAKAGE_MASS, iteration),
@@ -278,6 +281,7 @@ def _evaluation_columns(
         COL_REWRITTEN_TEXT: state.rewritten_text,
         COL_QUALITY_QA_REANSWER: state.quality_reanswer,
         COL_PRIVACY_QA_REANSWER: state.privacy_reanswer,
+        COL_PRIVACY_ITEMS_OMITTED: state.privacy_omitted,  # one marker per round; ``finalize`` reads the chosen one
         COL_QUALITY_QA_COMPARE: state.quality_compare,
         COL_UTILITY_SCORE: state.utility_score,
         COL_LEAKAGE_MASS: state.leakage_mass,
@@ -334,6 +338,7 @@ def _finalization_column(states: list[EvaluationState]) -> CustomColumnConfig:
                 state.rewritten_text,
                 state.quality_reanswer,
                 state.privacy_reanswer,
+                state.privacy_omitted,
                 state.quality_compare,
                 state.utility_score,
                 state.leakage_mass,
@@ -346,6 +351,7 @@ def _finalization_column(states: list[EvaluationState]) -> CustomColumnConfig:
     required_columns.append(COL_REWRITE_REPLACEMENT_READY)
     side_effect_columns = [
         COL_EVALUATION_UNAVAILABLE,
+        COL_PRIVACY_ITEMS_OMITTED,
         COL_QUALITY_QA_REANSWER,
         COL_PRIVACY_QA_REANSWER,
         COL_QUALITY_QA_COMPARE,
@@ -378,8 +384,11 @@ def _finalization_column(states: list[EvaluationState]) -> CustomColumnConfig:
                 quality_reanswer=earlier.quality_reanswer,
                 quality_compare=earlier.quality_compare,
                 privacy_reanswer=earlier.privacy_reanswer,
+                privacy_omitted=earlier.privacy_omitted,
             )
         row[COL_EVALUATION_UNAVAILABLE] = unavailable
+        # Only the chosen round's omission counts against its candidate; earlier ones are in the summary bit above.
+        row[COL_PRIVACY_ITEMS_OMITTED] = row.get(state.privacy_omitted)
         row[COL_REWRITTEN_TEXT] = row.get(state.rewritten_text)
         row[COL_QUALITY_QA_REANSWER] = normalize_payload(row.get(state.quality_reanswer))
         row[COL_PRIVACY_QA_REANSWER] = normalize_payload(row.get(state.privacy_reanswer))

@@ -3,15 +3,26 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
 from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.models import ModelConfig
+from data_designer.engine.models.errors import ModelGenerationValidationFailureError
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import SENSITIVITY_WEIGHTS, EvaluationCriteria
-from anonymizer.engine.constants import COL_UTILITY_SCORE
+from anonymizer.engine.constants import (
+    COL_PRIVACY_ITEMS_OMITTED,
+    COL_PRIVACY_QA,
+    COL_PRIVACY_QA_REANSWER,
+    COL_REWRITTEN_TEXT,
+    COL_UTILITY_SCORE,
+)
+from anonymizer.engine.rewrite import evaluate
 from anonymizer.engine.rewrite.evaluate import (
     EvaluateWorkflow,
     _normalize_answer_items,
@@ -243,3 +254,73 @@ def test_normalize_answer_items_drops_extra_and_duplicate_ids() -> None:
         default_item_factory=lambda item_id: {"id": item_id, "answer": "unknown"},
     )
     assert normalized == [{"id": 1, "answer": "first"}, {"id": 2, "answer": "unknown"}]
+
+
+# ---------------------------------------------------------------------------
+# Privacy omission marker
+# ---------------------------------------------------------------------------
+
+_TWO_ITEMS = {
+    "items": [
+        {
+            "id": i,
+            "question": "Q?",
+            "sensitivity": "high",
+            "entity_label": "x",
+            "entity_value": "v",
+            "category": "direct_identifier",
+        }
+        for i in (1, 2)
+    ]
+}
+
+
+def _answer(item_id: int, answer: str | None = "no") -> dict[str, Any]:
+    return {"id": item_id, "answer": answer, "confidence": 0.9, "reason": "Absent.", "evidence": []}
+
+
+class _Model:
+    """Parses ``reply`` with the column's parser, as the facade does; ``None`` never parses."""
+
+    def __init__(self, reply: str | None) -> None:
+        self._reply = reply
+
+    async def agenerate(self, *, parser: Any, **_: Any) -> Any:
+        if self._reply is None:
+            raise ModelGenerationValidationFailureError("unparsed")
+        return parser(self._reply), []
+
+
+def _marker(monkeypatch: pytest.MonkeyPatch, reply: str | None, text: str | None = "A rewrite.") -> Any:
+    monkeypatch.setattr(evaluate, "_render_privacy_reanswer_prompt", lambda row: "prompt")
+    column = evaluate._make_privacy_reanswer_column("evaluator")
+    row = {COL_PRIVACY_QA: _TWO_ITEMS, COL_REWRITTEN_TEXT: text}
+    return asyncio.run(column(row, None, {"evaluator": _Model(reply)}))
+
+
+@pytest.mark.parametrize(
+    ("answers", "marker"),
+    [
+        ([_answer(1), _answer(2)], False),
+        ([_answer(1)], True),  # item 2 omitted
+        ([_answer(1), _answer(2, None)], True),  # an explicit null answer counts as omitted
+        ([_answer(1), _answer(2), _answer(3, None)], False),  # a null for an id not asked is dropped
+        ([_answer(1), _answer(2), _answer(2, None)], False),  # a null in a duplicate is dropped with it
+    ],
+    ids=["complete", "omitted", "null-answer", "null-for-an-id-not-asked", "null-in-a-duplicate"],
+)
+def test_privacy_column_marks_a_response_that_leaves_a_question_unanswered(
+    monkeypatch: pytest.MonkeyPatch, answers: list[dict[str, Any]], marker: bool
+) -> None:
+    row = _marker(monkeypatch, json.dumps({"answers": answers}))
+    assert row[COL_PRIVACY_ITEMS_OMITTED] is marker
+    assert [a["answer"] for a in row[COL_PRIVACY_QA_REANSWER]["answers"]] == ["no", "yes" if marker else "no"]
+
+
+@pytest.mark.parametrize(("reply", "text"), [(None, "A rewrite."), ("unused", None)], ids=["unavailable", "no-text"])
+def test_privacy_column_marks_nothing_when_no_response_was_used(
+    monkeypatch: pytest.MonkeyPatch, reply: str | None, text: str | None
+) -> None:
+    row = _marker(monkeypatch, reply, text)
+    assert row[COL_PRIVACY_QA_REANSWER] is None
+    assert row[COL_PRIVACY_ITEMS_OMITTED] is None

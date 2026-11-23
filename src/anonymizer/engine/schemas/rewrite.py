@@ -392,7 +392,8 @@ class PrivacyAnswer(str, Enum):
     no = "no"
 
 
-_NULL_PRIVACY_ANSWER_REASON = "Model returned null answer; defaulted to highest-confidence leak."
+# The reason the schema gives a null answer it defaults; the privacy parser reads it to count the item as omitted.
+NULL_PRIVACY_ANSWER_REASON = "Model returned null answer; defaulted to highest-confidence leak."
 _NULL_PRIVACY_REASON = "Model returned no reason."
 _EMPTY_PRIVACY_REASON = "Model returned an empty reason."
 _PRIVACY_REASON_LIMIT = 200
@@ -497,7 +498,7 @@ class PrivacyAnswerItemSchema(BaseModel):
         if "answer" in normalized and normalized["answer"] is None:
             normalized["answer"] = PrivacyAnswer.yes
             normalized["confidence"] = 1.0
-            normalized["reason"] = _NULL_PRIVACY_ANSWER_REASON
+            normalized["reason"] = NULL_PRIVACY_ANSWER_REASON
         elif "reason" in normalized and normalized["reason"] is None:
             normalized["reason"] = _NULL_PRIVACY_REASON
         return normalized

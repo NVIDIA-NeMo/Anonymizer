@@ -6,9 +6,10 @@
 ``missed_repeat`` is the one situation whose answer depends on the mode and the detector kind; it returns a
 ``RepeatHandling``. The others have a fixed answer: a record fails with one of the ``FailureReason`` members, a
 Rewrite row is flagged for review by one of the ``ReviewFlag`` members and stays met, and Rewrite withholds a final
-candidate that fails a privacy check or whose privacy evaluation had no usable response. The fact checks that feed
-these decisions stay with their verifiers. The three enums are ``StrEnum``: a member equals, hashes and serialises as
-its string, so reasons and flags stay plain codes wherever they are read.
+candidate that fails a privacy check, whose privacy evaluation had no usable response, or whose privacy evaluation
+left a question unanswered. The fact checks that feed these decisions stay with their verifiers. The three enums are
+``StrEnum``: a member equals, hashes and serialises as its string, so reasons and flags stay plain codes wherever they
+are read.
 """
 
 from __future__ import annotations

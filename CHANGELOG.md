@@ -195,8 +195,8 @@ scored again. Now each repair sees the previous repair's text.
 
 **The review flag follows the final checks.** `needs_human_review` is set when a required check on the final text
 does not pass, when the row keeps a replaced value or a placeholder as described below, or when the utility score is
-missing or below the preset's floor. The checks are `high_leak`, `replacements_applied` and
-`leakage_within_threshold`. Compared with v0.5.0:
+missing or below the preset's floor. The checks are `high_leak`, `replacements_applied`,
+`leakage_within_threshold` and `privacy_coverage`. Compared with v0.5.0:
 - `replacements_applied` counts each value the sensitivity policy replaces, as the Replace advisory does (N, D and O,
   above). A row whose final text holds such a value more often than the source holds it outside the detected spans
   fails, and its `cause` gives the counts. A row whose policy is missing is flagged too;
@@ -460,6 +460,19 @@ These are additions and break nothing.
 ## Pending changes
 
 These are not on the #319 branch yet. Each lands with its change.
+
+### #NNN: privacy coverage reason
+
+**A Rewrite row whose final privacy evaluation left a question unanswered is withheld.** An omitted question or a
+null answer is still scored as leaked with full confidence. The row's outcome is now `not_met` with
+`could_not_assess` on the check `privacy_coverage` (cause `privacy_items_omitted`), its rewritten text is withheld
+(null, `available=False`) and `needs_human_review` is `True`.
+- Availability cost: such rows used to be released when the leak scored for the unanswered question stayed under the
+  threshold. They are now withheld.
+- An omission in an earlier repair round does not count against a repaired candidate that answered every question.
+- The run ends with a warning counting the rows whose privacy evaluation omitted a question in any round.
+- What to do: treat these rows like rows whose privacy evaluation was unavailable; the warning's count shows how
+  often your evaluator model leaves questions out.
 
 ### Detection contract
 

@@ -26,6 +26,7 @@ from anonymizer.engine.constants import (
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
+    COL_PRIVACY_ITEMS_OMITTED,
     COL_PRIVACY_QA_REANSWER,
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
@@ -323,8 +324,14 @@ def _rewrite_entry(row: dict[str, object]) -> dict[str, object] | RewriteUnavail
         "weighted_leakage_rate": row.get(COL_WEIGHTED_LEAKAGE_RATE),
         **_leftover_metrics(row),
         "placeholder_in_text": placeholder_in_text(text, row.get(COL_REPLACEMENT_MAP)),
+        # The final evaluation left a privacy question unanswered; False when it was not asked (passthrough rows).
+        "privacy_items_omitted": _set(row.get(COL_PRIVACY_ITEMS_OMITTED)),
     }
     return {"text": text, "metrics": metrics}
+
+
+def _set(flag: object) -> bool:
+    return not no_response(flag) and bool(flag)
 
 
 def _leftover_metrics(row: Mapping[str, object]) -> dict[str, bool | str | None]:
@@ -389,20 +396,33 @@ def _leakage_within(metrics: dict[str, Any], limit: float | None) -> bool | None
     return None if _unavailable(value) else limit is None or float(value) <= limit
 
 
+def _privacy_coverage(metrics: dict[str, Any]) -> bool | None:
+    return None if metrics.get("privacy_items_omitted") else True
+
+
+# The cause a check that could not assess states; ``metric_unavailable`` for the others.
+_MISSING_CAUSE = {
+    "replacements_applied": "replacement_policy_unavailable",
+    "privacy_coverage": "privacy_items_omitted",
+}
+
+
 def _final_checks(evaluation: EvaluationCriteria) -> tuple[Operation, ...]:
     """The privacy criteria over the final candidate's metrics, one model-free verifier per check. A failed check
-    states the metric ``<check>_cause`` when the metrics carry one."""
+    states the metric ``<check>_cause`` when the metrics carry one. ``privacy_coverage`` cannot assess a candidate
+    whose final privacy evaluation left a question unanswered (cause ``privacy_items_omitted``)."""
     limit = evaluation.flag_leakage_above
     predicates: dict[str, Callable[[dict[str, Any]], bool | None]] = {
         "high_leak": _high_leak,
         "replacements_applied": _replacements_applied,
         "leakage_within_threshold": lambda metrics: _leakage_within(metrics, limit),
+        "privacy_coverage": _privacy_coverage,
     }
 
     def verifier(check: str, predicate: Callable[[dict[str, Any]], bool | None]) -> Operation:
         def assess(metrics: dict[str, Any], target: Datum) -> Assessment:
             satisfied = predicate(metrics)
-            missing = "replacement_policy_unavailable" if check == "replacements_applied" else "metric_unavailable"
+            missing = _MISSING_CAUSE.get(check, "metric_unavailable")
             if satisfied is None:
                 return Assessment(None, target, missing)
             return Assessment(satisfied, target, "" if satisfied else str(metrics.get(f"{check}_cause", "")))
@@ -494,6 +514,24 @@ def _withhold_failed_repairs(frame: pd.DataFrame, result: ProtectionResult, targ
         frame.loc[withheld, COL_REWRITTEN_TEXT] = None
 
 
+def _withhold_incomplete(frame: pd.DataFrame, result: ProtectionResult, target_of: Mapping[int, Datum]) -> None:
+    """Null the rewritten text of rows whose final privacy evaluation left a question unanswered.
+
+    Their outcome is ``not_met`` with ``privacy_coverage`` unassessed, and flagged. An omission in an earlier round
+    does not count against a repaired candidate whose own evaluation is complete.
+    """
+    incomplete = [
+        any(
+            reason.code == "could_not_assess" and reason.check == "privacy_coverage"
+            for reason in result.outcome(target_of[record[ROW_ORDER_COL]]).reasons
+        )
+        for record in frame.to_dict("records")
+    ]
+    withheld = pd.Series(incomplete, index=frame.index, dtype=bool) & frame[COL_REWRITTEN_TEXT].notna()
+    if withheld.any():
+        frame.loc[withheld, COL_REWRITTEN_TEXT] = None
+
+
 def _none_for_missing_text(frame: pd.DataFrame) -> None:
     """Give a withheld or missing rewritten text as ``None`` in both modes.
 
@@ -546,6 +584,7 @@ def _rewrite_lowered(
     warn_kept_without_response(frame)
     _withhold_unassessed(frame)
     _withhold_failed_repairs(frame, result, target_of)
+    _withhold_incomplete(frame, result, target_of)
     _none_for_missing_text(frame)
     _apply_passthrough_defaults(passthrough_rows)
     return RewriteResult(
@@ -705,6 +744,7 @@ class RewriteWorkflow:
             warn_kept_without_response(frame)
             _withhold_unassessed(frame)
             _withhold_failed_repairs(frame, result, target_of)
+            _withhold_incomplete(frame, result, target_of)
             _none_for_missing_text(frame)
             output = merge_and_reorder(frame, passthrough_rows)
         record_stage(

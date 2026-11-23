@@ -185,7 +185,8 @@ class RetryBudget:
 @dataclass(frozen=True)
 class ModelResponse(Generic[T]):
     """One question's answer: ``parsed``; ``defaulted`` when the parser filled items the model omitted with their
-    fail-closed default (only omitted items: a field the schema fills for an explicit null does not count); or
+    fail-closed default (only omitted items: a field the schema fills for an explicit null does not count, except a
+    privacy item's null ``answer``, which its parser counts as omitted); or
     ``unavailable`` when no response parsed within the budget.
 
     ``value`` is ``None`` only when unavailable. ``cause`` is a fixed code, never the model's text. ``requests`` is

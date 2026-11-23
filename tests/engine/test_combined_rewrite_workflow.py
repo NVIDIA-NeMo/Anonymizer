@@ -23,11 +23,13 @@ from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_ENTITIES_BY_VALUE,
     COL_ENTITY_CLASSIFICATION,
+    COL_EVALUATION_UNAVAILABLE,
     COL_FULL_REWRITE,
     COL_LATENT_ENTITIES,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
+    COL_PRIVACY_ITEMS_OMITTED,
     COL_RAW_SENSITIVITY_DISPOSITION,
     COL_REPAIR_ITERATIONS,
     COL_REPLACEMENT_APPLICATION,
@@ -80,6 +82,7 @@ def _initial_rewrite(row: dict[str, Any]) -> dict[str, Any]:
 def _deterministic_evaluation_column(state: EvaluationState) -> CustomColumnConfig:
     side_effect_columns = [
         state.privacy_reanswer,
+        state.privacy_omitted,
         state.quality_compare,
         state.utility_score,
         state.leakage_mass,
@@ -97,6 +100,7 @@ def _deterministic_evaluation_column(state: EvaluationState) -> CustomColumnConf
         items: list[Any] | np.ndarray = [] if state.iteration == 0 else np.array([], dtype=object)
         row[state.quality_reanswer] = {"answers": items}
         row[state.privacy_reanswer] = {"answers": items}
+        row[state.privacy_omitted] = None
         row[state.quality_compare] = {"per_item": items}
         row[state.utility_score] = 0.5 if needs_repair else 1.0
         row[state.leakage_mass] = 1.0 if needs_repair else 0.0
@@ -188,6 +192,7 @@ def test_finalizer_selects_last_executed_iteration(
         initial.weighted_leakage_rate: 0.8,
         initial.any_high_leaked: True,
         initial.needs_repair: True,
+        initial.privacy_omitted: True,
         repaired.rewritten_text: "Repaired rewrite",
         repaired.quality_reanswer: {"answers": []},
         repaired.privacy_reanswer: {"answers": []},
@@ -197,6 +202,7 @@ def test_finalizer_selects_last_executed_iteration(
         repaired.weighted_leakage_rate: 0.05,
         repaired.any_high_leaked: False,
         repaired.needs_repair: False,
+        repaired.privacy_omitted: False,
         skipped.needs_repair: None,
         COL_REWRITTEN_TEXT: "forged preexisting terminal",
         COL_UTILITY_SCORE: 0.123,
@@ -213,6 +219,9 @@ def test_finalizer_selects_last_executed_iteration(
     assert result[COL_ANY_HIGH_LEAKED] is False
     assert result[COL_NEEDS_REPAIR] is False
     assert result[COL_REPAIR_ITERATIONS] == 1
+    # The chosen round answered every privacy question; the earlier omission is kept only for the run-end summary.
+    assert result[COL_PRIVACY_ITEMS_OMITTED] is False
+    assert result[COL_EVALUATION_UNAVAILABLE] == 4
 
 
 @pytest.mark.parametrize(

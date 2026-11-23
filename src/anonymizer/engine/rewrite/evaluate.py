@@ -19,6 +19,7 @@ from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_LEAKAGE_MASS,
     COL_NEEDS_REPAIR,
+    COL_PRIVACY_ITEMS_OMITTED,
     COL_PRIVACY_QA,
     COL_PRIVACY_QA_REANSWER,
     COL_QUALITY_QA,
@@ -48,6 +49,7 @@ from anonymizer.engine.rewrite.parsers import (
     parse_quality_qa,
 )
 from anonymizer.engine.schemas.rewrite import (
+    NULL_PRIVACY_ANSWER_REASON,
     PrivacyAnswer,
     PrivacyAnswerItemSchema,
     PrivacyAnswersSchema,
@@ -264,7 +266,7 @@ def _make_privacy_answer_parser(
     def parser(response: str) -> tuple[PrivacyAnswersSchema, bool]:
         obj = recipe.parse(response)
         payload = obj.model_dump() if hasattr(obj, "model_dump") else obj
-        defaulted = _omits(payload.get("answers"), expected_ids)
+        omitted = _omits(payload.get("answers"), expected_ids)
         payload["answers"] = _normalize_answer_items(
             payload.get("answers"),
             expected_ids=expected_ids,
@@ -277,6 +279,9 @@ def _make_privacy_answer_parser(
                 "evidence": [],
             },
         )
+        # An explicit null answer leaves the question as unanswered as an omitted id: both count as defaulted. Only the
+        # kept items count: normalization drops ids nobody asked about and every copy of a duplicate id but the first.
+        defaulted = omitted or _null_answer(payload["answers"])
         return PrivacyAnswersSchema.model_validate(payload, context={"expected_ids": expected_ids}), defaulted
 
     return parser
@@ -309,6 +314,14 @@ def _omits(raw_items: Any, expected_ids: list[int]) -> bool:
     """Whether a response's items leave out an expected id, which ``_normalize_answer_items`` then defaults."""
     given = {item.get("id") for item in raw_items if isinstance(item, dict)} if isinstance(raw_items, list) else set()
     return not set(expected_ids) <= given
+
+
+def _null_answer(items: Any) -> bool:
+    """Whether the normalized items of a privacy response hold one whose explicit null ``answer`` the schema
+    defaulted."""
+    return isinstance(items, list) and any(
+        isinstance(item, dict) and item.get("reason") == NULL_PRIVACY_ANSWER_REASON for item in items
+    )
 
 
 def _normalize_answer_items(
@@ -461,9 +474,14 @@ def _make_quality_reanswer_column(evaluator_alias: str) -> Any:
 def _make_privacy_reanswer_column(evaluator_alias: str) -> Any:
     @custom_column_generator(
         required_columns=[COL_PRIVACY_QA, COL_REWRITTEN_TEXT],
+        side_effect_columns=[COL_PRIVACY_ITEMS_OMITTED],
         model_aliases=[evaluator_alias],
     )
     async def _privacy_reanswer(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
+        """Also marks whether the response left a question unanswered, which its stored payload cannot show:
+        ``True`` when an item was omitted or null (and scored as leaked), ``False`` when complete, ``None`` when
+        not asked or unavailable."""
+        row[COL_PRIVACY_ITEMS_OMITTED] = None
         if no_response(row.get(COL_REWRITTEN_TEXT)):
             row[COL_PRIVACY_QA_REANSWER] = None  # no rewrite to assess; its text is unavailable already
             return row
@@ -477,6 +495,8 @@ def _make_privacy_reanswer_column(evaluator_alias: str) -> Any:
             models[evaluator_alias], prompt, parser, EVALUATE_BUDGET, step=COL_PRIVACY_QA_REANSWER, key=row_key(row)
         )
         row[COL_PRIVACY_QA_REANSWER] = _stored(response, COL_PRIVACY_QA_REANSWER)
+        if response.value is not None:
+            row[COL_PRIVACY_ITEMS_OMITTED] = response.state == "defaulted"
         return row
 
     return _privacy_reanswer
@@ -567,10 +587,11 @@ class EvaluateWorkflow:
 
     LLM calls use custom columns (not LLMStructuredColumnConfig) so we can
     build a per-row parser that passes ``context={"expected_ids": [...]}`` to
-    Pydantic's ``model_validate``. This enforces that the LLM answers every
-    question ID -- DD's correction loop retries with the exact missing IDs
-    if the LLM skips any. LLMStructuredColumnConfig does not support passing
-    Pydantic validation context, which is why custom columns are required.
+    Pydantic's ``model_validate``. The parser fills an omitted question ID with
+    its fail-closed default (a privacy item is scored as leaked) instead of
+    asking again; the privacy column marks such a response in
+    ``COL_PRIVACY_ITEMS_OMITTED``. LLMStructuredColumnConfig does not support
+    passing Pydantic validation context, which is why custom columns are required.
 
     The orchestrator uses the output metrics and COL_NEEDS_REPAIR flag to
     decide whether to run RepairWorkflow on failing rows.
