@@ -163,12 +163,14 @@ the trace only as a whole.
 The runnable pieces are shown separately: one call for many targets in
 [Process all targets in one call](guide-batch-targets.md), and records and output groups in
 [Release related texts together](guide-release-together.md). Keeping the same substitute for the same order across
-separate runs needs your own store today (see below).
+separate runs needs a `Session` (see below).
 
 ## Limits of what the SDK offers today
 
 - A step cannot report how many requests it actually made through a public name, so observed request counts stay
   `unknown` for steps that declare requests.
-- Nothing is kept between calls to `protect`. Reusing the same substitute for the same value across two runs needs
-  your own store.
+- Nothing is kept between calls to `protect` unless you pass a session. Pass the same
+  `Session(stable_replacements=True)` to `prepare(..., session=s)` and `protect(prepared, session=s)` to keep each
+  assignment an operation decides, so a later call can reuse it. `Session` is provisional; see the
+  [reference](reference.md).
 - Steps run one at a time on the calling thread. Concurrency, if you need it, goes inside a phase-scoped step.

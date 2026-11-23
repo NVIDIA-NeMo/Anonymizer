@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-12 lifecycle: caller-owned resources, uncertain effects, attribution (E12.2-E12.5; E12.1 retired)."""
+"""SP-12 lifecycle: caller-owned resources, uncertain effects, attribution (E12.2-E12.5)."""
 
 from __future__ import annotations
 

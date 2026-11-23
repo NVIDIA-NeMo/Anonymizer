@@ -202,7 +202,7 @@ class _Subclassed(graph.Operation):
 
 
 def _forging_builds(port: str, kind: str) -> list[Callable[[], Any]]:
-    """The S2 reviewer's forging layout: an operation whose output replaces a seed for every later operation."""
+    """Builds of each operation shape with an output named after a seed port, which would replace that seed."""
     outputs = {"text": "text", port: kind}
     return [
         lambda: graph.Operation("forge", lambda text: text, {"text": "text"}, outputs),

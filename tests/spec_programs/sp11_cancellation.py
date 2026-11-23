@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-11 lifecycle: synchronous cancellation through a CancelToken (E11.1-E11.7; E11.3 retired)."""
+"""SP-11 lifecycle: synchronous cancellation through a CancelToken (E11.1-E11.7)."""
 
 from __future__ import annotations
 

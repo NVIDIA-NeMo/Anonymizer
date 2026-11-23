@@ -69,7 +69,7 @@ input_df
   → one graph invocation: RewriteWorkflow.run_with_detection()   # engine/rewrite/rewrite_workflow.py
       detect (phase-scoped step)          # engine/detection/detect_step.py; EntityDetectionWorkflow.run(),
                                           # same as above, plus latent entity tagging
-      rewrite (rows with entities only; the rest keep default metrics)
+      rewrite (rows with an explicit or latent entity only; the rest keep default metrics)
         LlmReplaceWorkflow.generate_map_only() # build replacement map for prompt
         → single NDD adapter call (pipeline_columns):
               DomainClassificationWorkflow    → _domain, _domain_supplement
