@@ -137,7 +137,7 @@ def _violations(evaluated: Any, judges: _Judges, evaluated_from: pd.DataFrame) -
     return found
 
 
-# The P1 and P2 reproductions from review.
+# Judge rows without record ids cannot be placed, even when their text matches an input row.
 
 
 def test_rows_with_the_same_original_text_and_no_ids_take_no_outcome(tmp_path: Path) -> None:

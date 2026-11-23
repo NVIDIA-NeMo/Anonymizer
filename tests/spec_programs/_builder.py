@@ -28,9 +28,6 @@ class Checks:
             {"program": self.program, "check": check, "result": "PASS" if ok else "FAIL", "detail": detail}
         )
 
-    def retired(self, check: str, detail: str) -> None:
-        self.lines.append({"program": self.program, "check": check, "result": "RETIRED", "detail": detail})
-
     def guard(self, check: str, fn: Callable[[], tuple[bool, str]]) -> None:
         """Run one check body; an exception escaping it is a FAIL with its type (never content)."""
         try:

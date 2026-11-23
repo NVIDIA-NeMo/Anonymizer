@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-12 lifecycle: caller-owned resources, uncertain effects, attribution (E12.2-E12.5; E12.1 retired)."""
+"""SP-12 lifecycle: caller-owned resources, uncertain effects, attribution (E12.2-E12.5)."""
 
 from __future__ import annotations
 
@@ -44,7 +44,6 @@ def _with_resource(fail: bool) -> bool:
 
 def program() -> list[dict[str, str]]:
     c = Checks("SP-12")
-    c.retired("E12.1", "retired 2026-10-22")
     closed = [_with_resource(False), _with_resource(True)]
     c.check("E12.2", closed == [False, False], f"closed after success/failure={closed}")
     effects: list[str] = []

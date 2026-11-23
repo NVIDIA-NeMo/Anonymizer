@@ -84,11 +84,11 @@ class _DisplayMixin:
         ``scored`` or ``not_applicable``; ``cause`` says why: ``"judge_unavailable"`` when the judge gave no score,
         ``"raised"`` when its check raised, ``"blocked"`` when an earlier judge check of the row raised so it never ran.
         ``scored`` means the rewrite judge, which has no pass threshold, returned scores; read them in the judge
-        evaluation column. ``not_applicable`` means the rewrite judge skipped a row with no detected entities, by
-        design. A row without such an id (a custom runner dropped, nulled or repeated it) is ``not_assessed`` and
-        unprotected, and each judge reads ``could_not_assess`` with cause ``"unplaced"``. A row a custom runner gave
-        another record's id, including by retyping ids so that they compare equal as text, is reported as that record,
-        with its run outcome and its judges' verdicts. Judges never change qualification or
+        evaluation column. ``not_applicable`` means the rewrite judge skipped a row with neither explicit nor latent
+        entities, by design. A row without such an id (a custom runner dropped, nulled or repeated it) is
+        ``not_assessed`` and unprotected, and each judge reads ``could_not_assess`` with cause ``"unplaced"``. A row a
+        custom runner gave another record's id, including by retyping ids so that they compare equal as text, is
+        reported as that record, with its run outcome and its judges' verdicts. Judges never change qualification or
         release: those still say whether the run released the row. The evaluated result is not changed.
 
         Raises:

@@ -27,9 +27,17 @@ from anonymizer.config.models import (
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
+from anonymizer.engine.ndd.adapter import WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import load_default_model_selection
 from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult
+
+
+def positional_run_result(dataframe: pd.DataFrame, failed_records: list) -> WorkflowRunResult:
+    """An adapter result that reports one source position per returned row, in input order."""
+    return WorkflowRunResult(
+        dataframe=dataframe, failed_records=failed_records, source_positions=tuple(range(len(dataframe)))
+    )
 
 
 def stub_run_with_detection(runner: Mock) -> None:

@@ -43,7 +43,6 @@ def program() -> list[dict[str, str]]:
         f"raised={raised}, qualification={o and o.qualification}, failure entries={len(failed)}",
     )
     c.check("E3.4b", o is not None and o.terminal == "failed", f"terminal={o and o.terminal}")
-    c.retired("E3.5", "retired 2026-10-22; superseded by E3.5'")
     opaque = Operation("transform", rec.transform().fn, requests=Requests.opaque(1))
     code = rejected(lambda: run(g, opaque, request_budget=5))
     silent = prepare(g, Workflow("w", (rec.transform(),)), request_budget=0)
