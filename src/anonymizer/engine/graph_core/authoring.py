@@ -51,17 +51,25 @@ def mention_problem(mentions: Iterable[object], target: Datum | None = None) -> 
             return "invalid_output"
         if target is not None and m.datum != target:
             return "mention_not_on_target"
-        if not (type(m.start) is int and type(m.end) is int and 0 <= m.start < m.end <= len(m.datum.text)):
-            return "mention_out_of_range"
-        if m.text is not None and m.datum.text[m.start : m.end] != m.text:
-            return "mention_slice_mismatch"
-        if not m.label:  # a mention claims its region for a label: an unlabelled one owns nothing it can name
-            return "mention_unlabelled"
+        if problem := span_problem(m.datum.text, m.start, m.end, m.label, m.text):
+            return problem
         by_datum.setdefault(m.datum, []).append(m)
     for ms in by_datum.values():
         ms.sort(key=lambda m: m.start)
         if any(b.start < a.end for a, b in zip(ms, ms[1:])):
             return "overlapping_output_ownership"
+    return ""
+
+
+def span_problem(text: str, start: int, end: int, label: str, claimed: str | None = None) -> str:
+    """The first rule one span of ``text`` breaks, or "": its offsets are a valid half-open interval of ``text``, the
+    ``claimed`` text (when given) matches that slice, and it has a label."""
+    if not (type(start) is int and type(end) is int and 0 <= start < end <= len(text)):
+        return "mention_out_of_range"
+    if claimed is not None and text[start:end] != claimed:
+        return "mention_slice_mismatch"
+    if not label:  # a mention claims its region for a label: an unlabelled one owns nothing it can name
+        return "mention_unlabelled"
     return ""
 
 

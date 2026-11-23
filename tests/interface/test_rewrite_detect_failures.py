@@ -27,9 +27,11 @@ from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
     _build_entities_by_value,
 )
+from anonymizer.engine.detection.result import DetectorResult
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
+from tests.detector_results import as_detector_result, input_record_ids
 
 
 @pytest.mark.parametrize("rejected", [[0], [0, 1]])
@@ -52,7 +54,10 @@ def test_rewrite_reports_rows_that_fail_detection(
         return {"entities": spans}
 
     class Detector:
-        def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+        def run(self, dataframe: pd.DataFrame, **kwargs: object) -> DetectorResult:
+            return as_detector_result(dataframe, self.frame(dataframe))
+
+        def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
             frame = dataframe.copy()
             ents = [entities(row) for row in range(len(frame))]
             frame[COL_FINAL_ENTITIES] = ents
@@ -81,7 +86,10 @@ def test_rewrite_reports_rows_that_fail_detection(
     assert seen == ([kept] if kept else [])
     assert list(result.dataframe["text_rewritten"]) == [f"R<{t}>" for t in kept]
     assert result.failed_records == [
-        FailedRecord(str(row), "detect", "overlapping_output_ownership") for row in rejected
+        FailedRecord(
+            input_record_ids(AnonymizerInput(source=str(csv_path)))[row], "detect", "overlapping_output_ownership"
+        )
+        for row in rejected
     ]
     # A record failed at detect is counted under detection, not rewrite.
     detected = f"across {len(texts) - len(rejected)} records ({len(rejected)} failed)"

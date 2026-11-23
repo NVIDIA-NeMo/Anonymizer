@@ -34,12 +34,12 @@ from data_designer.interface.errors import DataDesignerEarlyShutdownError
 
 from anonymizer.config.regex import REGEX_WALL_CEILING_FACTOR
 from anonymizer.engine.constants import COL_REGEX_ENTITIES, RECORD_ID_COLUMN
+from anonymizer.engine.errors import AnonymizerWorkflowError
 from anonymizer.engine.graph_core.observe import report_requests
 from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame, designer_hook
 from anonymizer.engine.ndd.failed_record import FailedRecord as FailedRecord
 from anonymizer.engine.ndd.model_response import STOPPED_EARLY, RunStop, StoppedEarly, run_stop
 from anonymizer.engine.ndd.storage import prepare_json_storage_column, prepare_json_storage_seed
-from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
 
 if TYPE_CHECKING:
@@ -687,11 +687,11 @@ class NddAdapter:
             return df.copy()
 
         dataframe = df.copy()
-        dataframe[RECORD_ID_COLUMN] = dataframe.apply(self._compute_record_id, axis=1)
+        dataframe[RECORD_ID_COLUMN] = dataframe.apply(self.compute_record_id, axis=1)
         return dataframe
 
     @staticmethod
-    def _compute_record_id(row: pd.Series) -> str:
+    def compute_record_id(row: pd.Series) -> str:
         # uuid5 is deterministic so input/output IDs match for missing-record tracking.
         # Include row index so duplicate rows get distinct IDs.
         # TODO: consider whether id_column from AnonymizerInput should be used here instead.

@@ -21,12 +21,14 @@ from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
     _build_entities_by_value,
 )
+from anonymizer.engine.detection.result import DetectorResult
 from anonymizer.engine.graph_core.session import Session, SessionSnapshot
 from anonymizer.engine.ndd.adapter import NddAdapter, WorkflowRunResult
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.results import AnonymizerResult, SessionCallChanges
 
 Mentions = dict[str, list[tuple[str, str]]]
+from tests.detector_results import as_detector_result
 
 
 class _Detector:
@@ -36,7 +38,10 @@ class _Detector:
     def __init__(self, mentions: Mentions, *, reverse_entities: bool = False, reverse_rows: bool = False) -> None:
         self.mentions, self.reverse_entities, self.reverse_rows = mentions, reverse_entities, reverse_rows
 
-    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+    def run(self, dataframe: pd.DataFrame, **_: object) -> DetectorResult:
+        return as_detector_result(dataframe, self.frame(dataframe))
+
+    def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
         frame = dataframe.copy()
         rows = []
         for text in frame[COL_TEXT]:

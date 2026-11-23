@@ -32,12 +32,16 @@ from anonymizer.engine.graph_core.authoring import (
     Workflow,
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
-from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.engine.replace.route import run_replace_pipeline
 from anonymizer.engine.schemas import AugmentedEntitiesSchema, DetectionResult
 from tests.spec_programs._builder import Checks
 
 TEXTS = ("Alice met Bob.", "Carol left.")
+
+
+def _ids(frame: pd.DataFrame) -> pd.DataFrame:
+    """``frame`` with the record id column the ``Anonymizer`` seam attaches before the detect step."""
+    return frame.assign(**{RECORD_ID_COLUMN: [f"r{i}" for i in range(len(frame))]})
 
 
 def _run(produce: Any, *, per_invocation: bool = False, texts: tuple[str, ...] = TEXTS, **prepare_kwargs: Any):
@@ -79,14 +83,13 @@ def _redact(texts: list[str], entities: list[list[dict]]):
         found = df.assign(**{COL_FINAL_ENTITIES: [{"entities": e} for e in entities]})
         return EntityDetectionResult(found, [], tuple(range(len(df))))
 
-    frame = pd.DataFrame({COL_TEXT: texts})
+    frame = _ids(pd.DataFrame({COL_TEXT: texts}))
     return run_replace_pipeline(
         frame,
         detect=detect,
         replace_method=Redact(),
         llm_workflow=None,
         map_arguments={},
-        reroute=lambda df: ReplacementResult(df, []),
     )
 
 
@@ -134,7 +137,7 @@ def program() -> list[dict[str, str]]:
 
     # E20.4 a detector's nested spans resolve to the outer span; a partial overlap fails that target, not picked from.
     text = "Alice Smith met Bob at noon."
-    frame = pd.DataFrame({COL_TEXT: [text, text, "plain"]})
+    frame = _ids(pd.DataFrame({COL_TEXT: [text, text, "plain"]}))
     nested = [{"value": text[0:4], "label": "a", "start_position": 0, "end_position": 4}]
     nested.append({"value": text[0:22], "label": "b", "start_position": 0, "end_position": 22})
     partial = [nested[1], {"value": text[16:27], "label": "c", "start_position": 16, "end_position": 27}]

@@ -37,6 +37,7 @@ from anonymizer.engine.replace.replace_runner import ReplacementResult, Replacem
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
 from tests.conftest import stub_run_with_detection
+from tests.detector_results import returns_detector_result
 
 
 def _mock_method(method: object) -> Mock:
@@ -71,7 +72,7 @@ def _make_logging_anonymizer(
             COL_FINAL_ENTITIES: entities,
         }
     )
-    detection_workflow = Mock(spec=EntityDetectionWorkflow)
+    detection_workflow = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
     detection_workflow.run.return_value = EntityDetectionResult(
         dataframe=det_df,
         failed_records=detection_failures or [],
@@ -615,7 +616,7 @@ def test_preview_with_large_input_only_loads_preview_rows(tmp_path: Path, caplog
             COL_FINAL_ENTITIES: entities,
         }
     )
-    detection_workflow = Mock(spec=EntityDetectionWorkflow)
+    detection_workflow = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
     detection_workflow.run.return_value = EntityDetectionResult(dataframe=det_df, failed_records=[])
     _replace_df = pd.DataFrame(
         {
@@ -656,7 +657,7 @@ def test_local_replace_logs_progress_for_large_datasets(tmp_path: Path, caplog: 
             COL_FINAL_ENTITIES: [{"entities": e} for e in entities],
         }
     )
-    detection_workflow = Mock(spec=EntityDetectionWorkflow)
+    detection_workflow = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
     detection_workflow.run.return_value = EntityDetectionResult(
         dataframe=det_df, failed_records=[], source_positions=tuple(range(num_records))
     )

@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 from anonymizer.engine.replace.llm_replace_workflow import _collision_safe_synthetic, _recase, is_placeholder
-from anonymizer.engine.rewrite.rewrite_workflow import _placeholder_in_text
+from anonymizer.engine.replace.llm_replace_workflow import placeholder_in_text as _placeholder_in_text
 
 
 @pytest.mark.parametrize("label", ["İstanbul", "Straẞe", "city"])

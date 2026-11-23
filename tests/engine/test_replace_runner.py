@@ -51,6 +51,12 @@ from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.engine.spans import Span, Spans
 from anonymizer.engine.value_matching import format_cause
 from anonymizer.interface.anonymizer import Anonymizer
+from tests.detector_results import as_detector_result, returns_detector_result
+
+
+def _ids(frame: pd.DataFrame) -> pd.DataFrame:
+    """``frame`` with the record id column the ``Anonymizer`` seam attaches before the detect step."""
+    return frame.assign(**{RECORD_ID_COLUMN: [f"r{i}" for i in range(len(frame))]})
 
 
 def _build_entities_payload(payload_kind: str) -> object:
@@ -126,7 +132,7 @@ def test_substitute_consistency_shares_values_across_records_only_for_run(
         }
     )
     result = ReplacementWorkflow(llm_workflow=LlmReplaceWorkflow(adapter=adapter)).run_with_detection(
-        frame,
+        _ids(frame),
         detect=lambda df: EntityDetectionResult(df, [], tuple(range(len(df)))),
         replace_method=Substitute(consistency=consistency),
         model_configs=stub_model_configs,
@@ -722,11 +728,14 @@ def test_run_reports_each_rows_protection_outcome(omit_bob: bool, tmp_path: Path
     texts = ["Alice works at Acme", "Bob works at Acme"]
     bob = [{"value": "Bob", "label": "first_name", "start_position": 0, "end_position": 3}, dict(stub_entities[1])]
     bob[1].update(start_position=13, end_position=17)
-    detector = Mock(spec=EntityDetectionWorkflow)
-    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
-        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": stub_entities}, {"entities": bob}]}),
-        failed_records=[],
-        source_positions=(0, 1),
+    detector = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
+    detector.run.side_effect = lambda frame, **_: as_detector_result(
+        frame,
+        EntityDetectionResult(
+            dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": stub_entities}, {"entities": bob}]}),
+            failed_records=[],
+            source_positions=(0, 1),
+        ),
     )
     csv_path = tmp_path / "input.csv"
     pd.DataFrame({"text": texts}).to_csv(csv_path, index=False)
@@ -925,11 +934,14 @@ def test_leftovers_explain_a_substitute_that_brings_a_value_back(tmp_path: Path)
         failed_records=[],
         source_positions=(0,),
     )
-    detector = Mock(spec=EntityDetectionWorkflow)
-    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
-        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": entities}]}),
-        failed_records=[],
-        source_positions=(0,),
+    detector = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
+    detector.run.side_effect = lambda frame, **_: as_detector_result(
+        frame,
+        EntityDetectionResult(
+            dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": entities}]}),
+            failed_records=[],
+            source_positions=(0,),
+        ),
     )
     csv_path = tmp_path / "input.csv"
     pd.DataFrame({"text": [text]}).to_csv(csv_path, index=False)
@@ -965,11 +977,14 @@ def test_a_redact_template_that_brings_back_a_name_with_reordered_marks_fails_th
     tmp_path: Path, name: str
 ) -> None:
     text = f"{name} called."
-    detector = Mock(spec=EntityDetectionWorkflow)
-    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
-        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": [_ent(name, 0)]}]}),
-        failed_records=[],
-        source_positions=(0,),
+    detector = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
+    detector.run.side_effect = lambda frame, **_: as_detector_result(
+        frame,
+        EntityDetectionResult(
+            dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": [_ent(name, 0)]}]}),
+            failed_records=[],
+            source_positions=(0,),
+        ),
     )
     csv_path = tmp_path / "input.csv"
     pd.DataFrame({"text": [text]}).to_csv(csv_path, index=False)
@@ -1022,11 +1037,14 @@ def test_leftovers_are_what_the_replace_advisory_counted(
 ) -> None:
     """For every row, passing ones included, the audit holds one entry per detected value and its over-bound entries
     are the advisory's cause, whatever the source cell's type and whatever the other columns are named."""
-    detector = Mock(spec=EntityDetectionWorkflow)
-    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
-        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": e} for e in entities]}),
-        failed_records=[],
-        source_positions=tuple(range(len(entities))),
+    detector = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
+    detector.run.side_effect = lambda frame, **_: as_detector_result(
+        frame,
+        EntityDetectionResult(
+            dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": e} for e in entities]}),
+            failed_records=[],
+            source_positions=tuple(range(len(entities))),
+        ),
     )
     csv_path = tmp_path / "input.csv"
     pd.DataFrame(columns).to_csv(csv_path, index=False)
@@ -1052,11 +1070,14 @@ def test_leftovers_name_a_value_by_its_own_span(tmp_path: Path) -> None:
     """John matches inside "John Smith" first, yet its entry is John's own span."""
     text = "John Smith called. John said hi."
     entities = [_ent("John Smith", 0, "full_name"), _ent("John", 19)]
-    detector = Mock(spec=EntityDetectionWorkflow)
-    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
-        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": entities}]}),
-        failed_records=[],
-        source_positions=(0,),
+    detector = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
+    detector.run.side_effect = lambda frame, **_: as_detector_result(
+        frame,
+        EntityDetectionResult(
+            dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": entities}]}),
+            failed_records=[],
+            source_positions=(0,),
+        ),
     )
     csv_path = tmp_path / "input.csv"
     pd.DataFrame({"text": [text]}).to_csv(csv_path, index=False)

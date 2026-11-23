@@ -24,19 +24,19 @@ import time
 from collections import Counter
 from collections.abc import Callable, Sequence
 from itertools import repeat
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 
 from anonymizer.config.replace_strategies import Annotate, LocalReplaceMethod, Substitute
 from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
+    COL_PLACEHOLDER_IN_TEXT,
     COL_REPLACED_TEXT,
     COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_SOURCE,
     COL_TEXT,
-    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detect_step import DetectState, accepted_mentions, detect_step, missing
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
@@ -63,9 +63,11 @@ from anonymizer.engine.ndd.backend import (
     register_plain_kind,
     run_invocation,
 )
+from anonymizer.engine.protection_policy import missed_repeat
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
     LlmReplaceWorkflow,
+    placeholder_in_text,
 )
 from anonymizer.engine.replace.replace_runner import ReplacementResult, _drop_malformed_entities
 from anonymizer.engine.replace.strategies import (
@@ -134,9 +136,19 @@ def run_substitute_route(
     output_df[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
     output_df[COL_REPLACED_TEXT] = [result.value(d) for d in targets]
     output_df[COL_REPLACEMENT_APPLICATION] = [result.value(d, "application") for d in targets]
+    _flag_placeholders(output_df)
     return ReplacementResult(
         output_df, failures, session_changes=result.session_changes, placeholder_counts=dict(placeholders)
     )
+
+
+def _flag_placeholders(output_df: pd.DataFrame) -> None:
+    """Set ``placeholder_in_text`` on every Substitute output row: whether its replaced text keeps a placeholder of its
+    own map. It flags the row and the row stays met. Every Substitute route calls it once."""
+    output_df[COL_PLACEHOLDER_IN_TEXT] = [
+        placeholder_in_text(str(text), rmap)
+        for text, rmap in zip(output_df[COL_REPLACED_TEXT], output_df[COL_REPLACEMENT_MAP])
+    ]
 
 
 def _substitute_map_step(
@@ -201,17 +213,14 @@ def run_replace_pipeline(
     replace_method: LocalReplaceMethod | Substitute,
     llm_workflow: LlmReplaceWorkflow | None,
     map_arguments: dict[str, Any],
-    reroute: Callable[[pd.DataFrame], ReplacementResult],
     session: Session | None = None,
-    unspanned_check: bool = False,
+    detector: Literal["builtin", "custom"] = "builtin",
 ) -> ReplacementResult:
     """Run ``detect``, the Substitute map step and the per-target replace and verify as one invocation.
 
     A row the detector drops fails at ``detect`` and blocks the later steps. Output rows are the detection frame's
     rows for the targets that reached the end; a row that fails at a step for any reason other than missing output
-    (which that step's workflow already reports) is returned as a failed record naming the step and the reason. A
-    result that is not verifiably one input row per returned row (see ``resolve_positions``), or that changed a row's
-    text, fails every target at ``detect``, and ``reroute`` replaces over the detection frame as returned.
+    (which that step's workflow already reports) is returned as a failed record naming the step and the reason.
     """
     scope = GraphScope()
     graph = ProtectionGraph(scope, tuple(scope.datum(cell_text(text)) for text in dataframe[COL_TEXT]))
@@ -230,7 +239,7 @@ def run_replace_pipeline(
         positions = result.source_positions and tuple(result.source_positions[i] for i in kept.index)
         return dataclasses.replace(result, dataframe=kept.reset_index(drop=True), source_positions=positions)
 
-    detect_op = detect_step(dataframe, detect_replaceable, state, spans_only=unspanned_check)
+    detect_op = detect_step(dataframe, detect_replaceable, state, repeats=missed_repeat("replace", detector))
     tracker = ProgressTracker(total=len(graph.targets), label="Replacement")
     map_step = build_map = None
     if isinstance(replace_method, Substitute):
@@ -263,19 +272,14 @@ def run_replace_pipeline(
     replace_elapsed = time.perf_counter() - started - sum(elapsed)  # detection records its own stage
     failures.extend(malformed)
     call_on_empty_input(graph, detect_op)
-    if state.unresolved:
-        rerouted = reroute(detected[0].dataframe)
-        failed = [*failures, *rerouted.failed_records]
-        return dataclasses.replace(rerouted, failed_records=failed, detection=detected[0], detection_elapsed=elapsed[0])
     targets = [d for d in graph.targets if result.outcome(d).available]
     available = set(targets)
     row_of = {datum: row for row, datum in enumerate(owners)}
     frame = detected[0].dataframe
-    ids = list((frame[RECORD_ID_COLUMN] if RECORD_ID_COLUMN in frame.columns else frame.index).astype(str))
     # A returned row with no output is a failed record; ``missing_output`` rows were reported by their own step.
     for a in result.attempts:
         if a.status == "failed" and a.reason != "missing_output" and a.target in row_of and a.target not in available:
-            failures.append(FailedRecord(ids[row_of[a.target]], a.operation, a.reason))
+            failures.append(FailedRecord(state.rows[a.target].record_id, a.operation, a.reason))
     output_df = frame.iloc[[row_of[d] for d in targets]].reset_index(drop=True)
     output_df[COL_REPLACEMENT_MAP] = [result.value(d, "replacement_map") for d in targets]
     if map_step:
@@ -286,6 +290,8 @@ def run_replace_pipeline(
     # A row whose detected text is missing keeps the detection frame's own stringification (``<NA>`` for ``pd.NA``).
     output_df[COL_REPLACED_TEXT] = [str(text) if missing(text) else result.value(d) for d, text in zip(targets, shown)]
     output_df[COL_REPLACEMENT_APPLICATION] = [result.value(d, "application") for d in targets]
+    if map_step:  # only Substitute mints placeholders
+        _flag_placeholders(output_df)
     tracker.log_final()
     record_stage(
         "ReplacementWorkflow.run",

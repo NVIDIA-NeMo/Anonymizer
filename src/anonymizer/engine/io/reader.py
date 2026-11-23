@@ -16,9 +16,9 @@ from anonymizer.engine.constants import (
     RESERVED_INPUT_COLUMNS,
     RESULT_COLUMNS,
 )
+from anonymizer.engine.errors import AnonymizerIOError, InvalidInputError
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.engine.resolved_input import ResolvedInput
-from anonymizer.interface.errors import AnonymizerIOError, InvalidInputError
 
 logger = logging.getLogger("anonymizer")
 

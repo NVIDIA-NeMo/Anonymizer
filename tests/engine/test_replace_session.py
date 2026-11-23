@@ -15,13 +15,13 @@ import random
 import re
 import types
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
 
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite, TextRecord, TextRecordsInput
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, ReplaceMethod, Substitute
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
@@ -35,12 +35,14 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionResult,
     EntityDetectionWorkflow,
     _build_entities_by_value,
 )
+from anonymizer.engine.detection.result import DetectorResult, DetectorRow
 from anonymizer.engine.graph_core.session import FALLBACK, Session, SessionChanges, SessionView, normalize
 from anonymizer.engine.ndd.adapter import NddAdapter, WorkflowRunResult
 from anonymizer.engine.replace.llm_replace_workflow import (
@@ -54,12 +56,13 @@ from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteW
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.graph import SessionSnapshot
 from anonymizer.interface.anonymizer import Anonymizer
-from anonymizer.interface.errors import InvalidConfigError
+from anonymizer.interface.errors import InvalidConfigError, InvalidDetectorResultError
 from anonymizer.interface.results import AnonymizerResult, Replacement, SessionCallChanges
 from tests.engine import test_replace_detect_failures as rejected
 
 LABELS = {"Alice": "first_name", "ALICE": "first_name", "Bob": "first_name", "Carol": "first_name"}
 LABELS |= {"Dave": "first_name", "Zed": "first_name", "Paris": "city"}
+from tests.detector_results import as_detector_result
 
 
 class _Detector:
@@ -67,7 +70,10 @@ class _Detector:
 
     calls = 0
 
-    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+    def run(self, dataframe: pd.DataFrame, **_: object) -> DetectorResult:
+        return as_detector_result(dataframe, self.frame(dataframe))
+
+    def frame(self, dataframe: pd.DataFrame) -> EntityDetectionResult:
         type(self).calls += 1
         frame = dataframe.copy()
         entities = [_entities(str(text)) for text in frame[COL_TEXT]]
@@ -451,27 +457,46 @@ def test_an_overriding_rewrite_runner_runs_as_before_with_an_off_session(tmp_pat
     assert with_session.session_changes is None
 
 
-class _Unresolved(_Detector):
-    """No positions and no record IDs, so the route reroutes over the frame as returned: reversed, first row dropped
-    (as ``tests/interface/test_facade_detection_pins.py``'s unresolved detector)."""
+class _Unplaceable(_Detector):
+    """A result that cannot be placed: a frame (the old contract), an unknown record id, or a record answered twice."""
 
-    def run(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
-        returned = dataframe.drop(columns=[c for c in dataframe.columns if c != COL_TEXT]).iloc[:0:-1]
-        return EntityDetectionResult(super().run(returned.reset_index(drop=True)).dataframe, [], ())
+    def __init__(self, shape: str) -> None:
+        self.shape = shape
+
+    def run(self, dataframe: pd.DataFrame, **_: object) -> Any:
+        placed = super().run(dataframe)
+        if self.shape == "frame":
+            return self.frame(dataframe)
+        if self.shape == "unknown-id":
+            return DetectorResult(rows=(*placed.rows, DetectorRow(record_id="not-an-input-id")))
+        return DetectorResult(rows=(*placed.rows, placed.rows[0]))
 
 
-def test_the_reroute_takes_a_stable_session(tmp_path: Path) -> None:
-    session, results = Session(stable_replacements=True), []
+@pytest.mark.parametrize("shape", ["frame", "unknown-id", "duplicate-id"])
+def test_a_result_that_cannot_be_placed_raises_and_leaves_the_session_untouched(tmp_path: Path, shape: str) -> None:
+    """The route no longer reroutes over a detector's frame as returned: an unplaceable result raises before any model
+    call, and a stable Session that already holds entries keeps exactly those."""
+    session = Session(stable_replacements=True)
+    _protect(tmp_path, ["Alice lives in Paris."], {"Alice": "Bob", "Paris": "Lyon"}, session)
+    size, snapshot = session.size, session.snapshot().to_bytes()
+    assert size > 0
     texts = ["Carol is here.", "Alice lives in Paris."]
-    proposals = {"Alice": "Bob", "Paris": "Lyon", "Carol": "Dana"}
-    first = _protect(tmp_path, texts, proposals, session, results, detector=_Unresolved())
-    second = _protect(tmp_path, texts, {"Alice": "Zed", "Paris": "Nice"}, session, results, detector=_Unresolved())
-    assert list(first["text_replaced"]) == list(second["text_replaced"]) == ["Bob lives in Lyon."]
-    assert results == [SessionCallChanges(added=2), SessionCallChanges(reused=2)]
+    with (
+        patch.object(NddAdapter, "run_workflow") as model,
+        pytest.raises(InvalidDetectorResultError),
+    ):
+        Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, _Unplaceable(shape))).run(
+            config=AnonymizerConfig(replace=Substitute()),
+            data=TextRecordsInput(records=[TextRecord(id=f"r{i}", text=t) for i, t in enumerate(texts)]),
+            session=session,
+        )
+    assert model.call_count == 0
+    assert session.size == size
+    assert session.snapshot().to_bytes() == snapshot
 
 
 class _OldSignature(ReplacementWorkflow):
-    """Overrides ``run_with_detection`` with the signature it had before ``session`` (``unspanned_check`` included)."""
+    """Overrides ``run_with_detection`` with the signature it had before ``session`` (``detector`` included)."""
 
     def run_with_detection(  # ty: ignore[invalid-method-override]
         self,
@@ -482,7 +507,7 @@ class _OldSignature(ReplacementWorkflow):
         model_configs: Any,
         selected_models: Any,
         preview_num_records: int | None = None,
-        unspanned_check: bool = False,
+        detector: Literal["builtin", "custom"] = "builtin",
     ) -> ReplacementResult:
         return super().run_with_detection(
             dataframe,
@@ -491,7 +516,7 @@ class _OldSignature(ReplacementWorkflow):
             model_configs=model_configs,
             selected_models=selected_models,
             preview_num_records=preview_num_records,
-            unspanned_check=unspanned_check,
+            detector=detector,
         )
 
 
@@ -1299,7 +1324,9 @@ def _random_frame(rng: random.Random) -> pd.DataFrame:
             }
         )
         texts.append(" ".join(values))
-    return pd.DataFrame({COL_TEXT: texts, COL_ENTITIES_BY_VALUE: rows, "tagged_text": texts})
+    # The record id column the Anonymizer seam attaches before the map step.
+    ids = [f"r{i}" for i in range(len(texts))]
+    return pd.DataFrame({COL_TEXT: texts, COL_ENTITIES_BY_VALUE: rows, "tagged_text": texts, RECORD_ID_COLUMN: ids})
 
 
 @pytest.mark.parametrize("seed", range(300))

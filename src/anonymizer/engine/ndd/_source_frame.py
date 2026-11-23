@@ -28,7 +28,7 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_REANSWER,
     COL_REPLACEMENT_MAP,
 )
-from anonymizer.interface.errors import AnonymizerWorkflowError
+from anonymizer.engine.errors import AnonymizerWorkflowError
 
 _COL_SOURCE_PREFIX = "_anonymizer_source_"
 _SEMANTIC_PAYLOAD_COLUMNS = frozenset(

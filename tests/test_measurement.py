@@ -81,6 +81,7 @@ from anonymizer.measurement import (
 )
 from anonymizer.measurement.metrics.rewrite import _output_contains_original_value
 from tests.conftest import stub_run_with_detection
+from tests.detector_results import returns_detector_result
 
 
 class _FailingSink:
@@ -423,7 +424,7 @@ def test_anonymizer_records_per_record_measurement_without_raw_pii(tmp_path: Pat
             {"value": "Acme", "label": "company_name"},
         ]
     }
-    detection_workflow = Mock(spec=EntityDetectionWorkflow)
+    detection_workflow = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
     detection_workflow.run.return_value = EntityDetectionResult(
         dataframe=pd.DataFrame(
             {
@@ -580,7 +581,7 @@ def test_anonymizer_measurement_config_writes_jsonl(tmp_path: Path) -> None:
             {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
         ]
     }
-    detection_workflow = Mock(spec=EntityDetectionWorkflow)
+    detection_workflow = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
     detection_workflow.run.return_value = EntityDetectionResult(
         dataframe=pd.DataFrame(
             {

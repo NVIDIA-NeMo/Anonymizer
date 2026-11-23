@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from tests.detector_results import returns_detector_result
 from tests.tools.measurement_test_support import (
     _strict_record_payload,
 )
@@ -1201,7 +1202,7 @@ def _measured_redact_run(tmp_path: Path, *, also: Callable[[], None] = lambda: N
     source, path = tmp_path / "in.csv", tmp_path / "measurements.jsonl"
     pd.DataFrame({"text": ["Alice works at Acme"]}).to_csv(source, index=False)
     entities = {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
-    detection = Mock(spec=EntityDetectionWorkflow)
+    detection = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
     detection.run.return_value = EntityDetectionResult(
         dataframe=pd.DataFrame(
             {
