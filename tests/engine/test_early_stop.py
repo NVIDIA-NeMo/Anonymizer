@@ -8,13 +8,16 @@ Only the HTTP client is scripted, per model alias; every Rewrite step, detection
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
 import re
 import threading
+import time
 from collections import Counter
 from collections.abc import Callable, Generator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -79,31 +82,95 @@ _REQUESTS_PER_ROW = 6  # a first request and the corrections and restarts the de
 Failing = Callable[[int, int], bool]
 
 
+_STOP_WARNING = "Stopped model requests for step _domain"
+_REWRITE_ROLES = [role for role, (group, _) in _ROLES.items() if group == "rewrite" and role != "domain"]
+
+
+@dataclass
+class _Traffic:
+    """Request timing and who reached the domain step, shared by every scripted client.
+
+    ``latency`` adds seconds before a role's answer. A role in ``gated`` answers only once the domain step has
+    stopped (``released``), so the healthy rows are still part-way through their later steps when the stop fires,
+    the order a slow production model gives. ``timeout`` only stops a mistake from hanging the suite. ``asked``
+    holds the record numbers whose domain request reached the model, ``answered`` those it gave a usable answer.
+    """
+
+    latency: dict[str, float] = field(default_factory=dict)
+    gated: set[str] = field(default_factory=set)
+    released: threading.Event = field(default_factory=threading.Event)
+    timeout: float = 30.0
+    asked: set[int] = field(default_factory=set)
+    answered: set[int] = field(default_factory=set)
+
+    def delay_blocking(self, role: str) -> None:
+        if role in self.gated:
+            self.released.wait(self.timeout)
+        time.sleep(self.latency.get(role, 0.0))
+
+    async def delay(self, role: str) -> None:
+        if role in self.gated:
+            deadline = time.monotonic() + self.timeout
+            while not self.released.is_set() and time.monotonic() < deadline:
+                await asyncio.sleep(0.005)
+        await asyncio.sleep(self.latency.get(role, 0.0))
+
+
+class _Release(logging.Handler):
+    """Sets ``event`` on the domain step's stop WARNING."""
+
+    def __init__(self, event: threading.Event) -> None:
+        super().__init__(logging.WARNING)
+        self._event = event
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.getMessage().startswith(_STOP_WARNING):
+            self._event.set()
+
+
 class _Client:
     """Responds per alias; the failing alias answers prose whenever ``failing`` says so."""
 
-    def __init__(self, role: str, failing: dict[str, Failing], calls: Counter[str], lock: threading.Lock) -> None:
-        self._role, self._failing, self._calls, self._lock = role, failing, calls, lock
+    def __init__(
+        self, role: str, failing: dict[str, Failing], calls: Counter[str], lock: threading.Lock, traffic: _Traffic
+    ) -> None:
+        self._role, self._failing, self._calls, self._lock, self._traffic = role, failing, calls, lock, traffic
 
-    def _response(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
+    def _plan(self, request: ChatCompletionRequest) -> tuple[str, bool]:
+        """The request's prompt, and whether it gets prose."""
         prompt = json.dumps(request.messages, default=str)
+        match = re.search(r"Record (\d+):", prompt)
+        record = int(match.group(1)) if match else -1
+        failing = self._failing.get(self._role)
         with self._lock:
             n = self._calls[self._role]
             self._calls[self._role] += 1
-        match = re.search(r"Record (\d+):", prompt)
-        failing = self._failing.get(self._role)
-        if failing is not None and failing(n, int(match.group(1)) if match else -1):
+            prose = failing is not None and failing(n, record)
+            if self._role == "domain":
+                self._traffic.asked.add(record)
+                if not prose:
+                    self._traffic.answered.add(record)
+        return prompt, prose
+
+    def _response(self, prompt: str, prose: bool) -> ChatCompletionResponse:
+        if prose:
             return ChatCompletionResponse(message=AssistantMessage(content=_PROSE))
         if self._role == "evaluator":
             kind = "privacy" if "privacy auditor" in prompt else "compare" if "A student took" in prompt else "quality"
-            return ChatCompletionResponse(message=AssistantMessage(content=_EVALUATOR[kind]))
-        return ChatCompletionResponse(message=AssistantMessage(content=_GOOD[self._role]))
+            content = _EVALUATOR[kind]
+        else:
+            content = _GOOD[self._role]
+        return ChatCompletionResponse(message=AssistantMessage(content=content))
 
     def completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
-        return self._response(request)
+        prompt, prose = self._plan(request)
+        self._traffic.delay_blocking(self._role)
+        return self._response(prompt, prose)
 
     async def acompletion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
-        return self._response(request)
+        prompt, prose = self._plan(request)
+        await self._traffic.delay(self._role)
+        return self._response(prompt, prose)
 
     def supports_chat_completion(self) -> bool:
         return True
@@ -116,13 +183,25 @@ class _Client:
 
 
 @pytest.fixture
-def scripted(monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str, Failing], Counter[str]]:
+def traffic() -> Generator[_Traffic]:
+    traffic = _Traffic()
+    handler = _Release(traffic.released)
+    response_logger = logging.getLogger("anonymizer.ndd.response")
+    response_logger.addHandler(handler)
+    try:
+        yield traffic
+    finally:
+        response_logger.removeHandler(handler)
+
+
+@pytest.fixture
+def scripted(monkeypatch: pytest.MonkeyPatch, traffic: _Traffic) -> tuple[dict[str, Failing], Counter[str]]:
     failing: dict[str, Failing] = {}
     calls: Counter[str] = Counter()
     lock = threading.Lock()
 
     def create(model_config: Any, *args: Any, **kwargs: Any) -> _Client:
-        return _Client(model_config.alias.removeprefix("scripted-"), failing, calls, lock)
+        return _Client(model_config.alias.removeprefix("scripted-"), failing, calls, lock, traffic)
 
     monkeypatch.setattr(client_factory, "create_model_client", create)
     return failing, calls
@@ -182,6 +261,20 @@ def _assert_partitioned(result: Any, rows: int, reason: str) -> None:
     assert {record.reason for record in result.failed_records} <= {reason}
 
 
+def _returned_records(result: Any) -> set[int]:
+    return {int(text.removeprefix("Record ").split(":")[0]) for text in result.dataframe["text"]}
+
+
+def _assert_returns_the_rows_asked(result: Any, traffic: _Traffic, rows: int) -> None:
+    """The rows whose domain step was asked come back, those it answered among them; every other row is listed once
+    as refused by the stopped domain step."""
+    assert traffic.answered
+    assert traffic.answered <= traffic.asked
+    assert _returned_records(result) == traffic.asked
+    assert len(result.failed_records) == rows - len(traffic.asked)
+    _assert_partitioned(result, rows, "stopped_early (_domain)")
+
+
 _MODES = pytest.mark.parametrize("combined", [False, True], ids=["staged", "combined"])
 
 
@@ -189,6 +282,7 @@ _MODES = pytest.mark.parametrize("combined", [False, True], ids=["staged", "comb
 def test_a_step_that_never_responds_stops_and_lists_the_rows_not_run(
     tmp_path: Path,
     scripted: tuple[dict[str, Failing], Counter[str]],
+    traffic: _Traffic,
     caplog: pytest.LogCaptureFixture,
     combined: bool,
 ) -> None:
@@ -202,6 +296,8 @@ def test_a_step_that_never_responds_stops_and_lists_the_rows_not_run(
     # Without the stop every row spends its requests: 180. The stop allows about one window of rows.
     assert calls["domain"] < rows * _REQUESTS_PER_ROW
     assert result.failed_records  # the rows after the stop are listed, not dropped
+    # The rows asked before the stop are kept with the domain's fallback, like any row whose response never parsed.
+    assert _returned_records(result) == traffic.asked
     _assert_partitioned(result, rows, "stopped_early (_domain)")
     assert _stop_warnings(caplog) == [
         "Stopped model requests for step _domain: 10 of its last 10 rows had no usable response, a rate of 1.00 "
@@ -213,17 +309,36 @@ def test_a_step_that_never_responds_stops_and_lists_the_rows_not_run(
 
 @_MODES
 def test_a_step_that_stops_responding_returns_the_rows_that_finished(
-    tmp_path: Path, scripted: tuple[dict[str, Failing], Counter[str]], combined: bool
+    tmp_path: Path, scripted: tuple[dict[str, Failing], Counter[str]], traffic: _Traffic, combined: bool
 ) -> None:
+    """The later steps answer only after the domain step stops, so every healthy row is part-way when it does."""
     failing, calls = scripted
-    failing["domain"] = lambda n, record: n >= 15  # healthy for 15 rows, then down for good
-    rows = 30
+    healthy, rows = 20, 60
+    failing["domain"] = lambda n, record: record >= healthy  # records 0-19 answer; the rest never do
+    traffic.gated.update(_REWRITE_ROLES)
+    traffic.latency.update(dict.fromkeys(_REWRITE_ROLES, 0.05))
 
     result = _run(tmp_path, rows, combined=combined)
 
-    assert 15 <= len(result.dataframe) < rows  # the rows that finished come back
-    _assert_partitioned(result, rows, "stopped_early (_domain)")
-    assert calls["domain"] < 15 + (rows - 15) * _REQUESTS_PER_ROW
+    assert traffic.released.is_set()
+    _assert_returns_the_rows_asked(result, traffic, rows)
+    assert calls["domain"] < healthy + (rows - healthy) * _REQUESTS_PER_ROW
+
+
+@_MODES
+def test_a_stop_keeps_the_rows_past_it_at_scale(
+    tmp_path: Path, scripted: tuple[dict[str, Failing], Counter[str]], traffic: _Traffic, combined: bool
+) -> None:
+    """Half the rows never get a domain answer while every other model is slow."""
+    failing, _ = scripted
+    healthy, rows = 50, 100
+    failing["domain"] = lambda n, record: record >= healthy
+    traffic.latency.update({role: 0.05 for role in _ROLES if role != "domain"})
+
+    result = _run(tmp_path, rows, combined=combined)
+
+    assert traffic.released.is_set()
+    _assert_returns_the_rows_asked(result, traffic, rows)
 
 
 @_MODES
@@ -320,11 +435,8 @@ def test_evaluation_stops_by_step_not_by_model(
     assert {step.split("__iteration_")[0] for step in stopped} <= steps
     assert len(stopped) == len(set(stopped))  # one WARNING per stopped step
     assert result.failed_records
-    # A refused row names the step its own request was refused by; a row with no trace names every stopped step.
-    for record in result.failed_records:
-        assert record.reason.startswith("stopped_early (")
-        assert set(record.reason.removeprefix("stopped_early (").removesuffix(")").split(", ")) <= set(stopped)
-    assert any(record.reason in {f"stopped_early ({step})" for step in stopped} for record in result.failed_records)
+    # Each listed row names the one stopped step that refused it.
+    assert {record.reason for record in result.failed_records} <= {f"stopped_early ({step})" for step in stopped}
 
 
 @_MODES
