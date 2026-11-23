@@ -267,6 +267,7 @@ Same judge as in replace mode — see [Entity Detection Judge](#entity-detection
 | Scenario | `detection_valid` | Display | Log |
 |---|---|---|---|
 | No entities detected in this record | `1.0` | 1.00 | `INFO`: "N passthrough row(s) have no detected entities — detection_valid set to 1.0 (trivially valid)" |
+| Only latent entities detected (Rewrite) | `1.0` | 1.00 | — (the detection judge reads explicit entities only and is not asked) |
 | Judge ran and all detections passed | `1.0` | 1.00 | — |
 | Judge ran and flagged one or more detections | 0–1 fraction | numeric score | — |
 | Judge call failed or entity data unreadable | `None` | Unavailable | `WARNING`: "Could not parse entities_by_value to compute detection_valid fraction" |
@@ -374,7 +375,7 @@ each judge appended as an advisory. The advisory's `check` and `verifier` name t
 | `failed` | The judge failed the row; `cause` says why, such as `entities_leaked`. |
 | `could_not_assess` | `cause` is `judge_unavailable` (the judge gave no score), `raised` (its check raised) or `blocked` (an earlier judge check of the row raised, so this one never ran). |
 | `scored` | The rewrite judge, which has no pass threshold, returned scores; read them in the `judge_evaluation` column. |
-| `not_applicable` | The rewrite judge skips a row with no detected entities by design. |
+| `not_applicable` | The rewrite judge skips a row with neither explicit nor latent entities by design. |
 
 A judge never changes the row's qualification or release: `qualification` and `protected` still say whether the run
 released the row. Treat a judge's `failed` advisory as evidence to review before using the row. Evaluating an

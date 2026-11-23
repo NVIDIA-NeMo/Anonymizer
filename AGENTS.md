@@ -88,7 +88,7 @@ Later, `Anonymizer.evaluate()` runs the non-critical judge steps:
                                               (only when EvaluateConfig.compute_detection_validity=True)
 ```
 
-Records with no detected entities skip all LLM sub-workflows and pass through with default metrics (utility=1.0, leakage=0.0). A runner that overrides `run()` keeps the older path: the facade calls `EntityDetectionWorkflow.run()` and then that `run()` with the detection frame.
+Records with neither explicit nor latent entities skip all LLM sub-workflows and pass through with default metrics (utility=1.0, leakage=0.0); a record with only latent entities is rewritten under the privacy goal. A runner that overrides `run()` keeps the older path: the facade calls `EntityDetectionWorkflow.run()` and then that `run()` with the detection frame.
 
 ## Config Pattern
 

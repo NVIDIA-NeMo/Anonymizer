@@ -45,6 +45,7 @@ from anonymizer.engine.constants import (
     COL_ENTITY_COVERAGE,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
+    COL_LATENT_ENTITIES,
     COL_LEAKAGE_MASS,
     COL_MISSED_ENTITIES,
     COL_NEEDS_HUMAN_REVIEW,
@@ -102,9 +103,8 @@ from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow, require_detector_keyword
 from anonymizer.engine.resolved_input import ResolvedInput
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
-from anonymizer.engine.rewrite.rewrite_workflow import REWRITE_METRICS, RewriteWorkflow
+from anonymizer.engine.rewrite.rewrite_workflow import REWRITE_METRICS, RewriteWorkflow, routes_to_rewrite
 from anonymizer.engine.row_partitioning import placed_output, record_ids, source_positions, with_record_ids
-from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.engine.signatures import accepts_keyword
 from anonymizer.interface.errors import InvalidConfigError
 from anonymizer.interface.results import AnonymizerResult, PreviewResult, SessionCallChanges
@@ -297,14 +297,12 @@ def _reported_outcomes(
     return tuple(reported(p) for p in positions)
 
 
-def _has_entities_for_evaluation(raw: object) -> bool:
-    """Return whether a row should receive entity-dependent evaluation scores."""
-    return bool(EntitiesByValueSchema.from_raw(raw).entities_by_value)
-
-
 def _judged_by_rewrite_judge(metrics: dict) -> bool:
-    """Whether the rewrite judge scores the row: it skips rows with no entities; unknown when the column is absent."""
-    return COL_ENTITIES_BY_VALUE not in metrics or _has_entities_for_evaluation(metrics[COL_ENTITIES_BY_VALUE])
+    """Whether the rewrite judge scores the row: it skips rows with neither an explicit nor a latent entity; unknown
+    when the explicit column is absent. A trace without the latent column reads as having no latent entity."""
+    if COL_ENTITIES_BY_VALUE not in metrics:
+        return True
+    return routes_to_rewrite(metrics[COL_ENTITIES_BY_VALUE], metrics.get(COL_LATENT_ENTITIES))
 
 
 def _flag_missed_entities(df: pd.DataFrame) -> pd.DataFrame:
@@ -861,7 +859,7 @@ class Anonymizer:
                     compute_detection_validity=evaluate_config.compute_detection_validity,
                 )
                 entity_mask = (
-                    rewrite_result.dataframe[COL_ENTITIES_BY_VALUE].apply(_has_entities_for_evaluation)
+                    rewrite_result.dataframe.apply(_judged_by_rewrite_judge, axis=1)
                     if COL_ENTITIES_BY_VALUE in rewrite_result.dataframe.columns
                     else None
                 )
@@ -919,7 +917,7 @@ class Anonymizer:
                         REWRITE_METRICS,
                         rewrite_columns,
                         run_rewrite_judges,
-                        context=(COL_ENTITIES_BY_VALUE,),
+                        context=(COL_ENTITIES_BY_VALUE, COL_LATENT_ENTITIES),
                     ),
                     _Judge(
                         "coverage-judge", "coverage_metrics", COVERAGE_METRICS, (COL_ENTITY_COVERAGE,), run_coverage

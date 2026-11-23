@@ -73,6 +73,9 @@ carries latent entities for Rewrite. The engine renders `final_entities`, `_enti
 them; a detector no longer returns those columns. Any detector other than the built-in `EntityDetectionWorkflow`
 class itself, its subclasses included, returns a `DetectorResult`.
 
+In Rewrite, a row with latent entries and no spans is rewritten under the privacy goal. `latent=()` means the detector
+found no latent entity, so a row with no spans, no extra values and `latent=()` passes through unchanged.
+
 A result that cannot be placed against the input raises `InvalidDetectorResultError` before any model is called: a
 return value that is not a `DetectorResult`, a row or failure naming an id that is not an input id, or an id answered
 or failed twice. An input record the result neither answers nor fails fails at `detect` with `dropped_output`.

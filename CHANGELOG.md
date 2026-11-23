@@ -268,6 +268,11 @@ whose explicit sensitivity guidance the model applies where it agrees with the p
   alias. Expect one more model call for a record with custom labels.
 - Changed in: #333.
 
+**A record whose only finding is latent is rewritten.** A latent entity is sensitive information the text implies
+without naming it. A Rewrite record with latent entities and no explicit entity is now rewritten and evaluated under
+the privacy goal. It used to be returned unchanged and reported as protected. See "Latent-only Rewrite records" under
+"Pending changes".
+
 ### Evaluation
 
 **Missed entities flag a Rewrite row.** In Rewrite mode, `evaluate()` sets `needs_human_review` on any row whose
@@ -503,6 +508,26 @@ class itself, including its subclasses and `Mock(spec=EntityDetectionWorkflow)`.
 - Substitute rows gain a `placeholder_in_text` column, `True` when the replaced text keeps a placeholder substitute
   (`[SUBSTITUTE_<LABEL>_<n>]`) of the row's own replacement map. The row is not failed and stays `met`, as in Rewrite,
   where the same situation flags the row for review.
+
+### Latent-only Rewrite records
+
+**A Rewrite record whose only finding is latent is now rewritten and evaluated.** A latent entity is sensitive
+information the text implies without naming it, such as an occupation implied by "night shifts on the cardiac ward".
+Before, a record with latent entities and no explicit entity was returned unchanged and reported as protected,
+without any model request.
+- Each such record now goes through the full rewrite: about 8 model requests per record, and its text changes. The
+  privacy goal decides whether each latent entity is protected, as it already did for latent entities on records with
+  explicit ones. A record whose latent entities are all judged low sensitivity is still rewritten, as a record whose
+  explicit entities are all low is.
+- A record whose rewrite still leaks a latent entity is withheld and flagged for review, as any Rewrite record is.
+- `evaluate()` now runs the rewrite judge on these records. The detection validity judge still reads explicit
+  entities only, so these records keep `detection_valid` 1.0 and the judge is not asked.
+- A record whose latent detection fails still fails, and is neither rewritten nor released.
+- Records with neither explicit nor latent entities still pass through unchanged, with no model request.
+- A custom detector's `DetectorRow(latent=())` means "no latent entity found". There is no way yet to say "latent
+  entities not assessed"; that state is open.
+- What to do: expect more model requests and changed text for records whose only finding is latent. A custom
+  detector that does not look for latent entities should return `latent=()`.
 
 ### #407: frozen config and one options object
 

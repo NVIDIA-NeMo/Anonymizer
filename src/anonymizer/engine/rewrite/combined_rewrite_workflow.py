@@ -70,13 +70,13 @@ from anonymizer.engine.rewrite.rewrite_workflow import (
     RewriteResult,
     RewriteWorkflow,
     _apply_passthrough_defaults,
-    _has_entities,
     _join_new_columns,
     _rewrite_lowered,
     _Rows,
+    _split_rewrite_rows,
 )
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
-from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
+from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 from anonymizer.measurement import stage_timer
 
@@ -157,8 +157,9 @@ def _prepare_replacement_inputs(row: dict[str, Any]) -> dict[str, Any]:
 )
 def _filter_replacement_map(row: dict[str, Any]) -> dict[str, Any]:
     parsed = EntitiesByValueSchema.from_raw(row.get(COL_ENTITIES_BY_VALUE))
+    requested = bool(parsed.entities_by_value)  # a row with no entity skipped the request
     filtered = _filter_replacement_map_to_input_entities(
-        raw_map=row.get(COL_REPLACEMENT_MAP_RAW, {"replacements": []}),
+        raw_map=row.get(COL_REPLACEMENT_MAP_RAW, {"replacements": []}) if requested else {"replacements": []},
         parsed_entities=parsed,
         record_id=str(row.get(RECORD_ID_COLUMN, "")),
     )
@@ -179,10 +180,13 @@ def _replacement_columns(selected_models: ReplaceModelSelection) -> list[ColumnC
             prompt=_get_replacement_mapping_prompt(entities_column=COL_ENTITIES_FOR_REPLACE),
             model_alias=replace_alias,
             output_format=EntityReplacementMapSchema,
+            # A row with only latent entities has nothing to replace: no request, and no unparsed map to drop it.
+            skip=SkipConfig(when=f"{{{{ not {COL_ENTITIES_FOR_REPLACE} }}}}"),
         ),
         CustomColumnConfig(
             name=COL_REPLACEMENT_MAP,
             generator_function=_filter_replacement_map,
+            propagate_skip=False,  # a skipped request's row still gets its (empty) map
         ),
     ]
 
@@ -507,11 +511,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
         strict_entity_protection: bool = False,
     ) -> RewriteResult:
         with stage_timer("CombinedRewriteWorkflow.run", input_row_count=len(dataframe)) as measurement:
-            entity_rows, passthrough_rows = split_rows(
-                dataframe,
-                column=COL_ENTITIES_BY_VALUE,
-                predicate=_has_entities,
-            )
+            entity_rows, passthrough_rows = _split_rewrite_rows(dataframe)
             measurement.update(
                 entity_row_count=len(entity_rows),
                 passthrough_row_count=len(passthrough_rows),

@@ -22,6 +22,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
+    COL_LATENT_ENTITIES,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
@@ -152,6 +153,35 @@ def _has_entities(entities_by_value: object) -> bool:
     if not isinstance(items, list):
         return False
     return len(items) > 0
+
+
+def _has_latent_entities(latent: object) -> bool:
+    """Return True if this record has at least one latent entity; a missing or malformed cell has none."""
+    latent = normalize_payload(latent)
+    if not isinstance(latent, dict):
+        return False
+    items = latent.get("latent_entities")
+    return isinstance(items, list) and len(items) > 0
+
+
+def routes_to_rewrite(entities_by_value: object, latent: object = None) -> bool:
+    """Whether a Rewrite row takes the model route: it has an explicit or a latent entity.
+
+    Only a row with neither passes through unchanged. A latent entity defers to the privacy goal: the disposition
+    decides whether it is protected, as it does for latent entries on a row with explicit entities.
+    """
+    return _has_entities(entities_by_value) or _has_latent_entities(latent)
+
+
+_ROUTE_COL = "_anonymizer_routes_to_rewrite"
+
+
+def _split_rewrite_rows(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split ``df`` into (model-route, passthrough) rows by ``routes_to_rewrite``, with row-order tracking."""
+    latent = df[COL_LATENT_ENTITIES] if COL_LATENT_ENTITIES in df.columns else [None] * len(df)
+    marked = df.assign(**{_ROUTE_COL: [routes_to_rewrite(e, la) for e, la in zip(df[COL_ENTITIES_BY_VALUE], latent)]})
+    routed, passthrough = split_rows(marked, column=_ROUTE_COL, predicate=bool)
+    return routed.drop(columns=_ROUTE_COL), passthrough.drop(columns=_ROUTE_COL)
 
 
 def _normalize_evaluation_payloads(df: pd.DataFrame) -> None:
@@ -565,13 +595,13 @@ class RewriteWorkflow:
         strict_entity_protection: bool = False,
     ) -> RewriteResult:
         with stage_timer("RewriteWorkflow.run", input_row_count=len(dataframe)) as measurement:
-            entity_rows, passthrough_rows = split_rows(dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
+            entity_rows, passthrough_rows = _split_rewrite_rows(dataframe)
             measurement.update(
                 entity_row_count=len(entity_rows),
                 passthrough_row_count=len(passthrough_rows),
             )
 
-            # Fast path: no entities anywhere
+            # Fast path: no explicit or latent entities anywhere
             if entity_rows.empty:
                 _apply_passthrough_defaults(passthrough_rows)
                 result = RewriteResult(
@@ -616,9 +646,10 @@ class RewriteWorkflow:
     ) -> RewriteResult:
         """Run ``detect``, then ``rewrite`` and the final checks over every input row as one invocation.
 
-        ``rewrite`` splits the detection frame on its entities: rows with none take the passthrough defaults and the
-        rest go through ``_produce``, the stages ``run`` uses. A row the detector drops, or whose mentions the graph
-        rejects, fails at ``detect`` and is absent from the output. ``stage`` names the measurement.
+        ``rewrite`` splits the detection frame with ``routes_to_rewrite``: rows with neither an explicit nor a latent
+        entity take the passthrough defaults and the rest go through ``_produce``, the stages ``run`` uses. A row the
+        detector drops, or whose mentions the graph rejects, fails at ``detect`` and is absent from the output.
+        ``stage`` names the measurement.
         """
         started = time.perf_counter()
         evaluation = options["evaluation"]
@@ -630,7 +661,7 @@ class RewriteWorkflow:
 
         def split(keep: set[Datum]) -> tuple[pd.DataFrame, pd.DataFrame]:
             if not parts:  # only rows whose target reached ``rewrite``: a target that failed ``detect`` is dropped
-                halves = split_rows(state.detected[0].dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
+                halves = _split_rewrite_rows(state.detected[0].dataframe)
                 parts.append(
                     tuple(f[f[ROW_ORDER_COL].map(lambda o: state.owners[o] in keep).astype(bool)] for f in halves)
                 )
@@ -946,7 +977,7 @@ class RewriteWorkflow:
         COL_NEEDS_HUMAN_REVIEW is not modified — it was set during run() based on
         objective metrics and judge scores do not influence it.
         """
-        entity_rows, passthrough_rows = split_rows(df, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
+        entity_rows, passthrough_rows = _split_rewrite_rows(df)
 
         passthrough_rows = passthrough_rows.copy()
         if compute_detection_validity:
@@ -967,15 +998,24 @@ class RewriteWorkflow:
 
         # --- Detection validity judge (opt-in) ---
         def detection_judge() -> None:
+            # The judge reads explicit entities only: a latent-only row has none to judge and is trivially valid.
+            explicit = rows.frame[COL_ENTITIES_BY_VALUE].map(_has_entities).astype(bool)
+            latent_only = rows.frame[~explicit].copy()
+            latent_only[COL_DETECTION_VALID] = 1.0
+            latent_only[COL_DETECTION_INVALID_ENTITIES] = [[] for _ in range(len(latent_only))]
+            judged = rows.frame[explicit]
+            if judged.empty:
+                rows.frame = latent_only
+                return
             try:
                 detection_result = self._detection_judge_wf.evaluate(
-                    rows.frame,
+                    judged,
                     model_configs=model_configs,
                     selected_models=selected_models,
                     preview_num_records=preview_num_records,
                 )
-                rows.frame = _join_preserving(
-                    rows.frame,
+                judged = _join_preserving(
+                    judged,
                     detection_result.dataframe,
                     defaults={COL_DETECTION_VALID: None, COL_DETECTION_INVALID_ENTITIES: None},
                     source_positions=detection_result.source_positions,
@@ -983,15 +1023,19 @@ class RewriteWorkflow:
                 rows.failed.extend(detection_result.failed_records)
                 # Convert bool all_valid → 0–1 fraction so detection validity sits on the
                 # same scale as utility_score and leakage_mass in the rewrite scores section.
-                rows.frame[COL_DETECTION_VALID] = rows.frame.apply(_detection_valid_fraction, axis=1)
+                judged[COL_DETECTION_VALID] = judged.apply(_detection_valid_fraction, axis=1)
             except Exception as exc:
                 logger.warning(
                     "Detection validity judge failed (%s); detection_valid is unavailable for %d row(s).",
                     type(exc).__name__,
-                    len(rows.frame),
+                    len(judged),
                 )
-                rows.frame[COL_DETECTION_VALID] = None
-                rows.frame[COL_DETECTION_INVALID_ENTITIES] = None
+                judged = judged.copy()
+                judged[COL_DETECTION_VALID] = None
+                judged[COL_DETECTION_INVALID_ENTITIES] = None
+            if not latent_only.empty:
+                judged = pd.concat([judged, latent_only]).sort_values(ROW_ORDER_COL).reset_index(drop=True)
+            rows.frame = judged
 
         # --- Holistic judge (privacy / quality / style) ---
         def final_judge() -> None:

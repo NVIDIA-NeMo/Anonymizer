@@ -161,7 +161,9 @@ Use `preview.trace_dataframe` for the full pipeline trace (domain, disposition, 
 
 !!! note "No entities? No rewrite."
 
-    Records with no detected entities pass through unchanged with `utility_score=1.0` and `leakage_mass=0.0`.
+    Records with neither explicit nor latent entities pass through unchanged with `utility_score=1.0` and
+    `leakage_mass=0.0`. A record with only latent entities is rewritten under the privacy goal: the disposition
+    decides whether each latent entity is protected.
 
 ---
 
