@@ -15,6 +15,7 @@ from anonymizer.engine.constants import (
     COL_EVALUATION_UNAVAILABLE,
     COL_FULL_REWRITE,
     COL_MEANING_UNITS,
+    COL_PRIVACY_ITEMS_OMITTED,
     COL_PRIVACY_QA_REANSWER,
     COL_QUALITY_QA,
     COL_QUALITY_QA_COMPARE,
@@ -22,7 +23,12 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT,
 )
 from anonymizer.engine.rewrite.domain_classification import UNAVAILABLE_DOMAIN
-from anonymizer.engine.rewrite.response_summary import mark_evaluation_unavailable, warn_kept_without_response
+from anonymizer.engine.rewrite.response_summary import (
+    PRIVACY_EVALUATION_INCOMPLETE,
+    evaluation_unavailable,
+    mark_evaluation_unavailable,
+    warn_kept_without_response,
+)
 
 _RESPONSE = {"answers": []}
 _DOMAIN = {"domain": "FINANCIAL", "domain_confidence": 0.9}
@@ -176,3 +182,23 @@ def test_each_evaluation_step_counts_the_rows_without_a_response_in_any_round(
     shown = ", ".join(f"{step}={count}" for step, count in expected.items() if count)
     message = f"Rows kept without a usable model response after their retries, by step: {shown}. "
     assert counted == ([message + "If most rows are listed, check that step's model."] if shown else [])
+
+
+@pytest.mark.parametrize(("marker", "bit"), [(True, PRIVACY_EVALUATION_INCOMPLETE), (False, 0), (None, 0)])
+def test_an_omitted_privacy_item_sets_its_own_bit(marker: object, bit: int) -> None:
+    assert evaluation_unavailable(_row(**{COL_PRIVACY_ITEMS_OMITTED: marker})) == bit
+
+
+def test_an_omission_in_an_earlier_round_is_counted_once_in_its_own_warning(caplog: pytest.LogCaptureFixture) -> None:
+    frame = pd.DataFrame([_row(**{COL_PRIVACY_ITEMS_OMITTED: True}), _row(**{COL_PRIVACY_ITEMS_OMITTED: False})])
+    mark_evaluation_unavailable(frame)
+    frame[COL_PRIVACY_ITEMS_OMITTED] = False  # the next round answered every question
+
+    with caplog.at_level(logging.WARNING, logger="anonymizer.rewrite.responses"):
+        warn_kept_without_response(frame)
+
+    assert [r.getMessage() for r in caplog.records] == [
+        "Rows whose privacy evaluation omitted questions, each scored as leaked: 1. "
+        "A row whose final evaluation omitted one is not met."
+    ]
+    assert COL_PRIVACY_ITEMS_OMITTED not in frame.columns

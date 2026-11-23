@@ -123,6 +123,8 @@ COL_DOMAIN_UNAVAILABLE = "_domain_unavailable"  # internal: whether _domain hold
 COL_DOMAIN_SUPPLEMENT = "_domain_supplement"
 # internal: the evaluation steps (bit flags) that had no response in any round so far; popped before output
 COL_EVALUATION_UNAVAILABLE = "_evaluation_unavailable"
+# internal: whether this round's privacy evaluation left a question unanswered (None when not asked or unavailable)
+COL_PRIVACY_ITEMS_OMITTED = "_privacy_items_omitted"
 COL_DOMAIN_SUPPLEMENT_PRIVACY = "_domain_supplement_privacy"
 COL_ENTITY_CLASSIFICATION_LOCAL = "_entity_classification_local"  # label -> category, from the default table
 COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS = "_entity_classification_unmapped_labels"  # labels not in default table
