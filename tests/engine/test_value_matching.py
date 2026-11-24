@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import random
 import re
+import unicodedata
 from collections.abc import Callable, Iterable
 from types import SimpleNamespace
 from typing import Any
@@ -395,3 +396,31 @@ def test_exact_mode_counts_only_the_spelling_given(source: str, value: str, fold
     for mode, expected in ((MatchMode.FOLDED, folded), (MatchMode.EXACT, exact)):
         [leftover] = count_values(source, [], "", [value], mode=mode)
         assert leftover.in_source == expected, mode
+
+
+@pytest.mark.parametrize(
+    ("source", "value", "exact"),
+    [
+        ("สมชายบอกให้สมชายมา", "สมชาย", 2),
+        ("สมชายไปที่สมชาย", "สมชาย", 2),
+        ("सीता और राम सीता से मिले", "सीता", 2),
+        ("राम ने राम को देखा", "राम", 2),
+        (unicodedata.normalize("NFD", "Ông Le nói về Lê."), "Le", 1),
+        (unicodedata.normalize("NFD", "éLe met Le."), "Le", 1),
+        ("สมกินข้าว สมก", "สมก", 1),
+    ],
+    ids=[
+        "thai-1",
+        "thai-2",
+        "devanagari-sita",
+        "devanagari-ram",
+        "nfd-mark-after",
+        "nfd-mark-before",
+        "unspaced-ends-in-cluster",
+    ],
+)
+def test_exact_mode_never_splits_a_cluster(source: str, value: str, exact: int) -> None:
+    """``EXACT`` rejects a match that ends before a combining mark or starts on one, and a whole-word match right after
+    a mark; an unspaced match after a mark that belongs to the previous cluster still counts."""
+    [leftover] = count_values(source, [], "", [value], mode=MatchMode.EXACT)
+    assert leftover.in_source == exact

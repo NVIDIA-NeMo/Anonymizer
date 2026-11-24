@@ -1034,6 +1034,9 @@ def test_replace_fails_a_spans_unspanned_repeat_whatever_the_detectors_view(
         ("Qb May said she may come.", "May", False),
         (unicodedata.normalize("NFD", "Qb Le nói về Lê."), "Le", False),
         (unicodedata.normalize("NFD", "Qb Lê nói về Lê."), unicodedata.normalize("NFD", "Lê"), True),
+        ("Qb สมชายบอกให้สมชายมา", "สมชาย", True),
+        ("Qb สมชายไปที่สมชาย", "สมชาย", True),
+        (unicodedata.normalize("NFD", "Qb éLe met Lee."), "Le", False),
     ],
 )
 def test_unspanned_value_needs_the_reported_spelling(

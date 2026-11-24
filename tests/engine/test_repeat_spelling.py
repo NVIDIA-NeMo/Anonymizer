@@ -213,3 +213,21 @@ def test_a_repeat_span_never_splits_a_letter_from_its_mark() -> None:
     assert [(a.start_position, a.end_position) for a in added] == [
         (text.rindex(value), text.rindex(value) + len(value))
     ]
+
+
+@pytest.mark.parametrize(
+    ("text", "value", "label"),
+    [
+        ("สมชายบอกให้สมชายมา", "สมชาย", "first_name"),
+        ("สมชายไปที่สมชาย", "สมชาย", "first_name"),
+        ("सीता और राम सीता से मिले", "सीता", "first_name"),
+        ("राम ने राम को देखा", "राम", "first_name"),
+    ],
+)
+def test_an_unspaced_or_marked_script_repeat_keeps_its_span(text: str, value: str, label: str) -> None:
+    """A Thai name ends in a combining mark and a Devanagari name may too: its exact repeat still gets a span."""
+    kept = EntitiesSchema(entities=[EntitySchema(value=value, label=label, start_position=0, end_position=len(value))])
+    added = _repeat_spans(text, kept, [value], {normalized(value): label})
+    assert [(a.start_position, a.end_position) for a in added] == [
+        (text.rindex(value), text.rindex(value) + len(value))
+    ]

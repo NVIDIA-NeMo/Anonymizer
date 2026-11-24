@@ -896,8 +896,11 @@ def test_replace_advisory_error_is_could_not_assess(monkeypatch: pytest.MonkeyPa
     outcome = result.outcome(graph.targets[0])
 
     assert (outcome.qualification, outcome.protected, outcome.reasons) == ("met", True, ())
-    assert [(a.status, a.cause) for a in _added(outcome)] == [("could_not_assess", "check_error")]
-    assert canary not in repr(outcome) and "Alice" not in repr(_added(outcome))
+    assert [(a.check, a.status, a.cause) for a in outcome.advisories] == [
+        ("no_detected_value_added", "could_not_assess", "check_error"),
+        ("undetected_value_kept", "could_not_assess", "check_error"),
+    ]
+    assert canary not in repr(outcome) and "Alice" not in repr(outcome.advisories)
 
 
 def test_annotate_has_no_advisory() -> None:

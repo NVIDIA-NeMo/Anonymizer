@@ -168,7 +168,7 @@ class _Matcher:
         pos = text.find(self.key)
         while pos >= 0:
             if (self.pattern is None or self.pattern.match(text, pos)) and not (
-                self.exact and _marked_edge(text, pos, pos + len(self.key))
+                self.exact and _marked_edge(text, pos, pos + len(self.key), spaced=self.pattern is not None)
             ):
                 covered = origin[pos : pos + len(self.key)]  # canonical reordering can move marks across sources
                 yield Span(min(covered), max(covered) + 1)
@@ -191,12 +191,16 @@ def _compiled(keys: Iterable[str], *, exact: bool) -> dict[str, _Matcher]:
     return matchers
 
 
-def _marked_edge(text: str, start: int, end: int) -> bool:
-    """Whether a combining mark (category ``M*``) directly follows or precedes ``text[start:end]``: the word goes on
-    through the mark ("Le" in NFD "Lê"), which the word-boundary pattern does not see, so ``MatchMode.EXACT``
-    rejects the match."""
-    after = end < len(text) and unicodedata.category(text[end]).startswith("M")
-    return after or (start > 0 and unicodedata.category(text[start - 1]).startswith("M"))
+def _marked_edge(text: str, start: int, end: int, *, spaced: bool) -> bool:
+    """Whether ``MatchMode.EXACT`` rejects ``text[start:end]`` for splitting a cluster: a combining mark (category
+    ``M*``) directly follows its end, or the match starts on a mark, or, for a ``spaced`` (whole-word) key, a mark
+    directly precedes it ("Le" in NFD "Lê" or after a decomposed "é"). An unspaced key (Thai, Han) may follow a mark,
+    which belongs to the previous cluster, but still cannot end inside a cluster."""
+
+    def mark(i: int) -> bool:
+        return 0 <= i < len(text) and unicodedata.category(text[i]).startswith("M")
+
+    return mark(end) or mark(start) or (spaced and mark(start - 1))
 
 
 def _exact_key(text: str) -> str:

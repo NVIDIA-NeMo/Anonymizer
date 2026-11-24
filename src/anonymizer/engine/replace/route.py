@@ -6,9 +6,9 @@
 Each row lowers to one target datum whose exact, non-overlapping entity spans are its mentions. A row is a transform
 (``replace``: the 0.4.0 per-row replacement) followed by a verifier (``verify-patches``: one patch per accepted
 mention, checked by source-plus-patches reconstruction). Except under Annotate, a second verifier
-(``verify-no-original``) reports the non-required check ``no_detected_value_added`` as an
-advisory, and a third (``verify-undetected-kept``) the advisory ``undetected_value_kept``. The legacy DataFrame projection derives from the canonical result without rerunning work; Annotate
-output is an annotation result and is never Protected.
+(``verify-no-original``) reports the non-required check ``no_detected_value_added`` as an advisory, and a third
+(``verify-undetected-kept``) the advisory ``undetected_value_kept``. The legacy DataFrame projection derives from the
+canonical result without rerunning work; Annotate output is an annotation result and is never Protected.
 
 Substitute runs as one invocation. Its phase-scoped ``substitute-map`` step makes one ``LlmReplaceWorkflow`` call
 over the whole frame (DataDesigner batches it) and returns each row's replacement map; a row DataDesigner dropped gets
