@@ -287,6 +287,11 @@ is scanned whole, replacements included:
 - `passed`: it does not.
 - `could_not_assess`: the check could not run.
 
+They also carry the advisory `undetected_value_kept`, counted the same way (case and accents folded): `failed` when the
+replaced text keeps a detected value that the source also holds outside the detected spans, such as "may" left in
+"May said she may come back in May." with `May` detected, and `passed` when it does not. Its `cause` uses the same
+`e<i>:N<n>,D<d>,O<o>` form. The row stays met; nothing is edited.
+
 A `failed` advisory's `cause` lists each value over that bound as `e<i>:N<n>,D<d>,O<o>`, joined by `;`: `i` is the
 position, among the row's entities sorted by start, of the value's own detected span, else of the first
 detected span that contains one of its matches, or `-` (`e-`) when no detected span holds it; `n` the value's occurrences
