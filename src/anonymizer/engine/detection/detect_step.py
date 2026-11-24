@@ -404,7 +404,8 @@ def _repeat_spans(text: str, kept: EntitiesSchema, values: list[str], labels: di
     no span from a reported ``May``), and for a value it cannot match (a one-character key in an unspaced script)
     each plain match outside the kept spans. An occurrence that partly overlaps a kept or an earlier added span is
     left out, so the row still fails ``unspanned_value``; one that contains a kept span is added, and the collapse
-    keeps it as the outer span."""
+    keeps it as the outer span. ``labels`` stay keyed by the folded ``normalized`` value (``_first_labels``), so an
+    exact repeat can take the label of a case or accent variant the detector returned first."""
     distinct = [v for v in dict.fromkeys(values) if v]
     spans = entity_spans(text, kept.entities)
     taken = [(span.start, span.end) for span, _ in spans if span is not None]

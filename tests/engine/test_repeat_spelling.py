@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,9 @@ from data_designer.engine.models.clients.types import AssistantMessage, ChatComp
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.replace_strategies import Redact, Substitute
+from anonymizer.engine.detection.detect_step import _repeat_spans
+from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
+from anonymizer.engine.value_matching import normalized
 from anonymizer.interface.anonymizer import Anonymizer
 
 # text -> the detector's (value, label, start) spans
@@ -32,6 +36,7 @@ _DETECTED: dict[str, list[tuple[str, str, int]]] = {
     "Ông Hàn nói thẻ đã hết hạn.": [("Hàn", "last_name", 4)],
     "Alice met Alice.": [("Alice", "first_name", 0)],
     "Alice met alice.": [("Alice", "first_name", 0)],
+    "Alice Smith met Alice.": [("Alice Smith", "full_name", 0), ("Alice", "first_name", 16)],
 }
 # Each value's substitute, and one for its folded variant: the map offers both, so only spans decide what is edited.
 _SYNTHETIC = {
@@ -42,6 +47,7 @@ _SYNTHETIC = {
     "Nice": ("city", "Lyon"),
     "Hàn": ("last_name", "Trần"),
     "Alice": ("first_name", "Carol"),
+    "Alice Smith": ("full_name", "Carol Jones"),
 }
 
 
@@ -151,17 +157,59 @@ def test_a_repeat_span_needs_the_detected_spelling(tmp_path: Path, text: str, st
     assert result.outcome(0).qualification == "met"
 
 
+def _advisories(result: Any) -> dict[str, str]:
+    return {a.check: a.status for a in result.outcome(0).advisories}
+
+
 @pytest.mark.parametrize("strategy", ["redact", "substitute"])
-def test_a_case_variant_is_kept_and_flagged_by_the_folded_audit(tmp_path: Path, strategy: str) -> None:
-    """ "alice" after a detected "Alice" is not edited; the folded leftover count still sees it, as an advisory."""
+def test_a_kept_common_word_raises_the_undetected_value_kept_advisory(tmp_path: Path, strategy: str) -> None:
+    """ "may" after a detected ``May`` is kept, the row stays met, and the folded count flags it as an advisory."""
+    result = _run(tmp_path, "May said she may come back in May.", strategy)
+
+    assert " said she may come back in " in result.dataframe["text_replaced"].iloc[0]
+    assert result.outcome(0).qualification == "met"
+    assert _advisories(result)["undetected_value_kept"] == "failed"
+
+
+@pytest.mark.parametrize("strategy", ["redact", "substitute"])
+def test_exact_repeats_pass_the_undetected_value_kept_advisory(tmp_path: Path, strategy: str) -> None:
+    result = _run(tmp_path, "Alice Smith met Alice.", strategy)
+
+    assert "Alice" not in result.dataframe["text_replaced"].iloc[0]
+    assert _advisories(result) == {"no_detected_value_added": "passed", "undetected_value_kept": "passed"}
+
+
+@pytest.mark.parametrize("strategy", ["redact", "substitute"])
+def test_a_case_variant_is_kept_and_raises_the_advisory(tmp_path: Path, strategy: str) -> None:
+    """ "alice" after a detected "Alice" is not edited; the folded count flags it with ``undetected_value_kept``."""
     result = _run(tmp_path, "Alice met alice.", strategy)
 
     replaced = result.dataframe["text_replaced"].iloc[0]
     assert replaced.endswith(" met alice.")
     assert "Alice" not in replaced
-    outcome = result.outcome(0)
-    assert outcome.qualification == "met"
-    assert [(a.check, a.status) for a in outcome.advisories] == [("no_detected_value_added", "passed")]
+    assert result.outcome(0).qualification == "met"
+    assert _advisories(result) == {"no_detected_value_added": "passed", "undetected_value_kept": "failed"}
     [leftover] = result.leftovers(0)
     assert (leftover.value, leftover.in_source, leftover.detected, leftover.in_output) == ("Alice", 2, 1, 1)
     assert leftover.undetected_kept
+
+
+def test_a_repeat_span_never_splits_a_letter_from_its_mark() -> None:
+    """In NFD text "Le" is not a repeat inside "Lê": the word goes on through U+0302. An NFD "Lê" still repeats."""
+    text = unicodedata.normalize("NFD", "Ông Le nói về Lê.")
+    start = text.index("Le")
+    kept = EntitiesSchema(
+        entities=[EntitySchema(value="Le", label="last_name", start_position=start, end_position=start + 2)]
+    )
+    assert _repeat_spans(text, kept, ["Le"], {"Le": "last_name"}) == []
+
+    text = unicodedata.normalize("NFD", "Ông Lê nói về Lê.")
+    value = unicodedata.normalize("NFD", "Lê")
+    start = text.index(value)
+    kept = EntitiesSchema(
+        entities=[EntitySchema(value=value, label="last_name", start_position=start, end_position=start + len(value))]
+    )
+    added = _repeat_spans(text, kept, [value], {normalized(value): "last_name"})
+    assert [(a.start_position, a.end_position) for a in added] == [
+        (text.rindex(value), text.rindex(value) + len(value))
+    ]

@@ -754,9 +754,9 @@ def test_run_reports_each_rows_protection_outcome(omit_bob: bool, tmp_path: Path
     second = result.outcome(1)
     assert second.qualification == ("not_met" if omit_bob else "met")
     assert any(reason.check == "replacements_applied" for reason in second.reasons) is omit_bob
-    assert [(v.check, v.status) for v in result.outcome(0).advisories] == [("no_detected_value_added", "passed")]
+    assert [(v.check, v.status) for v in _added(result.outcome(0))] == [("no_detected_value_added", "passed")]
     second_status = "failed" if omit_bob else "passed"
-    assert [(v.check, v.status) for v in second.advisories] == [("no_detected_value_added", second_status)]
+    assert [(v.check, v.status) for v in _added(second)] == [("no_detected_value_added", second_status)]
     with pytest.raises(IndexError):
         result.outcome(2)
 
@@ -853,7 +853,7 @@ def test_replace_reports_detected_values_added(
     with_check = route._protect_rows(graph, "redact", build_map, False)
     outcome = with_check.outcome(graph.targets[0])
 
-    assert [(a.check, a.verifier, a.status, a.cause) for a in outcome.advisories] == [
+    assert [(a.check, a.verifier, a.status, a.cause) for a in _added(outcome)] == [
         ("no_detected_value_added", "verify-no-original", *advisory)
     ]
     without = _without_advisory_verifier(graph, build_map)
@@ -896,8 +896,8 @@ def test_replace_advisory_error_is_could_not_assess(monkeypatch: pytest.MonkeyPa
     outcome = result.outcome(graph.targets[0])
 
     assert (outcome.qualification, outcome.protected, outcome.reasons) == ("met", True, ())
-    assert [(a.status, a.cause) for a in outcome.advisories] == [("could_not_assess", "check_error")]
-    assert canary not in repr(outcome) and "Alice" not in repr(outcome.advisories)
+    assert [(a.status, a.cause) for a in _added(outcome)] == [("could_not_assess", "check_error")]
+    assert canary not in repr(outcome) and "Alice" not in repr(_added(outcome))
 
 
 def test_annotate_has_no_advisory() -> None:
@@ -951,7 +951,7 @@ def test_leftovers_explain_a_substitute_that_brings_a_value_back(tmp_path: Path)
         data=AnonymizerInput(source=str(csv_path), text_column="text"),
     )
 
-    (advisory,) = result.outcome(0).advisories
+    (advisory,) = _added(result.outcome(0))
     assert (advisory.check, advisory.status, advisory.cause) == ("no_detected_value_added", "failed", "e1:N1,D1,O1")
     _agrees(result, 0, advisory.cause)
     jose = result.leftovers(0)[1]
@@ -993,7 +993,7 @@ def test_a_redact_template_that_brings_back_a_name_with_reordered_marks_fails_th
         data=AnonymizerInput(source=str(csv_path), text_column="text"),
     )
 
-    (advisory,) = result.outcome(0).advisories
+    (advisory,) = _added(result.outcome(0))
     assert (advisory.status, advisory.cause) == ("failed", "e0:N1,D1,O1")
     _agrees(result, 0, advisory.cause)
 
@@ -1058,11 +1058,11 @@ def test_leftovers_are_what_the_replace_advisory_counted(
     )
 
     for row, row_entities in enumerate(entities):
-        (advisory,) = result.outcome(row).advisories
+        (advisory,) = _added(result.outcome(row))
         leftovers = result.leftovers(row)
         assert format_cause(x for x in leftovers if x.over_bound) == advisory.cause
         assert [x.in_source for x in leftovers] == [1] * len(row_entities)
-    first = result.outcome(0).advisories[0]
+    first = _added(result.outcome(0))[0]
     assert first.status == ("passed" if isinstance(method, Hash) else "failed")
 
 
@@ -1104,3 +1104,9 @@ def test_leftovers_name_a_value_by_its_own_span(tmp_path: Path) -> None:
         2,
         0,
     )
+
+
+def _added(outcome: Any) -> tuple[Any, ...]:
+    """The outcome's ``no_detected_value_added`` advisories: these tests are about that check, not the
+    ``undetected_value_kept`` advisory beside it."""
+    return tuple(a for a in outcome.advisories if a.check == "no_detected_value_added")

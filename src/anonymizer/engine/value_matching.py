@@ -19,7 +19,12 @@ class MatchMode(StrEnum):
     """How ``count_values`` matches a value. ``EXACT``: the value as spelled, whole words; for every check that edits
     text or fails a row, so a common word that folds to a detected name ("may" for ``May``) is left alone. ``FOLDED``:
     case and accents folded (``normalized``, casefold unless ``_short_code``), whole words; for advisories and audits,
-    where a variant spelling is flagged, never edited."""
+    where a variant spelling is flagged, never edited.
+
+    ``EXACT`` does not normalize: spans are sliced from the same text the value came from, so it compares code
+    points, keeps whitespace and compatibility forms as spelled ("Mary Jane" does not match "Mary\\nJane", "Alice"
+    does not match fullwidth "Ａlice"), and never matches a word that continues with a combining mark ("Le" in NFD
+    "Lê"). The folded audit still counts mixed normalization forms."""
 
     EXACT = "exact"
     FOLDED = "folded"
@@ -155,13 +160,16 @@ class _Matcher:
     key: str
     cased: bool
     pattern: re.Pattern[str] | None
+    exact: bool = False
 
     def spans(self, text: str, origin: list[int]) -> Iterator[Span]:
         """Every match in the normalized ``text``, overlapping ones included, as a span of the original text
         (``origin`` maps each character back). ``str.find`` proposes each start; the pattern checks it."""
         pos = text.find(self.key)
         while pos >= 0:
-            if self.pattern is None or self.pattern.match(text, pos):
+            if (self.pattern is None or self.pattern.match(text, pos)) and not (
+                self.exact and _marked_edge(text, pos, pos + len(self.key))
+            ):
                 covered = origin[pos : pos + len(self.key)]  # canonical reordering can move marks across sources
                 yield Span(min(covered), max(covered) + 1)
             pos = text.find(self.key, pos + 1)
@@ -176,10 +184,19 @@ def _compiled(keys: Iterable[str], *, exact: bool) -> dict[str, _Matcher]:
         cased = exact or _short_code(value)
         key = value if cased else value.casefold()
         if not (_unspaced(key[0]) and _unspaced(key[-1])):
-            matchers[value] = _Matcher(key, cased, re.compile(r"(?<![^\W_])" + re.escape(key) + r"(?![^\W_])"))
+            pattern = re.compile(r"(?<![^\W_])" + re.escape(key) + r"(?![^\W_])")
+            matchers[value] = _Matcher(key, cased, pattern, exact)
         elif len(key) >= 2:
-            matchers[value] = _Matcher(key, cased, None)
+            matchers[value] = _Matcher(key, cased, None, exact)
     return matchers
+
+
+def _marked_edge(text: str, start: int, end: int) -> bool:
+    """Whether a combining mark (category ``M*``) directly follows or precedes ``text[start:end]``: the word goes on
+    through the mark ("Le" in NFD "Lê"), which the word-boundary pattern does not see, so ``MatchMode.EXACT``
+    rejects the match."""
+    after = end < len(text) and unicodedata.category(text[end]).startswith("M")
+    return after or (start > 0 and unicodedata.category(text[start - 1]).startswith("M"))
 
 
 def _exact_key(text: str) -> str:
