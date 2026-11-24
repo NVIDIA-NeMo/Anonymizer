@@ -299,13 +299,14 @@ every detected value, in the order `cause` uses (`cause` lists only those over t
 [(x.position, x.value, x.output_spans) for x in result.leftovers(0)]
 ```
 
-They also carry the advisory `undetected_value_kept`, counted the same way (case and accents folded): `failed` when the
-replaced text keeps a detected value that the source also holds outside the detected spans, such as "may" left in
-"May said she may come back in May." with `May` detected, and `passed` when it does not. Its `cause` uses the same
-`e<i>:N<n>,D<d>,O<o>` form. The row stays met; nothing is edited. It counts span values only: a value a custom
-detector reports only in its pair list, with no span, is not counted, so its case or accent variant is not flagged.
+Redact, Hash and Substitute rows also carry the advisory `undetected_value_kept`, counted the same way (case and accents
+folded): `failed` when the replaced text keeps a detected value that the source also holds outside the detected spans,
+such as "may" left in "May said she may come back in May." with `May` detected, and `passed` when it does not. Its
+`cause` uses the same `e<i>:N<n>,D<d>,O<o>` form. The row stays met; nothing is edited. It counts span values only: a
+value a custom detector reports only in its pair list, with no span, is not counted, so its case or accent variant is
+not flagged.
 
-The check matches words, not meanings: an ordinary word spelled like a detected value, such as "will" when the name
-"Will" was detected, passes when the source already held it outside the detected spans, and a replacement that
-equals or contains another detected value is reported. Like every advisory, it never changes the row's
+`no_detected_value_added` matches words, not meanings: an ordinary word spelled like a detected value, such as "will"
+when the name "Will" was detected, passes it when the source already held it outside the detected spans, and a
+replacement that equals or contains another detected value is reported. Like every advisory, it never changes the row's
 qualification or release.
