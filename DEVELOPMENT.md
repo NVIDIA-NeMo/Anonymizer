@@ -376,9 +376,9 @@ Release tags use `vMAJOR.MINOR.PATCH` for stable releases and `vMAJOR.MINOR.PATC
 
 Release publishing is handled by `.github/workflows/release.yml`.
 
-Pushing a `v*` tag starts a production release immediately. The run builds the wheel, checks it against the tag (`release:verify`: the wheel version must equal the tag without its `v`, `twine check --strict` must pass, and a clean install must import), publishes to Test PyPI, then publishes to PyPI, creates the GitHub release for the tag, and deploys the versioned docs. Test PyPI runs first on every release, so a Test PyPI failure stops the run before PyPI.
+Pushing a `v*` tag starts a production release immediately. The run builds the wheel, checks it against the tag (`release:verify`: the wheel version must equal the tag without its `v`, `twine check --strict` must pass, and a clean install must import), publishes to PyPI through its trusted publisher, creates the GitHub release for the tag, and deploys the versioned docs. The upload runs in a separate job with the `pypi` environment and OIDC credentials; no PyPI API token is required.
 
-Create the tag on the exact commit you intend to release. The package version comes from Git tags (`uv-dynamic-versioning`), so a commit without a tag builds a version with a `+<hash>` suffix, which PyPI and Test PyPI do not accept.
+Create the tag on the exact commit you intend to release. The package version comes from Git tags (`uv-dynamic-versioning`), so a commit without a tag builds a version with a `+<hash>` suffix, which PyPI does not accept.
 
 To rehearse before tagging, run `mise run release:check <version>` with the tag minus its `v`, in normalized form (`0.5.0rc1`, not `0.5.0.rc1` or `0.5.0-rc1`). It builds the wheel at that version (`UV_DYNAMIC_VERSIONING_BYPASS`), then runs `release:verify`. It replaces `dist/`, needs no credentials, and publishes nothing. Local versions (`+...`) are rejected because PyPI would reject them.
 
@@ -387,11 +387,11 @@ The manual workflow (`workflow_dispatch`) takes three inputs. What it does depen
 | Run on | `version` | Result |
 | --- | --- | --- |
 | Branch | Required, with `dry-run` on | Runs `release:check` in CI. Uploads nothing and creates no release. |
-| Tag | Must be empty | Builds and verifies the tag's version, then uploads it to Test PyPI. With `dry-run` off it also publishes to PyPI. |
+| Tag | Must be empty | Builds and verifies the tag's version. With `dry-run` off it publishes to PyPI; dry runs upload nothing. |
 
-`create-gh-release` applies only when `dry-run` is off. A dry run never creates the release or deploys docs. The Test PyPI upload uses `--skip-existing`, so re-running a tag whose version is already on Test PyPI passes without uploading.
+`create-gh-release` applies only when `dry-run` is off. A dry run never uploads a package, creates the release, or deploys docs.
 
-`mise run publish:pypi <version>` builds and publishes an explicit version straight to PyPI, with no Test PyPI step and no tag check. It runs `release:verify` before uploading. It is a manual fallback, not the release path; `--dry-run` builds and validates without uploading.
+`mise run publish:pypi <version>` builds and publishes an explicit version straight to PyPI, with no tag check. It runs `release:verify` before uploading. It is a manual fallback, not the release path; `--dry-run` builds and validates without uploading.
 
 ## Local inference service environment
 

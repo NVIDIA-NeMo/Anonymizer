@@ -33,6 +33,7 @@ def test_github_setup_requires_signed_mise_installer() -> None:
 
 
 def test_release_workflow_uses_triggering_ref_and_completes_tag_releases() -> None:
+    """Release builds retain tag validation and publish through an isolated OIDC job."""
     workflow_path = REPO_ROOT / ".github/workflows/release.yml"
     workflow_text = workflow_path.read_text(encoding="utf-8")
     workflow = yaml.safe_load(workflow_text)
@@ -44,9 +45,12 @@ def test_release_workflow_uses_triggering_ref_and_completes_tag_releases() -> No
     assert "release-ref" not in workflow_text
     assert "release-target" not in workflow_text
 
-    publish_steps = workflow["jobs"]["publish-wheel"]["steps"]
+    publish_steps = workflow["jobs"]["build-wheel"]["steps"]
     checkout_steps = [
-        step for job in workflow["jobs"].values() for step in job["steps"] if step.get("uses") == "actions/checkout@v7"
+        step
+        for job in workflow["jobs"].values()
+        for step in job["steps"]
+        if step.get("uses", "").startswith("actions/checkout@")
     ]
     assert checkout_steps
     assert all("ref" not in step.get("with", {}) for step in checkout_steps)
@@ -67,18 +71,27 @@ def test_release_workflow_uses_triggering_ref_and_completes_tag_releases() -> No
         == 'mise run docs:deploy "$VERSION"'
     )
 
-    publish_to_pypi = next(step for step in publish_steps if step.get("name") == "Publish to PyPI")
+    publish_to_pypi = workflow["jobs"]["publish-pypi"]
     # A dry run must never create a release or deploy docs, whatever create-gh-release says.
     gated = "${{ github.event_name == 'push' || (!inputs.dry-run && inputs.create-gh-release) }}"
     assert workflow["jobs"]["create-gh-release"]["if"] == gated
     assert workflow["jobs"]["deploy-release-docs"]["if"] == gated
 
-    # Nothing uploads from a branch run, whatever the inputs say.
-    test_pypi = next(step for step in publish_steps if step.get("name", "").startswith("Publish to Test PyPI"))
-    assert test_pypi["if"] == "${{ github.ref_type == 'tag' }}"
     assert (
-        publish_to_pypi["if"] == "${{ github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.dry-run) }}"
+        publish_to_pypi["if"] == "${{ github.repository == 'NVIDIA-NeMo/Anonymizer' && github.ref_type == 'tag' "
+        "&& startsWith(github.ref_name, 'v') && (github.event_name == 'push' || !inputs.dry-run) }}"
     )
+    assert publish_to_pypi["needs"] == "build-wheel"
+    assert publish_to_pypi["permissions"] == {"id-token": "write"}
+    assert publish_to_pypi["environment"]["name"] == "pypi"
+    assert "publish-pypi" in workflow["jobs"]["create-gh-release"]["needs"]
+    assert "publish-pypi" in workflow["jobs"]["deploy-release-docs"]["needs"]
+    assert "TWINE_PASSWORD" not in workflow_text
+    assert "test.pypi.org" not in workflow_text
+    assert len(publish_to_pypi["steps"]) == 2
+    assert publish_to_pypi["steps"][0]["uses"].startswith("actions/download-artifact@")
+    assert publish_to_pypi["steps"][1]["uses"].startswith("pypa/gh-action-pypi-publish@")
+    assert all("run" not in step for step in publish_to_pypi["steps"])
 
     # Tag runs build from Git tags and verify the result; only branch rehearsals use the version override.
     assert 'mise run release:verify "$VERSION"' in build_step["run"]
