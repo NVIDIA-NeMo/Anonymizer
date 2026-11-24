@@ -177,7 +177,7 @@ such advisory. A `not_met` row stays in the output frame. A second advisory, `un
 way and fails when the replaced text keeps a detected value that the source also holds outside the detected spans (a
 case or accent variant such as "may" after a detected `May`); the row stays met.
 - What to do: read `result.outcome(row)` before releasing a row, and `result.leftovers(row)` to see the counted values.
-- Changed in: #319, #424, #426, #NNN.
+- Changed in: #319, #424, #426, #451.
 
 **A custom detector must report a span for every occurrence of a value it reports.** With a custom detector, Redact,
 Hash, Annotate and Substitute fail a row at step `detect` with `unspanned_value` when a value the detector reports, in a
@@ -187,7 +187,7 @@ unreplaced. An occurrence is a whole word spelled exactly as reported: a case or
 `May`, "hạn" for `Hàn`) does not fail the row. Built-in detection protects such a repeat instead: Replace adds a span
 there (see "Detection contract"), and a repeat that crosses a kept span's edge fails the row with `unspanned_value`.
 - What to do: report a span for each occurrence, or read `failed_records`.
-- Changed in: #432, #NNN.
+- Changed in: #432, #451.
 
 ### Rewrite
 
