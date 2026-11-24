@@ -424,3 +424,26 @@ def test_exact_mode_never_splits_a_cluster(source: str, value: str, exact: int) 
     a mark; an unspaced match after a mark that belongs to the previous cluster still counts."""
     [leftover] = count_values(source, [], "", [value], mode=MatchMode.EXACT)
     assert leftover.in_source == exact
+
+
+@pytest.mark.parametrize("mode", list(MatchMode))
+def test_count_values_maps_each_text_once_for_every_value(monkeypatch: pytest.MonkeyPatch, mode: MatchMode) -> None:
+    """Every value reads the same offset map of each text it searches, so a long row with many values is mapped once
+    per text, not once per value."""
+    origins: dict[str, set[int]] = {}
+    spans = value_matching._Matcher.spans
+
+    def recorded(self: Any, text: str, origin: Any) -> Any:
+        origins.setdefault(text, set()).add(id(origin))
+        return spans(self, text, origin)
+
+    monkeypatch.setattr(value_matching._Matcher, "spans", recorded)
+    names = ["Alice", "Bruno", "Chen", "Dara", "Emeka"]
+    source = " ".join(f"{name} met {name}." for name in names)
+    output = source.replace("Alice", "[NAME]")
+    entities = [(Span(source.index(name), source.index(name) + len(name)), "first_name") for name in names]
+    leftovers = count_values(source, entities, output, mode=mode)
+
+    assert [x.in_source for x in leftovers] == [2] * len(names)
+    assert len(origins) == 2  # one view of the source and one of the output (folded mode searches casefolded text)
+    assert all(len(ids) == 1 for ids in origins.values())

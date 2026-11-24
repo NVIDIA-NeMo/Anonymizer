@@ -100,19 +100,18 @@ def count_values(
     given: dict[str, str] = {}  # each key's first given form
     for value in values:
         given.setdefault(key_of(value), value)
+    source_forms: tuple[tuple[str, Sequence[int]], ...]
+    output_forms: tuple[tuple[str, Sequence[int]], ...]
     if mode is MatchMode.FOLDED:
         source_forms, output_forms = _mapped(source), _mapped(output)
-    else:
-        source_forms = output_forms = None
+    else:  # the text as given, each character its own origin; built once for every value
+        source_forms = ((source, range(len(source))),) * 2
+        output_forms = ((output, range(len(output))),) * 2
     leftovers: list[tuple[str, Leftover]] = []
     for key, matcher in _compiled(given, exact=mode is MatchMode.EXACT).items():
-        if source_forms is None or output_forms is None:
-            matches = Spans(matcher.spans(source, list(range(len(source)))))
-            output_spans = Spans(matcher.spans(output, list(range(len(output)))))
-        else:
-            form = 0 if matcher.cased else 1
-            matches = Spans(matcher.spans(*source_forms[form]))
-            output_spans = Spans(matcher.spans(*output_forms[form]))
+        form = 0 if matcher.cased else 1
+        matches = Spans(matcher.spans(*source_forms[form]))
+        output_spans = Spans(matcher.spans(*output_forms[form]))
         position = own.get(key)
         if position is None:
             containers = (detected.container_of(match) for match in matches)
@@ -162,7 +161,7 @@ class _Matcher:
     pattern: re.Pattern[str] | None
     exact: bool = False
 
-    def spans(self, text: str, origin: list[int]) -> Iterator[Span]:
+    def spans(self, text: str, origin: Sequence[int]) -> Iterator[Span]:
         """Every match in the normalized ``text``, overlapping ones included, as a span of the original text
         (``origin`` maps each character back). ``str.find`` proposes each start; the pattern checks it."""
         pos = text.find(self.key)
