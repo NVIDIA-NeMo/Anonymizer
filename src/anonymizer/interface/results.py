@@ -18,7 +18,7 @@ from anonymizer.engine.replace.llm_replace_workflow import is_placeholder
 from anonymizer.engine.rewrite.rewrite_workflow import rewrite_leftovers
 from anonymizer.engine.row_partitioning import cell_text
 from anonymizer.engine.schemas import EntitiesSchema
-from anonymizer.engine.value_matching import Leftover, count_values, entity_spans
+from anonymizer.engine.value_matching import Leftover, MatchMode, count_values, entity_spans
 from anonymizer.interface.display import _normalize_replacement_map, render_record_html
 
 
@@ -161,7 +161,7 @@ class _DisplayMixin:
         # these entities, so converting final_entities here gives the same spans.
         source = cell_text(record[text])
         entities = EntitiesSchema.from_raw(record[COL_FINAL_ENTITIES]).entities
-        return count_values(source, entity_spans(source, entities), str(record[output]))
+        return count_values(source, entity_spans(source, entities), str(record[output]), mode=MatchMode.FOLDED)
 
     def display_record(self, index: int | None = None) -> None:
         """Render a record with entity highlights and replacement map in a notebook.

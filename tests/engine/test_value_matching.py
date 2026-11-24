@@ -20,6 +20,7 @@ from anonymizer.engine.schemas import EntitySchema
 from anonymizer.engine.spans import Span, Spans
 from anonymizer.engine.value_matching import (
     Leftover,
+    MatchMode,
     _mapped,
     _occurs,
     count_values,
@@ -45,7 +46,7 @@ def _counts(
     unusable but keeps its position."""
     ordered = sorted(spans, key=lambda span: span[0])
     usable = [Span(a, b) if 0 <= a < b <= len(source) else None for a, b in ordered]
-    return count_values(source, [(span, "name") for span in usable], output, values)
+    return count_values(source, [(span, "name") for span in usable], output, values, mode=MatchMode.FOLDED)
 
 
 def _nums(leftovers: tuple[Leftover, ...]) -> list[tuple[int | None, int, int, int]]:
@@ -147,7 +148,7 @@ _MIRA = "Mira\U0001d157\U0001d16d\U0001d16e"  # the last two marks are out of ca
 )
 def test_a_value_with_reordered_marks_is_found_where_it_occurs(value: str, output: str) -> None:
     source = f"{value} called."
-    leftovers = count_values(source, [(Span(0, len(value)), "first_name")], output)
+    leftovers = count_values(source, [(Span(0, len(value)), "first_name")], output, mode=MatchMode.FOLDED)
     assert format_cause(leftovers) == "e0:N1,D1,O1"
     assert leftovers[0].output_spans == Spans([Span(0, len(output) - len(" called."))])
 
@@ -365,7 +366,7 @@ def test_matching_holds_on_a_wide_unicode_corpus() -> None:
             assert plain == _normalized(t) and folded == plain.casefold()
             assert all(0 <= i < len(t) for i in origin + folded_origin)
         key = _normalized(value)
-        leftovers = count_values("", [], text, [value])
+        leftovers = count_values("", [], text, [value], mode=MatchMode.FOLDED)
         plain = _normalized(text)
         present = _occurs(key, plain, plain.casefold())
         assert any(x.in_output for x in leftovers) is present
@@ -378,3 +379,19 @@ def test_matching_holds_on_a_wide_unicode_corpus() -> None:
                     held if value_matching._short_code(key) else held.casefold()
                 )
     assert found > 300  # matches, not only misses
+
+
+@pytest.mark.parametrize(
+    ("source", "value", "folded", "exact"),
+    [
+        ("May said she may come.", "May", 2, 1),
+        ("Ông Hàn nói hết hạn.", "Hàn", 2, 1),
+        ("Alice met Alice.", "Alice", 2, 2),
+        ("Mark marked Mark.", "Mark", 2, 2),
+    ],
+)
+def test_exact_mode_counts_only_the_spelling_given(source: str, value: str, folded: int, exact: int) -> None:
+    """``EXACT`` matches the value as spelled, whole words; ``FOLDED`` folds case and accents."""
+    for mode, expected in ((MatchMode.FOLDED, folded), (MatchMode.EXACT, exact)):
+        [leftover] = count_values(source, [], "", [value], mode=mode)
+        assert leftover.in_source == expected, mode

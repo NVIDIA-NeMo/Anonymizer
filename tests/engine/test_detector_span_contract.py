@@ -50,7 +50,7 @@ from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteW
 from anonymizer.engine.rewrite.rewrite_generation import _prepare_rewrite_tagged_text
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.schemas import EntitiesSchema
-from anonymizer.engine.value_matching import count_values, entity_spans
+from anonymizer.engine.value_matching import MatchMode, count_values, entity_spans
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import InvalidConfigError
 from tests.detector_results import as_detector_result, builtin_stub, input_record_ids
@@ -1023,6 +1023,27 @@ def test_replace_fails_a_spans_unspanned_repeat_whatever_the_detectors_view(
     assert result.failed_records == [FailedRecord(_rid(tmp_path / "in.csv", 0), "detect", "unspanned_value")]
 
 
+@pytest.mark.parametrize("strategy", ["redact", "substitute"])
+@pytest.mark.parametrize(
+    ("text", "value", "fails"),
+    [
+        ("Qb Bob met Bob.", "Bob", True),
+        ("Qb Bob met bob.", "Bob", False),
+        ("Qb Hàn met han.", "Hàn", False),
+        ("Qb May said she may come.", "May", False),
+    ],
+)
+def test_unspanned_value_needs_the_reported_spelling(
+    text: str, value: str, fails: bool, strategy: str, tmp_path: Path
+) -> None:
+    """A custom detector's reported value fails the row only where it recurs as spelled outside every span; a case
+    or accent variant there does not fail it."""
+    result, _ = _one_row_run(tmp_path, text, [_at(text, value, "first_name")], _view((value, "first_name")), strategy)
+
+    expected = [FailedRecord(_rid(tmp_path / "in.csv", 0), "detect", "unspanned_value")] if fails else []
+    assert result.failed_records == expected
+
+
 @pytest.mark.parametrize("strategy", ["redact", "hash", "annotate", "substitute"])
 @pytest.mark.parametrize(
     ("text", "spans"),
@@ -1135,7 +1156,7 @@ def test_every_reported_value_is_protected_or_fails_its_row(mode: str, tmp_path:
 def _occurs_outside(text: str, kept: EntitiesSchema, value: str) -> bool:
     """The test's oracle: the leftover check's rule, or, for a value it builds no matcher for, any plain occurrence
     that no kept span contains."""
-    leftovers = count_values(text, entity_spans(text, kept.entities), "", [value])
+    leftovers = count_values(text, entity_spans(text, kept.entities), "", [value], mode=MatchMode.EXACT)
     if leftovers:
         return any(lo.undetected_spans for lo in leftovers)
     spans = [(e.start_position, e.end_position) for e in kept.entities]

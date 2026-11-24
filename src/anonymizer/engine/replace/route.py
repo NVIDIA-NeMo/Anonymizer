@@ -78,7 +78,7 @@ from anonymizer.engine.replace.strategies import (
 from anonymizer.engine.row_partitioning import cell_text, resolve_source_positions
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
 from anonymizer.engine.spans import Span
-from anonymizer.engine.value_matching import count_values, format_cause
+from anonymizer.engine.value_matching import MatchMode, count_values, format_cause
 from anonymizer.logging import ProgressTracker
 from anonymizer.measurement import record_stage
 
@@ -459,7 +459,9 @@ def _verify_no_original(text: str, source: str, mentions: tuple[Mention, ...], t
     names each value over that bound. Never raises: an error could not be assessed."""
     try:
         ordered = sorted(mentions, key=lambda m: m.start)
-        leftovers = count_values(source, [(Span(m.start, m.end), m.label) for m in ordered], text)
+        leftovers = count_values(
+            source, [(Span(m.start, m.end), m.label) for m in ordered], text, mode=MatchMode.FOLDED
+        )
         over = [x for x in leftovers if x.over_bound]
         return Assessment(not over, target, format_cause(over))
     except Exception:

@@ -89,7 +89,7 @@ from anonymizer.engine.row_partitioning import (
 )
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.spans import Spans
-from anonymizer.engine.value_matching import Leftover, count_values, entity_spans, format_cause
+from anonymizer.engine.value_matching import Leftover, MatchMode, count_values, entity_spans, format_cause
 from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.rewrite.workflow")
@@ -371,7 +371,7 @@ def rewrite_leftovers(
         entities = entity_spans(source, EntitiesSchema.from_raw(final_entities).entities)
     except (ValueError, TypeError):
         entities = []
-    leftovers = count_values(source, entities, str(rewritten), values)
+    leftovers = count_values(source, entities, str(rewritten), values, mode=MatchMode.FOLDED)
     if any(x.position is not None for x in leftovers):
         return leftovers
     return tuple(replace(x, undetected_spans=Spans()) for x in leftovers)
