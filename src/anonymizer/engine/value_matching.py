@@ -310,13 +310,17 @@ def _word_edges_at_breaks(view: _View, start: int, end: int) -> bool:
     #29; ``_BREAKS`` treats it as a separator anyway, which keeps the base behaviour and only adds matches."""
     text = view.text
 
-    def edge(k: int, neighbour: int) -> bool:  # no word character at ``neighbour``, or a dropped break before ``k``
+    def edge(inside: int, neighbour: int) -> bool:
+        """No word character at ``neighbour``, or a dropped break in the source between it and ``inside``."""
         if not 0 <= neighbour < len(text) or not _WORD_CHAR.match(text, neighbour):
             return True
-        a, b = sorted((view.origin[k - 1], view.origin[k]))
+        a, b = sorted((view.origin[inside], view.origin[neighbour]))
         return any(c in _BREAKS for c in view.source[a + 1 : b])
 
-    return edge(start, start - 1) and edge(end, end)
+    after = end
+    while after < len(text) and text[after] in _JOINERS:  # as ``_JOINED_WORD``: a word goes on past a joiner
+        after += 1
+    return edge(start, start - 1) and edge(end - 1, after)
 
 
 _BREAKS = frozenset("\u200b\u2060")

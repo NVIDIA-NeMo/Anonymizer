@@ -644,3 +644,18 @@ def test_unicode_survey_cases(source: str, value: str, exact: int, folded: int) 
     for mode, expected in ((MatchMode.EXACT, exact), (MatchMode.FOLDED, folded)):
         leftovers = count_values(source, [], "", [value], mode=mode)
         assert sum(x.in_source for x in leftovers) == expected, mode
+
+
+@pytest.mark.parametrize(
+    ("source", "folded"),
+    [
+        pytest.param("Alice\u200db", 0, id="joiner-then-letter"),
+        pytest.param("Alice\u200db x\u200b", 0, id="joiner-then-letter-with-a-break-elsewhere"),
+        pytest.param("Alice\u200bb", 1, id="break-at-the-edge"),
+        pytest.param("Alice\u200d\u200bb", 1, id="joiner-then-break-at-the-edge"),
+    ],
+)
+def test_a_break_relaxes_only_the_edge_it_stands_at(source: str, folded: int) -> None:
+    """A dropped zero-width space separates words only where it stood: one elsewhere in the text does not make a
+    joiner followed by a letter a word edge."""
+    assert count_values(source, [], "", ["Alice"], mode=MatchMode.FOLDED)[0].in_source == folded
