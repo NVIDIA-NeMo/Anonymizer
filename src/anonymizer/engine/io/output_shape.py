@@ -30,6 +30,7 @@ from anonymizer.engine.constants import (
     COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
     COL_REPLACEMENT_APPLICATION,
     COL_TYPE_FIDELITY_INVALID_REPLACEMENTS,
+    is_reserved_column,
 )
 
 # The user-facing nested columns. The internal columns are named by constant below, so a caller's own input column is
@@ -66,18 +67,10 @@ def _shape(column: str, cell: Any) -> Any:
     return plain(cell)
 
 
-_INTERNAL_COLUMNS = frozenset(
-    value
-    for name, value in vars(constants).items()
-    if name.startswith("COL_") and isinstance(value, str) and value.startswith("_")
-)
-_ROUND = "__iteration_"  # combined Rewrite suffixes a repair round's columns, as in ``_privacy_qa__iteration_0``
-
-
 def _shaped(column: object) -> bool:
-    if not isinstance(column, str):
-        return False
-    return column in USER_NESTED_COLUMNS or column.split(_ROUND, 1)[0] in _INTERNAL_COLUMNS
+    """A user nested column, an internal column or a combined Rewrite round column: names the reader refuses in input,
+    so a caller's own column is never one of them."""
+    return column in USER_NESTED_COLUMNS or (is_reserved_column(column) and column != constants.RECORD_ID_COLUMN)
 
 
 def to_output_shape(frame: pd.DataFrame) -> pd.DataFrame:

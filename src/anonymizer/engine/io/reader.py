@@ -13,8 +13,8 @@ from anonymizer.config.anonymizer_config import AnonymizerInput, TextRecordsInpu
 from anonymizer.engine.constants import (
     COL_TEXT,
     RECORD_ID_COLUMN,
-    RESERVED_INPUT_COLUMNS,
     RESULT_COLUMNS,
+    is_reserved_column,
 )
 from anonymizer.engine.errors import AnonymizerIOError, InvalidInputError
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
@@ -78,7 +78,7 @@ def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_tex
     text), so none may be supplied. The selected text column is exempt: it is renamed to the internal text name
     before the pipeline runs.
     """
-    reserved = [c for c in dataframe.columns if c in RESERVED_INPUT_COLUMNS and c != selected_text_column]
+    reserved = [c for c in dataframe.columns if is_reserved_column(c) and c != selected_text_column]
     if not reserved:
         return
     hint = f" or set text_column={COL_TEXT!r}" if COL_TEXT in reserved else ""

@@ -32,6 +32,7 @@ def test_label_keyed_values_become_lists_of_records_and_come_back() -> None:
             COL_FINAL_ENTITIES: [{"entities": []}, float("nan")],
             "passthrough": [{}, float("nan")],
             "_note": [{}, float("nan")],
+            "_privacy_qa__iteration_notes": [[1.0, float("nan")], {}],
         }
     )
     shaped = to_output_shape(frame)
@@ -46,10 +47,18 @@ def test_label_keyed_values_become_lists_of_records_and_come_back() -> None:
     assert shaped["passthrough"][0] == {}
     assert shaped["_note"][0] == {}
     assert shaped["_note"].isna()[1]
+    kept = shaped["_privacy_qa__iteration_notes"]
+    assert kept[0][1] != kept[0][1]  # NaN kept: a round-like name without a round number is the caller's column
+    assert kept[1] == {}
     back = from_output_shape(shaped)
     assert back[COL_ENTITY_CLASSIFICATION][0] == {"first_name": "direct_identifier"}
     assert back[COL_REPLACEMENT_APPLICATION][0] == application
     assert back[COL_REPLACEMENT_APPLICATION][1]["skipped_span_label_counts"] == "{}"
+
+
+def test_combined_rewrite_round_columns_are_shaped() -> None:
+    shaped = to_output_shape(pd.DataFrame({"_privacy_qa__iteration_0": [{}], "_privacy_qa__iteration_12": [{}]}))
+    assert shaped.iloc[0].tolist() == [None, None]
 
 
 def test_is_missing_names_null_markers_and_not_empty_containers() -> None:

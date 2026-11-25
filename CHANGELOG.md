@@ -312,6 +312,12 @@ objects, not Arrow structs. They round-trip through `to_parquet` and `pd.read_pa
 - What to do: read these columns as Python dicts.
 - Changed in: #352.
 
+**Input columns named like combined Rewrite's round columns are refused.** An input column named after an internal
+column plus `__iteration_<n>` (for example `_privacy_qa__iteration_0`) now raises `InvalidInputError`, as the internal
+names themselves already did. A name such as `_privacy_qa__iteration_notes` is the caller's own column and is
+returned unchanged.
+- What to do: rename such a column before the run.
+
 **Nested values in result frames follow one rule.** In `dataframe` and `trace_dataframe`, every nested column the
 library produces holds plain JSON types (dict, list, str, int, float, bool, None), keyed by names, never by data.
 A missing value and an empty object are both `None`, never NaN or `{}`. The user columns this affects are

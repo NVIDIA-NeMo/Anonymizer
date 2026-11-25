@@ -560,3 +560,17 @@ def test_read_input_empty_parquet_returns_empty(tmp_path: Path) -> None:
     result = read_input(inp, nrows=5)
     assert len(result.dataframe) == 0
     assert COL_TEXT in result.dataframe.columns
+
+
+@pytest.mark.parametrize("column", [f"{COL_REWRITTEN_TEXT}__iteration_0", f"{COL_REWRITTEN_TEXT}__iteration_12"])
+def test_read_input_reserves_combined_rewrite_round_columns(tmp_path: Path, column: str) -> None:
+    inp = _write_input(pd.DataFrame({"bio": ["text"], column: ["note"]}), tmp_path, text_column="bio")
+    with pytest.raises(InvalidInputError, match="reserved internal column") as excinfo:
+        read_input(inp)
+    assert column in str(excinfo.value)
+
+
+def test_read_input_keeps_a_round_like_name_without_a_round_number(tmp_path: Path) -> None:
+    column = f"{COL_REWRITTEN_TEXT}__iteration_notes"
+    inp = _write_input(pd.DataFrame({"bio": ["text"], column: ["note"]}), tmp_path, text_column="bio")
+    assert column in read_input(inp).dataframe.columns

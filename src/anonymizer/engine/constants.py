@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import re
+
 SOURCE_KIND_AUGMENTER = "augmenter"
 SEED_DETECTION_RESULT_ID = "r1"
 AUGMENTATION_DETECTION_RESULT_ID = "r2"
@@ -192,6 +194,18 @@ RESERVED_INPUT_COLUMNS: frozenset[str] = frozenset(
         if name.startswith("COL_") and isinstance(value, str) and value.startswith("_")
     }
 )
+
+# Combined Rewrite names the columns of each evaluation and repair round ``<internal column>__iteration_<n>``.
+ROUND_COLUMN_SUFFIX = r"__iteration_\d+"
+
+
+def is_reserved_column(name: object) -> bool:
+    """An internal column name, or an internal name with combined Rewrite's round suffix."""
+    if not isinstance(name, str):
+        return False
+    match = re.fullmatch(rf"(.+){ROUND_COLUMN_SUFFIX}", name)
+    return name in RESERVED_INPUT_COLUMNS or (match is not None and match.group(1) in RESERVED_INPUT_COLUMNS)
+
 
 # ---------------------------------------------------------------------------
 # Entity labels and examples
