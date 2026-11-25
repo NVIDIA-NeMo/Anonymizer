@@ -20,7 +20,7 @@ The graph SDK is provisional. Names, signatures and default values may change in
 |---|---|---|
 | `OutputGroup(members)` | Several targets must be released together or not at all, such as the fields of one row. | Yes |
 | `Dependency(dependent, on)` | One target is derived from another, such as a summary of a note; if the note is withheld, the summary must be too. | Yes |
-| `Record` (from `scope.record(members)`) | Several targets belong together and steps should know it, such as to put one row in one prompt. | No |
+| `Record` (from `scope.record(members)`) | Several targets belong together and steps should know it, such as to put one row in one prompt. | Yes, unless `partial_release=True` |
 
 Groups may not overlap, dependencies may not form a cycle (`group_overlap`, `dependency_cycle`), and each target is
 in at most one declared record (`record_overlap`).
@@ -85,12 +85,12 @@ summary  met      protected=False reason=withheld withheld_by=['note']
 too, but depends on `note`. `withheld_by` names the targets that caused the withholding, so you can trace each
 withheld target back to the one that actually failed.
 
-Release is decided after all checks: a target is released only when it is `met` and nothing it depends on, and no
-member of its group, is withheld. Withholding spreads along dependencies and through groups until nothing changes.
+Release is decided after all checks: a target is released only when it is `met` and nothing it depends on, no
+member of its group, and no member of its record, is withheld. Withholding spreads along dependencies and through groups until nothing changes.
 
 ## Records
 
-A record does not change release. For now each target is released on its own checks: use `OutputGroup` when the members must be released all or none. Releasing a complete record is planned as the default. A record tells steps which targets belong together. `graph.record_of(target)` returns
+A record is released whole. If any member is withheld (it failed or did not finish, or a dependency or an output group withheld it), every other member is withheld too, with reason `withheld` and `withheld_by` naming the members that caused it. Records with no member in common are released independently, and an output group that shares a member with a record is released together with it. A target in no declared record is its own one-member record, so a graph that declares no records releases as before. To release each member on its own checks instead, pass `partial_release=True` to `prepare`; output groups and dependencies still apply. A record tells steps which targets belong together. `graph.record_of(target)` returns
 a target's record; a target in no declared record is its own one-member record. `graph.all_records` lists every
 record once.
 

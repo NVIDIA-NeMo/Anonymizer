@@ -474,6 +474,18 @@ These are additions and break nothing.
 
 These are not on the #319 branch yet. Each lands with its change.
 
+### Complete-Record release
+
+**A declared Record is released whole.** In `anonymizer.graph`, when any member of a Record is withheld, the other
+members are withheld too (reason `withheld`; `withheld_by` names the cause). Records with no member in common are
+released independently, and an `OutputGroup` that shares a member with a Record is released together with it.
+`prepare(..., partial_release=True)` releases each member on its own checks. `run()`, `preview()` and `evaluate()` are
+unchanged: each row is its own Record.
+
+- What to do: nothing, unless a graph declares Records and needs per-member release; then pass
+  `partial_release=True`.
+- Graph SDK additions: `prepare` takes `partial_release=`; a new rejection code `invalid_partial_release`.
+
 ### #NNN: privacy coverage reason
 
 **A Rewrite row whose final privacy evaluation left a question unanswered is withheld.** An omitted question or a

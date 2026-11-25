@@ -131,7 +131,7 @@ Each pattern below uses only public names. None is shown as a full program here.
 | Pattern | How | Pieces | Guide |
 |---|---|---|---|
 | Bring your own detector | A phase-scoped step calls a local NER model or a service once for all targets and returns mentions; a later step replaces them; a separate verifier rescans the output. | `Operation.phase_scoped`, `Mention`, `Operation.verifier` | [Write your own detector](guide-custom-detector.md) |
-| Release a row only when every field passes | Each field is a target; the row's fields form one output group; a derived field depends on its source fields. | `OutputGroup`, `Dependency`, `Record` | [Release related texts together](guide-release-together.md) |
+| Release a row only when every field passes | Each field is a target; the row's fields form one record, which is released whole; a derived field depends on its source fields. | `Record`, `Dependency` | [Release related texts together](guide-release-together.md) |
 | One prompt per row | A phase-scoped step reads the `record` seed and sends the fields of each record to the model together. | `Record`, `Operation.phase_scoped` | [Release related texts together](guide-release-together.md#records) |
 | Conversation-aware protection | Earlier turns, or a structured profile, reach a step as bounded context that is read but never released. | `ContextScope`, `ContextSource`, `ContextView`, `register_kind`, `Limits(max_context_bytes=)` | [Give an operation context](guide-give-an-operation-context.md) |
 | Long documents by section | Each section is a target, so a failure stays in its section; the document is rebuilt only from available candidates. | `ProtectionResult.assemble_regions` | [Rebuild a document](guide-rebuild-documents.md) |
@@ -143,8 +143,8 @@ This is a proposed worked example, not a shipped program. It describes a workflo
 support; no page or test runs it yet.
 
 An agent trace has several parts: the customer's message, a tool result that lists the customer's orders, and the
-agent's tool call `cancel_order(order_id=...)`. Each part is a target, and the parts of one trace form one record
-and one output group. A phase-scoped step reads the `record` seed and replaces each order ID with a substitute, so
+agent's tool call `cancel_order(order_id=...)`. Each part is a target, and the parts of one trace form one record,
+which is released whole. A phase-scoped step reads the `record` seed and replaces each order ID with a substitute, so
 the parts of one trace can be replaced together.
 
 The property to protect is a relationship, not a spelling: **the order in the cancellation argument must be the
@@ -157,8 +157,8 @@ order the customer chose.** Two things make it harder than mapping each ID to on
 
 So a verifier that only rejects two values mapped to one key is not enough: it passes a trace whose cancellation
 now points at a different order that has its own distinct key. The verifier this example needs checks that the
-substitute in the tool call is the substitute of the order the customer named, and the output group then releases
-the trace only as a whole.
+substitute in the tool call is the substitute of the order the customer named, and the record is then released
+only as a whole.
 
 The runnable pieces are shown separately: one call for many targets in
 [Process all targets in one call](guide-batch-targets.md), and records and output groups in

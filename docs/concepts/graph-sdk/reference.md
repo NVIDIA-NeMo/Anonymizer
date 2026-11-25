@@ -25,7 +25,7 @@ Import the module as `from anonymizer import graph as g`.
 | `ContextSource` | A named provider of context items, with item and byte bounds, called once per run. |
 | `Dependency` | Withhold `dependent` when `on` is withheld. |
 | `OutputGroup` | Release `members` together or not at all. |
-| `Record` | A group of targets that belong together. Made only by `GraphScope.record`. It does not change release for now: each target is released on its own checks; use `OutputGroup` for all-or-none release. Releasing a complete record is planned as the default. |
+| `Record` | A group of targets that belong together. Made only by `GraphScope.record`. Released all together or not at all; `prepare(..., partial_release=True)` releases each member on its own checks. |
 | `ProtectionGraph` | The targets of one run and their relations. |
 | `Operation` | One step. Also `Operation.verifier` and `Operation.phase_scoped`. |
 | `Workflow` | An ordered sequence of operations and nested workflows. |
@@ -190,7 +190,7 @@ but bases its verdict on an earlier value is still accepted. To stop a target ea
 
 ## Preparing and running
 
-**`prepare(graph, workflow, *, limits=None, capabilities=None, request_budget=None, session=None) -> PreparedProtection`**
+**`prepare(graph, workflow, *, limits=None, capabilities=None, request_budget=None, session=None, partial_release=False) -> PreparedProtection`**
 
 - Runs no callback and no context provider.
 - `limits`: defaults to `Limits()`.
@@ -199,6 +199,8 @@ but bases its verdict on an earlier value is still accepted. To stop a target ea
   not listed raises `capability_not_admitted`.
 - `request_budget`: refuses a plan above it (`over_request_budget`) or one that is unknown
   (`hard_budget_without_visibility`). Not enforced during the run.
+- `partial_release`: release each member of a declared record on its own checks instead of the whole record
+  (`invalid_partial_release` if not a bool).
 
 **`PreparedProtection`**: fields `limits`, `names` (flattened operation names), `planned_requests`, `capabilities`;
 `summary() -> InspectionSummary`. It cannot be pickled or copied (`TypeError`), and `protect` refuses a value with
@@ -303,7 +305,7 @@ is the verifier's stated reason for `failed` and `could_not_assess`, and empty o
 | `cancelled` | The run was cancelled before this target finished. |
 | `blocked` | The target did not finish and no step of it failed, for example because it was never dispatched. |
 | `inconsistent_invocation` | A verifier in the run returned an assessment naming another target or none. |
-| `withheld` | The target is `met`, but a dependency or a member of its output group was withheld. |
+| `withheld` | The target is `met`, but a dependency, a member of its output group or a member of its record was withheld. |
 | `annotation` | The target is `met`, but the workflow is an annotation workflow, which never releases. |
 
 [Find out why a target was withheld](guide-read-outcomes.md#the-fields-of-a-targetoutcome) shows them in a program.
@@ -420,6 +422,7 @@ fails that target with the refusal's reason (`unspanned_value`); it is not part 
 | `required_check_not_final` | A required check with no verifier of the final candidate. `detail` names it. |
 | `not_a_session` | `session=` is not a `Session` (also at `protect`). |
 | `session_without_resolution` | A stable Session with no `decisions` output in the workflow. |
+| `invalid_partial_release` | `partial_release` is not a bool. |
 | `session_mode_unsupported` | A Session with `identity_matching=True`. |
 | `session_mismatch` | At `protect`: a Session of another mode than the one prepared. |
 | `session_busy` | At `protect` or `snapshot`: another execution is using the Session. |

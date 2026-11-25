@@ -85,6 +85,7 @@ class PreparedProtection:
     final_text: int | None = None
     seal: str = field(default="", repr=False)
     session_mode: SessionMode = SessionMode()
+    partial_release: bool = False
 
     def summary(self) -> InspectionSummary:
         return InspectionSummary(self.names, len(self.graph.targets), self.planned_requests)
@@ -101,20 +102,24 @@ def prepare(
     capabilities: tuple[str, ...] | None = None,
     request_budget: int | None = None,
     session: Session | None = None,
+    partial_release: bool = False,
 ) -> PreparedProtection:
     """Validate everything before effects and compile an immutable plan. No callback runs here.
 
     ``capabilities`` names the operation implementations admitted for this invocation (default: the workflow's);
     ``request_budget`` rejects the workflow here when its planned external-request count is unknown, opaque or
     above the budget; it is not enforced while the workflow runs. ``session`` is read for its mode only; the
-    prepared value holds no live Session, and ``protect`` must get a Session of the same mode.
+    prepared value holds no live Session, and ``protect`` must get a Session of the same mode. A declared Record is
+    released whole unless ``partial_release`` is true, which releases each member on its own checks.
     """
+    if not isinstance(partial_release, bool):
+        raise k.GraphRejection("invalid_partial_release")
     _reject_bare_string("capabilities", capabilities, "operation names")
     mode = _session_mode(session)
     if mode.identity_matching:
         raise k.GraphRejection("session_mode_unsupported")
     with _measure("graph_prepare", operation_count=None, target_count=len(graph.targets)) as m:
-        prepared = _prepare(graph, workflow, limits, capabilities, request_budget, mode)
+        prepared = _prepare(graph, workflow, limits, capabilities, request_budget, mode, partial_release)
         m["operation_count"] = len(prepared.names)
     return prepared
 
@@ -126,6 +131,7 @@ def _prepare(
     capabilities: tuple[str, ...] | None,
     request_budget: int | None,
     mode: SessionMode,
+    partial_release: bool = False,
 ) -> PreparedProtection:
     limits = limits or Limits()
 
@@ -168,9 +174,63 @@ def _prepare(
         planned = Count(None, "unknown")
     names = tuple(n for n, _ in ops)
     prepared = PreparedProtection(
-        graph, workflow, limits, plan, names, planned, covering, admitted, final_text, session_mode=mode
+        graph,
+        workflow,
+        limits,
+        plan,
+        names,
+        planned,
+        covering,
+        admitted,
+        final_text,
+        session_mode=mode,
+        partial_release=partial_release,
     )
     return replace(prepared, seal=_seal(prepared))
+
+
+def _release_units(g: ProtectionGraph, partial: bool) -> tuple[tuple[Datum, ...], ...]:
+    """The all-or-none release units: the output groups, merged with every declared Record of two or more members.
+
+    Under partial release the output groups alone. Otherwise groups and Records that share a target merge into one
+    unit (a flat partition). A group that touches no multi-member Record keeps its members and its position; a
+    merged unit lists its members in target order. The graph's own declarations are not changed.
+    """
+    groups = [grp.members for grp in g.groups]
+    records = [r.members for r in g.records if len(r.members) > 1]
+    if partial or not records:
+        return tuple(groups)
+    sets = [set(m) for m in groups + records]
+    parent = list(range(len(sets)))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    owner: dict[Datum, int] = {}
+    for i, members in enumerate(sets):
+        for m in members:
+            if m in owner:
+                parent[root(i)] = root(owner[m])
+            else:
+                owner[m] = i
+    merged: dict[int, set[Datum]] = {}
+    for i, members in enumerate(sets):
+        merged.setdefault(root(i), set()).update(members)
+    order = {d: n for n, d in enumerate(g.targets)}
+    units: list[tuple[Datum, ...]] = []
+    for i, members in enumerate(sets):
+        r = root(i)
+        if r not in merged:
+            continue
+        unit = merged.pop(r)
+        if i < len(groups) and unit == members and not any(root(j) == r for j in range(len(groups), len(sets))):
+            units.append(groups[i])  # an untouched group keeps its declared member order
+        else:
+            units.append(tuple(sorted(unit, key=order.__getitem__)))
+    return tuple(units)
 
 
 def _covering(ops: tuple[tuple[str, Operation], ...], plan: k.Plan, final: int) -> frozenset[int]:
@@ -816,14 +876,15 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
     dependents: dict[Datum, list[Datum]] = {}
     for dep in g.dependencies:
         dependents.setdefault(dep.on, []).append(dep.dependent)
-    group_of = {m: i for i, grp in enumerate(g.groups) for m in grp.members}
+    units = _release_units(g, p.partial_release)
+    group_of = {m: i for i, members in enumerate(units) for m in members}
     withheld = [d for d in g.targets if d not in released]
     releasable = set(released)
     withheld_by: dict[Datum, list[Datum]] = {}
     spent: set[int] = set()
     for d in withheld:  # grows while iterating
         i = group_of.get(d, -1)
-        members = () if i < 0 or i in spent else g.groups[i].members
+        members = () if i < 0 or i in spent else units[i]
         spent.add(i)
         for nxt in dependents.get(d, ()):
             if nxt in releasable:
@@ -836,7 +897,7 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
     # share one tuple; each has no entry yet, since a member with an entry is itself a cause.
     shared: dict[Datum, tuple[Datum, ...]] = {}
     for i in spent - {-1}:
-        members = g.groups[i].members
+        members = units[i]
         causes = tuple(m for m in members if m not in releasable or m in withheld_by)
         cause_set = set(causes)
         shared.update((m, causes) for m in members if m not in cause_set)
