@@ -32,12 +32,13 @@ from bisect import bisect_right
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from operator import attrgetter
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, TypeVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, Protocol, TypeVar, overload
 
 from anonymizer.config.entity_labels import normalize_entity_label
 
 _BOUNDS = attrgetter("start", "end")
 _ItemT = TypeVar("_ItemT")
+_RangedT = TypeVar("_RangedT", bound="_Ranged")
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -158,6 +159,23 @@ class Positioned:
         """Raise ``ValueError`` with ``geometry_problem``'s message when the range breaks the rule."""
         if problem := geometry_problem(self._noun, self.start_position, self.end_position, value, empty=self._empty):
             raise ValueError(problem)
+
+
+class _Ranged(Protocol):
+    @property
+    def start_position(self) -> int: ...
+    @property
+    def end_position(self) -> int: ...
+
+
+def within(length: int, records: Iterable[_RangedT]) -> Iterator[tuple[_RangedT, Span]]:
+    """Each record whose range lies in a text of ``length`` (an empty range included), with its span, in input
+    order; a record whose range does not is skipped."""
+    return (
+        (record, Span(record.start_position, record.end_position))
+        for record in records
+        if 0 <= record.start_position <= record.end_position <= length
+    )
 
 
 OrderField = Literal["start", "end", "-end", "label", "position"]

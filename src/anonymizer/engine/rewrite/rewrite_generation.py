@@ -44,7 +44,7 @@ from anonymizer.engine.schemas import (
     EntitiesSchema,
     RewriteOutputSchema,
 )
-from anonymizer.engine.spans import Span
+from anonymizer.engine.spans import within
 from anonymizer.engine.workflow_columns.response.config import ResponseColumnConfig
 
 logger = logging.getLogger("anonymizer.rewrite.generation")
@@ -258,10 +258,7 @@ def _placed_entities(
     """
     replacement_by_pair = _unique_replacements(replacements)
     edits: list[Edit] = []
-    for entity in entities.entities:
-        if not 0 <= entity.start_position <= entity.end_position <= len(text):
-            continue
-        span = Span(entity.start_position, entity.end_position)
+    for entity, span in within(len(text), entities.entities):
         pair = (entity.value, entity.label)
         synthetic = replacement_by_pair.get(pair) if pair in replace_pairs else None
         edits.append(Edit(span, text[span.slice] if synthetic is None else synthetic, entity.label))

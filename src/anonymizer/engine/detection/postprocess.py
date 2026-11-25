@@ -11,7 +11,7 @@ from anonymizer.config.entity_labels import label_keys
 from anonymizer.config.entity_labels import normalize_entity_label as normalize_label
 from anonymizer.engine.edits import Edit, Edits, Prefer
 from anonymizer.engine.schemas import DetectionResult
-from anonymizer.engine.spans import BY_START_END, Positioned, Span, group_overlapping_spans
+from anonymizer.engine.spans import BY_START_END, Positioned, Span, group_overlapping_spans, within
 
 VALIDATION_CONTEXT_WINDOW = 32
 
@@ -144,12 +144,8 @@ def build_tagged_text(
         resolved_notation = notation
     else:
         resolved_notation = TagNotation(notation)
-    tags: list[Edit] = []
-    for entity in entities:
-        if not 0 <= entity.start_position <= entity.end_position <= len(text):
-            continue  # a tag whose range is not in the text is dropped
-        span = Span(entity.start_position, entity.end_position)
-        tags.append(Edit(span, resolved_notation.tag(text[span.slice], entity.label)))
+    # A tag whose range is not in the text is dropped.
+    tags = [Edit(span, resolved_notation.tag(text[span.slice], e.label)) for e, span in within(len(text), entities)]
     # Among overlapping tags the earlier, then the shorter, stands; identical spans keep input order.
     edits, _ = Edits.admit(text, tags, Prefer(BY_START_END))
     return edits.apply()
