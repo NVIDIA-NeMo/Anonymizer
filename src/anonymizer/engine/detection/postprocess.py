@@ -52,10 +52,29 @@ def is_reserved_entity_label(label: str) -> bool:
 
 
 class TagNotation(str, Enum):
-    xml = "xml"
-    bracket = "bracket"
-    paren = "paren"
-    sentinel = "sentinel"
+    """How prompt text marks an entity: the ``markers`` whose count in a text decides the notation, and the tag
+    ``template``. A text gets the first notation, in member order, whose markers occur least often in it."""
+
+    markers: tuple[str, ...]
+    template: str
+
+    def __new__(cls, value: str, markers: tuple[str, ...], template: str) -> TagNotation:
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.markers = markers
+        member.template = template
+        return member
+
+    xml = "xml", ("<", "</"), "<{label}>{value}</{label}>"
+    bracket = "bracket", ("[[", "]]"), "[[{value}|{label}]]"
+    paren = "paren", ("((SENSITIVE:", "))"), "((SENSITIVE:{label}|{value}))"
+    sentinel = "sentinel", ("<<SENSITIVE:", "<</SENSITIVE:"), "<<SENSITIVE:{label}>>{value}<</SENSITIVE:{label}>>"
+
+    def marker_count(self, text: str) -> int:
+        return sum(text.count(marker) for marker in self.markers)
+
+    def tag(self, value: str, label: str) -> str:
+        return self.template.format(value=value, label=label)
 
 
 def project_detection_result_to_entity_spans(result: DetectionResult) -> list[EntitySpan]:
@@ -130,9 +149,7 @@ def build_tagged_text(
         if not 0 <= entity.start_position <= entity.end_position <= len(text):
             continue  # a tag whose range is not in the text is dropped
         span = Span(entity.start_position, entity.end_position)
-        tags.append(
-            Edit(span, _format_entity_tag(value=text[span.slice], label=entity.label, notation=resolved_notation))
-        )
+        tags.append(Edit(span, resolved_notation.tag(text[span.slice], entity.label)))
     # Among overlapping tags the earlier, then the shorter, stands; identical spans keep input order.
     edits, _ = Edits.admit(text, tags, Prefer(BY_START_END))
     return edits.apply()
@@ -196,24 +213,4 @@ def _build_entity_id(*, label: str, start: int, end: int) -> str:
 
 
 def _choose_tag_notation(text: str) -> TagNotation:
-    candidates: tuple[tuple[TagNotation, tuple[str, ...]], ...] = (
-        (TagNotation.xml, ("<", "</")),
-        (TagNotation.bracket, ("[[", "]]")),
-        (TagNotation.paren, ("((SENSITIVE:", "))")),
-        (TagNotation.sentinel, ("<<SENSITIVE:", "<</SENSITIVE:")),
-    )
-    scored = sorted(
-        ((sum(text.count(marker) for marker in markers), notation) for notation, markers in candidates),
-        key=lambda item: item[0],
-    )
-    return scored[0][1]
-
-
-def _format_entity_tag(*, value: str, label: str, notation: TagNotation) -> str:
-    if notation == TagNotation.xml:
-        return f"<{label}>{value}</{label}>"
-    if notation == TagNotation.bracket:
-        return f"[[{value}|{label}]]"
-    if notation == TagNotation.paren:
-        return f"((SENSITIVE:{label}|{value}))"
-    return f"<<SENSITIVE:{label}>>{value}<</SENSITIVE:{label}>>"
+    return min(TagNotation, key=lambda notation: notation.marker_count(text))

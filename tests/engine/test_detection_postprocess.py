@@ -202,3 +202,19 @@ def test_tagged_text_drops_a_tag_past_the_end() -> None:
     ]
     assert build_tagged_text("We met in Paris.", entities[:1], notation="xml") == "We met in <city>Paris</city>."
     assert build_tagged_text("We met in Paris.", entities[1:], notation="xml") == "We met in Paris."
+
+
+def test_a_tag_keeps_braces_in_its_value_and_label_verbatim() -> None:
+    """Each notation's tag is a ``str.format`` template: braces in the value or label are text, never fields."""
+    entities = [EntitySpan("id1", "{0}", "na{me}", 3, 6, 1.0, "detector")]
+    tagged = {n: build_tagged_text("ab {0} cd", entities, notation=n) for n in ("xml", "bracket", "paren", "sentinel")}
+    assert tagged == {
+        "xml": "ab <na{me}>{0}</na{me}> cd",
+        "bracket": "ab [[{0}|na{me}]] cd",
+        "paren": "ab ((SENSITIVE:na{me}|{0})) cd",
+        "sentinel": "ab <<SENSITIVE:na{me}>>{0}<</SENSITIVE:na{me}>> cd",
+    }
+
+
+def test_tied_notations_resolve_in_member_order() -> None:
+    assert get_tag_notation("< [[ ((SENSITIVE: <<SENSITIVE:") == "bracket"
