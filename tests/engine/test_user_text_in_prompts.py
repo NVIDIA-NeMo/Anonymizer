@@ -278,10 +278,12 @@ class _Stop(Exception):
 class _RecordingRunner(RewriteWorkflow):
     """A caller's runner: ``Anonymizer`` calls its ``run`` with the rewrite options after detection."""
 
-    options: dict[str, Any] = {}
+    def __init__(self, adapter: Any) -> None:
+        super().__init__(adapter)
+        self.options: dict[str, Any] = {}
 
     def run(self, dataframe: pd.DataFrame, **options: Any) -> Any:
-        type(self).options = options
+        self.options = options
         raise _Stop
 
 
@@ -294,15 +296,16 @@ def test_anonymizer_passes_rewrite_instructions_to_the_runner(tmp_path: Path) ->
     )
     csv_path = tmp_path / "input.csv"
     pd.DataFrame({"text": ["Alice works here."]}).to_csv(csv_path, index=False)
-    anonymizer = Anonymizer(detection_workflow=detector, rewrite_runner=_RecordingRunner(adapter=Mock()))
+    runner = _RecordingRunner(adapter=Mock())
+    anonymizer = Anonymizer(detection_workflow=detector, rewrite_runner=runner)
 
-    with pytest.raises(Exception):
+    with pytest.raises(_Stop):
         anonymizer.run(
             config=AnonymizerConfig(rewrite=Rewrite(privacy_goal=_GOAL, instructions=USER_TEXT), emit_telemetry=False),
             data=AnonymizerInput(source=str(csv_path), text_column="text"),
         )
 
-    assert _RecordingRunner.options["instructions"] == USER_TEXT
+    assert runner.options["instructions"] == USER_TEXT
 
 
 def _render_with_datadesigner(template: str, record: dict[str, Any]) -> str:

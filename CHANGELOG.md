@@ -207,7 +207,9 @@ scored again. Now each repair sees the previous repair's text.
 **`Rewrite.instructions` reaches the rewrite.** It used to be accepted and never read. It is now given to the rewrite
 and repair models as literal text, after the privacy goal, which takes precedence. The evaluator, the QA generator,
 the disposition and domain steps and the judges do not see it. `run rewrite --instructions ...` sets it.
-- What to do: nothing, unless you set it before; then expect it to change the rewritten text.
+- What to do: nothing, unless you set it before; then expect it to change the rewritten text. A caller's runner
+  or `build_graph` override with the 0.4.0 signature keeps working while `instructions` is unset; to use
+  `instructions`, the override must accept it, or it raises `TypeError` for the unexpected keyword.
 - Changed in: #NNN.
 
 **The review flag follows the final checks.** `needs_human_review` is set when a required check on the final text
