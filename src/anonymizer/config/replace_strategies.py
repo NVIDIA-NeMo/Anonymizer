@@ -9,6 +9,7 @@ import re
 from string import Formatter
 from typing import Annotated, Any, Literal
 
+import cyclopts
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
@@ -154,6 +155,10 @@ class Annotate(ReplaceMethodBase):
         )
 
 
+# The environment variable the CLI reads the hash key from. The key has no CLI flag, so it stays out of argv and
+# shell history.
+HASH_KEY_ENV = "ANONYMIZER_HASH_KEY"
+
 HASH_KEY_REQUIRED_MESSAGE = (
     'Hash requires a secret key: pass Hash(key=...), for example Hash(key=os.environ["ANONYMIZER_HASH_KEY"]) '
     "(the CLI reads ANONYMIZER_HASH_KEY). Unkeyed hashes of low-entropy values are reversible, so there is no "
@@ -192,7 +197,7 @@ class Hash(ReplaceMethodBase):
         default="<HASH_{label}_{digest}>", description="Template with {digest} required and optional {label}."
     )
     # Required (no default). ``None`` only on a copy made by ``without_key``, which cannot hash.
-    key: SecretStr | None = Field(
+    key: Annotated[SecretStr | None, cyclopts.Parameter(env_var=HASH_KEY_ENV, parse=False)] = Field(
         description="Required secret key. The digest is HMAC-SHA256 of the case- and whitespace-folded text; "
         "unkeyed digests of low-entropy values are reversible, so there is no unkeyed mode.",
     )

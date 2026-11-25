@@ -22,7 +22,7 @@ import cyclopts
 from pydantic import ValidationError
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite
-from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
+from anonymizer.config.replace_strategies import HASH_KEY_ENV, Annotate, Hash, Redact, Substitute
 from anonymizer.config.rewrite import (
     PrivacyGoal,
     RiskTolerance,
@@ -36,7 +36,6 @@ from anonymizer.logging import LoggingConfig, configure_logging
 
 app = cyclopts.App(help="NeMo Anonymizer CLI")
 
-HASH_KEY_ENV = "ANONYMIZER_HASH_KEY"
 
 ReplaceChoice = Literal["redact", "hash", "annotate", "substitute"]
 RiskToleranceChoice = Literal["minimal", "low", "moderate", "high"]
