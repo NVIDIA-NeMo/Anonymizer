@@ -23,10 +23,10 @@ v1.0.0 may break compatibility with v0.5.0. Each entry says what changed, where 
   `DataDesigner` or `RunConfig`) must follow DataDesigner's 1.0 changes.
 - Changed in: #375, #404, #410.
 
-**New and updated dependencies.** `regex` is a new required dependency. The `notebooks` extra moves to
-`gliner2==2.1.0` and `pillow>=13,<14`.
+**New and updated dependencies.** `regex` is a new required dependency. `cyclopts` moves from `>=3` to `>=5.1,<6`.
+The `notebooks` extra moves to `gliner2==2.1.0` and `pillow>=13,<14`.
 - What to do: nothing, unless you pin these packages yourself.
-- Changed in: #265, #212, #375.
+- Changed in: #265, #212, #375, #453.
 
 **Notebook runtime internals are removed.** `anonymizer.notebooks.local_inference` and the private helpers in
 `anonymizer.notebooks._runtime` and `_model_config` (such as `build_notebook_model_configuration`) are gone.
