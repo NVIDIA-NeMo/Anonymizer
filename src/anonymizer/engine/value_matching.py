@@ -5,11 +5,12 @@
 
 from __future__ import annotations
 
-import re
 import unicodedata
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+
+import regex
 
 from anonymizer.engine.schemas import EntitySchema
 from anonymizer.engine.spans import Span, Spans
@@ -24,7 +25,15 @@ class MatchMode(StrEnum):
     ``EXACT`` does not normalize: spans are sliced from the same text the value came from, so it compares code
     points, keeps whitespace and compatibility forms as spelled ("Mary Jane" does not match "Mary\\nJane", "Alice"
     does not match fullwidth "Ａlice"), and never matches a word that continues with a combining mark ("Le" in NFD
-    "Lê"). The folded audit still counts mixed normalization forms."""
+    "Lê"). The folded audit still counts mixed normalization forms.
+
+    Both modes are configurations of one pipeline (``_PIPELINES``). In both, a match never starts on, or ends
+    before, a mark that survives the mode's normalization or a spacing mark (``_GLUE_CLASS``). A zero-width joiner or a
+    variation selector right after a value blocks it only when it joins an emoji or a mark in the source
+    (``_end_edge``): "Alice" matches before a joiner, an emoji value inside a joined sequence does not. A zero-width
+    non-joiner, an emoji modifier or a Prepend character next to a value never blocks it. ``FOLDED`` also drops
+    invisible format characters (``_DropIgnorables``), so "An\u00ada" matches "Ana"; a dropped zero-width space or word
+    joiner still separates two words."""
 
     EXACT = "exact"
     FOLDED = "folded"
@@ -87,31 +96,28 @@ def count_values(
     ``source``; an entity without a usable span has ``None`` and keeps its position. Every match start counts,
     overlapping matches included, and a match is detected when some detected span contains it.
     """
-    key_of = normalized if mode is MatchMode.FOLDED else _exact_key  # ``value_key`` for this mode
+    pipeline = _PIPELINES[mode]
     usable = {i: span for i, (span, _) in enumerate(entities) if span is not None}
     detected = Spans(usable.values())
     position_of: dict[Span, int] = {}  # the first entity with each span
-    own: dict[str, int] = {}  # the first entity whose text is each normalized value
+    own: dict[str, int] = {}  # the first entity whose text is each key
     for i, span in usable.items():
         position_of.setdefault(span, i)
-        own.setdefault(key_of(source[span.slice]), i)
+        own.setdefault(pipeline.key(source[span.slice]), i)
     if values is None:
         values = [source[span.slice] for span in usable.values()]
     given: dict[str, str] = {}  # each key's first given form
     for value in values:
-        given.setdefault(key_of(value), value)
-    source_forms: tuple[tuple[str, Sequence[int]], ...]
-    output_forms: tuple[tuple[str, Sequence[int]], ...]
-    if mode is MatchMode.FOLDED:
-        source_forms, output_forms = _mapped(source), _mapped(output)
-    else:  # the text as given, each character its own origin; built once for every value
-        source_forms = ((source, range(len(source))),) * 2
-        output_forms = ((output, range(len(output))),) * 2
+        given.setdefault(pipeline.key(value), value)
+    matchers = _compiled(given, pipeline)
+    if not matchers:
+        return ()
+    source_views, output_views = pipeline.views(source), pipeline.views(output)
     leftovers: list[tuple[str, Leftover]] = []
-    for key, matcher in _compiled(given, exact=mode is MatchMode.EXACT).items():
+    for key, matcher in matchers.items():
         form = 0 if matcher.cased else 1
-        matches = Spans(matcher.spans(*source_forms[form]))
-        output_spans = Spans(matcher.spans(*output_forms[form]))
+        matches = Spans(matcher.spans(source_views[form]))
+        output_spans = Spans(matcher.spans(output_views[form]))
         position = own.get(key)
         if position is None:
             containers = (detected.container_of(match) for match in matches)
@@ -129,6 +135,15 @@ def count_values(
         leftovers.append((key, leftover))
     leftovers.sort(key=lambda item: (item[1].position is None, item[1].position or 0, item[0]))
     return tuple(leftover for _, leftover in leftovers)
+
+
+def occurrences(text: str, key: str) -> Iterator[int]:
+    """Every start index of ``key`` in ``text``, in order, overlapping occurrences included ("aa" in "aaaa" starts at 0,
+    1 and 2); an empty ``key`` starts at every index from 0 to ``len(text)``."""
+    start = text.find(key)
+    while start >= 0:
+        yield start
+        start = text.find(key, start + 1)
 
 
 def entity_spans(source: str, entities: Iterable[EntitySchema]) -> list[tuple[Span | None, str]]:
@@ -151,114 +166,289 @@ def format_cause(leftovers: Iterable[Leftover]) -> str:
     )
 
 
+# --- The matching pipeline ------------------------------------------------------------------------------------------
+#
+# Like ``tokenizers``: normalizer steps over an aligned string (every character keeps the index of the source
+# character it came from), a segmentation step that says where a match may start or end, and a matcher. ``EXACT``
+# and ``FOLDED`` are two configurations of the same pipeline (``_PIPELINES``), not branches. Each step has a plain
+# form for keys (``text``, C-speed where ``unicodedata`` allows) and an aligned form for the texts searched
+# (``aligned``); ``test_value_matching`` checks that the two agree.
+
+_Chars = list[tuple[str, int]]  # each character with the index of its source character
+
+
+class _Nfkd:
+    """NFKD (the identity on ASCII). Aligned: per character, then every run of combining marks put in canonical order
+    with the source indexes carried along, which is what NFKD does to the whole string; inside a reordered run the
+    indexes do not increase."""
+
+    ascii_identity = True
+
+    @staticmethod
+    def text(text: str) -> str:
+        return text if text.isascii() else unicodedata.normalize("NFKD", text)
+
+    @staticmethod
+    def aligned(chars: _Chars) -> _Chars:
+        out = [(d, i) for c, i in chars for d in (unicodedata.normalize("NFKD", c) if not c.isascii() else c)]
+        start = 0
+        while start < len(out):
+            if not unicodedata.combining(out[start][0]):
+                start += 1
+                continue
+            end = start
+            while end < len(out) and unicodedata.combining(out[end][0]):
+                end += 1
+            out[start:end] = sorted(out[start:end], key=lambda pair: unicodedata.combining(pair[0]))
+            start = end
+        return out
+
+
+class _DropIgnorables:
+    """Drop invisible format characters (Unicode default-ignorable code points, as NFKC_Casefold does: soft hyphen,
+    zero-width space, word joiner, bidi marks and isolates, BOM), so "An\u00ada" folds to "Ana". The zero-width joiner
+    and non-joiner stay: they decide where a match may end (``_end_edge``) and, in Persian, where a word ends."""
+
+    ascii_identity = True
+
+    @staticmethod
+    def text(text: str) -> str:
+        return text if text.isascii() else _IGNORABLE.sub("", text)
+
+    @staticmethod
+    def aligned(chars: _Chars) -> _Chars:
+        return [(c, i) for c, i in chars if c.isascii() or _IGNORABLE.match(c) is None]
+
+
+_IGNORABLE = regex.compile(r"[\p{Default_Ignorable_Code_Point}--[\u200c\u200d]]", regex.V1)
+
+
+class _StripMarks:
+    """Drop nonspacing marks (``Mn``): accents fold away."""
+
+    ascii_identity = True
+
+    @staticmethod
+    def text(text: str) -> str:
+        return text if text.isascii() else "".join(c for c in text if unicodedata.category(c) != "Mn")
+
+    @staticmethod
+    def aligned(chars: _Chars) -> _Chars:
+        return [(c, i) for c, i in chars if c.isascii() or unicodedata.category(c) != "Mn"]
+
+
+class _CollapseWhitespace:
+    """Every run of whitespace as one space, taking the index of the character after it; none at the edges."""
+
+    ascii_identity = False
+
+    @staticmethod
+    def text(text: str) -> str:
+        return " ".join(text.split())
+
+    @staticmethod
+    def aligned(chars: _Chars) -> _Chars:
+        out: _Chars = []
+        pending = False
+        for c, i in chars:
+            if c.isspace():
+                pending = bool(out)
+            else:
+                if pending:
+                    out.append((" ", i))
+                    pending = False
+                out.append((c, i))
+        return out
+
+
+def _casefold(chars: _Chars) -> _Chars:
+    """``str.casefold`` per character; an expansion ("ß" to "ss") keeps the one source index."""
+    return [(f, i) for c, i in chars for f in (c.casefold() if not c.isascii() else c.lower())]
+
+
+_Step = type[_Nfkd] | type[_DropIgnorables] | type[_StripMarks] | type[_CollapseWhitespace]
+
+# Characters that continue the cluster before them, so a match never starts on one or ends before one: combining
+# marks (``\p{M}``, including Myanmar and other spacing marks whose UAX #29 class is Other), the UAX #29 SpacingMark
+# class and the zero-width joiner. Other UAX #29 Extend characters (ZWNJ, emoji modifiers, tags) and Prepend characters
+# do not glue: a value next to them still matches.
+_GLUE_CLASS = r"[\p{M}\p{Grapheme_Cluster_Break=SpacingMark}\u200d]"
+_GLUE = regex.compile(_GLUE_CLASS)
+_CONTROL = regex.compile(
+    r"[\p{Grapheme_Cluster_Break=Control}\p{Grapheme_Cluster_Break=CR}\p{Grapheme_Cluster_Break=LF}]"
+)
+
+
+def _cluster_edge(text: str, k: int) -> bool:
+    """The segmentation step, at one position: whether a match may start or end at ``k``. No match starts on, or ends
+    before, a ``_GLUE`` character, unless it follows a control (UAX #29 GB4); the end of the text is always an edge."""
+    if k >= len(text):
+        return True
+    if text[k].isascii():  # no ASCII character glues
+        return True
+    if k > 0 and _CONTROL.match(text, k - 1):
+        return True
+    return _GLUE.match(text, k) is None
+
+
+# A zero-width joiner or a text/emoji variation selector (VS15, VS16) right after a match blocks it only when it joins
+# the character before it in the source: an emoji (a pictograph, a skin-tone modifier, a regional indicator) or a mark
+# such as a virama. After a letter it joins nothing a reader sees, so a name stays matched ("Alice\u200d\U0001f469").
+_JOINERS = frozenset("\u200d\ufe0e\ufe0f")
+_JOIN_HOST = regex.compile(r"[\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\p{M}]")
+
+
+def _end_edge(view: _View, k: int) -> bool:
+    """Whether a match in ``view`` may end at ``k``: ``_cluster_edge``, except that a ``_JOINERS`` character there blocks
+    only after a ``_JOIN_HOST`` character, decided on the source text (``FOLDED`` has stripped the virama before a
+    half-form joiner)."""
+    text = view.text
+    if k < len(text) and text[k] in _JOINERS:
+        j = view.origin[k]
+        if j > 0 and _JOIN_HOST.match(view.source, j - 1):
+            return False
+        while k < len(text) and text[k] in _JOINERS:  # past the joiners, the next character decides (a keycap's
+            k += 1  # U+20E3 is an enclosing mark, so "1" in "1\ufe0f\u20e3" does not match)
+    return _cluster_edge(text, k)
+
+
+def _word_edges_at_breaks(view: _View, start: int, end: int) -> bool:
+    """Whether ``view.text[start:end]`` is a whole word once a dropped zero-width space or word joiner counts as a
+    word edge: ``_DropIgnorables`` removes them so a name split by one matches, but where one stood between two words
+    it still separates them ("Ana\u200bLee" holds "Ana"). The word joiner is a format character, not a break, in UAX
+    #29; ``_BREAKS`` treats it as a separator anyway, which keeps the base behaviour and only adds matches."""
+    text = view.text
+
+    def edge(inside: int, neighbour: int) -> bool:
+        """No word character at ``neighbour``, or a dropped break in the source between it and ``inside``."""
+        if not 0 <= neighbour < len(text) or not _WORD_CHAR.match(text, neighbour):
+            return True
+        a, b = sorted((view.origin[inside], view.origin[neighbour]))
+        return any(c in _BREAKS for c in view.source[a + 1 : b])
+
+    after = end
+    while after < len(text) and text[after] in _JOINERS:  # as ``_JOINED_WORD``: a word goes on past a joiner
+        after += 1
+    return edge(start, start - 1) and edge(end - 1, after)
+
+
+_BREAKS = frozenset("\u200b\u2060")
+
+
+@dataclass(frozen=True)
+class _View:
+    """One normalized form of ``source``: ``text`` and ``origin``, the source index of each of its characters."""
+
+    text: str
+    origin: Sequence[int]
+    source: str
+    breaks: bool = False  # a ``_BREAKS`` character was dropped, so ``_word_edges_at_breaks`` can apply
+
+
+@dataclass(frozen=True)
+class _Pipeline:
+    """``normalizers`` applied in order to the text and to each value; ``fold_case`` adds a casefolded view, which a
+    value matches in unless it is a ``_short_code``."""
+
+    normalizers: tuple[_Step, ...]
+    fold_case: bool
+
+    def normalize(self, text: str) -> str:
+        for step in self.normalizers:
+            text = step.text(text)
+        return text
+
+    def key(self, value: str) -> str:
+        """``value_key``: the value normalized, less surrounding whitespace."""
+        return self.normalize(value).strip()
+
+    def views(self, text: str) -> tuple[_View, _View]:
+        """The cased view and the casefolded one (the cased view again when the pipeline does not fold case)."""
+        if not self.normalizers and not self.fold_case:
+            view = _View(text, range(len(text)), text)  # nothing to align
+            return (view, view)
+        chars: _Chars = list(zip(text, range(len(text))))
+        ascii_text = text.isascii()
+        for step in self.normalizers:
+            if not (ascii_text and step.ascii_identity):
+                chars = step.aligned(chars)
+        breaks = (
+            not ascii_text and any(c in _BREAKS for c in text) and any(s is _DropIgnorables for s in self.normalizers)
+        )
+        cased = _View("".join(c for c, _ in chars), [i for _, i in chars], text, breaks)
+        if not self.fold_case:
+            return (cased, cased)
+        folded = _casefold(chars)
+        return (cased, _View("".join(c for c, _ in folded), [i for _, i in folded], text, breaks))
+
+
+_PIPELINES = {
+    MatchMode.EXACT: _Pipeline(normalizers=(), fold_case=False),
+    MatchMode.FOLDED: _Pipeline(normalizers=(_Nfkd, _DropIgnorables, _StripMarks, _CollapseWhitespace), fold_case=True),
+}
+
+# A word character for the whole-word rule: a letter, a mark or a number (the underscore is a boundary, so "Emma"
+# matches in "emma_kovacs"). Marks count, so a word goes on through a combining mark (WB4) and "Le" does not end
+# inside NFD "Lê".
+_WORD = r"(?:(?![\ufe0e\ufe0f])[\p{L}\p{M}\p{N}])"
+_WORD_CHAR = regex.compile(_WORD)
+_JOINED_WORD = (
+    r"[\u200d\ufe0e\ufe0f]*+[\p{L}\p{M}\p{N}]"  # a word that goes on past a joiner or selector ("Alice\ufe0fb")
+)
+
+
 @dataclass(frozen=True)
 class _Matcher:
-    """One normalized value as ``_occurs`` matches it: ``key`` (casefolded unless ``cased``) and, unless the value is
-    matched as a substring, the ``pattern`` that checks its word boundaries."""
+    """One key as the pipeline matches it: in the cased view when ``cased``, else in the casefolded one; with a
+    ``pattern`` checking whole-word edges unless the key is in an unspaced script (a substring match)."""
 
     key: str
     cased: bool
-    pattern: re.Pattern[str] | None
-    exact: bool = False
+    pattern: Callable[[str, int], object] | None  # a compiled pattern's ``match``
 
-    def spans(self, text: str, origin: Sequence[int]) -> Iterator[Span]:
-        """Every match in the normalized ``text``, overlapping ones included, as a span of the original text
-        (``origin`` maps each character back). ``str.find`` proposes each start; the pattern checks it."""
-        pos = text.find(self.key)
-        while pos >= 0:
-            if (self.pattern is None or self.pattern.match(text, pos)) and not (
-                self.exact and _marked_edge(text, pos, pos + len(self.key), spaced=self.pattern is not None)
+    def spans(self, view: _View) -> Iterator[Span]:
+        """Every match in ``view``, overlapping ones included, as a span of the original text. ``occurrences``
+        proposes each start; the cluster edges and the pattern check it."""
+        text, size = view.text, len(self.key)
+        for pos in occurrences(text, self.key):
+            end = pos + size
+            if (
+                (
+                    self.pattern is None
+                    or self.pattern(text, pos)
+                    or (view.breaks and _word_edges_at_breaks(view, pos, end))
+                )
+                and _cluster_edge(text, pos)
+                and _end_edge(view, end)
             ):
-                covered = origin[pos : pos + len(self.key)]  # canonical reordering can move marks across sources
+                covered = view.origin[pos:end]  # canonical reordering can move marks across sources
                 yield Span(min(covered), max(covered) + 1)
-            pos = text.find(self.key, pos + 1)
 
 
-def _compiled(keys: Iterable[str], *, exact: bool) -> dict[str, _Matcher]:
-    """One matcher per distinct key, each already ``normalized`` (normalizing is not idempotent: a dropped mark can
-    leave marks out of canonical order, so a key is normalized once), or ``_exact_key`` and matched with its case when
-    ``exact``; a blank key and a one-character unspaced key get none."""
+def _compiled(keys: Iterable[str], pipeline: _Pipeline) -> dict[str, _Matcher]:
+    """One matcher per distinct key, each already ``pipeline.key`` (normalizing is not idempotent: a dropped mark can
+    leave marks out of canonical order, so a key is normalized once); a blank key and a one-character unspaced key get
+    none. The short-code rule picks the cased view; the unspaced rule drops the word-edge pattern."""
     matchers: dict[str, _Matcher] = {}
     for value in set(keys) - {""}:
-        cased = exact or _short_code(value)
+        cased = not pipeline.fold_case or _short_code(value)
         key = value if cased else value.casefold()
         if not (_unspaced(key[0]) and _unspaced(key[-1])):
-            pattern = re.compile(r"(?<![^\W_])" + re.escape(key) + r"(?![^\W_])")
-            matchers[value] = _Matcher(key, cased, pattern, exact)
+            pattern = regex.compile(f"(?<!{_WORD})" + regex.escape(key) + f"(?!{_JOINED_WORD})")
+            matchers[value] = _Matcher(key, cased, pattern.match)
         elif len(key) >= 2:
-            matchers[value] = _Matcher(key, cased, None, exact)
+            matchers[value] = _Matcher(key, cased, None)
     return matchers
-
-
-def _marked_edge(text: str, start: int, end: int, *, spaced: bool) -> bool:
-    """Whether ``MatchMode.EXACT`` rejects ``text[start:end]`` for splitting a cluster: a combining mark (category
-    ``M*``) directly follows its end, or the match starts on a mark, or, for a ``spaced`` (whole-word) key, a mark
-    directly precedes it ("Le" in NFD "Lê" or after a decomposed "é"). An unspaced key (Thai, Han) may follow a mark,
-    which belongs to the previous cluster, but still cannot end inside a cluster."""
-
-    def mark(i: int) -> bool:
-        return 0 <= i < len(text) and unicodedata.category(text[i]).startswith("M")
-
-    return mark(end) or mark(start) or (spaced and mark(start - 1))
-
-
-def _exact_key(text: str) -> str:
-    """The value as spelled, less surrounding whitespace: ``MatchMode.EXACT``'s key."""
-    return text.strip()
 
 
 def value_key(value: str, mode: MatchMode) -> str:
     """The key ``count_values`` groups ``value`` under in ``mode``: a ``Leftover.value`` maps back to its key."""
-    return normalized(value) if mode is MatchMode.FOLDED else _exact_key(value)
+    return _PIPELINES[mode].key(value)
 
 
 def normalized(text: str) -> str:
-    """NFKD with combining marks dropped and whitespace collapsed."""
-    decomposed = unicodedata.normalize("NFKD", text)
-    return " ".join("".join(c for c in decomposed if unicodedata.category(c) != "Mn").split())
-
-
-def _mapped(text: str) -> tuple[tuple[str, list[int]], tuple[str, list[int]]]:
-    """``normalized(text)`` and its casefold, each with the index in ``text`` of every character's source character.
-
-    Each source character is decomposed (NFKD) and every run of combining marks is put in canonical order, carrying
-    the source indexes along, which is what NFKD does to the whole string; marks are dropped and whitespace collapsed
-    only after that, so the plain form equals ``normalized(text)``. Inside a reordered run the indexes are not
-    increasing.
-    """
-    decomposed = [
-        (d, i) for i, c in enumerate(text) for d in (unicodedata.normalize("NFKD", c) if not c.isascii() else c)
-    ]
-    start = 0
-    while start < len(decomposed):
-        if not unicodedata.combining(decomposed[start][0]):
-            start += 1
-            continue
-        end = start
-        while end < len(decomposed) and unicodedata.combining(decomposed[end][0]):
-            end += 1
-        decomposed[start:end] = sorted(decomposed[start:end], key=lambda pair: unicodedata.combining(pair[0]))
-        start = end
-    plain: list[str] = []
-    origin: list[int] = []
-    pending = False
-    for d, i in decomposed:
-        if d.isspace():
-            pending = bool(plain)
-        elif unicodedata.category(d) != "Mn":
-            if pending:
-                plain.append(" ")
-                origin.append(i)
-                pending = False
-            plain.append(d)
-            origin.append(i)
-    folded: list[str] = []
-    folded_origin: list[int] = []
-    for d, i in zip(plain, origin):
-        f = d.casefold()
-        folded.append(f)
-        folded_origin.extend([i] * len(f))
-    return ("".join(plain), origin), ("".join(folded), folded_origin)
+    """NFKD with combining marks dropped and whitespace collapsed: the ``FOLDED`` normalizers."""
+    return _PIPELINES[MatchMode.FOLDED].normalize(text)
 
 
 # Scripts written without spaces between words: Han, Hiragana, Katakana, Thai, Lao, Khmer, Myanmar.
@@ -288,16 +478,32 @@ def _short_code(value: str) -> bool:
 
 
 def _occurs(value: str, text: str, folded: str) -> bool:
-    """Whether ``value`` occurs in ``text`` (both ``normalized``; ``folded`` is ``text`` casefolded).
+    """Whether ``value`` occurs in ``text`` (both ``normalized``; ``folded`` is ``text`` casefolded): the reference
+    rule, written as one search rather than as the pipeline.
 
-    Case-insensitive unless ``_short_code``. A value whose first and last characters are in ``_UNSPACED`` matches as a
-    substring when it has two or more characters, and never when it has one; any other value matches where no letter
-    or digit directly precedes or follows it.
+    Case-insensitive unless ``_short_code``. No match starts on a ``_GLUE_CLASS`` character that does not follow a
+    control, or ends before one, except a ``_JOINERS`` character that does not follow a ``_JOIN_HOST`` character. A
+    value whose first and last characters are in ``_UNSPACED`` matches as a substring when it has two or more
+    characters, and never when it has one; any other value matches where no letter, mark or number directly precedes
+    or follows it.
     """
     if not value:
         return False
     if not _short_code(value):
         value, text = value.casefold(), folded
+    glued = {
+        m.start()
+        for m in regex.finditer(_GLUE_CLASS, text)
+        if not (m.start() > 0 and _CONTROL.match(text, m.start() - 1))
+    }
+    loose = {k for k in glued if text[k] in _JOINERS and (k == 0 or _JOIN_HOST.match(text, k - 1) is None)}
     if _unspaced(value[0]) and _unspaced(value[-1]):
-        return len(value) >= 2 and value in text
-    return re.search(r"(?<![^\W_])" + re.escape(value) + r"(?![^\W_])", text) is not None
+        if len(value) < 2:
+            return False
+        pattern = regex.compile(regex.escape(value))
+    else:
+        pattern = regex.compile(f"(?<!{_WORD})" + regex.escape(value) + f"(?!{_JOINED_WORD})")
+    return any(
+        m.start() not in glued and (m.end() not in glued or m.end() in loose)
+        for m in pattern.finditer(text, overlapped=True)
+    )

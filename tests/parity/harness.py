@@ -97,6 +97,18 @@ RECORDS = [
     ("d", "Dora paints in Lyon."),
     ("e", "Eve visits Rome."),
 ]
+# Unicode matching cases (Thai repeat, NFD accent, Devanagari marks, ZWJ), recorded by every case; kept apart from
+# RECORDS, which other tests read as one space-separated sentence per record.
+UNICODE_RECORDS = [
+    (
+        "f",
+        "\u0e2a\u0e21\u0e0a\u0e32\u0e22\u0e1a\u0e2d\u0e01\u0e43\u0e2b\u0e49\u0e2a\u0e21\u0e0a\u0e32\u0e22\u0e21\u0e32",
+    ),
+    ("g", "\u00d4ng Le n\u00f3i v\u1ec1 Le\u0302."),
+    ("h", "\u0930\u093e\u092e \u0928\u0947 \u0930\u093e\u092e\u093e\u092f\u0923 \u092a\u0922\u093c\u0940\u0964"),
+    ("i", "\u0938\u0940\u0924\u093e \u0914\u0930 \u0930\u093e\u092e \u0906\u090f\u0964"),
+    ("j", "Alice met Alice\u200d\U0001f469."),
+]
 LEXICON = {
     "Alice": "first_name",
     "Acme": "organization_name",
@@ -106,6 +118,10 @@ LEXICON = {
     "Lyon": "city",
     "Eve": "first_name",
     "Rome": "city",
+    "\u0e2a\u0e21\u0e0a\u0e32\u0e22": "first_name",
+    "Le": "last_name",
+    "\u0930\u093e\u092e": "first_name",
+    "\u0938\u0940\u0924\u093e": "first_name",
 }
 SYNTHETIC = {
     "Alice": "Maria",
@@ -116,6 +132,10 @@ SYNTHETIC = {
     "Lyon": "Bergen",
     "Eve": "Nora",
     "Rome": "Turin",
+    "\u0e2a\u0e21\u0e0a\u0e32\u0e22": "\u0e2a\u0e21\u0e28\u0e23\u0e35",
+    "Le": "Tran",
+    "\u0930\u093e\u092e": "\u0936\u094d\u092f\u093e\u092e",
+    "\u0938\u0940\u0924\u093e": "\u0917\u0940\u0924\u093e",
 }
 PREVIEW_ROWS = 4
 
@@ -157,7 +177,7 @@ CASES = [
         lambda: AnonymizerConfig(replace=Substitute()),
         EvaluateConfig(compute_detection_validity=True),
         drops={"replace-map-generation": "Bob"},
-        missed="Alice",
+        missed="Alice works",
     ),
     Case(
         "rewrite_staged",
@@ -173,7 +193,7 @@ CASES = [
         "rewrite_combined",
         lambda: AnonymizerConfig(rewrite=Rewrite(use_combined_graph=True)),
         drops={"rewrite-combined": "Bob", "entity-coverage-judge": "Dora"},
-        missed="Alice",
+        missed="Alice works",
     ),
     Case(
         "rewrite_custom_label",
@@ -486,7 +506,7 @@ def _observe(call: Callable[[], Any], case: Case) -> tuple[dict[str, Any], Any]:
 
 def record_case(case: Case) -> dict[str, Any]:
     """Drive run(), preview() and evaluate() of one case and return everything observed."""
-    data = TextRecordsInput(records=[TextRecord(id=i, text=t) for i, t in RECORDS])
+    data = TextRecordsInput(records=[TextRecord(id=i, text=t) for i, t in RECORDS + UNICODE_RECORDS])
     config = case.config()
     with tempfile.TemporaryDirectory() as artifacts:
         anonymizer = Anonymizer(artifact_path=artifacts)

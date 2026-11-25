@@ -91,21 +91,27 @@ view follows the leftover check's rule, with case and accents folded, so "Ann" d
 occurs in "José". What edits the text or fails a row matches the reported spelling exactly, so "May" does not occur in
 "may" and "Hàn" does not occur in "hạn". The spelling includes whitespace and compatibility forms, with no Unicode
 normalization: "Mary Jane" does not occur in "Mary Jane" split across two lines, "Alice" does not occur in fullwidth
-"Ａlice", and "Le" does not occur in a decomposed "Lê". A one-character value in an unspaced script, such as 王, which
-neither rule matches, counts wherever it appears as spelled. The Replace modes (Redact, Hash, Annotate, Substitute)
-replace spans only, so with a custom detector a row with a reported value that occurs, as spelled, in its text outside
-every kept span fails at the `detect` step with the reason `unspanned_value`. That includes a span's value repeated
-without a span, and a value that crosses two spans (`Paris/Rome` over spans on `Paris` and `Rome`). A case or accent
-variant outside every span does not fail the row. With built-in detection, the Replace modes instead add a span at each
-such occurrence (a missed repeat), with the label of the first detected span of the same value, so `final_entities` can
-hold spans the detector did not return (marked `"source": "repeat"`). A variant spelling gets no span and keeps its
-text: with `May` detected, "May said she may come back in May." keeps "may". The row is not failed and stays met, but
-the advisory `undetected_value_kept` fails for it, counted with case and accents folded, and `result.leftovers(row)`
-shows the count. An occurrence that partly overlaps a kept span (it crosses a span's edge, as the first "New York" does
-in "New York University is in New York." with spans on "York University" and the second "New York") gets no span: the
-row fails at the `detect` step with `unspanned_value`, as with a custom detector. The added span replaces the whole
-matched word, so text around a detected value, such as `#` in `order #W3916020`, is replaced with it. Rewrite passes a
-missed repeat to the rewriter in its replacement view, as before.
+"Ａlice", and "Le" does not occur in a decomposed "Lê". Neither rule starts a match on, or ends one before, a combining
+mark or a spacing mark (such as a Devanagari vowel sign), so "राम" does not occur in "रामायण", and a folded value does
+not occur inside another word ("स" does not occur in "सीता"). A zero-width joiner or variation selector after a value
+blocks it only when it joins an emoji or a mark, so "Alice" directly before a joiner still occurs; a zero-width
+non-joiner never blocks. The folded rule also ignores invisible format characters (soft hyphen, zero-width space, word
+joiner, bidi marks, byte-order mark), so a name with one inside still occurs; a zero-width space or word joiner between
+words still separates them. A one-character value in an unspaced script, such as 王, which neither rule matches, counts
+wherever it appears as spelled. The Replace modes (Redact, Hash, Annotate, Substitute) replace spans only, so with a
+custom detector a row with a reported value that occurs, as spelled, in its text outside every kept span fails at the
+`detect` step with the reason `unspanned_value`. That includes a span's value repeated without a span, and a value that
+crosses two spans (`Paris/Rome` over spans on `Paris` and `Rome`). A case or accent variant outside every span does not
+fail the row. With built-in detection, the Replace modes instead add a span at each such occurrence (a missed repeat),
+with the label of the first detected span of the same value, so `final_entities` can hold spans the detector did not
+return (marked `"source": "repeat"`). A variant spelling gets no span and keeps its text: with `May` detected, "May said
+she may come back in May." keeps "may". The row is not failed and stays met, but the advisory `undetected_value_kept`
+fails for it, counted with case and accents folded, and `result.leftovers(row)` shows the count. An occurrence that
+partly overlaps a kept span (it crosses a span's edge, as the first "New York" does in "New York University is in New
+York." with spans on "York University" and the second "New York") gets no span: the row fails at the `detect` step with
+`unspanned_value`, as with a custom detector. The added span replaces the whole matched word, so text around a detected
+value, such as `#` in `order #W3916020`, is replaced with it. Rewrite passes a missed repeat to the rewriter in its
+replacement view, as before.
 
 Custom runners (`replace_runner`, `rewrite_runner`) are an advanced and testing seam. A runner that overrides `run()`
 must keep `_anonymizer_record_id` on every row it returns. A row with no id, an id that is not an input id, or an id

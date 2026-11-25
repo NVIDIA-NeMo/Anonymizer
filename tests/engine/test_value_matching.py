@@ -6,13 +6,13 @@
 from __future__ import annotations
 
 import random
-import re
 import unicodedata
 from collections.abc import Callable, Iterable
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import regex
 
 from anonymizer.engine import value_matching
 from anonymizer.engine.graph_core.authoring import GraphScope, Mention
@@ -22,7 +22,6 @@ from anonymizer.engine.spans import Span, Spans
 from anonymizer.engine.value_matching import (
     Leftover,
     MatchMode,
-    _mapped,
     _occurs,
     count_values,
     entity_spans,
@@ -31,6 +30,27 @@ from anonymizer.engine.value_matching import (
 from anonymizer.engine.value_matching import (
     normalized as _normalized,
 )
+
+
+def _mapped(text: str) -> tuple[tuple[str, list[int]], tuple[str, list[int]]]:
+    """The ``FOLDED`` cased and casefolded views of ``text``, each with the source index of every character."""
+    cased, folded = value_matching._PIPELINES[MatchMode.FOLDED].views(text)
+    return (cased.text, list(cased.origin)), (folded.text, list(folded.origin))
+
+
+def _source_decides(text: str) -> bool:
+    """Whether ``FOLDED`` matching in ``text`` reads the source, which the folded-text reference ``_occurs`` cannot: a
+    dropped zero-width space or word joiner (still a word edge), or a joiner or variation selector after a different
+    kind of character in the source than in the folded text (a stripped virama, a decomposed symbol)."""
+    if any(c in value_matching._BREAKS for c in text):
+        return True
+    for j, c in enumerate(text):
+        if j and c in value_matching._JOINERS:
+            folded = _normalized(text[:j])
+            host = value_matching._JOIN_HOST
+            if bool(host.match(text, j - 1)) != bool(folded and host.match(folded, len(folded) - 1)):
+                return True
+    return False
 
 
 def _reference_any_value_occurs(values: Iterable[str], text: str) -> bool:
@@ -117,7 +137,9 @@ def test_count_values_finds_a_value_exactly_when_the_presence_rule_does() -> Non
         if any(c.in_output for c in _counts("", [], t, v)) != _reference_any_value_occurs(v, t)
     ]
     assert mismatches == []
-    assert sum(_reference_any_value_occurs(v, t) for v, t in corpus) > 2_000  # matches, not only misses
+    assert (
+        sum(_reference_any_value_occurs(v, t) for v, t in corpus) > 1_500
+    )  # matches, not only misses (marks of every kind now end more words)
 
 
 def test_every_reported_span_is_a_span_of_the_text_holding_the_value() -> None:
@@ -256,13 +278,13 @@ def test_no_original_check_compiles_each_value_once(monkeypatch: pytest.MonkeyPa
     def counted(name: str) -> Callable[..., Any]:
         def call(*args: Any, **kwargs: Any) -> Any:
             calls[name] += 1
-            return getattr(re, name)(*args, **kwargs)
+            return getattr(regex, name)(*args, **kwargs)
 
         return call
 
-    shim = SimpleNamespace(**{k: getattr(re, k) for k in dir(re) if not k.startswith("__")})
+    shim = SimpleNamespace(**{k: getattr(regex, k) for k in dir(regex) if not k.startswith("__")})
     shim.escape, shim.compile = counted("escape"), counted("compile")
-    monkeypatch.setattr(value_matching, "re", shim)
+    monkeypatch.setattr(value_matching, "regex", shim)
 
     words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"]
     names = [(words[i % 8] + words[i // 8 % 8] + words[i // 64 % 8]).capitalize() for i in range(n)]
@@ -370,6 +392,8 @@ def test_matching_holds_on_a_wide_unicode_corpus() -> None:
         leftovers = count_values("", [], text, [value], mode=MatchMode.FOLDED)
         plain = _normalized(text)
         present = _occurs(key, plain, plain.casefold())
+        if _source_decides(text):
+            continue
         assert any(x.in_output for x in leftovers) is present
         found += present
         for x in leftovers:
@@ -379,7 +403,7 @@ def test_matching_holds_on_a_wide_unicode_corpus() -> None:
                 assert (key if value_matching._short_code(key) else key.casefold()) in (
                     held if value_matching._short_code(key) else held.casefold()
                 )
-    assert found > 300  # matches, not only misses
+    assert found > 150  # matches, not only misses (marks of every kind now end more words)
 
 
 @pytest.mark.parametrize(
@@ -433,9 +457,9 @@ def test_count_values_maps_each_text_once_for_every_value(monkeypatch: pytest.Mo
     origins: dict[str, set[int]] = {}
     spans = value_matching._Matcher.spans
 
-    def recorded(self: Any, text: str, origin: Any) -> Any:
-        origins.setdefault(text, set()).add(id(origin))
-        return spans(self, text, origin)
+    def recorded(self: Any, view: Any) -> Any:
+        origins.setdefault(view.text, set()).add(id(view.origin))
+        return spans(self, view)
 
     monkeypatch.setattr(value_matching._Matcher, "spans", recorded)
     names = ["Alice", "Bruno", "Chen", "Dara", "Emeka"]
@@ -447,3 +471,191 @@ def test_count_values_maps_each_text_once_for_every_value(monkeypatch: pytest.Mo
     assert [x.in_source for x in leftovers] == [2] * len(names)
     assert len(origins) == 2  # one view of the source and one of the output (folded mode searches casefolded text)
     assert all(len(ids) == 1 for ids in origins.values())
+
+
+@pytest.mark.parametrize(
+    ("source", "value", "folded", "exact"),
+    [
+        pytest.param("Ông Lê đến.", "Le", 1, 0, id="nfd-le-in-le-circumflex"),
+        pytest.param("สมชายบอกให้สมชายมา", "สมชาย", 2, 2, id="thai-repeat-after-tone-mark"),
+        pytest.param("सीता आई। सीता गई।", "सीता", 2, 2, id="devanagari-whole"),
+        pytest.param("सीता आई।", "स", 0, 0, id="devanagari-prefix-before-vowel-sign"),
+        pytest.param("Ａlice called.", "Alice", 1, 0, id="fullwidth"),
+        pytest.param("Mary\nJane called.", "Mary Jane", 1, 0, id="newline-inside-value"),
+        pytest.param("May said she may come.", "May", 2, 1, id="may"),
+        pytest.param("Ông Hàn nói hết hạn.", "Hàn", 2, 1, id="han-han"),
+        pytest.param("user emma_kovacs logged in", "Emma", 1, 0, id="underscore-is-a-boundary"),
+    ],
+)
+def test_pipeline_cases(source: str, value: str, folded: int, exact: int) -> None:
+    """The spike's hard cases, in both pipeline configurations."""
+    for mode, expected in ((MatchMode.FOLDED, folded), (MatchMode.EXACT, exact)):
+        [leftover] = count_values(source, [], "", [value], mode=mode)
+        assert leftover.in_source == expected, mode
+
+
+def test_each_step_agrees_with_its_aligned_form() -> None:
+    """A step's plain form (used for keys) equals its aligned form (used for texts), and NFKD matches ``unicodedata``
+    on the whole string."""
+    rng = random.Random(911)
+    pipeline = value_matching._PIPELINES[MatchMode.FOLDED]
+    for _ in range(5_000):
+        text = _fuzz_string(rng, 0, 12)
+        chars = list(zip(text, range(len(text))))
+        plain = text
+        for step in pipeline.normalizers:
+            chars, plain = step.aligned(chars), step.text(plain)
+            assert "".join(c for c, _ in chars) == plain, step
+        assert value_matching._Nfkd.text(text) == unicodedata.normalize("NFKD", text)
+
+
+@pytest.mark.parametrize(
+    ("source", "value", "folded", "exact"),
+    [
+        pytest.param("राम ने रामायण पढ़ी।", "राम", 1, 1, id="spacing-vowel-sign-after"),
+        pytest.param("सीता और राम आए।", "स", 0, 0, id="folded-prefix-inside-a-word"),
+        pytest.param("Bob⃝ met Bob.", "Bob", 1, 1, id="enclosing-mark-after"),
+    ],
+)
+def test_a_mark_or_joiner_next_to_a_value_blocks_a_match(source: str, value: str, folded: int, exact: int) -> None:
+    """A spacing mark (Mc) or an enclosing mark (Me) right after a value continues its cluster, so that occurrence is not
+    the value, in either mode."""
+    for mode, expected in ((MatchMode.FOLDED, folded), (MatchMode.EXACT, exact)):
+        [leftover] = count_values(source, [], "", [value], mode=mode)
+        assert leftover.in_source == expected, mode
+
+
+@pytest.mark.parametrize(
+    ("source", "value", "folded", "exact"),
+    [
+        pytest.param(
+            "\u0639\u0644\u06cc\u200c\u0647\u0627 \u0648 \u0639\u0644\u06cc",
+            "\u0639\u0644\u06cc",
+            2,
+            2,
+            id="zwnj-after",
+        ),
+        pytest.param(
+            "\u0930\u093e\u092e\u200c \u0906\u092f\u093e", "\u0930\u093e\u092e", 1, 1, id="zwnj-after-devanagari"
+        ),
+        pytest.param("\u0600123 and 123", "123", 2, 2, id="prepend-before"),
+        pytest.param("\U0001f44d\U0001f3fd and \U0001f44d", "\U0001f44d", 2, 2, id="emoji-modifier-after"),
+        pytest.param("\u1019\u1031\u102c\u1004\u103a", "\u1019\u1031", 0, 0, id="myanmar-vowel-sign-other"),
+        pytest.param("\u1000\u1002\u102b", "\u1000\u1002", 0, 0, id="myanmar-tall-aa"),
+        pytest.param("\u0301Le met Le.", "\u0301Le", 2, 0, id="mark-at-text-start"),
+    ],
+)
+def test_only_marks_spacing_marks_and_zwj_glue(source: str, value: str, folded: int, exact: int) -> None:
+    """A zero-width non-joiner, a Prepend character or an emoji modifier next to a value does not block it; a Myanmar
+    spacing mark (UAX #29 class Other) does, and no match starts on a mark, even at the start of the text."""
+    for mode, expected in ((MatchMode.FOLDED, folded), (MatchMode.EXACT, exact)):
+        leftovers = count_values(source, [], "", [value], mode=mode)
+        assert sum(x.in_source for x in leftovers) == expected, mode
+
+
+def test_thai_sara_am_blocks_only_the_exact_match() -> None:
+    """SARA AM (U+0E33) is a spacing mark, so it blocks ``EXACT``; NFKD splits it into NIKHAHIT, which ``FOLDED`` strips,
+    and SARA AA, which does not glue, so the folded match stands."""
+    source = "\u0e2a\u0e21\u0e0a\u0e32\u0e22\u0e33"
+    value = "\u0e2a\u0e21\u0e0a\u0e32\u0e22"
+    assert count_values(source, [], "", [value], mode=MatchMode.EXACT)[0].in_source == 0
+    assert count_values(source, [], "", [value], mode=MatchMode.FOLDED)[0].in_source == 1
+
+
+# The Unicode survey's cases (UNICODE-SURVEY.md) with the ruled result. A joiner or variation selector after a letter
+# does not block a name; after an emoji or a mark it keeps the sequence whole. FOLDED drops invisible format characters,
+# and a dropped zero-width space or word joiner still separates two words.
+@pytest.mark.parametrize(
+    ("source", "value", "exact", "folded"),
+    [
+        pytest.param("#\ufe0f\u20e3 and #", "#", 1, 1, id="keycap-hash"),
+        pytest.param("Alice\ufe0fb met Alice", "Alice", 1, 1, id="vs16-then-letter"),
+        pytest.param("Alice\ufe0f met Alice", "Alice", 2, 2, id="vs16-then-space"),
+        pytest.param("\u2764\ufe0fAna met Ana", "Ana", 2, 2, id="vs16-before-name"),
+        pytest.param("Ana\u200d\U0001f469 met Ana.", "Ana", 2, 2, id="zwj-name-emoji"),
+        pytest.param("\U0001f468\u200d\U0001f469\u200d\U0001f467 Ana", "\U0001f469", 0, 0, id="zwj-family-part"),
+        pytest.param("Ana\U0001f468\u200d\U0001f469\u200d\U0001f467", "Ana", 1, 1, id="zwj-name-before-family"),
+        pytest.param("Dr Ana \U0001f469\u200d\u2695\ufe0f", "\U0001f469", 0, 0, id="zwj-profession-part"),
+        pytest.param("Ana \U0001f3f3\ufe0f\u200d\U0001f308", "\U0001f3f3", 0, 0, id="zwj-flag-part"),
+        pytest.param("Ana\U0001f44b\U0001f3fd and Ana", "Ana", 2, 2, id="skin-name"),
+        pytest.param("\U0001f44b\U0001f3fd hi", "\U0001f44b", 1, 1, id="skin-part"),
+        pytest.param("Ana\u2764\ufe0f Ana", "Ana", 2, 2, id="vs16-name"),
+        pytest.param("I \u2764\ufe0f it", "\u2764", 0, 1, id="vs16-part"),
+        pytest.param("call \u260e\ufe0e now", "\u260e", 0, 1, id="vs15-part"),
+        pytest.param("Ana\ufe0f met Ana", "Ana", 2, 2, id="vs16-after-name"),
+        pytest.param("Room 1\ufe0f\u20e3 and room 1", "1", 1, 1, id="keycap-digit"),
+        pytest.param("Ana1\ufe0f\u20e3", "Ana", 0, 0, id="keycap-name"),
+        pytest.param("\U0001f1fa\U0001f1f8\U0001f1eb\U0001f1f7", "\U0001f1f8\U0001f1eb", 1, 1, id="ri-split"),
+        pytest.param("Ana\U0001f1eb\U0001f1f7 and Ana", "Ana", 2, 2, id="ri-name"),
+        pytest.param(
+            "\U0001f3f4\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f Ana",
+            "\U0001f3f4",
+            1,
+            1,
+            id="tag-part",
+        ),
+        pytest.param(
+            "Ana\U0001f3f4\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f", "Ana", 1, 1, id="tag-name"
+        ),
+        pytest.param(
+            "\u0639\u0644\u06cc\u200c\u0647\u0627 \u0648 \u0639\u0644\u06cc",
+            "\u0639\u0644\u06cc",
+            2,
+            2,
+            id="zwnj-persian",
+        ),
+        pytest.param("\u0930\u093e\u092e\u200c \u0906\u092f\u093e", "\u0930\u093e\u092e", 1, 1, id="zwnj-hindi"),
+        pytest.param(
+            "\u0930\u093e\u092e\u094d\u092f\u093e \u0914\u0930 \u0930\u093e\u092e",
+            "\u0930\u093e\u092e",
+            1,
+            1,
+            id="virama-after",
+        ),
+        pytest.param("\u0915\u094d\u200d\u0937 \u0915\u094d", "\u0915\u094d", 1, 1, id="virama-zwj"),
+        pytest.param("\u0915\u094d\u0937\u093e", "\u0915", 0, 0, id="conjunct-prefix"),
+        pytest.param(
+            "\u0e2a\u0e21\u0e0a\u0e32\u0e22\u0e1a\u0e2d\u0e01\u0e43\u0e2b\u0e49\u0e2a\u0e21\u0e0a\u0e32\u0e22\u0e21\u0e32",
+            "\u0e2a\u0e21\u0e0a\u0e32\u0e22",
+            2,
+            2,
+            id="thai-tone",
+        ),
+        pytest.param("\u0e2a\u0e21\u0e0a\u0e32\u0e22\u0e33", "\u0e2a\u0e21\u0e0a\u0e32\u0e22", 0, 1, id="thai-sara-am"),
+        pytest.param("\u1019\u1031\u102c\u1004\u103a", "\u1019\u1031", 0, 0, id="myanmar-vowel"),
+        pytest.param("Jose\u0301 and Jose", "Jose", 1, 2, id="latin-nfd"),
+        pytest.param("Ana\u0301 met Ana", "Ana", 1, 2, id="latin-mark-after"),
+        pytest.param("\uff21\uff4c\uff49\uff43\uff45 met Alice", "Alice", 1, 2, id="fullwidth"),
+        pytest.param("\ufb01ona and fiona", "fiona", 1, 2, id="ligature"),
+        pytest.param("Ana\u00b2 met Ana", "Ana", 1, 1, id="superscript"),
+        pytest.param("\u200fAna\u200e said hi", "Ana", 1, 1, id="lrm"),
+        pytest.param("\u2067Ana\u2069 said hi", "Ana", 1, 1, id="isolate"),
+        pytest.param("Ana\u2060Lee and Ana", "Ana", 2, 2, id="word-joiner"),
+        pytest.param("An\u00ada met Ana", "Ana", 1, 2, id="soft-hyphen-inside"),
+        pytest.param("Ana\u00ad met Ana", "Ana", 2, 2, id="soft-hyphen-after"),
+        pytest.param("\ufeffAna met Ana", "Ana", 2, 2, id="bom"),
+        pytest.param("Ana\u200bLee and Ana", "Ana", 2, 2, id="zwsp"),
+        pytest.param("A\u200bna met Ana", "Ana", 1, 2, id="zwsp-inside"),
+        pytest.param("A\u2060na met Ana", "Ana", 1, 2, id="wj-inside"),
+        pytest.param("Ana\u00adlyn met", "Ana", 1, 0, id="soft-hyphen-joins-a-word"),
+    ],
+)
+def test_unicode_survey_cases(source: str, value: str, exact: int, folded: int) -> None:
+    for mode, expected in ((MatchMode.EXACT, exact), (MatchMode.FOLDED, folded)):
+        leftovers = count_values(source, [], "", [value], mode=mode)
+        assert sum(x.in_source for x in leftovers) == expected, mode
+
+
+@pytest.mark.parametrize(
+    ("source", "folded"),
+    [
+        pytest.param("Alice\u200db", 0, id="joiner-then-letter"),
+        pytest.param("Alice\u200db x\u200b", 0, id="joiner-then-letter-with-a-break-elsewhere"),
+        pytest.param("Alice\u200bb", 1, id="break-at-the-edge"),
+        pytest.param("Alice\u200d\u200bb", 1, id="joiner-then-break-at-the-edge"),
+    ],
+)
+def test_a_break_relaxes_only_the_edge_it_stands_at(source: str, folded: int) -> None:
+    """A dropped zero-width space separates words only where it stood: one elsewhere in the text does not make a
+    joiner followed by a letter a word edge."""
+    assert count_values(source, [], "", ["Alice"], mode=MatchMode.FOLDED)[0].in_source == folded
