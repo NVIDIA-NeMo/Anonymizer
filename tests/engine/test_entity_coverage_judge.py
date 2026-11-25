@@ -35,6 +35,7 @@ from anonymizer.engine.evaluation.entity_coverage_judge import (
     _parse_candidate_entities,
 )
 from anonymizer.engine.evaluation.judge_base import JudgeResult
+from anonymizer.engine.prompt_utils import jinja_literal
 
 
 def test_coverage_prompt_omits_data_summary_context_when_summary_absent() -> None:
@@ -82,7 +83,7 @@ def test_coverage_prompt_includes_data_summary_as_interpretive_context() -> None
         data_summary="Customer support transcripts.",
     )
 
-    assert "<data_summary_context>\nCustomer support transcripts.\n" in prompt
+    assert f"<data_summary_context>\n{jinja_literal('Customer support transcripts.')}\n" in prompt
     assert "Use this context only to interpret literal values and their semantic types." in prompt
     assert "Do not infer or invent entities that are absent from the original text." in prompt
 

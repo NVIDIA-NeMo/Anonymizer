@@ -325,3 +325,34 @@ def test_substitute_instructions_are_sent_as_written() -> None:
     )
 
     assert f"Additional instructions: {USER_TEXT}\n" in rendered
+
+
+def _data_summary_prompts(summary: str) -> dict[str, str]:
+    """Every prompt that carries ``data_summary``; each is rendered as Jinja before it is sent."""
+    from anonymizer.engine.detection import detection_workflow as detection
+    from anonymizer.engine.evaluation.entity_coverage_judge import _coverage_prompt
+    from anonymizer.engine.rewrite.domain_classification import _get_domain_classification_prompt
+    from anonymizer.engine.rewrite.rewrite_generation import _get_rewrite_prompt
+    from anonymizer.engine.rewrite.sensitivity_disposition import _get_sensitivity_disposition_prompt
+
+    return {
+        "validation": detection._get_validation_prompt(data_summary=summary, labels=["first_name"]),
+        "augmentation": detection._get_augment_prompt(data_summary=summary, labels=["first_name"]),
+        "latent": detection._get_latent_prompt(data_summary=summary, privacy_goal=_GOAL),
+        "domain": _get_domain_classification_prompt(summary),
+        "disposition": _get_sensitivity_disposition_prompt(_GOAL, data_summary=summary),
+        "rewrite": _get_rewrite_prompt(_GOAL, summary),
+        "entity_coverage": _coverage_prompt(entity_labels=None, data_summary=summary),
+    }
+
+
+@pytest.mark.parametrize("name", list(_data_summary_prompts("x")))
+def test_data_summary_is_sent_as_written(name: str) -> None:
+    from jinja2 import ChainableUndefined, Environment
+
+    prompt = _data_summary_prompts(USER_TEXT)[name]
+
+    # Lenient on the prompt's own column references, which this render does not supply.
+    rendered = Environment(undefined=ChainableUndefined).from_string(prompt).render()
+
+    assert USER_TEXT in rendered

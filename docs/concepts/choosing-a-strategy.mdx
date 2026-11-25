@@ -31,7 +31,7 @@ Steps 1–2 govern the [detection](/concepts/detection) stage that runs first in
 
 ## 1. (Detection) `data_summary`
 
-`AnonymizerInput.data_summary` is an optional one-line description that flows into LLM prompts. It is the single cheapest quality lever you have. It improves **detection** — which runs first in both Replace and Rewrite modes, so it's a precursor to any transformation. In Rewrite mode it additionally provides context on what the data contains, helping the rewriter preserve meaning.
+`AnonymizerInput.data_summary` is an optional one-line description that flows into LLM prompts. It is the single cheapest quality lever you have. It improves **detection** — which runs first in both Replace and Rewrite modes, so it's a precursor to any transformation. In Rewrite mode it additionally provides context on what the data contains, helping the rewriter preserve meaning. It is passed to the model as literal text; template syntax such as `{{ }}` in it is not interpreted.
 
 ```python
 from anonymizer import AnonymizerInput

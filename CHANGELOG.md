@@ -101,6 +101,12 @@ validation drops it and augmentation does not add it.
 - What to do: review summaries that describe sensitivity. They now change detection output.
 - Changed in: #389.
 
+**`data_summary` is sent as written.** Template syntax in it, such as `{{ x }}` or `{% ... %}`, used to be rendered by
+the detection, rewrite and evaluation prompt templates, so it was dropped, changed, or failed the run. It now reaches
+every model verbatim.
+- What to do: nothing.
+- Changed in: #NNN.
+
 **The augmenter asks for schema-constrained output.** On OpenAI-compatible providers, augmenter requests send the
 response JSON schema as `response_format`. If the provider rejects the field, the request is retried once without it.
 A malformed augmenter response is retried under the run's restart and correction limits instead of dropping the record.

@@ -68,6 +68,7 @@ from anonymizer.engine.ndd.model_loader import (
     resolve_model_alias,
     resolve_model_aliases,
 )
+from anonymizer.engine.prompt_utils import jinja_literal
 from anonymizer.engine.schemas import AugmentedEntitiesSchema, EntitiesSchema, SourceTextRef, SourceView
 from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
@@ -218,7 +219,7 @@ def test_latent_prompt_includes_summary_and_goal() -> None:
             preserve="Clinical utility and semantic meaning of the original text.",
         ),
     )
-    assert "Data type summary:\nMedical visit notes" in prompt
+    assert f"Data type summary:\n{jinja_literal('Medical visit notes')}" in prompt
     assert "The text will be rewritten according to this privacy goal:" in prompt
     assert "PROTECT: Protect direct and inferred identities from re-identification." in prompt
     assert "PRESERVE: Clinical utility and semantic meaning of the original text." in prompt

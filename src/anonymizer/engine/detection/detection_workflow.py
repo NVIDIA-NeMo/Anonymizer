@@ -62,7 +62,7 @@ from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import raise_if_cancelled
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
-from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.prompt_utils import jinja_literal, substitute_placeholders
 from anonymizer.engine.row_partitioning import resolve_source_positions, try_resolve_source_positions
 from anonymizer.engine.schemas import (
     EntitiesByValueSchema,
@@ -933,7 +933,7 @@ Template: <<VALIDATION_SKELETON>>
         "and otherwise using the generic guidance below. "
         "Drop candidates that the data summary explicitly identifies as not sensitive, "
         "even when their entity label is correct.\n\n"
-        f"Data summary: {data_summary}\n"
+        f"Data summary: {jinja_literal(data_summary)}\n"
         if data_summary
         else ""
     )
@@ -1191,7 +1191,7 @@ Input text: <<INPUT_TEXT>>
         if data_summary
         else "\n\nFocus on:"
     )
-    context_section = f"Data summary: {data_summary}\n\n" if data_summary else ""
+    context_section = f"Data summary: {jinja_literal(data_summary)}\n\n" if data_summary else ""
     return substitute_placeholders(
         prompt,
         {
@@ -1211,7 +1211,7 @@ def _get_latent_prompt(
     privacy_goal: PrivacyGoal | None,
     excluded_entity_labels: list[str] | None = None,
 ) -> str:
-    summary_line = data_summary.strip() if data_summary else "Not provided"
+    summary_line = jinja_literal(data_summary.strip()) if data_summary else "Not provided"
     privacy_goal_text = _format_privacy_goal(privacy_goal)
     excluded_labels = sorted(normalize_labels(excluded_entity_labels))
     exclusion_block = (

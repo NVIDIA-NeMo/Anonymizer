@@ -32,7 +32,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.postprocess import EntitySpan, build_tagged_text
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.ndd.model_response import no_response
-from anonymizer.engine.prompt_utils import substitute_placeholders, user_instructions_section
+from anonymizer.engine.prompt_utils import jinja_literal, substitute_placeholders, user_instructions_section
 from anonymizer.engine.replace.strategies import (
     ReplacementEntry,
     _parse_replacements,
@@ -64,7 +64,9 @@ def _get_rewrite_prompt(
     """
     data_context_section = ""
     if data_summary and data_summary.strip():
-        data_context_section = "\n<data_context>\nDataset description: " + data_summary.strip() + "\n</data_context>\n"
+        data_context_section = (
+            "\n<data_context>\nDataset description: " + jinja_literal(data_summary.strip()) + "\n</data_context>\n"
+        )
 
     prompt = """You are an expert writer. You excel at rewriting, paraphrasing, rewording, and following instructions.
 

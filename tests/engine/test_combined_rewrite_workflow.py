@@ -48,6 +48,7 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.prompt_utils import jinja_literal
 from anonymizer.engine.rewrite.combined_rewrite_workflow import (
     CombinedRewriteGraph,
     CombinedRewriteWorkflow,
@@ -890,4 +891,4 @@ def test_combined_graph_passes_summary_to_disposition(
     )
     disposition = next(column for column in graph.columns if column.name == COL_RAW_SENSITIVITY_DISPOSITION)
     assert isinstance(disposition, LLMStructuredColumnConfig)
-    assert "<data_summary>\nCustomer support conversations\n</data_summary>" in disposition.prompt
+    assert f"<data_summary>\n{jinja_literal('Customer support conversations')}\n</data_summary>" in disposition.prompt

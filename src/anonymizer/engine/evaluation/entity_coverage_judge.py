@@ -29,7 +29,7 @@ from anonymizer.engine.detection.postprocess import normalize_label, normalize_l
 from anonymizer.engine.evaluation.judge_base import JudgeResult, _BaseJudgeWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, exception_class_label
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.prompt_utils import jinja_literal, substitute_placeholders
 from anonymizer.engine.row_partitioning import (
     ROW_ORDER_COL,
     merge_and_reorder,
@@ -122,7 +122,7 @@ def _data_summary_block(data_summary: str | None) -> str:
         return ""
     return (
         "<data_summary_context>\n"
-        f"{data_summary.strip()}\n"
+        f"{jinja_literal(data_summary.strip())}\n"
         "Use this context only to interpret literal values and their semantic types. "
         "Do not infer or invent entities that are absent from the original text.\n"
         "</data_summary_context>"
