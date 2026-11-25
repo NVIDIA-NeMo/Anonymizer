@@ -454,8 +454,10 @@ never echoes the input value. A missing key prints one line naming the variable.
   `--output` format. It used to be 1.
 - 1: an input or I/O error, such as an unreadable source, a missing text or id column, or blank or duplicate ids.
 - Any other error is a runtime fault: it prints a traceback and exits 1.
-- What to do: scripts that test for exit code 1 on a usage error should accept 2. `--entity-labels` and `--regex-rules` take one value
-per flag; repeat the flag for more. `--regex-rules` also takes a JSON list of rules.
+- What to do: scripts that test for exit code 1 on a usage error should accept 2.
+
+`--entity-labels` and `--regex-rules` take one value per flag; repeat the flag for more. `--regex-rules` also takes a
+JSON list of rules.
 
 **SDK-only.** A `RegexRule.validator` given as a Python callable, the `Anonymizer` arguments that take live objects
 (`data_designer`, `detection_workflow`, the runners) and in-memory `TextRecordsInput` have no CLI form. A test keeps
