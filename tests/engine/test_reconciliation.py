@@ -70,3 +70,10 @@ def test_an_independent_target_passes() -> None:
 def test_a_missing_required_view_withholds_before_any_decision() -> None:
     result = reconcile((LEE,), _never, required_views=("people", "dates"))
     assert result == Withheld(UnresolvedCause.MISSING_VIEW, missing_views=("dates",))
+
+
+def test_a_required_view_that_answered_with_no_findings_is_not_missing() -> None:
+    result = reconcile((LEE,), _never, required_views=("people", "dates"), answered_views=("people", "dates"))
+    assert result == Accepted((Mention(Span(8, 11), "Lee", "last_name"),))
+    still_missing = reconcile((LEE,), _never, required_views=("people", "dates"), answered_views=("people",))
+    assert still_missing == Withheld(UnresolvedCause.MISSING_VIEW, missing_views=("dates",))

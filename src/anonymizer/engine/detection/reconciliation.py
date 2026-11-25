@@ -129,13 +129,17 @@ def reconcile(
     resolver: Resolver,
     *,
     required_views: Iterable[str] = (),
+    answered_views: Iterable[str] | None = None,
 ) -> Reconciliation:
     """One target's observations as accepted mentions, or withheld with a typed cause.
+
+    ``answered_views`` names the views that answered, findings or not, so a view that found nothing is not missing.
+    When it is not given, a view counts as answered only if it made an observation.
 
     A group whose observations agree is accepted without asking the resolver; a conflicting group goes to it.
     """
     items = tuple(observations)
-    answered = {o.view for o in items}
+    answered = {o.view for o in items} | set(answered_views or ())
     if missing := tuple(view for view in dict.fromkeys(required_views) if view not in answered):
         return Withheld(UnresolvedCause.MISSING_VIEW, missing_views=missing)
     mentions: list[Mention] = []
