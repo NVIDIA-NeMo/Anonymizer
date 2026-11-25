@@ -155,6 +155,32 @@ def _output_path(data: AnonymizerInput, mode: str, output: str | None) -> str:
 _PREVIEW_NUM_RECORDS: int = inspect.signature(Anonymizer.preview).parameters["num_records"].default
 
 
+# Help panels in reading order: what to read and write, the mode's own settings, detection, then run options.
+INPUT_GROUP = cyclopts.Group("Input and output", sort_key=0)
+DETECT_GROUP = cyclopts.Group(
+    "Detect",
+    sort_key=2,
+    help=(
+        "List flags take one value each; repeat the flag for more (--entity-labels first_name --entity-labels "
+        "city). --entity-label-examples takes a JSON object. --regex-rules takes one JSON rule or a JSON list of "
+        "rules per flag; a rule's validator is a registered validator name, since Python callables cannot be "
+        "given on the command line."
+    ),
+)
+RUN_GROUP = cyclopts.Group("Run", sort_key=3)
+
+
+def _mode_group(mode: str, model: type[BaseModel]) -> cyclopts.Group:
+    """The mode's help panel. A field read only from the environment has no flag, so the panel names it."""
+    notes = [
+        f"The {name} is read from {' or '.join(meta.env_var)}; it has no flag."
+        for name, info in model.model_fields.items()
+        for meta in info.metadata
+        if isinstance(meta, cyclopts.Parameter) and meta.parse is False and meta.env_var
+    ]
+    return cyclopts.Group(mode.title(), sort_key=1, help=" ".join(notes))
+
+
 def _command(verb: str, mode: str) -> Callable[..., None]:
     """The ``<verb> <mode>`` command. Its annotations are set here, since the mode's model is only known now."""
     if verb == "run":
@@ -169,10 +195,11 @@ def _command(verb: str, mode: str) -> Callable[..., None]:
             "output": Annotated[
                 str | None,
                 cyclopts.Parameter(
+                    group=INPUT_GROUP,
                     help=(
                         "Output file (.csv or .parquet) holding the input columns plus the anonymized text and the "
                         "result columns. Defaults to the source name with _anonymized (replace) or _rewritten (rewrite)."
-                    )
+                    ),
                 ),
             ]
         }
@@ -186,7 +213,9 @@ def _command(verb: str, mode: str) -> Callable[..., None]:
             result = anonymizer.preview(config=config, data=data, num_records=num_records)
             print(result.dataframe.to_string(max_colwidth=80))
 
-        extra = {"num_records": Annotated[int, cyclopts.Parameter(help="Number of records to preview.")]}
+        extra = {
+            "num_records": Annotated[int, cyclopts.Parameter(group=INPUT_GROUP, help="Number of records to preview.")]
+        }
         summary = "Run the pipeline on the first records for quick inspection"
     else:
 
@@ -198,13 +227,12 @@ def _command(verb: str, mode: str) -> Callable[..., None]:
         extra = {}
         summary = "Validate that the config is compatible with the model selections"
 
-    group = "Rewrite" if mode == "rewrite" else mode.title()
     command.__annotations__ = {
-        "data": Annotated[AnonymizerInput, cyclopts.Parameter(name="*", group="Input")],
+        "data": Annotated[AnonymizerInput, cyclopts.Parameter(name="*", group=INPUT_GROUP)],
         # The mode's model is a runtime value here, which a type checker cannot read as a type.
-        "strategy": Annotated[MODES[mode] | None, cyclopts.Parameter(name="*", group=group)],  # ty: ignore[invalid-type-form]
-        "detect": Annotated[Detect | None, cyclopts.Parameter(name="*", group="Detect")],
-        "options": Annotated[RunOptions, cyclopts.Parameter(name="*", group="Run")],
+        "strategy": Annotated[MODES[mode] | None, cyclopts.Parameter(name="*", group=_mode_group(mode, MODES[mode]))],  # ty: ignore[invalid-type-form]
+        "detect": Annotated[Detect | None, cyclopts.Parameter(name="*", group=DETECT_GROUP)],
+        "options": Annotated[RunOptions, cyclopts.Parameter(name="*", group=RUN_GROUP)],
         **extra,
         "return": None,
     }

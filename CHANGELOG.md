@@ -434,7 +434,8 @@ read and has no flag.
 
 **New flags from the models.** `substitute` gains `--consistency`; `rewrite` gains `--use-combined-graph` and
 `--strict-entity-protection`. `--protect` and `--preserve` keep their names and their defaults now come from
-`PrivacyGoal`. Help text is each field's description.
+`PrivacyGoal`. Help text is each field's description. Help panels read Input and output (with `--source` and
+`--output`), then the mode, Detect and Run; `run hash --help` says the key is read from `ANONYMIZER_HASH_KEY`.
 
 **`--algorithm` takes only `sha256`, as before; the hash key still comes from `ANONYMIZER_HASH_KEY` only.** There is
 no `--key` flag, so the key stays out of argv and shell history.

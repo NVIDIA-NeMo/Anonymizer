@@ -214,3 +214,37 @@ def test_regex_rules_flag_takes_a_json_list(csv_file: Path) -> None:
     )
     assert code == 0 and config is not None
     assert [rule.label for rule in config.detect.regex_rules] == ["city"]
+
+
+def _help(*argv: str) -> str:
+    with pytest.raises(SystemExit):
+        app([*argv, "--help"])
+    return ""
+
+
+@pytest.mark.parametrize("mode", list(MODES))
+def test_help_panels_read_input_and_output_first(mode: str, capsys: pytest.CaptureFixture[str]) -> None:
+    _help("run", mode)
+    out = capsys.readouterr().out
+    panels = [line.split("─")[1].strip() for line in out.splitlines() if line.startswith("╭─")]
+    assert panels == ["Input and output", mode.title(), "Detect", "Run"]
+    assert "Parameters" not in panels
+    input_panel = out.split("╭─ Input and output")[1].split("╰")[0]
+    assert "--source" in input_panel and "--output" in input_panel
+
+
+def test_hash_help_names_the_key_variable(capsys: pytest.CaptureFixture[str]) -> None:
+    _help("run", "hash")
+    assert "ANONYMIZER_HASH_KEY" in capsys.readouterr().out
+
+
+def test_model_descriptions_do_not_mention_the_cli() -> None:
+    """CLI-only wording lives in the CLI's help panels, so SDK docs and the JSON schema stay SDK-neutral."""
+    from anonymizer.config.regex import RegexLimits
+    from anonymizer.config.rewrite import PrivacyGoal
+
+    for model in (Detect, RegexLimits, Redact, Hash, Annotate, Substitute, PrivacyGoal, AnonymizerConfig):
+        for name, info in model.model_fields.items():
+            description = info.description or ""
+            assert "On the CLI" not in description and " --" not in description, (model.__name__, name)
+            assert "command line" not in description, (model.__name__, name)

@@ -166,8 +166,7 @@ class Detect(BaseModel):
         default=None,
         description=(
             "Labels to detect. None uses the built-in default detection label set. "
-            "To inspect the default set, use `from anonymizer import DEFAULT_ENTITY_LABELS`. "
-            "On the CLI, repeat the flag per label: --entity-labels first_name --entity-labels city."
+            "To inspect the default set, use `from anonymizer import DEFAULT_ENTITY_LABELS`."
         ),
     )
     entity_label_examples: Annotated[dict[str, list[str]], cyclopts.Parameter(accepts_keys=False, n_tokens=1)] = Field(
@@ -177,7 +176,7 @@ class Detect(BaseModel):
             "Configured positive detection examples organized by entity label. For default labels, these "
             "values are appended to the built-in examples. Non-default labels must also be declared "
             "in an explicit entity_labels set; examples never activate labels implicitly. "
-            'On the CLI, a JSON object: \'{"first_name": ["Alice", "Bob"]}\'.'
+            'Also accepts the mapping as JSON text: \'{"first_name": ["Alice", "Bob"]}\'.'
         ),
     )
     excluded_entity_labels: list[str] | None = Field(
@@ -219,9 +218,8 @@ class Detect(BaseModel):
     regex_rules: Annotated[list[BuiltinRegex | RegexRule], cyclopts.Parameter(accepts_keys=False, n_tokens=-1)] = Field(
         default_factory=list,
         description=(
-            "Per-label built-in settings and user-defined regex candidate rules. On the CLI, one JSON rule per "
-            'flag, repeatable: \'{"label": "ticket_id", "pattern": "TKT-[0-9]+"}\'. A validator given on the CLI '
-            "is a registered validator name; Python callables are SDK-only."
+            "Per-label built-in settings and user-defined regex candidate rules. Items may also be given as JSON "
+            'text, one rule or a list of rules each: \'{"label": "ticket_id", "pattern": "TKT-[0-9]+"}\'.'
         ),
     )
     regex_limits: RegexLimits = Field(
