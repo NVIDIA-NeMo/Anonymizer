@@ -429,6 +429,8 @@ The CLI is generated from the config models, so a config field is a flag under t
   `validator` from the CLI is a registered validator name; a Python callable is SDK-only.
 - `PrivacyGoal` gives `protect` and `preserve` the default texts, so `PrivacyGoal(protect=...)` alone is valid. Both
   used to be required.
+- `Hash.algorithm` is typed `Literal["sha256"]`. It used to list `sha1` and `md5`, which validation refused.
+  - What to do: nothing at run time; code that passed `sha1` or `md5` already failed. Type checkers now flag it.
 
 ### Internal changes
 

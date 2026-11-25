@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import pickle
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -66,7 +66,7 @@ _KEY = "s3cr3t-key-material"
 @pytest.mark.parametrize(
     "build",
     [
-        lambda: Hash(key=_KEY, algorithm="md5"),
+        lambda: Hash.model_validate({"key": _KEY, "algorithm": "md5"}),
         lambda: Hash(key=_KEY, digest_length=3),
         lambda: Hash(key=_KEY, format_template="<HASH>"),
         lambda: Hash.model_validate({"key": _KEY, "kind": "redact"}),
@@ -169,10 +169,17 @@ def test_keyed_hash_config_does_not_reload_from_json_with_masked_key() -> None:
 
 
 @pytest.mark.parametrize("algorithm", ["sha1", "md5"])
-def test_keyed_hash_rejects_non_default_algorithm(algorithm: Literal["sha1", "md5"]) -> None:
+def test_keyed_hash_rejects_non_default_algorithm(algorithm: str) -> None:
     with pytest.raises(ValidationError, match="HMAC-SHA256") as exc_info:
-        Hash(key="s3cr3t", algorithm=algorithm)
+        Hash.model_validate({"key": "s3cr3t", "algorithm": algorithm})
     assert "s3cr3t" not in str(exc_info.value)
+
+
+def test_hash_algorithm_type_lists_only_sha256() -> None:
+    """The schema and the CLI help offer only the algorithm Hash uses."""
+    schema = Hash.model_json_schema()["properties"]["algorithm"]
+    assert schema.get("const") == "sha256"
+    assert "enum" not in schema
 
 
 def test_rewrite_defaults_privacy_goal() -> None:

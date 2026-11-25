@@ -182,7 +182,7 @@ class Hash(ReplaceMethodBase):
     model_config = ConfigDict(hide_input_in_errors=True)
 
     kind: Literal["hash"] = "hash"
-    algorithm: Literal["sha256", "sha1", "md5"] = Field(
+    algorithm: Literal["sha256"] = Field(
         default="sha256", description="Hash algorithm. Only 'sha256' is accepted: the digest is always HMAC-SHA256."
     )
     digest_length: int = Field(
@@ -245,9 +245,9 @@ class Hash(ReplaceMethodBase):
             )
         return value
 
-    @field_validator("algorithm")
+    @field_validator("algorithm", mode="before")
     @classmethod
-    def validate_algorithm(cls, value: str) -> str:
+    def validate_algorithm(cls, value: Any) -> Any:
         if value != "sha256":
             raise ValueError("a keyed Hash always uses HMAC-SHA256; leave algorithm at its default 'sha256'")
         return value
