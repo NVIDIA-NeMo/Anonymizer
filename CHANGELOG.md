@@ -200,7 +200,7 @@ exact matching, a variation selector before a value no longer blocks it ("Ana" n
 non-joiner, an emoji modifier or a Prepend character next to a value does not block it, and a Thai repeat after a tone
 mark is still found.
 - What to do: nothing, unless you relied on those matches.
-- Changed in: #NNN.
+- Changed in: #457.
 
 **Folded matching ignores invisible format characters.** Folded matching (Rewrite's `replacements_applied` check, the
 Replace advisories `no_detected_value_added` and `undetected_value_kept`, and `result.leftovers(row)`) now drops a soft
@@ -210,7 +210,7 @@ or word joiner between two words still separates them; a soft hyphen or bidi mar
 written with a soft hyphen after "Ana" no longer holds "Ana" in folded matching). Exact matching (`unspanned_value` and
 missed-repeat spans) is unchanged.
 - What to do: nothing.
-- Changed in: #NNN.
+- Changed in: #457.
 
 ### Rewrite
 
