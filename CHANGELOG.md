@@ -419,7 +419,7 @@ an `Error: ...` line. It ends the command with its traceback, as a wiring fault.
 
 ### CLI and config surface
 
-The CLI is generated from the config models, so a config field is a flag under the field's own name.
+The CLI is generated from the config models (#453), so a config field is a flag under the field's own name.
 
 **The mode is a subcommand.** `anonymizer run --replace <strategy>` becomes `anonymizer run <strategy>`
 (`redact`, `hash`, `annotate`, `substitute`), and `anonymizer run --rewrite` becomes `anonymizer run rewrite`. The
