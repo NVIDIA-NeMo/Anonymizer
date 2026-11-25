@@ -112,6 +112,47 @@ By default, Anonymizer runs GLiNER2 detection locally and uses OpenRouter for LL
 
     `data_summary` is optional but recommended for domain-specific data. It helps the LLM find more entities and reduce false drops.
 
+### Keep CLI settings in a file
+
+`--config FILE` reads a YAML or JSON file in the same shape as `AnonymizerConfig`: `detect`, then `replace` or
+`rewrite`, and `emit_telemetry`. An optional `input` section holds `source`, `text_column`, `id_column` and
+`data_summary`. Flags you pass on the command line replace the file's values, field by field; a flag you leave out
+keeps the file's value. Telemetry is off if either the file or `--no-emit-telemetry` turns it off.
+
+A replace file, for `anonymizer run substitute --config substitute.yaml`:
+
+```yaml
+input:
+  source: biographies.csv
+  text_column: biography
+  data_summary: Biographical profiles of individuals
+detect:
+  gliner_threshold: 0.4
+  entity_label_examples:
+    first_name: ["Ada"]
+replace:
+  kind: substitute
+  instructions: Keep names culturally consistent.
+```
+
+A rewrite file, for `anonymizer run rewrite --config rewrite.yaml --output rewritten.csv`:
+
+```yaml
+input:
+  source: clinical_notes.csv
+  text_column: note
+rewrite:
+  privacy_goal:
+    protect: Patient names, dates of birth, and facility names
+    preserve: Clinical findings and treatment course
+  risk_tolerance: moderate
+emit_telemetry: false
+```
+
+The file must match the subcommand: a `rewrite` file with `run redact`, or `replace.kind: annotate` with
+`run hash`, is refused. `kind` may be left out. A file for `run hash` must not hold the key, which is read from
+`ANONYMIZER_HASH_KEY` only. A bad file prints one line naming the file and the field, and exits 2.
+
 ## Language And Regional Coverage
 
 Anonymizer has been tested most extensively on English-language data. Multilingual quality has not yet been evaluated systematically across languages, domains, and models.

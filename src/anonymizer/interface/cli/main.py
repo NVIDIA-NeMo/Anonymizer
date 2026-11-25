@@ -29,7 +29,8 @@ os.environ.setdefault("NEMO_DEPLOYMENT_TYPE", "cli")
 logger = logging.getLogger("anonymizer.cli")
 
 import cyclopts
-from pydantic import BaseModel, ValidationError
+import yaml
+from pydantic import BaseModel, Field, ValidationError, create_model
 from rich.console import Console
 from rich.text import Text
 
@@ -48,10 +49,31 @@ MODES: dict[str, type[BaseModel]] = {
 } | {"rewrite": Rewrite}
 
 
+# The input flags: ``AnonymizerInput``'s fields, each optional, since a ``--config`` file's ``input`` section can
+# supply them. Generated from the model, with its descriptions; ``_input`` validates the result as an
+# ``AnonymizerInput``.
+_INPUT_FIELDS: dict[str, Any] = {
+    name: (info.annotation | None, Field(default=None, description=info.description))
+    for name, info in AnonymizerInput.model_fields.items()
+}
+_InputFlags: type[BaseModel] = create_model("_InputFlags", **_INPUT_FIELDS)
+
+
 @dataclass(frozen=True)
 class RunOptions:
     """Options that are not config: how the ``Anonymizer`` is built, telemetry and logging."""
 
+    config: Annotated[
+        Path | None,
+        cyclopts.Parameter(
+            help=(
+                "YAML or JSON file holding an AnonymizerConfig (detect, and replace or rewrite, as "
+                "AnonymizerConfig.model_validate reads it; emit_telemetry) plus an optional input section "
+                "(source, text_column, id_column, data_summary). Flags given on the command line replace the "
+                "file's values. The file must match the subcommand's mode and must not hold the hash key."
+            )
+        ),
+    ] = None
     model_configs: Annotated[
         str | None,
         cyclopts.Parameter(
@@ -199,22 +221,148 @@ def _cli_error_handler(mode: str, fn: Callable[..., None]) -> Callable[..., None
 # -- building the config and the Anonymizer ----------------------------------------------------------------------
 
 
-def _config(mode: str, strategy: BaseModel | None, detect: Detect | None, options: RunOptions) -> AnonymizerConfig:
-    """The config from the parsed models. A model the user gave no flag for is built from its defaults; a field
-    read only from the environment that is unset is named by its variable."""
-    if strategy is None:
-        missing = [env[0] for env in _env_only(MODES[mode]).values() if not any(os.environ.get(var) for var in env)]
-        if missing:
+def _given(model: BaseModel | None) -> dict[str, Any]:
+    """The fields the user set on the command line (or through the environment), nested models included. cyclopts
+    builds each model from only the tokens it was given, so ``model_fields_set`` holds exactly those fields and a
+    flag's default never stands in for a value from the config file."""
+    if model is None:
+        return {}
+    return {
+        name: _given(value) if isinstance(value, BaseModel) else value
+        for name in model.model_fields_set
+        for value in (getattr(model, name),)
+    }
+
+
+def _merge(base: dict[str, Any], top: dict[str, Any]) -> dict[str, Any]:
+    """``base`` with ``top`` laid over it, mapping by mapping; any other value in ``top`` replaces the file's."""
+    merged = dict(base)
+    for key, value in top.items():
+        merged[key] = (
+            _merge(merged[key], value) if isinstance(value, dict) and isinstance(merged.get(key), dict) else value
+        )
+    return merged
+
+
+_CONFIG_SECTIONS = ("input", "detect", "replace", "rewrite", "emit_telemetry")
+
+
+def _read_config_file(path: Path, mode: str) -> dict[str, Any]:
+    """The ``--config`` file: an ``AnonymizerConfig`` in YAML or JSON (JSON is YAML) plus an optional ``input``
+    section. The file may set only this subcommand's mode, and never the hash key."""
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise InvalidConfigError(f"{path}: cannot read the config file ({exc.strerror or exc})") from None
+    except yaml.YAMLError as exc:
+        # The problem and its position only: yaml's own message quotes the offending line.
+        mark = getattr(exc, "problem_mark", None)
+        where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark is not None else ""
+        raise InvalidConfigError(
+            f"{path}: not valid YAML or JSON{where}: {getattr(exc, 'problem', None) or 'parse error'}"
+        ) from None
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise InvalidConfigError(f"{path}: expected a mapping with {', '.join(_CONFIG_SECTIONS)}")
+    unknown = sorted(str(key) for key in data if key not in _CONFIG_SECTIONS)
+    if unknown:
+        raise InvalidConfigError(
+            f"{path}: unknown section(s) {', '.join(unknown)}; expected {', '.join(_CONFIG_SECTIONS)}"
+        )
+    section, other = ("rewrite", "replace") if mode == "rewrite" else ("replace", "rewrite")
+    if data.get(other) is not None:
+        raise InvalidConfigError(
+            f"{path}: the file sets {other}, but this command is {mode}; use the matching subcommand"
+        )
+    body = data.get(section)
+    if body is not None and not isinstance(body, dict):
+        raise InvalidConfigError(f"{path}: {section}: expected a mapping")
+    if section == "replace" and body:
+        kind = str(body.get("kind", mode)).lower()
+        if kind != mode:
+            raise InvalidConfigError(f"{path}: replace.kind is {kind}, but this command is {mode}; use run {kind}")
+        if "key" in body:
+            env = " or ".join(next(iter(_env_only(MODES[mode]).values()), ("ANONYMIZER_HASH_KEY",)))
             raise InvalidConfigError(
-                f"{' and '.join(missing)} is not set. run {mode} reads its secret key from it; there is no flag."
+                f"{path}: replace.key is not read from a file; set {env} instead and remove the key from the file"
             )
+    for name in ("input", "detect"):
+        if data.get(name) is not None and not isinstance(data[name], dict):
+            raise InvalidConfigError(f"{path}: {name}: expected a mapping")
+    return data
+
+
+def _missing_env(mode: str) -> None:
+    """A field read only from the environment that is unset is named by its variable."""
+    missing = [env[0] for env in _env_only(MODES[mode]).values() if not any(os.environ.get(var) for var in env)]
+    if missing:
+        raise InvalidConfigError(
+            f"{' and '.join(missing)} is not set. run {mode} reads its secret key from it; there is no flag."
+        )
+
+
+def _given_at(given: dict[str, Any], loc: tuple[Any, ...]) -> bool:
+    """Whether the user gave a flag for the field at ``loc``."""
+    value: Any = given
+    for part in loc:
+        if not isinstance(value, dict) or part not in value:
+            return False
+        value = value[part]
+    return True
+
+
+def _input(mode: str, data: BaseModel | None, file: dict[str, Any], path: Path | None) -> AnonymizerInput:
+    """The input: the file's ``input`` section with the input flags over it."""
+    given = _given(data)
+    merged = _merge(file.get("input") or {}, given)
+    if "source" not in merged:
+        raise InvalidConfigError("--source is required" + (f" (or input.source in {path})" if path else ""))
+
+    def name_for(loc: tuple[Any, ...]) -> str | None:
+        if path is not None and not _given_at(given, loc):
+            return f"{path}: input.{'.'.join(map(str, loc))}"
+        return _flag_for(_command_arguments(mode)["data"], loc)
+
+    try:
+        return AnonymizerInput.model_validate(merged)
+    except ValidationError as exc:
+        raise InvalidConfigError(_describe(exc, name_for)) from None
+
+
+def _config(
+    mode: str, data: BaseModel | None, strategy: BaseModel | None, detect: Detect | None, options: RunOptions
+) -> tuple[AnonymizerConfig, AnonymizerInput]:
+    """The config and the input: the ``--config`` file as the base, the flags the user gave laid over it field by
+    field, validated once. A model the user gave no flag for comes from the file, else from its defaults. Telemetry
+    is off if either the file or ``--no-emit-telemetry`` turns it off."""
+    path = options.config
+    file = _read_config_file(path, mode) if path is not None else {}
+    section = "rewrite" if mode == "rewrite" else "replace"
+    if strategy is None:
+        _missing_env(mode)
         strategy = MODES[mode]()
-    detect = detect if detect is not None else Detect()
-    if isinstance(strategy, Rewrite):
-        return AnonymizerConfig(rewrite=strategy, detect=detect, emit_telemetry=options.emit_telemetry)
-    return AnonymizerConfig.model_validate(
-        {"replace": strategy, "detect": detect, "emit_telemetry": options.emit_telemetry}
+    flags = {"strategy": _given(strategy), "detect": _given(detect)}
+    merged = _merge(
+        {key: value for key, value in file.items() if key != "input"},
+        {section: flags["strategy"], "detect": flags["detect"]},
     )
+    if section == "replace":
+        merged["replace"] = {**merged["replace"], "kind": mode}
+
+    def name_for(loc: tuple[Any, ...]) -> str | None:
+        parameter, rest = _error_root(mode, loc)
+        if path is not None and not _given_at(flags[parameter], rest):
+            return f"{path}: {'.'.join(map(str, loc))}"
+        return _flag_for(_command_arguments(mode)[parameter], rest)
+
+    try:
+        config = AnonymizerConfig.model_validate(merged)
+    except ValidationError as exc:
+        raise InvalidConfigError(_describe(exc, name_for)) from None
+    if not options.emit_telemetry and config.emit_telemetry:
+        config = config.model_copy(update={"emit_telemetry": False})
+    return config, _input(mode, data, file, path)
 
 
 def _configure_logging(options: RunOptions) -> None:
@@ -252,25 +400,25 @@ def _output_path(data: AnonymizerInput, mode: str, output: str | None) -> str:
 # -- the verbs -----------------------------------------------------------------------------------------------------
 
 
-def _run(mode: str, *, data, strategy=None, detect=None, options=RunOptions(), output=None) -> None:
+def _run(mode: str, *, data=None, strategy=None, detect=None, options=RunOptions(), output=None) -> None:
+    config, data = _config(mode, data, strategy, detect, options)
     path = _output_path(data, mode, output)
-    config = _config(mode, strategy, detect, options)
     _configure_logging(options)
     result = _anonymizer(options).run(config=config, data=data)
     print(f"Output written to: {write_result(result, path)}")
 
 
 def _preview(
-    mode: str, *, data, strategy=None, detect=None, options=RunOptions(), num_records=_PREVIEW_NUM_RECORDS
+    mode: str, *, data=None, strategy=None, detect=None, options=RunOptions(), num_records=_PREVIEW_NUM_RECORDS
 ) -> None:
-    config = _config(mode, strategy, detect, options)
+    config, data = _config(mode, data, strategy, detect, options)
     _configure_logging(options)
     result = _anonymizer(options).preview(config=config, data=data, num_records=num_records)
     print(result.dataframe.to_string(max_colwidth=80))
 
 
-def _validate(mode: str, *, data, strategy=None, detect=None, options=RunOptions()) -> None:
-    config = _config(mode, strategy, detect, options)
+def _validate(mode: str, *, data=None, strategy=None, detect=None, options=RunOptions()) -> None:
+    config, _ = _config(mode, data, strategy, detect, options)
     _configure_logging(options)
     _anonymizer(options).validate_config(config)
     print("Config is valid.")
@@ -346,7 +494,8 @@ def _annotations(mode: str, extra: dict[str, Any]) -> dict[str, Any]:
     """The command's parameters: the input, the mode's model, ``Detect`` and ``RunOptions``, each flattened into
     flags, plus the verb's own. Set as ``__annotations__``, since the mode's model is only known at runtime."""
     return {
-        "data": Annotated[AnonymizerInput, cyclopts.Parameter(name="*", group=INPUT_GROUP)],
+        # Like the mode's model, a model built at runtime, which a type checker cannot read as a type.
+        "data": Annotated[_InputFlags | None, cyclopts.Parameter(name="*", group=INPUT_GROUP)],  # ty: ignore[invalid-type-form]
         # The mode's model is a runtime value here, which a type checker cannot read as a type.
         "strategy": Annotated[MODES[mode] | None, cyclopts.Parameter(name="*", group=_mode_group(mode))],  # ty: ignore[invalid-type-form]
         "detect": Annotated[Detect | None, cyclopts.Parameter(name="*", group=DETECT_GROUP)],
