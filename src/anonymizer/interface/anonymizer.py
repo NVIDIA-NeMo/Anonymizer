@@ -15,7 +15,7 @@ from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, ParamSpec, Protocol, TypedDict, TypeGuard, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, ParamSpec, TypedDict, TypeVar, cast
 
 import pandas as pd
 from data_designer.config.models import ModelProvider
@@ -35,6 +35,8 @@ from anonymizer.config.anonymizer_config import (
 from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
 from anonymizer.config.replace_strategies import HASH_KEY_REQUIRED_MESSAGE, Hash, ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
+from anonymizer.engine.cells import is_list_convertible as _is_list_convertible
+from anonymizer.engine.cells import is_missing
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
@@ -86,6 +88,7 @@ from anonymizer.engine.graph_core.execution import (
 )
 from anonymizer.engine.graph_core.kernel import Status, register_kind
 from anonymizer.engine.graph_core.session import Session
+from anonymizer.engine.io.output_shape import from_output_shape, to_output_shape
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import (
@@ -173,7 +176,7 @@ def _verdict(
 
     def verify(target: Any, **ports: Any) -> Assessment:
         value = ports[port].get(column)
-        if value is None or value is pd.NA or (isinstance(value, float) and value != value):
+        if is_missing(value):
             if applies is not None and not applies(ports[port]):
                 return Assessment(None, target, "not_applicable")
             return Assessment(None, target, "judge_unavailable")
@@ -844,7 +847,9 @@ class Anonymizer:
         # '__nemo_anonymizer_text_input__'). The judge prompts reference the
         # internal names, so reverse the rename before the DD call and re-apply
         # it on the result.
-        internal_df = _unrename_output_columns(output.trace_dataframe, resolved_text_column=text_column)
+        internal_df = from_output_shape(
+            _unrename_output_columns(output.trace_dataframe, resolved_text_column=text_column)
+        )
 
         if rewrite_config is not None:
 
@@ -978,7 +983,7 @@ class Anonymizer:
                     )
                 ],
             )
-        renamed_trace = _rename_output_columns(judged_df, resolved_text_column=text_column)
+        renamed_trace = to_output_shape(_rename_output_columns(judged_df, resolved_text_column=text_column))
         outcomes = _reported_outcomes(
             evaluation,
             internal_df,
@@ -1309,7 +1314,7 @@ class Anonymizer:
                 "%d record(s) failed during pipeline processing: %s.", len(all_failures), _failure_tally(all_failures)
             )
         text_col = context.resolved_text_column
-        renamed_trace = _rename_output_columns(final_df, resolved_text_column=text_col)
+        renamed_trace = to_output_shape(_rename_output_columns(final_df, resolved_text_column=text_col))
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
         record_record_metrics(
             final_df,
@@ -1497,14 +1502,6 @@ class Anonymizer:
                 "unknown_step_failure_count": failure_counts["unknown"],
             }
         )
-
-
-class _ListConvertible(Protocol):
-    def tolist(self) -> object: ...
-
-
-def _is_list_convertible(value: object) -> TypeGuard[_ListConvertible]:
-    return callable(getattr(value, "tolist", None))
 
 
 def _unwrap_entities(raw: object) -> list:

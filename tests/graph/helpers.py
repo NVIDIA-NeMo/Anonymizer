@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared builder for the spec programs: check lines, call recorders and small workflows."""
+"""Shared helpers for the graph kernel tests: a call recorder, one-text graphs, a one-workflow run and rejection codes."""
 
 from __future__ import annotations
 
@@ -14,31 +14,6 @@ from anonymizer.engine.graph_core.execution import prepare, protect
 from anonymizer.engine.graph_core.kernel import GraphRejection
 
 NAME = "Alice"
-
-
-class Checks:
-    """Collects one JSON-able line per check: {"program", "check", "result", "detail"}."""
-
-    def __init__(self, program: str) -> None:
-        self.program = program
-        self.lines: list[dict[str, str]] = []
-
-    def check(self, check: str, ok: bool, detail: str) -> None:
-        self.lines.append(
-            {"program": self.program, "check": check, "result": "PASS" if ok else "FAIL", "detail": detail}
-        )
-
-    def retired(self, check: str, detail: str) -> None:
-        self.lines.append({"program": self.program, "check": check, "result": "RETIRED", "detail": detail})
-
-    def guard(self, check: str, fn: Callable[[], tuple[bool, str]]) -> None:
-        """Run one check body; an exception escaping it is a FAIL with its type (never content)."""
-        try:
-            ok, detail = fn()
-        # A check must report, not crash the program.
-        except Exception as exc:
-            ok, detail = False, f"unexpected {type(exc).__name__}"
-        self.check(check, ok, detail)
 
 
 class Recorder:

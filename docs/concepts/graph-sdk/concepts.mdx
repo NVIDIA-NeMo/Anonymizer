@@ -139,7 +139,7 @@ For each target, `result.outcome(target)` returns a `TargetOutcome`. It keeps th
 2. **Qualification** (`qualification`): did the required checks pass on the final candidate? `met`, `not_met`, or
    `not_assessed` when the workflow requires no checks.
 3. **Release** (`protected`): was the output released? This needs `met`, a workflow that releases output, and no
-   withheld dependency or output group member.
+   withheld dependency, output group member or record member.
 
 A target that is not released is **withheld**. Its `reasons` say why, one `Reason` per cause. The result also
 offers the final candidate of every target without any release claim (`result.content()`), for inspection and
@@ -160,7 +160,7 @@ The SDK decides each target in this order:
       |
  workflow has release="annotation"? --------------------- yes -> met, withheld (reason: annotation)
       | no
- a dependency or group member withheld? ----------------- yes -> met, withheld (reason: withheld)
+ a dependency, group or record member withheld? -------- yes -> met, withheld (reason: withheld)
       | no
  protected = True
 ```

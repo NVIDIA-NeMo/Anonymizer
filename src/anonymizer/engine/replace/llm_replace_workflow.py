@@ -20,6 +20,7 @@ from data_designer.config.models import ModelConfig
 from pydantic import BaseModel
 
 from anonymizer.config.models import ReplaceModelSelection
+from anonymizer.engine.cells import normalize_payload
 from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_ENTITIES_FOR_REPLACE,
@@ -42,7 +43,6 @@ from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema, EntityReplacementMapSchema
-from anonymizer.engine.schemas.shared import normalize_payload
 from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")

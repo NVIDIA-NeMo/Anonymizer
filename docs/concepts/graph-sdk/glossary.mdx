@@ -42,7 +42,7 @@ The graph SDK is provisional. Names, signatures and default values may change in
 | Protection graph (`ProtectionGraph`) | The targets of one run and the relations among them. |
 | Qualification | Whether the required checks passed on the final candidate: `met`, `not_met` or `not_assessed`. |
 | Reason (`Reason`) | One cause of a target not qualifying or not being released, as a code plus the check and verifier it concerns. |
-| Record (`Record`) | A group of targets that belong together, such as the fields of one row. Does not change release. |
+| Record (`Record`) | A group of targets that belong together, such as the fields of one row. Released all together or not at all, unless `partial_release=True`. |
 | Rejection (`GraphRejection`) | The error raised when a declaration or workflow is invalid. Carries a `code` and a `detail`. |
 | Release | Making a target's final candidate available as protected output. |
 | Requests (`Requests`) | A step's declaration of how many external requests it makes per call: none, exact, at most, unknown or opaque. |
@@ -54,5 +54,5 @@ The graph SDK is provisional. Names, signatures and default values may change in
 | Target | A datum the workflow processes and may release. |
 | Terminal | Whether a target's steps ran: `success`, `failed`, `cancelled` or `blocked`. |
 | Verifier | An operation whose function returns an `Assessment`. Built with `Operation.verifier`. |
-| Withheld | Not released. A target is withheld when it is not met, or when a dependency or group member is withheld. |
+| Withheld | Not released. A target is withheld when it is not met, or when a dependency, output group member or record member is withheld. |
 | Workflow (`Workflow`) | An ordered sequence of operations and nested workflows, with the checks it requires. |

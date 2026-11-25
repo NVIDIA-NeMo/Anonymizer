@@ -10,10 +10,10 @@ import pandas as pd
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig
 
+from anonymizer.engine.cells import is_missing, to_python
 from anonymizer.engine.constants import RECORD_ID_COLUMN
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.backend import BackendRun, DataDesignerBackend
-from anonymizer.engine.schemas.shared import to_python
 
 
 def derive_seed_columns(
@@ -57,7 +57,7 @@ def select_seed_cols(df: pd.DataFrame, seed_cols: list[str]) -> pd.DataFrame:
 
 
 def _seed_cell(value: object) -> object:
-    if isinstance(value, str) or value is None or value is pd.NA or (isinstance(value, float) and value != value):
+    if isinstance(value, str) or is_missing(value):
         return value
     return json.dumps(to_python(value), default=str, ensure_ascii=False)
 

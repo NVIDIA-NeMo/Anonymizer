@@ -69,7 +69,7 @@ Carol failed not_met False False ['raised']
 | `protected` | Whether the final candidate was released. |
 | `reasons` | One `Reason` per cause of not qualifying or not being released. Empty for a released target. |
 | `reason` | The code of the last entry in `reasons`, or `""`. |
-| `withheld_by` | The targets whose withholding withheld this one, through a dependency or an output group. |
+| `withheld_by` | The targets whose withholding withheld this one, through a dependency, an output group or a record. |
 | `advisories` | One `Advisory` per check a final-text verifier answered that the workflow does not require. |
 | `error` | The exception that failed the target, if any. Never printed in summaries. |
 
@@ -88,7 +88,7 @@ A `Reason` has `code`, `check`, `verifier` and `cause`. The codes:
 | `binding_failed` | A context source this target reads did not return usable items ([guide](/concepts/graph-sdk/guide-give-an-operation-context)). |
 | `cancelled` | The run was cancelled before this target finished. |
 | `inconsistent_invocation` | Some verifier in the run returned an assessment naming another target, or no target, so no target in the run qualifies. |
-| `withheld` | The target is `met` but a dependency or group member was withheld. See `withheld_by`. |
+| `withheld` | The target is `met` but a dependency, group member or record member was withheld. See `withheld_by`. |
 | `annotation` | The target is `met` but the workflow is an annotation workflow, which never releases. |
 
 ## What ran for each target

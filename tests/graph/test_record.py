@@ -14,6 +14,7 @@ import pytest
 import anonymizer.graph as graph
 from anonymizer.engine.graph_core.authoring import _RESERVED_SEED_OUTPUTS
 from anonymizer.engine.graph_core.execution import SEEDS
+from tests.graph.helpers import NAME, Recorder
 
 SECRET = "Alice Smith lives at 12 Elm Street"
 
@@ -260,3 +261,73 @@ def test_graph_without_records_keeps_its_fields_and_positional_order() -> None:
     ]
     with pytest.raises(TypeError):
         graph.ProtectionGraph(scope, (a, b), (), (), (), (), ())  # ty: ignore[too-many-positional-arguments]
+
+
+BUILD_REJECTIONS: dict[str, Callable[[graph.GraphScope, graph.Datum, graph.Datum], Any]] = {
+    "invalid_record": lambda scope, a, b: graph.ProtectionGraph(scope, (a, b), records=((a,),)),  # ty: ignore[invalid-argument-type]
+    "empty_record": lambda scope, a, b: scope.record(()),
+    "foreign_record": lambda scope, a, b: graph.ProtectionGraph(
+        scope, (a, b), records=(graph.GraphScope().record((a,)),)
+    ),
+    "foreign_datum": lambda scope, a, b: graph.ProtectionGraph(
+        scope, (a,), records=(scope.record((graph.GraphScope().datum("x"),)),)
+    ),
+    "unknown_reference": lambda scope, a, b: graph.ProtectionGraph(scope, (a,), records=(scope.record((b,)),)),
+    "record_overlap": lambda scope, a, b: graph.ProtectionGraph(
+        scope, (a, b), records=(scope.record((a, b)), scope.record((a,)))
+    ),
+}
+
+
+@pytest.mark.parametrize("code", BUILD_REJECTIONS)
+def test_invalid_record_is_rejected_while_the_graph_is_built(code: str) -> None:
+    rec = Recorder()
+    scope, (a, b) = build(f"{NAME} one", "Bob two")
+    assert rejection(lambda: BUILD_REJECTIONS[code](scope, a, b)).code == code
+    assert rec.count() == 0
+
+
+def test_two_target_record_and_singleton_seeds() -> None:
+    scope, (a, b, s) = build(f"{NAME} one", "Bob two", "Carol three")
+    g = graph.ProtectionGraph(scope, (a, b, s), records=(scope.record((a, b)),))
+    seen: dict[Any, graph.Record] = {}
+
+    def look(text: str, target: Any, record: graph.Record) -> str:
+        seen[target] = record
+        return text
+
+    run(g, graph.Operation("look", look, {"text": "text", "target": "datum", "record": "record"}))
+    assert seen[a] == seen[b]
+    assert seen[b] != seen[s]
+    assert seen[s].members == (s,)
+    assert len(g.all_records) == 2
+
+
+def test_phase_scoped_operation_groups_received_targets_by_record() -> None:
+    scope, (a, b, s) = build(f"{NAME} one", "Bob two", f"{NAME} three")
+    g = graph.ProtectionGraph(scope, (a, b, s), records=(scope.record((s, a)),))
+    sizes: list[int] = []
+
+    def fold(text: tuple[str, ...], record: tuple[graph.Record, ...]) -> list[str]:
+        groups: dict[graph.Record, int] = {}
+        for r in record:
+            groups[r] = groups.get(r, 0) + 1
+        sizes.extend(groups.values())
+        return [t.replace(NAME, "[NAME]") for t in text]
+
+    r = run(g, graph.Operation.phase_scoped("fold", fold, {"text": "text", "record": "record"}))
+    assert sizes == [2, 1]
+    assert all(NAME not in (t or NAME) for _, t in r.content())
+
+
+def test_no_records_leaves_content_and_outcomes_unchanged() -> None:
+    rec = Recorder()
+    scope, ts = build(f"{NAME} one", "Bob two")
+    g = graph.ProtectionGraph(scope, ts)
+    w = graph.Workflow("w", (rec.transform(), rec.verifier()), requires=("verifier",))
+    r = graph.protect(graph.prepare(g, w))
+    assert [t for _, t in r.content()] == ["[NAME] one", "Bob two"]
+    assert [(o.qualification, o.protected) for o in map(r.outcome, ts)] == [("met", True)] * 2
+    assert rec.count() == 4
+    assert g.records == ()
+    assert [x.members for x in g.all_records] == [(t,) for t in ts]

@@ -8,11 +8,12 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeGuard, cast
+from typing import Any, cast
 
 import pandas as pd
 from pydantic import BaseModel
 
+from anonymizer.engine.cells import is_list_convertible as _is_list_convertible
 from anonymizer.engine.constants import (
     COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
     COL_ATTRIBUTE_FIDELITY_JUDGE,
@@ -47,14 +48,6 @@ from anonymizer.engine.schemas import (
 from anonymizer.engine.spans import Span
 
 logger = logging.getLogger(__name__)
-
-
-class _ListConvertible(Protocol):
-    def tolist(self) -> object: ...
-
-
-def _is_list_convertible(value: object) -> TypeGuard[_ListConvertible]:
-    return callable(getattr(value, "tolist", None))
 
 
 ENTITY_COLORS: list[str] = [

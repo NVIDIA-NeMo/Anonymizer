@@ -378,6 +378,7 @@ def rewrite_leftovers(
 
 
 def _unavailable(value: Any) -> bool:
+    # Kept apart from ``cells.is_missing`` on purpose: a metric equal to ``pd.NA`` is not treated as unavailable here.
     return value is None or (isinstance(value, float) and value != value)
 
 
