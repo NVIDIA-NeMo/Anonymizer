@@ -166,7 +166,8 @@ class Detect(BaseModel):
         default=None,
         description=(
             "Labels to detect. None uses the built-in default detection label set. "
-            "To inspect the default set, use `from anonymizer import DEFAULT_ENTITY_LABELS`."
+            "To inspect the default set, use `from anonymizer import DEFAULT_ENTITY_LABELS`. "
+            "On the CLI, repeat the flag per label: --entity-labels first_name --entity-labels city."
         ),
     )
     entity_label_examples: Annotated[dict[str, list[str]], cyclopts.Parameter(accepts_keys=False, n_tokens=1)] = Field(

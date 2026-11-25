@@ -12,6 +12,7 @@ another mode is an unknown option. The models hold every default; this module ho
 from __future__ import annotations
 
 import functools
+import inspect
 import logging
 import os
 import sys
@@ -81,13 +82,18 @@ class RunOptions:
                 "Also overridable globally via NEMO_TELEMETRY_ENABLED=false."
             )
         ),
-    ] = True
-    verbose: Annotated[bool, cyclopts.Parameter(help="Verbose logging.")] = False
-    debug: Annotated[bool, cyclopts.Parameter(help="Debug logging.")] = False
+    ] = AnonymizerConfig.model_fields["emit_telemetry"].default
+    verbose: Annotated[bool, cyclopts.Parameter(help="Verbose logging.", negative="")] = False
+    debug: Annotated[bool, cyclopts.Parameter(help="Debug logging.", negative="")] = False
 
 
 # ``--empty-<list>`` flags would only restate a list's empty default, so they are turned off.
-app = cyclopts.App(help="NeMo Anonymizer CLI", default_parameter=cyclopts.Parameter(negative_iterable=()))
+app = cyclopts.App(
+    help="NeMo Anonymizer CLI",
+    default_parameter=cyclopts.Parameter(negative_iterable=()),
+    # Field descriptions are plain text; markup rendering would drop tokens such as <LABEL>.
+    help_format="plaintext",
+)
 
 
 def _cli_error_handler(fn: Callable[..., None]) -> Callable[..., None]:
@@ -146,6 +152,9 @@ def _output_path(data: AnonymizerInput, mode: str, output: str | None) -> str:
     return output
 
 
+_PREVIEW_NUM_RECORDS: int = inspect.signature(Anonymizer.preview).parameters["num_records"].default
+
+
 def _command(verb: str, mode: str) -> Callable[..., None]:
     """The ``<verb> <mode>`` command. Its annotations are set here, since the mode's model is only known now."""
     if verb == "run":
@@ -160,14 +169,19 @@ def _command(verb: str, mode: str) -> Callable[..., None]:
             "output": Annotated[
                 str | None,
                 cyclopts.Parameter(
-                    help="Output file path (.csv or .parquet). Defaults to source stem + _anonymized or _rewritten."
+                    help=(
+                        "Output file (.csv or .parquet) holding the input columns plus the anonymized text and the "
+                        "result columns. Defaults to the source name with _anonymized (replace) or _rewritten (rewrite)."
+                    )
                 ),
             ]
         }
         summary = "Run the full pipeline"
     elif verb == "preview":
 
-        def command(*, data, strategy=None, detect=None, options=RunOptions(), num_records=10) -> None:
+        def command(
+            *, data, strategy=None, detect=None, options=RunOptions(), num_records=_PREVIEW_NUM_RECORDS
+        ) -> None:
             config, anonymizer = _build(mode, strategy, detect, options)
             result = anonymizer.preview(config=config, data=data, num_records=num_records)
             print(result.dataframe.to_string(max_colwidth=80))

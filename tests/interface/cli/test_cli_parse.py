@@ -187,7 +187,22 @@ def test_no_mode_is_an_error(csv_file: Path) -> None:
     assert code != 0 and config is None
 
 
-def test_no_empty_list_flags(capsys: pytest.CaptureFixture[str]) -> None:
+def test_help_has_no_empty_list_or_logging_negative_flags(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
         app(["run", "redact", "--help"])
-    assert "--empty-" not in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "--empty-" not in out
+    assert "--no-verbose" not in out and "--no-debug" not in out
+
+
+def test_help_renders_descriptions_as_plain_text(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        app(["run", "substitute", "--help"])
+    assert "[SUBSTITUTE_<LABEL>_<n>]" in capsys.readouterr().out.replace("\n", "")
+
+
+def test_cli_defaults_come_from_the_sdk() -> None:
+    from anonymizer.interface.cli.main import _PREVIEW_NUM_RECORDS, RunOptions
+
+    assert RunOptions().emit_telemetry is AnonymizerConfig.model_fields["emit_telemetry"].default
+    assert _PREVIEW_NUM_RECORDS == 10
