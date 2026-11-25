@@ -427,6 +427,8 @@ The CLI is generated from the config models, so a config field is a flag under t
   rule per item. On the CLI, `--entity-label-examples '{"first_name": ["Alice"]}'` and a repeatable
   `--regex-rules '{"label": "ticket_id", "pattern": "TKT-[0-9]+"}'`; both flags used to fail for every value. A rule's
   `validator` from the CLI is a registered validator name; a Python callable is SDK-only.
+- `PrivacyGoal` gives `protect` and `preserve` the default texts, so `PrivacyGoal(protect=...)` alone is valid. Both
+  used to be required.
 
 ### Internal changes
 

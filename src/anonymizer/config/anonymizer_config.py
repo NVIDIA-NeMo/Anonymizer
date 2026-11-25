@@ -16,8 +16,6 @@ from anonymizer.config.entity_labels import normalize_entity_label
 from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
 from anonymizer.config.replace_strategies import HASH_KEY_REQUIRED_MESSAGE, Hash, ReplaceMethod
 from anonymizer.config.rewrite import (
-    DEFAULT_PRESERVE_TEXT,
-    DEFAULT_PROTECT_TEXT,
     EvaluationCriteria,
     PrivacyGoal,
     RiskTolerance,
@@ -390,10 +388,7 @@ class Rewrite(BaseModel):
     @model_validator(mode="after")
     def populate_default_privacy_goal(self) -> Rewrite:
         if self.privacy_goal is None:
-            self.privacy_goal = PrivacyGoal(
-                protect=DEFAULT_PROTECT_TEXT,
-                preserve=DEFAULT_PRESERVE_TEXT,
-            )
+            self.privacy_goal = PrivacyGoal()
         return self
 
     @property

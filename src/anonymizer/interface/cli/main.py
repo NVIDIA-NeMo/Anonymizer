@@ -24,8 +24,6 @@ from pydantic import ValidationError
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.config.rewrite import (
-    DEFAULT_PRESERVE_TEXT,
-    DEFAULT_PROTECT_TEXT,
     PrivacyGoal,
     RiskTolerance,
 )
@@ -201,10 +199,8 @@ def _build_rewrite_config(opts: CliOpts) -> Rewrite:
     """Build a Rewrite config from CLI args."""
     privacy_goal = None
     if opts.protect or opts.preserve:
-        privacy_goal = PrivacyGoal(
-            protect=opts.protect or DEFAULT_PROTECT_TEXT,
-            preserve=opts.preserve or DEFAULT_PRESERVE_TEXT,
-        )
+        goal = {"protect": opts.protect, "preserve": opts.preserve}
+        privacy_goal = PrivacyGoal(**{name: text for name, text in goal.items() if text})
     return Rewrite(
         privacy_goal=privacy_goal,
         instructions=opts.instructions,
