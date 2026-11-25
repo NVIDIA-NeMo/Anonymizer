@@ -793,7 +793,7 @@ def _format_label_examples(
     lines: list[str] = []
     for label in labels:
         examples = examples_by_label.get(label)
-        rendered_label = _prompt_safe_configured_value(label) if label in configured_examples else label
+        rendered_label = _prompt_safe_configured_value(label) if label in configured_examples else jinja_literal(label)
         if examples:
             configured_for_label = set(configured_examples.get(label, []))
             rendered = [
@@ -1157,7 +1157,8 @@ Input text: <<INPUT_TEXT>>
     # passing them into the single-pass substitution of the main prompt.
     configured_examples = configured_examples or {}
     rendered_labels = [
-        _prompt_safe_configured_value(label) if label in configured_examples else label for label in labels
+        _prompt_safe_configured_value(label) if label in configured_examples else jinja_literal(label)
+        for label in labels
     ]
     label_block = label_block.replace("<<VALID_CLASSES>>", ", ".join(rendered_labels))
     active_configured_examples = {
@@ -1216,7 +1217,7 @@ def _get_latent_prompt(
     excluded_labels = sorted(normalize_labels(excluded_entity_labels))
     exclusion_block = (
         "\n<excluded_entity_labels>\n"
-        f"Do NOT return latent entities with these labels: {', '.join(excluded_labels)}.\n"
+        f"Do NOT return latent entities with these labels: {', '.join(map(jinja_literal, excluded_labels))}.\n"
         "</excluded_entity_labels>\n"
         if excluded_labels
         else ""

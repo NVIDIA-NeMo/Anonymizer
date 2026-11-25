@@ -397,6 +397,35 @@ def test_privacy_goal_is_sent_as_written(name: str) -> None:
     assert f"PRESERVE: {TEMPLATE_GOAL.preserve}" in rendered
 
 
+TEMPLATE_LABEL = "ticket_{{ 7*7 }}_{% endraw %}"
+
+
+def _label_prompts(label: str) -> dict[str, str]:
+    """Every Jinja-rendered prompt that splices label names, given ``label`` as a custom label."""
+    from anonymizer.engine.detection import detection_workflow as detection
+    from anonymizer.engine.evaluation.entity_coverage_judge import _coverage_prompt
+
+    return {
+        "augment": detection._get_augment_prompt(data_summary=None, labels=["first_name", label]),
+        "augment_strict": detection._get_augment_prompt(
+            data_summary=None, labels=["first_name", label], strict_labels=True
+        ),
+        "validation": detection._get_validation_prompt(data_summary=None, labels=["first_name", label]),
+        "latent_excluded": detection._get_latent_prompt(
+            data_summary=None, privacy_goal=_GOAL, excluded_entity_labels=[label]
+        ),
+        "coverage_scoped": _coverage_prompt(entity_labels=["first_name", label]),
+        "coverage_excluded": _coverage_prompt(entity_labels=None, excluded_entity_labels=[label]),
+    }
+
+
+@pytest.mark.parametrize("name", list(_label_prompts("x")))
+def test_custom_label_names_are_sent_as_written(name: str) -> None:
+    rendered = _render_leniently(_label_prompts(TEMPLATE_LABEL)[name])
+
+    assert TEMPLATE_LABEL in rendered
+
+
 # sha256 of each prompt built from the default privacy goal and default labels at the base of this change. Text with
 # no "{" is not wrapped, so these prompts are unchanged.
 _DEFAULT_PROMPT_SHA256 = {

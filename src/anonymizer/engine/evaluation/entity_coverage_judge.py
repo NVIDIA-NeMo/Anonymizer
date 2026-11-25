@@ -101,12 +101,12 @@ def _entity_type_scope_block(
     if entity_labels is None:
         excluded = sorted(normalize_labels(excluded_entity_labels))
         exclusion = (
-            f"\nDo NOT report candidates with these explicitly excluded entity labels: {', '.join(excluded)}."
+            f"\nDo NOT report candidates with these explicitly excluded entity labels: {', '.join(map(jinja_literal, excluded))}."
             if excluded
             else ""
         )
         return f"<entity_type_scope>\nEvaluate for all PII and sensitive entity types.{exclusion}\n</entity_type_scope>"
-    labels_str = ", ".join(entity_labels)
+    labels_str = ", ".join(map(jinja_literal, entity_labels))
     return (
         "<entity_type_scope>\n"
         f"Detection was configured to target ONLY these entity types: {labels_str}.\n"
@@ -142,7 +142,7 @@ def _coverage_prompt(
     active_labels = entity_labels if entity_labels is not None else DEFAULT_ENTITY_LABELS
     if entity_labels is None and effective_entity_labels is not None:
         active_labels = effective_entity_labels
-    labels_str = ", ".join(active_labels)
+    labels_str = ", ".join(map(jinja_literal, active_labels))
     if entity_labels is None:
         taxonomy_guidance = (
             f"Common entity types include: {labels_str}. This list is not exhaustive. "

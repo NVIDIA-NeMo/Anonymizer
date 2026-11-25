@@ -107,6 +107,12 @@ every model verbatim.
 - What to do: nothing.
 - Changed in: #NNN.
 
+**Custom label names are sent as written.** Template syntax in a custom entity label, such as `{{ x }}`, used to be
+rendered by the augmentation, validation, latent-detection and entity-coverage prompt templates. It now reaches each
+model verbatim. Prompts built from the default labels, or labels with no `{`, are unchanged.
+- What to do: nothing.
+- Changed in: #NNN.
+
 **The augmenter asks for schema-constrained output.** On OpenAI-compatible providers, augmenter requests send the
 response JSON schema as `response_format`. If the provider rejects the field, the request is retried once without it.
 A malformed augmenter response is retried under the run's restart and correction limits instead of dropping the record.
