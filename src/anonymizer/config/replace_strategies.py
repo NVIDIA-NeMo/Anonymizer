@@ -9,6 +9,7 @@ import re
 from string import Formatter
 from typing import Annotated, Any, Literal
 
+import cyclopts
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
@@ -28,6 +29,10 @@ def _normalize_replace_kind(value: Any) -> Any:
     if isinstance(value, (list, tuple, set, frozenset)):
         return f"<{type(value).__name__}>"
     return value
+
+
+# A strategy's kind is the CLI subcommand that picks it (``anonymizer run redact``), not a flag.
+_KIND_IS_THE_SUBCOMMAND = cyclopts.Parameter(parse=False)
 
 
 class ReplaceMethodBase(BaseModel):
@@ -56,7 +61,7 @@ class ReplaceMethodBase(BaseModel):
 class Substitute(ReplaceMethodBase):
     """Replace entities with LLM-generated synthetic values."""
 
-    kind: Literal["substitute"] = "substitute"
+    kind: Annotated[Literal["substitute"], _KIND_IS_THE_SUBCOMMAND] = "substitute"
     instructions: str | None = Field(
         default=None, description="Additional instructions for the LLM replacement generator."
     )
@@ -77,7 +82,7 @@ class Substitute(ReplaceMethodBase):
 class Redact(ReplaceMethodBase):
     """Replace each entity with a configurable redaction template."""
 
-    kind: Literal["redact"] = "redact"
+    kind: Annotated[Literal["redact"], _KIND_IS_THE_SUBCOMMAND] = "redact"
     format_template: str = Field(
         default="[REDACTED_{label}]", description="Nonempty redaction template with optional {label} placeholder."
     )
@@ -125,7 +130,7 @@ class Redact(ReplaceMethodBase):
 class Annotate(ReplaceMethodBase):
     """Tag each entity with a readable label token."""
 
-    kind: Literal["annotate"] = "annotate"
+    kind: Annotated[Literal["annotate"], _KIND_IS_THE_SUBCOMMAND] = "annotate"
     format_template: str = Field(
         default="<{text}, {label}>", description="Template with {text} and {label} placeholders."
     )
@@ -154,6 +159,10 @@ class Annotate(ReplaceMethodBase):
         )
 
 
+# The environment variable the CLI reads the hash key from. The key has no CLI flag, so it stays out of argv and
+# shell history.
+HASH_KEY_ENV = "ANONYMIZER_HASH_KEY"
+
 HASH_KEY_REQUIRED_MESSAGE = (
     'Hash requires a secret key: pass Hash(key=...), for example Hash(key=os.environ["ANONYMIZER_HASH_KEY"]) '
     "(the CLI reads ANONYMIZER_HASH_KEY). Unkeyed hashes of low-entropy values are reversible, so there is no "
@@ -181,8 +190,8 @@ class Hash(ReplaceMethodBase):
     # Validation errors would otherwise echo the plaintext key.
     model_config = ConfigDict(hide_input_in_errors=True)
 
-    kind: Literal["hash"] = "hash"
-    algorithm: Literal["sha256", "sha1", "md5"] = Field(
+    kind: Annotated[Literal["hash"], _KIND_IS_THE_SUBCOMMAND] = "hash"
+    algorithm: Literal["sha256"] = Field(
         default="sha256", description="Hash algorithm. Only 'sha256' is accepted: the digest is always HMAC-SHA256."
     )
     digest_length: int = Field(
@@ -192,7 +201,7 @@ class Hash(ReplaceMethodBase):
         default="<HASH_{label}_{digest}>", description="Template with {digest} required and optional {label}."
     )
     # Required (no default). ``None`` only on a copy made by ``without_key``, which cannot hash.
-    key: SecretStr | None = Field(
+    key: Annotated[SecretStr | None, cyclopts.Parameter(env_var=HASH_KEY_ENV, parse=False)] = Field(
         description="Required secret key. The digest is HMAC-SHA256 of the case- and whitespace-folded text; "
         "unkeyed digests of low-entropy values are reversible, so there is no unkeyed mode.",
     )
@@ -245,9 +254,9 @@ class Hash(ReplaceMethodBase):
             )
         return value
 
-    @field_validator("algorithm")
+    @field_validator("algorithm", mode="before")
     @classmethod
-    def validate_algorithm(cls, value: str) -> str:
+    def validate_algorithm(cls, value: Any) -> Any:
         if value != "sha256":
             raise ValueError("a keyed Hash always uses HMAC-SHA256; leave algorithm at its default 'sha256'")
         return value

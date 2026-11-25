@@ -39,6 +39,7 @@ from anonymizer.engine.detection.detection_workflow import (
 )
 from anonymizer.engine.detection.result import DetectorResult, DetectorRow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+from anonymizer.interface.cli._output import write_result
 from anonymizer.interface.errors import InvalidDetectorResultError
 from tests.detector_results import as_detector_result
 from tests.parity.harness import RECORDS, Case, scripted
@@ -231,3 +232,32 @@ def test_a_missing_text_cell_keeps_its_protection_outcome(tmp_path: Path, mode: 
             "[REDACTED_FIRST_NAME] works here.",
             "[REDACTED_FIRST_NAME] lives there.",
         ]
+
+
+def test_file_input_id_column_names_the_records(tmp_path: Path) -> None:
+    """The ``id_column`` values are the record ids a detector receives."""
+    seen: list[list[str]] = []
+
+    class Recording:
+        def run(self, dataframe: pd.DataFrame, **_: object) -> DetectorResult:
+            seen.append(list(dataframe["_anonymizer_record_id"]))
+            out = dataframe.copy()
+            out[COL_FINAL_ENTITIES] = [_first_word_entities(t) for t in out[COL_TEXT]]
+            out[COL_ENTITIES_BY_VALUE] = [_build_entities_by_value(e) for e in out[COL_FINAL_ENTITIES]]
+            return as_detector_result(dataframe, out)
+
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"doc": ["a", "b"], "text": ["Alice works here.", "Bob lives there."]}).to_csv(csv_path, index=False)
+    detector: Any = Recording()
+    result = Anonymizer(detection_workflow=detector).run(
+        config=_REPLACE, data=AnonymizerInput(source=str(csv_path), id_column="doc")
+    )
+    assert seen == [["a", "b"]]
+    assert result.id_column == "doc"
+    assert list(result.dataframe["doc"]) == ["a", "b"]
+    written = write_result(result, tmp_path / "out.csv")
+    assert list(pd.read_csv(written)["doc"]) == ["a", "b"]
+    assert list(result.dataframe["text_replaced"]) == [
+        "[REDACTED_FIRST_NAME] works here.",
+        "[REDACTED_FIRST_NAME] lives there.",
+    ]

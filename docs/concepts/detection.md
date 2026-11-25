@@ -242,6 +242,18 @@ Detect(
 )
 ```
 
+From the CLI, pass one JSON rule per `--regex-rules` flag and repeat the flag:
+
+```bash
+anonymizer run redact --source data.csv \
+  --regex-rules '{"label": "email", "validate_matches_with_llm": false}' \
+  --regex-rules '{"label": "url", "enabled": false}' \
+  --regex-rules '{"label": "support_case", "pattern": "CASE-[0-9]{8}"}'
+```
+
+A rule's `validator` on the CLI is a registered validator name; a Python callable can only be passed through the
+Python API.
+
 `Detect(builtin_regexes=False)` disables all built-ins without disabling custom
 rules. With `entity_labels=None`, enabled custom rules extend the default label
 set. With an explicit `entity_labels` list, every enabled custom rule's label
@@ -481,7 +493,7 @@ Configured examples affect detection only; they do not guide substitution or eva
 
 The validator receives the full resolved examples: built-in plus configured examples for default labels, and configured examples for non-default labels. The augmenter receives all active label names but only configured examples, which show it the intended value shape beyond the label name alone. Built-in examples are omitted from the augmenter to limit prompt growth. Keep configured lists short because the validator's full example set is repeated for each validation chunk.
 
-`entity_label_examples` is currently configured through the Python `Detect` API; the CLI does not provide a mapping syntax for this field.
+From the CLI, pass the mapping as a JSON object: `--entity-label-examples '{"vendor_api_key": ["acme_live_abc123"]}'`, together with `--entity-labels` for a non-default label.
 
 When injecting a custom `detection_workflow` into `Anonymizer`, older methods without
 an `entity_label_examples` keyword continue to work when no examples are configured.

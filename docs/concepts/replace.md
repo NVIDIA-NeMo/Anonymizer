@@ -165,7 +165,7 @@ import os
 
 from anonymizer import AnonymizerConfig, Hash
 
-# Key from the environment; the CLI reads the same variable for --replace hash
+# Key from the environment; the CLI reads the same variable for anonymizer run hash
 AnonymizerConfig(replace=Hash(key=os.environ["ANONYMIZER_HASH_KEY"]))
 
 # Short digest, label left out of the token

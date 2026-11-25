@@ -46,3 +46,14 @@ def test_injected_workflow_cannot_silently_ignore_nondefault_limits() -> None:
 def test_regex_limits_reject_invalid_values(field: str, value: float) -> None:
     with pytest.raises(ValidationError):
         RegexLimits.model_validate({field: value})
+
+
+def test_max_matches_per_rule_accepts_a_digit_string() -> None:
+    """The CLI passes text; a string of digits is the number it spells."""
+    assert RegexLimits.model_validate({"max_matches_per_rule": "5"}).max_matches_per_rule == 5
+
+
+@pytest.mark.parametrize("value", ["5.5", "5.0", "-5", "five", True, 5.0])
+def test_max_matches_per_rule_still_refuses_non_integers(value: object) -> None:
+    with pytest.raises(ValidationError):
+        RegexLimits.model_validate({"max_matches_per_rule": value})

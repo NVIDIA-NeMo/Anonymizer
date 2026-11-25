@@ -57,17 +57,19 @@ export OPENROUTER_API_KEY="your-openrouter-api-key"
 DATA_URL="https://raw.githubusercontent.com/NVIDIA-NeMo/Anonymizer/refs/heads/main/docs/data/NVIDIA_synthetic_biographies.csv"
 
 # Preview on a small sample
-uv run anonymizer preview --source $DATA_URL --text-column biography --replace redact --num_records 3
+uv run anonymizer preview redact --source $DATA_URL --text-column biography --num-records 3
 
 # Full run with output file
-uv run anonymizer run --source $DATA_URL --text-column biography --replace redact --output result.csv
+uv run anonymizer run redact --source $DATA_URL --text-column biography --output result.csv
 
 # Validate config without running (hash reads its required key from ANONYMIZER_HASH_KEY)
 export ANONYMIZER_HASH_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
-uv run anonymizer validate --source $DATA_URL --text-column biography --replace hash
+uv run anonymizer validate hash --source $DATA_URL --text-column biography
 ```
 
-Run `anonymizer --help` or `anonymizer <subcommand> --help` for all options.
+The mode is a subcommand: `redact`, `hash`, `annotate`, `substitute` or `rewrite`, after `run`, `preview` or
+`validate`. Each mode lists its own flags, named after the config fields: run `anonymizer run <mode> --help`.
+Errors print one `Error: ...` line. The exit code is 2 for a usage or config error and 1 for an input or I/O error.
 
 #### Python API
 
@@ -265,7 +267,7 @@ You may opt out of telemetry at any time:
 
 - **For one CLI invocation**: pass `--no-emit-telemetry`
   ```bash
-  uv run anonymizer run --source data.csv --text-column text --replace redact --no-emit-telemetry
+  uv run anonymizer run redact --source data.csv --text-column text --no-emit-telemetry
   ```
 - **In the SDK**: set `emit_telemetry=False` on `AnonymizerConfig`
   ```python

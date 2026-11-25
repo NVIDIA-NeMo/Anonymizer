@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
 import pandas as pd
 import pyarrow as pa
@@ -53,9 +54,32 @@ def read_input(input_data: AnonymizerInput | TextRecordsInput, *, nrows: int | N
     if selected_text_column not in dataframe.columns:
         raise InvalidInputError(f"Input text column '{selected_text_column}' not found.")
     _validate_internal_column_collision(dataframe, selected_text_column=selected_text_column)
+    record_ids = _read_record_ids(dataframe, input_data.id_column)
     resolved = _resolve_output_column_collisions(dataframe, selected_text_column=selected_text_column)
     renamed = resolved.dataframe.rename(columns={resolved.resolved_text_column: COL_TEXT})
-    return resolved.with_dataframe(renamed)
+    if record_ids is None:
+        return resolved.with_dataframe(renamed)
+    renamed[RECORD_ID_COLUMN] = record_ids
+    id_position = list(dataframe.columns).index(input_data.id_column)
+    return replace(resolved, dataframe=renamed, resolved_id_column=str(resolved.dataframe.columns[id_position]))
+
+
+def _read_record_ids(dataframe: pd.DataFrame, id_column: str | None) -> list[str] | None:
+    """The record ids from ``id_column``, compared as text; ``None`` when no id column is configured.
+
+    Ids must be present and unique, as for in-memory records: they name rows in failures and outcomes.
+    """
+    if id_column is None:
+        return None
+    if id_column not in dataframe.columns:
+        raise InvalidInputError(f"Input id column '{id_column}' not found.")
+    column = dataframe[id_column]
+    if column.isna().any() or any(not str(value).strip() for value in column):
+        raise InvalidInputError(f"Input id column '{id_column}' has empty values; every record needs an id.")
+    record_ids = [str(value) for value in column]
+    if len(set(record_ids)) != len(record_ids):
+        raise InvalidInputError(f"Input id column '{id_column}' has duplicate ids; ids must be unique.")
+    return record_ids
 
 
 # Suffixes appended to the user's text column to form per-mode output columns
@@ -207,7 +231,14 @@ def _load_dataframe(input_data: AnonymizerInput, *, nrows: int | None = None) ->
         logger.debug("nrows=%d; returning empty DataFrame", nrows)
     try:
         if suffix == ".csv":
-            df = pd.read_csv(source_str, nrows=nrows)
+            # Ids keep their exact text: "001" and "1" stay two ids.
+            id_column = input_data.id_column
+            if id_column is None:
+                df = pd.read_csv(source_str, nrows=nrows)
+            else:
+                df = pd.read_csv(source_str, nrows=nrows, dtype={id_column: "string"})
+                if id_column in df.columns:
+                    df[id_column] = df[id_column].astype(object)
         else:
             df = _read_parquet_partial(source_str, nrows=nrows)
     except (OSError, pd.errors.ParserError, ValueError) as error:

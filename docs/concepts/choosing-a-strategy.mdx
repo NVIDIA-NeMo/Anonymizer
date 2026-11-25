@@ -268,4 +268,4 @@ A starting point for common scenarios. Always run `preview` and iterate from her
 | "Allow re-joining records by identifier without keeping the identifier" | Replace | `Hash(key=os.environ["ANONYMIZER_HASH_KEY"], digest_length=16)` |
 | "I just want to see what the detector finds" | Replace | `Annotate()` (preview only — never ship Annotate output as anonymized data) |
 
-Once you have a starting config, run `anonymizer validate <config>`, then `anonymizer preview --num-records 5 <config>`, then iterate. See [Troubleshooting](/troubleshooting) for what to change when preview shows a problem.
+Once you have a starting config, run `anonymizer validate <mode> <flags>`, then `anonymizer preview <mode> --num-records 5 <flags>`, then iterate. See [Troubleshooting](/troubleshooting) for what to change when preview shows a problem.

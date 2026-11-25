@@ -3,19 +3,19 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlparse
 
+import cyclopts
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from anonymizer.config.entity_labels import normalize_entity_label
 from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
 from anonymizer.config.replace_strategies import HASH_KEY_REQUIRED_MESSAGE, Hash, ReplaceMethod
 from anonymizer.config.rewrite import (
-    DEFAULT_PRESERVE_TEXT,
-    DEFAULT_PROTECT_TEXT,
     EvaluationCriteria,
     PrivacyGoal,
     RiskTolerance,
@@ -87,7 +87,10 @@ class AnonymizerInput(BaseModel):
 
     source: str = Field(description="Local path or HTTP(S) URL for a .csv or .parquet input file.")
     text_column: str = Field(default="text", min_length=1, description="Column containing the text to anonymize.")
-    id_column: str | None = Field(default=None, description="Optional column to use as record identifier.")
+    id_column: str | None = Field(
+        default=None,
+        description="Optional column whose values, compared as text, are the record ids; they must be present and unique.",
+    )
     data_summary: str | None = Field(
         default=None, description="Short description of the data. Improves LLM detection accuracy."
     )
@@ -147,6 +150,13 @@ class DetectionScope(BaseModel):
     gliner_threshold: float = Field(description="GLiNER detection confidence threshold.")
 
 
+def _decode_json(text: str, field: str) -> Any:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{field} given as text must be JSON: {exc}") from exc
+
+
 class Detect(BaseModel):
     """Configuration for the entity detection stage."""
 
@@ -159,13 +169,14 @@ class Detect(BaseModel):
             "To inspect the default set, use `from anonymizer import DEFAULT_ENTITY_LABELS`."
         ),
     )
-    entity_label_examples: dict[str, list[str]] = Field(
+    entity_label_examples: Annotated[dict[str, list[str]], cyclopts.Parameter(accepts_keys=False, n_tokens=1)] = Field(
         default_factory=dict,
         repr=False,
         description=(
             "Configured positive detection examples organized by entity label. For default labels, these "
             "values are appended to the built-in examples. Non-default labels must also be declared "
-            "in an explicit entity_labels set; examples never activate labels implicitly."
+            "in an explicit entity_labels set; examples never activate labels implicitly. "
+            'Also accepts the mapping as JSON text: \'{"first_name": ["Alice", "Bob"]}\'.'
         ),
     )
     excluded_entity_labels: list[str] | None = Field(
@@ -204,9 +215,12 @@ class Detect(BaseModel):
         default=True,
         description="Run built-in regex recognizers for labels in the effective detection scope.",
     )
-    regex_rules: list[BuiltinRegex | RegexRule] = Field(
+    regex_rules: Annotated[list[BuiltinRegex | RegexRule], cyclopts.Parameter(accepts_keys=False, n_tokens=-1)] = Field(
         default_factory=list,
-        description="Per-label built-in settings and user-defined regex candidate rules.",
+        description=(
+            "Per-label built-in settings and user-defined regex candidate rules. Items may also be given as JSON "
+            'text, one rule or a list of rules each: \'{"label": "ticket_id", "pattern": "TKT-[0-9]+"}\'.'
+        ),
     )
     regex_limits: RegexLimits = Field(
         default_factory=RegexLimits,
@@ -242,9 +256,26 @@ class Detect(BaseModel):
             logger.warning("excluded_entity_labels contained duplicates, removed automatically.")
         return deduped
 
+    @field_validator("regex_rules", mode="before")
+    @classmethod
+    def decode_regex_rules(cls, value: Any) -> Any:
+        """Decode rules given as JSON text (the CLI's form): a whole list, or one rule per item."""
+        if isinstance(value, str):
+            value = _decode_json(value, "regex_rules")
+        if isinstance(value, list):
+            rules: list[Any] = []
+            for item in value:
+                decoded = _decode_json(item, "regex_rules") if isinstance(item, str) else item
+                # One item may hold a whole list of rules: JSON text, or the list cyclopts decoded from it.
+                rules.extend(decoded if isinstance(decoded, list) else [decoded])
+            return rules
+        return value
+
     @field_validator("entity_label_examples", mode="before")
     @classmethod
     def validate_entity_label_examples(cls, value: Any) -> dict[str, list[str]]:
+        if isinstance(value, str):
+            value = _decode_json(value, "entity_label_examples")
         if not isinstance(value, dict):
             raise ValueError("entity_label_examples must be a dictionary of label names to lists of examples.")
 
@@ -339,10 +370,13 @@ class Detect(BaseModel):
 class Rewrite(BaseModel):
     """Configuration for rewrite-mode execution."""
 
-    privacy_goal: PrivacyGoal | None = Field(
+    privacy_goal: Annotated[PrivacyGoal | None, cyclopts.Parameter(name="*")] = Field(
         default=None, description="Structured privacy goal. Auto-populated with defaults if not provided."
     )
-    instructions: str | None = Field(default=None, description="Additional instructions for the rewrite LLM.")
+    # Never read by the rewrite (config-flow audit F10); not offered on the CLI.
+    instructions: Annotated[str | None, cyclopts.Parameter(parse=False)] = Field(
+        default=None, description="Additional instructions for the rewrite LLM."
+    )
     risk_tolerance: RiskTolerance = Field(
         default=RiskTolerance.low,
         description="Preset controlling repair thresholds and review flagging.",
@@ -364,10 +398,7 @@ class Rewrite(BaseModel):
     @model_validator(mode="after")
     def populate_default_privacy_goal(self) -> Rewrite:
         if self.privacy_goal is None:
-            self.privacy_goal = PrivacyGoal(
-                protect=DEFAULT_PROTECT_TEXT,
-                preserve=DEFAULT_PRESERVE_TEXT,
-            )
+            self.privacy_goal = PrivacyGoal()
         return self
 
     @property

@@ -106,10 +106,16 @@ class PrivacyGoal(BaseModel):
     """Structured privacy and utility goal for rewrite mode."""
 
     protect: str = Field(
-        min_length=10, max_length=1000, description="What to protect (e.g. direct identifiers, quasi-identifiers)."
+        default=DEFAULT_PROTECT_TEXT,
+        min_length=10,
+        max_length=1000,
+        description="What to protect (e.g. direct identifiers, quasi-identifiers).",
     )
     preserve: str = Field(
-        min_length=10, max_length=1000, description="What to preserve (e.g. utility, semantic meaning)."
+        default=DEFAULT_PRESERVE_TEXT,
+        min_length=10,
+        max_length=1000,
+        description="What to preserve (e.g. utility, semantic meaning).",
     )
 
     @field_validator("protect", "preserve")

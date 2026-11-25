@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 
 from anonymizer.engine.ndd.model_loader import load_default_model_providers, parse_model_configs, parse_model_providers
-from anonymizer.interface.cli.main import app
+from anonymizer.interface.cli.app import app
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -242,10 +242,9 @@ def test_cli_missing_model_configs_exits_cleanly(csv_file: Path, capsys: pytest.
         app(
             [
                 "run",
+                "redact",
                 "--source",
                 str(csv_file),
-                "--replace",
-                "redact",
                 "--model-configs",
                 "nonexistent/models.yaml",
             ]
@@ -258,16 +257,15 @@ def test_cli_missing_model_configs_exits_cleanly(csv_file: Path, capsys: pytest.
 
 def test_cli_missing_model_providers_exits_cleanly(csv_file: Path, capsys: pytest.CaptureFixture) -> None:
     """A missing --model-providers file exits with code 1 and prints a useful message."""
-    with patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
+    with patch("anonymizer.interface.cli.commands.Anonymizer") as mock_cls:
         mock_cls.side_effect = OSError("Providers config file not found: nonexistent/providers.yaml")
         with pytest.raises(SystemExit) as exc_info:
             app(
                 [
                     "run",
+                    "redact",
                     "--source",
                     str(csv_file),
-                    "--replace",
-                    "redact",
                     "--model-providers",
                     "nonexistent/providers.yaml",
                 ]
@@ -277,16 +275,15 @@ def test_cli_missing_model_providers_exits_cleanly(csv_file: Path, capsys: pytes
 
 def test_cli_oserror_exits_cleanly(csv_file: Path, capsys: pytest.CaptureFixture) -> None:
     """Any OSError (e.g. PermissionError) is caught cleanly — no traceback."""
-    with patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
+    with patch("anonymizer.interface.cli.commands.Anonymizer") as mock_cls:
         mock_cls.side_effect = PermissionError("Permission denied: /secure/models.yaml")
         with pytest.raises(SystemExit) as exc_info:
             app(
                 [
                     "run",
+                    "redact",
                     "--source",
                     str(csv_file),
-                    "--replace",
-                    "redact",
                     "--model-configs",
                     "/secure/models.yaml",
                 ]
@@ -304,15 +301,14 @@ def test_cli_model_configs_file_path_accepted(csv_file: Path, model_configs_yaml
     mock_result.failed_records = []
     mock_anonymizer.run.return_value = mock_result
 
-    with patch("anonymizer.interface.cli.main.Anonymizer", return_value=mock_anonymizer) as mock_cls:
+    with patch("anonymizer.interface.cli.commands.Anonymizer", return_value=mock_anonymizer) as mock_cls:
         with pytest.raises(SystemExit) as exc_info:
             app(
                 [
                     "run",
+                    "redact",
                     "--source",
                     str(csv_file),
-                    "--replace",
-                    "redact",
                     "--model-configs",
                     str(model_configs_yaml),
                 ]
@@ -331,15 +327,14 @@ def test_cli_model_providers_file_path_accepted(csv_file: Path, providers_yaml: 
     mock_result.failed_records = []
     mock_anonymizer.run.return_value = mock_result
 
-    with patch("anonymizer.interface.cli.main.Anonymizer", return_value=mock_anonymizer) as mock_cls:
+    with patch("anonymizer.interface.cli.commands.Anonymizer", return_value=mock_anonymizer) as mock_cls:
         with pytest.raises(SystemExit) as exc_info:
             app(
                 [
                     "run",
+                    "redact",
                     "--source",
                     str(csv_file),
-                    "--replace",
-                    "redact",
                     "--model-providers",
                     str(providers_yaml),
                 ]
@@ -356,10 +351,9 @@ def test_cli_old_confusing_error_message_is_gone(csv_file: Path, capsys: pytest.
         app(
             [
                 "run",
+                "redact",
                 "--source",
                 str(csv_file),
-                "--replace",
-                "redact",
                 "--model-configs",
                 "configs/models_super.yaml",
             ]

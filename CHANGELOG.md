@@ -23,10 +23,10 @@ v1.0.0 may break compatibility with v0.5.0. Each entry says what changed, where 
   `DataDesigner` or `RunConfig`) must follow DataDesigner's 1.0 changes.
 - Changed in: #375, #404, #410.
 
-**New and updated dependencies.** `regex` is a new required dependency. The `notebooks` extra moves to
-`gliner2==2.1.0` and `pillow>=13,<14`.
+**New and updated dependencies.** `regex` is a new required dependency. `cyclopts` moves from `>=3` to `>=5.1,<6`.
+The `notebooks` extra moves to `gliner2==2.1.0` and `pillow>=13,<14`.
 - What to do: nothing, unless you pin these packages yourself.
-- Changed in: #265, #212, #375.
+- Changed in: #265, #212, #375, #453.
 
 **Notebook runtime internals are removed.** `anonymizer.notebooks.local_inference` and the private helpers in
 `anonymizer.notebooks._runtime` and `_model_config` (such as `build_notebook_model_configuration`) are gone.
@@ -419,6 +419,74 @@ an `Error: ...` line. It ends the command with its traceback, as a wiring fault.
 **Telemetry key for the combined Rewrite path.** Failures from `Rewrite(use_combined_graph=True)` count under
 `rewrite_pipeline`, not `unknown`.
 - Changed in: #373.
+
+### CLI and config surface
+
+The CLI is generated from the config models (#453), so a config field is a flag under the field's own name.
+
+**The mode is a subcommand.** `anonymizer run --replace <strategy>` becomes `anonymizer run <strategy>`
+(`redact`, `hash`, `annotate`, `substitute`), and `anonymizer run --rewrite` becomes `anonymizer run rewrite`. The
+same holds for `preview` and `validate`.
+- What to do: move the strategy name, or `rewrite`, right after the command, and drop `--replace` and `--rewrite`.
+
+**A flag of another mode or strategy is an unknown option.** For example `run redact --digest-length 8`,
+`run rewrite --format-template ...` and `run rewrite --instructions ...` exit with `Unknown option`. They used to be
+dropped, most without a warning. `--instructions` now belongs to `substitute` only: `Rewrite.instructions` was never
+read and has no flag.
+- What to do: remove the flag, or use the subcommand it belongs to (`run substitute --help` lists its flags).
+
+**New flags from the models.** `substitute` gains `--consistency`; `rewrite` gains `--use-combined-graph` and
+`--strict-entity-protection`. `--protect` and `--preserve` keep their names and their defaults now come from
+`PrivacyGoal`. Help text is each field's description. Help panels read Input and output (with `--source` and
+`--output`), then the mode, Detect and Run; `run hash --help` says the key is read from `ANONYMIZER_HASH_KEY`.
+
+**`--algorithm` takes only `sha256`, as before; the hash key still comes from `ANONYMIZER_HASH_KEY` only.** There is
+no `--key` flag, so the key stays out of argv and shell history.
+
+**`id_column` sets the record ids.** `AnonymizerInput(id_column=...)` and `--id-column` now name the records: the
+column's values, as written (`001` and `1` are two ids), name them in failures, outcomes and a custom detector's input.
+A missing column, an empty or whitespace-only id, or a duplicate id raises `InvalidInputError`. The id column is kept in
+`result.dataframe` and in the written output, and `result.id_column` names it. The option used to be accepted and never
+read: file records got generated ids, the output did not keep the id column, and `result.id_column` was `None`.
+- What to do: make the id column's values present and unique, or leave `id_column` unset.
+
+**CLI errors are one line, name the flag, and exit 2 for usage errors.** An error prints as `Error: <flag>: <message>`,
+naming the flag the user typed (`--protect`, not `privacy_goal.protect`), or `ANONYMIZER_HASH_KEY` for the key, and
+never echoes the input value. A missing key prints one line naming the variable. Exit codes:
+- 2: a usage or config error, such as an unknown flag, a value a model refuses, a missing hash key, or an unsupported
+  `--output` format. It used to be 1.
+- 1: an input or I/O error, such as an unreadable source, a missing text or id column, or blank or duplicate ids.
+- Any other error is a runtime fault: it prints a traceback and exits 1.
+- What to do: scripts that test for exit code 1 on a usage error should accept 2.
+
+`--entity-labels` and `--regex-rules` take one value per flag; repeat the flag for more. `--regex-rules` also takes a
+JSON list of rules.
+
+**`--config FILE`.** Every `run`, `preview` and `validate` subcommand reads an optional YAML or JSON file in the
+`AnonymizerConfig` shape (`detect`, `replace` or `rewrite`, `emit_telemetry`) plus an optional `input` section
+(`source`, `text_column`, `id_column`, `data_summary`). Flags given on the command line replace the file's values:
+nested settings merge field by field, while a list or mapping given by a flag replaces the file's whole value; a flag
+left out keeps the file's value. A relative `input.source` is read from the working directory. Telemetry is off if
+either the file or `--no-emit-telemetry` turns it off. A file whose mode differs from the subcommand, a hash key in the
+file (the key is read from `ANONYMIZER_HASH_KEY` only; a dump's `null` or masked key is ignored), an unknown key at any
+level, or a bad value is refused with one line naming the file and the field, exit 2. A dump of an SDK config works as a
+file; its `null` sections are ignored. `--source` is no longer marked required in help: it may come from the file, and
+is required when neither gives it.
+
+**SDK-only.** A `RegexRule.validator` given as a Python callable, the `Anonymizer` arguments that take live objects
+(`data_designer`, `detection_workflow`, the runners) and in-memory `TextRecordsInput` have no CLI form. A test keeps
+every other config field reachable as a flag.
+
+- `RegexLimits.max_matches_per_rule` accepts a string of digits, such as `"5"`. Floats and bools are still refused.
+  `--regex-limits.max-matches-per-rule` used to reject every value.
+- `Detect.entity_label_examples` also accepts a JSON object as text, and `Detect.regex_rules` a JSON list or one JSON
+  rule per item. On the CLI, `--entity-label-examples '{"first_name": ["Alice"]}'` and a repeatable
+  `--regex-rules '{"label": "ticket_id", "pattern": "TKT-[0-9]+"}'`; both flags used to fail for every value. A rule's
+  `validator` from the CLI is a registered validator name; a Python callable is SDK-only.
+- `PrivacyGoal` gives `protect` and `preserve` the default texts, so `PrivacyGoal(protect=...)` alone is valid. Both
+  used to be required.
+- `Hash.algorithm` is typed `Literal["sha256"]`. It used to list `sha1` and `md5`, which validation refused.
+  - What to do: nothing at run time; code that passed `sha1` or `md5` already failed. Type checkers now flag it.
 
 ### Internal changes
 
