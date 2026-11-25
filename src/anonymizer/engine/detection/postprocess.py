@@ -11,14 +11,16 @@ from enum import Enum
 from anonymizer.config.entity_labels import normalize_entity_label as normalize_label
 from anonymizer.engine.edits import Edit, Edits, Prefer
 from anonymizer.engine.schemas import DetectionResult
-from anonymizer.engine.spans import BY_START_END, Span, group_overlapping_spans
+from anonymizer.engine.spans import BY_START_END, Positioned, Span, group_overlapping_spans
 
 VALIDATION_CONTEXT_WINDOW = 32
 
 
 @dataclass(frozen=True)
-class EntitySpan:
+class EntitySpan(Positioned):
     """Canonical standoff entity representation."""
+
+    _noun = "entity span"
 
     entity_id: str
     value: str
@@ -27,10 +29,6 @@ class EntitySpan:
     end_position: int
     score: float
     source: str
-
-    @property
-    def span(self) -> Span:
-        return Span(self.start_position, self.end_position)
 
     def as_dict(self) -> dict[str, str | int | float]:
         return {

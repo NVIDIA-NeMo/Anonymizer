@@ -9,7 +9,7 @@ from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from anonymizer.engine.schemas.shared import _parse_raw_wrapper
-from anonymizer.engine.spans import Span
+from anonymizer.engine.spans import Positioned, Span
 
 
 class FrozenStrictModel(BaseModel):
@@ -25,21 +25,19 @@ class SourceTextRef(FrozenStrictModel):
     field_id: str = Field(min_length=1)
 
 
-class SourceView(FrozenStrictModel):
+class SourceView(Positioned, FrozenStrictModel):
     """Contiguous canonical source range supplied to a detection component."""
+
+    _noun = "source view"
+    _empty = True
 
     source_text_ref: SourceTextRef
     start_position: int = Field(ge=0)
     end_position: int = Field(ge=0)
 
-    @property
-    def span(self) -> Span:
-        return Span(self.start_position, self.end_position)
-
     @model_validator(mode="after")
     def validate_geometry(self) -> SourceView:
-        if self.end_position < self.start_position:
-            raise ValueError("source view end must not precede its start")
+        self._check_geometry()
         return self
 
 
@@ -55,8 +53,10 @@ class ObservationRef(FrozenStrictModel):
     observation_id: str = Field(min_length=1)
 
 
-class Observation(FrozenStrictModel):
+class Observation(Positioned, FrozenStrictModel):
     """One source-bound detector claim before admission."""
+
+    _noun = "observation"
 
     detection_result_id: str = Field(min_length=1)
     observation_id: str = Field(min_length=1)
@@ -78,16 +78,9 @@ class Observation(FrozenStrictModel):
             observation_id=self.observation_id,
         )
 
-    @property
-    def span(self) -> Span:
-        return Span(self.start_position, self.end_position)
-
     @model_validator(mode="after")
     def validate_geometry(self) -> Observation:
-        if self.end_position <= self.start_position:
-            raise ValueError("observation must cover a non-empty span")
-        if len(self.value) != self.end_position - self.start_position:
-            raise ValueError("observation value length must match its source bounds")
+        self._check_geometry(self.value)
         return self
 
 
@@ -161,8 +154,10 @@ class EffectiveLabelPolicy(FrozenStrictModel):
         )
 
 
-class ValidationInventoryEntry(FrozenStrictModel):
+class ValidationInventoryEntry(Positioned, FrozenStrictModel):
     """Authoritative request-local mapping from an alias to an observation."""
+
+    _noun = "inventory entry"
 
     alias: str = Field(pattern=r"^c[1-9][0-9]*$")
     conflict_group_id: str | None = Field(default=None, pattern=r"^g[1-9][0-9]*$")
@@ -172,16 +167,9 @@ class ValidationInventoryEntry(FrozenStrictModel):
     start_position: int = Field(ge=0)
     end_position: int = Field(gt=0)
 
-    @property
-    def span(self) -> Span:
-        return Span(self.start_position, self.end_position)
-
     @model_validator(mode="after")
     def validate_geometry(self) -> ValidationInventoryEntry:
-        if self.end_position <= self.start_position:
-            raise ValueError("inventory entry must cover a non-empty span")
-        if len(self.value) != self.end_position - self.start_position:
-            raise ValueError("inventory entry value length must match its source bounds")
+        self._check_geometry(self.value)
         return self
 
 
@@ -327,8 +315,10 @@ class NativeScore(FrozenStrictModel):
     score: float = Field(allow_inf_nan=False)
 
 
-class AdmittedCandidate(FrozenStrictModel):
+class AdmittedCandidate(Positioned, FrozenStrictModel):
     """Eligible protection candidate produced after observation admission."""
+
+    _noun = "candidate"
 
     source_text_ref: SourceTextRef
     value: str = Field(min_length=1)
@@ -345,16 +335,9 @@ class AdmittedCandidate(FrozenStrictModel):
         """Whether at least one origin explicitly admitted this candidate."""
         return bool(self.accepted_origins)
 
-    @property
-    def span(self) -> Span:
-        return Span(self.start_position, self.end_position)
-
     @model_validator(mode="after")
     def validate_candidate(self) -> AdmittedCandidate:
-        if self.end_position <= self.start_position:
-            raise ValueError("candidate must cover a non-empty span")
-        if len(self.value) != self.end_position - self.start_position:
-            raise ValueError("candidate value length must match its source bounds")
+        self._check_geometry(self.value)
         if not (self.has_explicit_acceptance or self.has_fallback_protection):
             raise ValueError("candidate requires an admitted protection state")
         lineage = set(self.lineage)
@@ -389,6 +372,11 @@ class EntitySchema(BaseModel):
     end_position: int = Field(default=0)
     score: float = Field(default=0.0)
     source: str = Field(default="detector")
+
+    def span_in(self, text: str) -> Span | None:
+        """The entity's range in ``text`` when it is a non-empty range of it, else ``None``: the entity stays lenient
+        and a reader that needs a range asks here."""
+        return Span.in_text(self.start_position, self.end_position, text)
 
 
 class EntitiesSchema(BaseModel):

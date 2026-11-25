@@ -32,7 +32,7 @@ from bisect import bisect_right
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from operator import attrgetter
-from typing import Any, Literal, NoReturn, TypeVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, TypeVar, overload
 
 from anonymizer.config.entity_labels import normalize_entity_label
 
@@ -121,6 +121,43 @@ class Span:
 
     def shifted(self, offset: int) -> Span:
         return Span(self.start + offset, self.end + offset)
+
+
+def geometry_problem(noun: str, start: int, end: int, value: str | None = None, *, empty: bool = False) -> str:
+    """The first rule a record's range breaks, as its validation message, or "": the end does not precede the start
+    (``empty``) or the range holds at least one character, and a ``value`` fills it exactly."""
+    if empty:
+        if end < start:
+            return f"{noun} end must not precede its start"
+    elif end <= start:
+        return f"{noun} must cover a non-empty span"
+    if value is not None and len(value) != end - start:
+        return f"{noun} value length must match its source bounds"
+    return ""
+
+
+class Positioned:
+    """A record with ``start_position`` and ``end_position``: its ``span``, and the one geometry rule for a validator.
+
+    It holds no fields, so a pydantic model or a dataclass keeps its own fields and key order. ``_noun`` names the
+    record in messages; ``_empty`` allows an empty range.
+    """
+
+    __slots__ = ()
+    _noun: ClassVar[str]
+    _empty: ClassVar[bool] = False
+    if TYPE_CHECKING:
+        start_position: int
+        end_position: int
+
+    @property
+    def span(self) -> Span:
+        return Span(self.start_position, self.end_position)
+
+    def _check_geometry(self, value: str | None = None) -> None:
+        """Raise ``ValueError`` with ``geometry_problem``'s message when the range breaks the rule."""
+        if problem := geometry_problem(self._noun, self.start_position, self.end_position, value, empty=self._empty):
+            raise ValueError(problem)
 
 
 OrderField = Literal["start", "end", "-end", "label", "position"]
