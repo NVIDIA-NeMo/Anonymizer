@@ -446,6 +446,10 @@ written output, and `result.id_column` names it. The option used to be accepted 
 generated ids, the output did not keep the id column, and `result.id_column` was `None`.
 - What to do: make the id column's values present and unique, or leave `id_column` unset.
 
+**CLI errors no longer echo input values.** A rejected flag or environment value is reported by location and
+message only, so a rejected `ANONYMIZER_HASH_KEY` is not printed. `--entity-labels` and `--regex-rules` take one value
+per flag; repeat the flag for more. `--regex-rules` also takes a JSON list of rules.
+
 **SDK-only.** A `RegexRule.validator` given as a Python callable, the `Anonymizer` arguments that take live objects
 (`data_designer`, `detection_workflow`, the runners) and in-memory `TextRecordsInput` have no CLI form. A test keeps
 every other config field reachable as a flag.
