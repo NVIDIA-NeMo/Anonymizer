@@ -275,11 +275,17 @@ class RatBenchReidentificationMeasurement(_MeasurementEnvelope):
     record_type: Literal["rat_bench_reidentification"]
     rows_processed: NonNegativeInt
     rows_failed: NonNegativeInt
+    rows_requested: NonNegativeInt | None = None
+    rows_scored: NonNegativeInt | None = None
+    rows_missing: NonNegativeInt | None = None
+    rows_excluded: NonNegativeInt | None = None
     reidentified_rows: NonNegativeInt
     direct_reidentified_rows: NonNegativeInt
     correctmatch_reidentified_rows: NonNegativeInt
     reid_error_rows: NonNegativeInt
     reidentification_rate_pct: Percentage
+    reidentification_rate_ci95_low_pct: Percentage | None = None
+    reidentification_rate_ci95_high_pct: Percentage | None = None
     coverage_pct: Percentage
     correct_guess_count: NonNegativeInt
     incorrect_guess_count: NonNegativeInt
@@ -293,6 +299,10 @@ class RatBenchReidentificationMeasurement(_MeasurementEnvelope):
 
     @model_validator(mode="after")
     def validate_summary_counts(self) -> RatBenchReidentificationMeasurement:
+        if self.rows_requested is not None and self.rows_processed > self.rows_requested:
+            raise ValueError("rows_processed cannot exceed rows_requested")
+        if self.rows_scored is not None and self.rows_scored != self.rows_processed - self.reid_error_rows:
+            raise ValueError("rows_scored must equal rows_processed minus reid_error_rows")
         if self.reidentified_rows > self.rows_processed:
             raise ValueError("reidentified_rows cannot exceed rows_processed")
         if self.direct_reidentified_rows + self.correctmatch_reidentified_rows != self.reidentified_rows:
@@ -301,14 +311,27 @@ class RatBenchReidentificationMeasurement(_MeasurementEnvelope):
             )
         if self.reid_error_rows > self.rows_processed:
             raise ValueError("reid_error_rows cannot exceed rows_processed")
+        if self.rows_requested is not None:
+            scored = self.rows_processed - self.reid_error_rows
+            accounted = scored + self.rows_failed + (self.rows_missing or 0) + (self.rows_excluded or 0)
+            if accounted > self.rows_requested:
+                raise ValueError("scored, failed, missing, and excluded rows cannot exceed rows_requested")
         if self.correct_guess_count + self.incorrect_guess_count != self.total_guess_count:
             raise ValueError("correct_guess_count plus incorrect_guess_count must equal total_guess_count")
 
-        expected_reidentification_rate = (
-            self.reidentified_rows / self.rows_processed * 100.0 if self.rows_processed else 0.0
-        )
+        denominator = self.rows_requested if self.rows_requested is not None else self.rows_processed
+        expected_reidentification_rate = self.reidentified_rows / denominator * 100.0 if denominator else 0.0
         if abs(self.reidentification_rate_pct - expected_reidentification_rate) > 1e-6:
-            raise ValueError("reidentification_rate_pct must match reidentified_rows / rows_processed")
+            raise ValueError("reidentification_rate_pct must match reidentified_rows / the requested or processed rows")
+        low, high = self.reidentification_rate_ci95_low_pct, self.reidentification_rate_ci95_high_pct
+        if (low is None) != (high is None):
+            raise ValueError("reidentification confidence interval requires both bounds")
+        if (
+            low is not None
+            and high is not None
+            and (low > high or not low - 1e-6 <= self.reidentification_rate_pct <= high + 1e-6)
+        ):
+            raise ValueError("reidentification confidence interval must contain the reported rate")
 
         expected_coverage = (
             self.incorrect_guess_count / self.total_guess_count * 100.0 if self.total_guess_count else 0.0
