@@ -20,10 +20,9 @@ def test_invalid_source_exits(tmp_path: Path) -> None:
         app(
             [
                 "run",
+                "redact",
                 "--source",
                 str(tmp_path / "nonexistent.csv"),
-                "--replace",
-                "redact",
             ]
         )
     assert exc_info.value.code != 0
@@ -32,7 +31,7 @@ def test_invalid_source_exits(tmp_path: Path) -> None:
 def test_missing_required_args_exits() -> None:
     """Omitting the required --source flag causes SystemExit."""
     with pytest.raises(SystemExit):
-        app(["run", "--replace", "redact"])
+        app(["run", "redact"])
 
 
 @pytest.fixture
@@ -65,7 +64,7 @@ def test_error_handler_exits_nonzero(csv_file: Path, exc: Exception, subcommand:
 
     with patch("anonymizer.interface.cli.main.Anonymizer", return_value=mock_anonymizer):
         with pytest.raises(SystemExit) as exc_info:
-            app([subcommand, "--source", str(csv_file), "--replace", "redact"])
+            app([subcommand, "redact", "--source", str(csv_file)])
 
     assert exc_info.value.code != 0
 
@@ -74,7 +73,7 @@ def test_bad_output_format_exits_before_pipeline(csv_file: Path) -> None:
     """An unsupported output extension is rejected before the pipeline runs."""
     with patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
         with pytest.raises(SystemExit) as exc_info:
-            app(["run", "--source", str(csv_file), "--replace", "redact", "--output", "/tmp/out.xyz"])
+            app(["run", "redact", "--source", str(csv_file), "--output", "/tmp/out.xyz"])
         assert exc_info.value.code != 0
     mock_cls.return_value.run.assert_not_called()
 
@@ -83,7 +82,7 @@ def test_output_same_as_source_exits(csv_file: Path) -> None:
     """Output path identical to source is rejected before the pipeline runs."""
     with patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
         with pytest.raises(SystemExit) as exc_info:
-            app(["run", "--source", str(csv_file), "--replace", "redact", "--output", str(csv_file)])
+            app(["run", "redact", "--source", str(csv_file), "--output", str(csv_file)])
         assert exc_info.value.code != 0
     mock_cls.return_value.run.assert_not_called()
 
@@ -97,10 +96,9 @@ def test_threshold_out_of_range_exits(tmp_path: Path) -> None:
         app(
             [
                 "run",
+                "redact",
                 "--source",
                 str(csv_file),
-                "--replace",
-                "redact",
                 "--gliner-threshold",
                 "2.0",
             ]

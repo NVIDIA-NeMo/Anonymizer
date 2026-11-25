@@ -363,10 +363,13 @@ class Detect(BaseModel):
 class Rewrite(BaseModel):
     """Configuration for rewrite-mode execution."""
 
-    privacy_goal: PrivacyGoal | None = Field(
+    privacy_goal: Annotated[PrivacyGoal | None, cyclopts.Parameter(name="*")] = Field(
         default=None, description="Structured privacy goal. Auto-populated with defaults if not provided."
     )
-    instructions: str | None = Field(default=None, description="Additional instructions for the rewrite LLM.")
+    # Never read by the rewrite (config-flow audit F10); not offered on the CLI.
+    instructions: Annotated[str | None, cyclopts.Parameter(parse=False)] = Field(
+        default=None, description="Additional instructions for the rewrite LLM."
+    )
     risk_tolerance: RiskTolerance = Field(
         default=RiskTolerance.low,
         description="Preset controlling repair thresholds and review flagging.",

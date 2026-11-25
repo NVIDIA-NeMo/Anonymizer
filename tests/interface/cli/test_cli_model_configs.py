@@ -242,10 +242,9 @@ def test_cli_missing_model_configs_exits_cleanly(csv_file: Path, capsys: pytest.
         app(
             [
                 "run",
+                "redact",
                 "--source",
                 str(csv_file),
-                "--replace",
-                "redact",
                 "--model-configs",
                 "nonexistent/models.yaml",
             ]
@@ -264,10 +263,9 @@ def test_cli_missing_model_providers_exits_cleanly(csv_file: Path, capsys: pytes
             app(
                 [
                     "run",
+                    "redact",
                     "--source",
                     str(csv_file),
-                    "--replace",
-                    "redact",
                     "--model-providers",
                     "nonexistent/providers.yaml",
                 ]
@@ -283,10 +281,9 @@ def test_cli_oserror_exits_cleanly(csv_file: Path, capsys: pytest.CaptureFixture
             app(
                 [
                     "run",
+                    "redact",
                     "--source",
                     str(csv_file),
-                    "--replace",
-                    "redact",
                     "--model-configs",
                     "/secure/models.yaml",
                 ]
@@ -309,10 +306,9 @@ def test_cli_model_configs_file_path_accepted(csv_file: Path, model_configs_yaml
             app(
                 [
                     "run",
+                    "redact",
                     "--source",
                     str(csv_file),
-                    "--replace",
-                    "redact",
                     "--model-configs",
                     str(model_configs_yaml),
                 ]
@@ -336,10 +332,9 @@ def test_cli_model_providers_file_path_accepted(csv_file: Path, providers_yaml: 
             app(
                 [
                     "run",
+                    "redact",
                     "--source",
                     str(csv_file),
-                    "--replace",
-                    "redact",
                     "--model-providers",
                     str(providers_yaml),
                 ]
@@ -356,10 +351,9 @@ def test_cli_old_confusing_error_message_is_gone(csv_file: Path, capsys: pytest.
         app(
             [
                 "run",
+                "redact",
                 "--source",
                 str(csv_file),
-                "--replace",
-                "redact",
                 "--model-configs",
                 "configs/models_super.yaml",
             ]

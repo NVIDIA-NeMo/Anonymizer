@@ -421,6 +421,28 @@ an `Error: ...` line. It ends the command with its traceback, as a wiring fault.
 
 The CLI is generated from the config models, so a config field is a flag under the field's own name.
 
+**The mode is a subcommand.** `anonymizer run --replace <strategy>` becomes `anonymizer run <strategy>`
+(`redact`, `hash`, `annotate`, `substitute`), and `anonymizer run --rewrite` becomes `anonymizer run rewrite`. The
+same holds for `preview` and `validate`.
+- What to do: move the strategy name, or `rewrite`, right after the command, and drop `--replace` and `--rewrite`.
+
+**A flag of another mode or strategy is an unknown option.** For example `run redact --digest-length 8`,
+`run rewrite --format-template ...` and `run rewrite --instructions ...` exit with `Unknown option`. They used to be
+dropped, most without a warning. `--instructions` now belongs to `substitute` only: `Rewrite.instructions` was never
+read and has no flag.
+- What to do: remove the flag, or use the subcommand it belongs to (`run substitute --help` lists its flags).
+
+**New flags from the models.** `substitute` gains `--consistency`; `rewrite` gains `--use-combined-graph` and
+`--strict-entity-protection`. `--protect` and `--preserve` keep their names and their defaults now come from
+`PrivacyGoal`. Help text is each field's description.
+
+**`--algorithm` takes only `sha256`, as before; the hash key still comes from `ANONYMIZER_HASH_KEY` only.** There is
+no `--key` flag, so the key stays out of argv and shell history.
+
+**SDK-only.** A `RegexRule.validator` given as a Python callable, the `Anonymizer` arguments that take live objects
+(`data_designer`, `detection_workflow`, the runners) and in-memory `TextRecordsInput` have no CLI form. A test keeps
+every other config field reachable as a flag.
+
 - `RegexLimits.max_matches_per_rule` accepts a string of digits, such as `"5"`. Floats and bools are still refused.
   `--regex-limits.max-matches-per-rule` used to reject every value.
 - `Detect.entity_label_examples` also accepts a JSON object as text, and `Detect.regex_rules` a JSON list or one JSON

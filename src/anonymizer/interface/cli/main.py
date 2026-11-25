@@ -1,15 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+"""The ``anonymizer`` CLI, generated from the config models.
+
+Each of ``run``, ``preview`` and ``validate`` has one subcommand per mode: the replace strategies in
+``ReplaceMethod`` and ``rewrite``. A subcommand's flags are the fields of ``AnonymizerInput``, ``Detect`` and that
+mode's model, under the fields' own names and with their descriptions as help, plus ``RunOptions``. A flag of
+another mode is an unknown option. The models hold every default; this module holds none.
+"""
+
 from __future__ import annotations
 
 import functools
 import logging
 import os
 import sys
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, ClassVar, Literal
+from typing import Annotated, Any, get_args
 
 # When invoked via the CLI entry point, telemetry deployment type defaults to "cli".
 # Anonymizer's SDK path sets "sdk" via os.environ.setdefault in Anonymizer.__init__,
@@ -19,14 +28,10 @@ os.environ.setdefault("NEMO_DEPLOYMENT_TYPE", "cli")
 logger = logging.getLogger("anonymizer.cli")
 
 import cyclopts
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite
-from anonymizer.config.replace_strategies import HASH_KEY_ENV, Annotate, Hash, Redact, Substitute
-from anonymizer.config.rewrite import (
-    PrivacyGoal,
-    RiskTolerance,
-)
+from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.engine.graph_core.kernel import GraphRejection
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.interface.anonymizer import Anonymizer
@@ -34,43 +39,16 @@ from anonymizer.interface.cli._output import write_result
 from anonymizer.interface.errors import AnonymizerIOError, InvalidConfigError
 from anonymizer.logging import LoggingConfig, configure_logging
 
-app = cyclopts.App(help="NeMo Anonymizer CLI")
+# One subcommand per mode, from the members of ReplaceMethod (by their ``kind``) plus rewrite.
+MODES: dict[str, type[BaseModel]] = {
+    cls.model_fields["kind"].default: cls for cls in get_args(get_args(ReplaceMethod)[0])
+} | {"rewrite": Rewrite}
 
 
-ReplaceChoice = Literal["redact", "hash", "annotate", "substitute"]
-RiskToleranceChoice = Literal["minimal", "low", "moderate", "high"]
+@dataclass(frozen=True)
+class RunOptions:
+    """Options that are not config: how the ``Anonymizer`` is built, telemetry and logging."""
 
-_STRATEGY_CLS = {
-    "substitute": Substitute,
-    "redact": Redact,
-    "hash": Hash,
-    "annotate": Annotate,
-}
-
-
-@dataclass
-class CliOpts:
-    """CLI options for anonymizer commands.
-
-    Exactly one of ``--replace`` or ``--rewrite`` must be provided.
-
-    Replace-specific flags (``format_template``, ``normalize_label``,
-    ``algorithm``, ``digest_length``) only apply when ``--replace`` is set.
-    ``--replace hash`` reads its required key from ``ANONYMIZER_HASH_KEY``.
-
-    Rewrite-specific flags (``protect``, ``preserve``, ``risk_tolerance``,
-    ``max_repair_iterations``) only apply when ``--rewrite`` is set.
-    """
-
-    # -- mode selection (exactly one required) --
-    replace: Annotated[
-        ReplaceChoice | None,
-        cyclopts.Parameter(help=f"Replace strategy. hash reads its required secret key from {HASH_KEY_ENV}."),
-    ] = None
-    rewrite: bool = False
-
-    # -- shared --
-    detect: Annotated[Detect, cyclopts.Parameter(name="*")] = field(default_factory=Detect)
     model_configs: Annotated[
         str | None,
         cyclopts.Parameter(
@@ -93,34 +71,7 @@ class CliOpts:
         str | None,
         cyclopts.Parameter(help="Directory for intermediate pipeline artifacts. Defaults to .anonymizer-artifacts."),
     ] = None
-    verbose: bool = False
-    debug: bool = False
-
-    # -- replace-specific --
-    format_template: Annotated[
-        str | None,
-        cyclopts.Parameter(
-            help=(
-                "Output template for the replacement token. "
-                "Redact supports {label}; Annotate requires {text} and {label}; "
-                "Hash requires {digest} and optionally {label}. Not used by substitute."
-            )
-        ),
-    ] = None
-    normalize_label: bool = True
-    algorithm: Annotated[Literal["sha256"], cyclopts.Parameter(help="Hash algorithm (HMAC-SHA256).")] = "sha256"
-    digest_length: Annotated[int, cyclopts.Parameter(help="Hash digest length (6-64).")] = 12
-
-    # -- rewrite-specific --
-    protect: Annotated[str | None, cyclopts.Parameter(help="What to protect (privacy goal).")] = None
-    preserve: Annotated[str | None, cyclopts.Parameter(help="What to preserve (utility goal).")] = None
-    risk_tolerance: Annotated[RiskToleranceChoice, cyclopts.Parameter(help="Risk tolerance preset.")] = "low"
-    max_repair_iterations: Annotated[int, cyclopts.Parameter(help="Max evaluate-repair iterations.")] = 3
-
-    # -- shared between substitute (replace) and rewrite --
-    instructions: Annotated[str | None, cyclopts.Parameter(help="Extra instructions for the LLM.")] = None
-
-    # -- telemetry --
+    # AnonymizerConfig.emit_telemetry; the other AnonymizerConfig fields are the subcommand and its flags.
     emit_telemetry: Annotated[
         bool,
         cyclopts.Parameter(
@@ -131,35 +82,17 @@ class CliOpts:
             )
         ),
     ] = True
-
-    _REPLACE_ONLY_FLAGS: ClassVar[tuple[str, ...]] = ("format_template",)
-    _REWRITE_ONLY_FLAGS: ClassVar[tuple[str, ...]] = ("protect", "preserve")
-
-    def __post_init__(self) -> None:
-        if self.replace and self.rewrite:
-            raise InvalidConfigError("Cannot use both --replace and --rewrite. Choose one mode.")
-        self._warn_cross_mode_flags()
-
-    def _warn_cross_mode_flags(self) -> None:
-        if self.rewrite:
-            stray = [f for f in self._REPLACE_ONLY_FLAGS if getattr(self, f) is not None]
-            if stray:
-                logger.warning(
-                    "Ignoring replace-only flag(s) in rewrite mode: %s",
-                    ", ".join(f"--{f.replace('_', '-')}" for f in stray),
-                )
-        elif self.replace:
-            stray = [f for f in self._REWRITE_ONLY_FLAGS if getattr(self, f) not in (None, False)]
-            if stray:
-                logger.warning(
-                    "Ignoring rewrite-only flag(s) in replace mode: %s",
-                    ", ".join(f"--{f.replace('_', '-')}" for f in stray),
-                )
+    verbose: Annotated[bool, cyclopts.Parameter(help="Verbose logging.")] = False
+    debug: Annotated[bool, cyclopts.Parameter(help="Debug logging.")] = False
 
 
-def _cli_error_handler(fn):
+# ``--empty-<list>`` flags would only restate a list's empty default, so they are turned off.
+app = cyclopts.App(help="NeMo Anonymizer CLI", default_parameter=cyclopts.Parameter(negative_iterable=()))
+
+
+def _cli_error_handler(fn: Callable[..., None]) -> Callable[..., None]:
     @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: Any, **kwargs: Any) -> None:
         try:
             return fn(*args, **kwargs)
         except GraphRejection:
@@ -171,88 +104,37 @@ def _cli_error_handler(fn):
     return wrapper
 
 
-def _build_replace_strategy(opts: CliOpts) -> Substitute | Redact | Hash | Annotate:
-    """Build a replace strategy instance from CLI args.
-
-    Only passes non-default kwargs so Pydantic field defaults are preserved.
-    """
-    if opts.replace is None:
-        raise ValueError("A replacement strategy is required in replace mode.")
-    cls = _STRATEGY_CLS[opts.replace]
-    kw: dict = {}
-    if opts.format_template is not None and "format_template" in cls.model_fields:
-        kw["format_template"] = opts.format_template
-    if cls is Redact:
-        kw["normalize_label"] = opts.normalize_label
-    if cls is Hash:
-        kw["algorithm"] = opts.algorithm
-        kw["digest_length"] = opts.digest_length
-        # The key stays out of argv and shell history; Hash names the fix when it is unset.
-        kw["key"] = os.environ.get(HASH_KEY_ENV)
-    if cls is Substitute and opts.instructions is not None:
-        kw["instructions"] = opts.instructions
-    return cls(**kw)
-
-
-def _build_rewrite_config(opts: CliOpts) -> Rewrite:
-    """Build a Rewrite config from CLI args."""
-    privacy_goal = None
-    if opts.protect or opts.preserve:
-        goal = {"protect": opts.protect, "preserve": opts.preserve}
-        privacy_goal = PrivacyGoal(**{name: text for name, text in goal.items() if text})
-    return Rewrite(
-        privacy_goal=privacy_goal,
-        instructions=opts.instructions,
-        risk_tolerance=RiskTolerance(opts.risk_tolerance),
-        max_repair_iterations=opts.max_repair_iterations,
-    )
-
-
-def _build_config_and_anonymizer(opts: CliOpts) -> tuple[AnonymizerConfig, Anonymizer]:
-    """Build the shared AnonymizerConfig and Anonymizer from CLI args."""
-    if opts.rewrite:
-        strategy = _build_rewrite_config(opts)
-        config = AnonymizerConfig(rewrite=strategy, detect=opts.detect, emit_telemetry=opts.emit_telemetry)
-    elif opts.replace:
-        strategy = _build_replace_strategy(opts)
-        config = AnonymizerConfig(replace=strategy, detect=opts.detect, emit_telemetry=opts.emit_telemetry)
+def _build(
+    mode: str, strategy: BaseModel | None, detect: Detect | None, options: RunOptions
+) -> tuple[AnonymizerConfig, Anonymizer]:
+    """Build the config and the Anonymizer. A model the user gave no flag for is built from its defaults."""
+    if strategy is None:
+        strategy = MODES[mode]()
+    detect = detect if detect is not None else Detect()
+    if isinstance(strategy, Rewrite):
+        config = AnonymizerConfig(rewrite=strategy, detect=detect, emit_telemetry=options.emit_telemetry)
     else:
-        raise InvalidConfigError("Specify --replace <strategy> or --rewrite.")
-
+        config = AnonymizerConfig.model_validate(
+            {"replace": strategy, "detect": detect, "emit_telemetry": options.emit_telemetry}
+        )
+    if options.debug:
+        configure_logging(LoggingConfig.debug())
+    elif options.verbose:
+        configure_logging(LoggingConfig.verbose())
+    else:
+        configure_logging(LoggingConfig.default())
     anonymizer = Anonymizer(
-        model_configs=opts.model_configs,
-        model_providers=opts.model_providers,
-        artifact_path=opts.artifact_path,
+        model_configs=options.model_configs,
+        model_providers=options.model_providers,
+        artifact_path=options.artifact_path,
     )
     return config, anonymizer
 
 
-def _configure_logging(opts: CliOpts) -> None:
-    if opts.debug:
-        configure_logging(LoggingConfig.debug())
-    elif opts.verbose:
-        configure_logging(LoggingConfig.verbose())
-    else:
-        configure_logging(LoggingConfig.default())
-
-
-@app.command
-@_cli_error_handler
-def run(
-    *,
-    data: Annotated[AnonymizerInput, cyclopts.Parameter(name="*")],
-    opts: Annotated[CliOpts, cyclopts.Parameter(name="*")] = CliOpts(),
-    output: Annotated[
-        str | None,
-        cyclopts.Parameter(
-            help="Output file path (.csv or .parquet). Defaults to source stem + _anonymized or _rewritten."
-        ),
-    ] = None,
-) -> None:
-    """Run the full anonymization pipeline (detection + replacement or rewrite)."""
+def _output_path(data: AnonymizerInput, mode: str, output: str | None) -> str:
     if output is None:
         source = Path(data.source)
-        suffix = "_rewritten" if opts.rewrite else "_anonymized"
+        suffix = "_rewritten" if mode == "rewrite" else "_anonymized"
         output = str(source.parent / f"{source.stem}{suffix}{source.suffix}")
     output_path = Path(output).resolve()
     if output_path.suffix.lower() not in SUPPORTED_IO_FORMATS:
@@ -261,40 +143,72 @@ def run(
         )
     if output_path == Path(data.source).resolve():
         raise InvalidConfigError(f"Output path must differ from source: {output_path}")
-    _configure_logging(opts)
-    config, anonymizer = _build_config_and_anonymizer(opts)
-    result = anonymizer.run(config=config, data=data)
-    written = write_result(result, output)
-    print(f"Output written to: {written}")
+    return output
 
 
-@app.command
-@_cli_error_handler
-def preview(
-    *,
-    data: Annotated[AnonymizerInput, cyclopts.Parameter(name="*")],
-    opts: Annotated[CliOpts, cyclopts.Parameter(name="*")] = CliOpts(),
-    num_records: int = 10,
-) -> None:
-    """Run the pipeline on a subset of records for quick inspection."""
-    _configure_logging(opts)
-    config, anonymizer = _build_config_and_anonymizer(opts)
-    result = anonymizer.preview(config=config, data=data, num_records=num_records)
-    print(result.dataframe.to_string(max_colwidth=80))
+def _command(verb: str, mode: str) -> Callable[..., None]:
+    """The ``<verb> <mode>`` command. Its annotations are set here, since the mode's model is only known now."""
+    if verb == "run":
+
+        def command(*, data, strategy=None, detect=None, options=RunOptions(), output=None) -> None:
+            path = _output_path(data, mode, output)
+            config, anonymizer = _build(mode, strategy, detect, options)
+            result = anonymizer.run(config=config, data=data)
+            print(f"Output written to: {write_result(result, path)}")
+
+        extra: dict[str, Any] = {
+            "output": Annotated[
+                str | None,
+                cyclopts.Parameter(
+                    help="Output file path (.csv or .parquet). Defaults to source stem + _anonymized or _rewritten."
+                ),
+            ]
+        }
+        summary = "Run the full pipeline"
+    elif verb == "preview":
+
+        def command(*, data, strategy=None, detect=None, options=RunOptions(), num_records=10) -> None:
+            config, anonymizer = _build(mode, strategy, detect, options)
+            result = anonymizer.preview(config=config, data=data, num_records=num_records)
+            print(result.dataframe.to_string(max_colwidth=80))
+
+        extra = {"num_records": Annotated[int, cyclopts.Parameter(help="Number of records to preview.")]}
+        summary = "Run the pipeline on the first records for quick inspection"
+    else:
+
+        def command(*, data, strategy=None, detect=None, options=RunOptions()) -> None:
+            config, anonymizer = _build(mode, strategy, detect, options)
+            anonymizer.validate_config(config)
+            print("Config is valid.")
+
+        extra = {}
+        summary = "Validate that the config is compatible with the model selections"
+
+    group = "Rewrite" if mode == "rewrite" else mode.title()
+    command.__annotations__ = {
+        "data": Annotated[AnonymizerInput, cyclopts.Parameter(name="*", group="Input")],
+        # The mode's model is a runtime value here, which a type checker cannot read as a type.
+        "strategy": Annotated[MODES[mode] | None, cyclopts.Parameter(name="*", group=group)],  # ty: ignore[invalid-type-form]
+        "detect": Annotated[Detect | None, cyclopts.Parameter(name="*", group="Detect")],
+        "options": Annotated[RunOptions, cyclopts.Parameter(name="*", group="Run")],
+        **extra,
+        "return": None,
+    }
+    label = "rewrite" if mode == "rewrite" else f"replace with {mode}"
+    command.__doc__ = f"{summary} ({label})."
+    command.__name__ = mode
+    return _cli_error_handler(command)
 
 
-@app.command
-@_cli_error_handler
-def validate(
-    *,
-    data: Annotated[AnonymizerInput, cyclopts.Parameter(name="*")],
-    opts: Annotated[CliOpts, cyclopts.Parameter(name="*")] = CliOpts(),
-) -> None:
-    """Validate that the active config is compatible with model selections."""
-    _configure_logging(opts)
-    config, anonymizer = _build_config_and_anonymizer(opts)
-    anonymizer.validate_config(config)
-    print("Config is valid.")
+for _verb, _help in (
+    ("run", "Run the full anonymization pipeline (detection + replacement or rewrite)."),
+    ("preview", "Run the pipeline on a subset of records for quick inspection."),
+    ("validate", "Validate that the active config is compatible with model selections."),
+):
+    _sub = cyclopts.App(name=_verb, help=_help)
+    for _mode in MODES:
+        _sub.command(_command(_verb, _mode), name=_mode)
+    app.command(_sub)
 
 
 def main() -> None:

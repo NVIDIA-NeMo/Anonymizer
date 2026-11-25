@@ -31,6 +31,10 @@ def _normalize_replace_kind(value: Any) -> Any:
     return value
 
 
+# A strategy's kind is the CLI subcommand that picks it (``anonymizer run redact``), not a flag.
+_KIND_IS_THE_SUBCOMMAND = cyclopts.Parameter(parse=False)
+
+
 class ReplaceMethodBase(BaseModel):
     """Shared configuration for all replacement methods."""
 
@@ -57,7 +61,7 @@ class ReplaceMethodBase(BaseModel):
 class Substitute(ReplaceMethodBase):
     """Replace entities with LLM-generated synthetic values."""
 
-    kind: Literal["substitute"] = "substitute"
+    kind: Annotated[Literal["substitute"], _KIND_IS_THE_SUBCOMMAND] = "substitute"
     instructions: str | None = Field(
         default=None, description="Additional instructions for the LLM replacement generator."
     )
@@ -78,7 +82,7 @@ class Substitute(ReplaceMethodBase):
 class Redact(ReplaceMethodBase):
     """Replace each entity with a configurable redaction template."""
 
-    kind: Literal["redact"] = "redact"
+    kind: Annotated[Literal["redact"], _KIND_IS_THE_SUBCOMMAND] = "redact"
     format_template: str = Field(
         default="[REDACTED_{label}]", description="Nonempty redaction template with optional {label} placeholder."
     )
@@ -126,7 +130,7 @@ class Redact(ReplaceMethodBase):
 class Annotate(ReplaceMethodBase):
     """Tag each entity with a readable label token."""
 
-    kind: Literal["annotate"] = "annotate"
+    kind: Annotated[Literal["annotate"], _KIND_IS_THE_SUBCOMMAND] = "annotate"
     format_template: str = Field(
         default="<{text}, {label}>", description="Template with {text} and {label} placeholders."
     )
@@ -186,7 +190,7 @@ class Hash(ReplaceMethodBase):
     # Validation errors would otherwise echo the plaintext key.
     model_config = ConfigDict(hide_input_in_errors=True)
 
-    kind: Literal["hash"] = "hash"
+    kind: Annotated[Literal["hash"], _KIND_IS_THE_SUBCOMMAND] = "hash"
     algorithm: Literal["sha256"] = Field(
         default="sha256", description="Hash algorithm. Only 'sha256' is accepted: the digest is always HMAC-SHA256."
     )
