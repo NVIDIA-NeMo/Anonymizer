@@ -5,9 +5,16 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
+from data_designer.engine.models.clients.errors import ProviderError
+from data_designer.engine.models.errors import (
+    ModelBadRequestError,
+    ModelUnprocessableEntityError,
+    ModelUnsupportedParamsError,
+)
 from data_designer.engine.models.recipes.response_recipes import PydanticResponseRecipe
 from jinja2 import BaseLoader, Environment, StrictUndefined
 
@@ -17,6 +24,7 @@ from anonymizer.engine.constants import (
     COL_AUGMENTATION_ADMISSION_RESULTS,
     COL_AUGMENTATION_ATTEMPTS,
     COL_AUGMENTATION_DETECTION_RESULT,
+    COL_AUGMENTATION_RESPONSE_FORMAT,
     COL_AUGMENTED_CANDIDATES,
     COL_AUGMENTED_ENTITIES,
     COL_TEXT,
@@ -46,6 +54,7 @@ from anonymizer.engine.schemas import (
     SourceView,
     ValidationRequestDecisionSets,
 )
+from anonymizer.engine.spans import Span
 
 logger = logging.getLogger("anonymizer.detection.augmentation")
 
@@ -57,13 +66,165 @@ _PROMPT_ENV = Environment(
 )
 _MAX_GROUNDING_ATTEMPTS = 2
 
+ResponseFormatMode = Literal["sent", "fallback", "ignored", "unconstrained"]
+# Higher wins when a row's grounding attempts were sent differently.
+_MODE_PRECEDENCE: dict[ResponseFormatMode, int] = {"unconstrained": 0, "sent": 1, "ignored": 2, "fallback": 3}
+_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {"name": "AugmentedEntitiesSchema", "schema": AugmentedEntitiesSchema.model_json_schema()},
+}
+_FENCE_INSTRUCTION = "* Your JSON response must be returned within a Markdown, ```json code fence.\n"
+_REJECTION_ERRORS = (ModelBadRequestError, ModelUnsupportedParamsError, ModelUnprocessableEntityError)
+_REJECTION_MARKERS = ("response_format", "json_schema", "guided", "grammar")
+
+
+class _ConstrainedRecipe(PydanticResponseRecipe):
+    """The augmenter recipe without the fence instruction, for schema-constrained requests."""
+
+    @property
+    def task_instructions(self) -> str:
+        return super().task_instructions.replace(_FENCE_INSTRUCTION, "", 1)
+
+
+_PLAIN_RECIPE = PydanticResponseRecipe(data_type=AugmentedEntitiesSchema)
+_CONSTRAINED_RECIPE = _ConstrainedRecipe(data_type=AugmentedEntitiesSchema)
+
+
+@dataclass
+class _ResponseFormatSwitch:
+    """Whether augmenter requests carry ``response_format``, for one column in one DataDesigner call."""
+
+    send: bool
+    fell_back: bool = False
+    warned_ignored: bool = False
+
+    def switch_off(self) -> None:
+        if not self.fell_back:
+            logger.warning(
+                "augmenter request with response_format was rejected; retried without it, and later requests omit it"
+            )
+        self.send = False
+        self.fell_back = True
+
+    def mode_for_reply(self, trace: Any) -> ResponseFormatMode:
+        if not _reply_is_fenced(trace):
+            return "sent"
+        if not self.warned_ignored:
+            self.warned_ignored = True
+            logger.warning("augmenter reply was fenced although response_format was sent; the backend may ignore it")
+        return "ignored"
+
+
+def build_response_format_switch(
+    *, provider_type: str, extra_bodies: Iterable[dict[str, Any] | None]
+) -> _ResponseFormatSwitch:
+    """Send ``response_format`` to OpenAI-compatible providers unless an ``extra_body`` already sets the key."""
+    user_set = any(body is not None and "response_format" in body for body in extra_bodies)
+    if user_set and provider_type == "openai":
+        logger.info("augmenter response_format is set in extra_body; that setting is used instead of the schema")
+    return _ResponseFormatSwitch(send=provider_type == "openai" and not user_set)
+
+
+def _reply_is_fenced(trace: Any) -> bool:
+    return any(
+        getattr(message, "role", None) == "assistant"
+        and isinstance(message.content, str)
+        and message.content.lstrip().startswith("```")
+        for message in trace or ()
+    )
+
+
+def _is_response_format_rejection(exc: BaseException) -> bool:
+    """Match only a provider 400/422 that names structured output; read the provider error DD chains."""
+    provider_error = exc.__context__
+    return (
+        isinstance(exc, _REJECTION_ERRORS)
+        and isinstance(provider_error, ProviderError)
+        and provider_error.status_code in (400, 422)
+        and any(marker in (provider_error.message or "").lower() for marker in _REJECTION_MARKERS)
+    )
+
+
+def _request(
+    *, recipe: PydanticResponseRecipe, prompt: str, system_prompt: str | None, **kwargs: Any
+) -> dict[str, Any]:
+    return {
+        "prompt": recipe.apply_recipe_to_user_prompt(prompt),
+        "parser": recipe.parse,
+        "system_prompt": recipe.apply_recipe_to_system_prompt(system_prompt),
+        **kwargs,
+    }
+
+
+def _call(
+    facade: Any, switch: _ResponseFormatSwitch | None, *, prompt: str, system_prompt: str | None, **kwargs: Any
+) -> tuple[AugmentedEntitiesSchema, ResponseFormatMode]:
+    plain = _request(recipe=_PLAIN_RECIPE, prompt=prompt, system_prompt=system_prompt, **kwargs)
+    if switch is None or not switch.send:
+        output, _trace = facade.generate(**plain)
+        return output, "fallback" if switch is not None and switch.fell_back else "unconstrained"
+    constrained = _request(
+        recipe=_CONSTRAINED_RECIPE,
+        prompt=prompt,
+        system_prompt=system_prompt,
+        response_format=_RESPONSE_FORMAT,
+        **kwargs,
+    )
+    try:
+        output, trace = facade.generate(**constrained)
+    except _REJECTION_ERRORS as exc:
+        if not _is_response_format_rejection(exc):
+            raise
+        rejection = exc
+    else:
+        return output, switch.mode_for_reply(trace)
+    try:
+        output, _trace = facade.generate(**plain)
+    except Exception:
+        output = None
+    if output is None:  # Raised outside the handler so the original keeps its provider-error context.
+        raise rejection
+    switch.switch_off()
+    return output, "fallback"
+
+
+async def _call_async(
+    facade: Any, switch: _ResponseFormatSwitch | None, *, prompt: str, system_prompt: str | None, **kwargs: Any
+) -> tuple[AugmentedEntitiesSchema, ResponseFormatMode]:
+    plain = _request(recipe=_PLAIN_RECIPE, prompt=prompt, system_prompt=system_prompt, **kwargs)
+    if switch is None or not switch.send:
+        output, _trace = await facade.agenerate(**plain)
+        return output, "fallback" if switch is not None and switch.fell_back else "unconstrained"
+    constrained = _request(
+        recipe=_CONSTRAINED_RECIPE,
+        prompt=prompt,
+        system_prompt=system_prompt,
+        response_format=_RESPONSE_FORMAT,
+        **kwargs,
+    )
+    try:
+        output, trace = await facade.agenerate(**constrained)
+    except _REJECTION_ERRORS as exc:
+        if not _is_response_format_rejection(exc):
+            raise
+        rejection = exc
+    else:
+        return output, switch.mode_for_reply(trace)
+    try:
+        output, _trace = await facade.agenerate(**plain)
+    except Exception:
+        output = None
+    if output is None:  # Raised outside the handler so the original keeps its provider-error context.
+        raise rejection
+    switch.switch_off()
+    return output, "fallback"
+
 
 @dataclass(frozen=True)
 class _GroundedOccurrence:
     """One exact source occurrence of an augmenter response item."""
 
-    start_position: int
-    end_position: int
+    span: Span
     label: str
     item_index: int
 
@@ -93,7 +254,7 @@ def _ground_augmentation_items(
     """Keep independently grounded items without allocating observation IDs."""
     if source_view.end_position > len(canonical_text):
         raise ValueError("augmentation source view exceeds canonical text")
-    view_text = canonical_text[source_view.start_position : source_view.end_position]
+    view_text = canonical_text[source_view.span.slice]
     occurrences: list[_GroundedOccurrence] = []
     failures: list[AugmentationGroundingFailure] = []
     grounded_entities = AugmentedEntitiesSchema()
@@ -120,15 +281,8 @@ def _ground_augmentation_items(
                 )
             )
         for view_relative_start in matches:
-            canonical_start = source_view.start_position + view_relative_start
-            occurrences.append(
-                _GroundedOccurrence(
-                    start_position=canonical_start,
-                    end_position=canonical_start + len(value),
-                    label=item.label,
-                    item_index=item_index,
-                )
-            )
+            span = Span(view_relative_start, view_relative_start + len(value)).shifted(source_view.start_position)
+            occurrences.append(_GroundedOccurrence(span=span, label=item.label, item_index=item_index))
 
     return _GroundedAugmentationItems(
         grounded_entities=grounded_entities,
@@ -148,22 +302,17 @@ def _to_detection_result(
     """Assign source-ordered observation IDs after grounding and retry finish."""
     ordered_occurrences = sorted(
         occurrences,
-        key=lambda occurrence: (
-            occurrence.start_position,
-            occurrence.end_position,
-            normalize_candidate_label(occurrence.label),
-            occurrence.item_index,
-        ),
+        key=lambda occurrence: (occurrence.span, normalize_candidate_label(occurrence.label), occurrence.item_index),
     )
     observations = tuple(
         Observation(
             detection_result_id=detection_result_id,
             observation_id=f"o{observation_index}",
             source_text_ref=source_view.source_text_ref,
-            value=canonical_text[occurrence.start_position : occurrence.end_position],
+            value=canonical_text[occurrence.span.slice],
             label=occurrence.label,
-            start_position=occurrence.start_position,
-            end_position=occurrence.end_position,
+            start_position=occurrence.span.start,
+            end_position=occurrence.span.end,
             source_kind=SOURCE_KIND_AUGMENTER,
             source_instance=source_instance,
             admission_route=AdmissionRoute.direct_acceptance,
@@ -212,8 +361,11 @@ def augment_row(
     allowed_entity_labels: list[str] | None,
     excluded_entity_labels: list[str],
     system_prompt: str | None = None,
+    max_conversation_restarts: int = 0,
+    max_correction_steps: int = 0,
     enabled: bool = True,
     regex_constrained_entity_labels: list[str] | None = None,
+    response_format: _ResponseFormatSwitch | None = None,
 ) -> dict[str, Any]:
     """Generate, ground, and directly admit one row's augmentation output."""
     prepared = _prepare_augmentation(
@@ -224,13 +376,16 @@ def augment_row(
     )
     if not enabled:
         return _store_disabled_augmentation(row=row, prepared=prepared, model_alias=model_alias)
-    grounded_entities, detection_result, attempts = _generate_and_ground(
+    grounded_entities, detection_result, attempts, mode = _generate_and_ground(
         facade=facade,
+        response_format=response_format,
         prompt=prepared.prompt,
         system_prompt=system_prompt,
         canonical_text=prepared.canonical_text,
         source_view=prepared.source_view,
         model_alias=model_alias,
+        max_conversation_restarts=max_conversation_restarts,
+        max_correction_steps=max_correction_steps,
     )
     return _store_augmentation_lifecycle(
         row=row,
@@ -240,6 +395,7 @@ def augment_row(
         policy=prepared.label_policy,
         attempts=attempts,
         regex_constrained_entity_labels=regex_constrained_entity_labels,
+        response_format_mode=mode,
     )
 
 
@@ -252,8 +408,11 @@ async def augment_row_async(
     allowed_entity_labels: list[str] | None,
     excluded_entity_labels: list[str],
     system_prompt: str | None = None,
+    max_conversation_restarts: int = 0,
+    max_correction_steps: int = 0,
     enabled: bool = True,
     regex_constrained_entity_labels: list[str] | None = None,
+    response_format: _ResponseFormatSwitch | None = None,
 ) -> dict[str, Any]:
     """Async equivalent of :func:`augment_row`."""
     prepared = _prepare_augmentation(
@@ -264,13 +423,16 @@ async def augment_row_async(
     )
     if not enabled:
         return _store_disabled_augmentation(row=row, prepared=prepared, model_alias=model_alias)
-    grounded_entities, detection_result, attempts = await _generate_and_ground_async(
+    grounded_entities, detection_result, attempts, mode = await _generate_and_ground_async(
         facade=facade,
+        response_format=response_format,
         prompt=prepared.prompt,
         system_prompt=system_prompt,
         canonical_text=prepared.canonical_text,
         source_view=prepared.source_view,
         model_alias=model_alias,
+        max_conversation_restarts=max_conversation_restarts,
+        max_correction_steps=max_correction_steps,
     )
     return _store_augmentation_lifecycle(
         row=row,
@@ -280,6 +442,7 @@ async def augment_row_async(
         policy=prepared.label_policy,
         attempts=attempts,
         regex_constrained_entity_labels=regex_constrained_entity_labels,
+        response_format_mode=mode,
     )
 
 
@@ -353,24 +516,30 @@ def _find_exact_occurrences(text: str, value: str) -> tuple[int, ...]:
 def _generate_and_ground(
     *,
     facade: Any,
+    response_format: _ResponseFormatSwitch | None = None,
     prompt: str,
     system_prompt: str | None,
     canonical_text: str,
     source_view: SourceView,
     model_alias: str,
-) -> tuple[AugmentedEntitiesSchema, DetectionResult, AugmentationAttempts]:
-    recipe = PydanticResponseRecipe(data_type=AugmentedEntitiesSchema)
+    max_conversation_restarts: int,
+    max_correction_steps: int,
+) -> tuple[AugmentedEntitiesSchema, DetectionResult, AugmentationAttempts, ResponseFormatMode]:
     repair_message = ""
     attempts: list[AugmentationAttemptTrace] = []
     grounded_attempts: list[_GroundedAugmentationItems] = []
+    mode: ResponseFormatMode = "unconstrained"
     for attempt_index in range(_MAX_GROUNDING_ATTEMPTS):
-        attempt_prompt = prompt + repair_message
-        output, _trace = facade.generate(
-            prompt=recipe.apply_recipe_to_user_prompt(attempt_prompt),
-            parser=recipe.parse,
-            system_prompt=recipe.apply_recipe_to_system_prompt(system_prompt),
+        output, attempt_mode = _call(
+            facade,
+            response_format,
+            prompt=prompt + repair_message,
+            system_prompt=system_prompt,
             purpose=f"entity-augmentation-attempt-{attempt_index}",
+            max_conversation_restarts=max_conversation_restarts,
+            max_correction_steps=max_correction_steps,
         )
+        mode = max(mode, attempt_mode, key=_MODE_PRECEDENCE.__getitem__)
         grounded = _ground_augmentation_items(canonical_text=canonical_text, source_view=source_view, output=output)
         grounded_attempts.append(grounded)
         attempts.append(
@@ -380,36 +549,45 @@ def _generate_and_ground(
             break
         if attempt_index + 1 < _MAX_GROUNDING_ATTEMPTS:
             repair_message = _repair_message(output=output, failures=grounded.failures)
-    return _combine_grounded_attempts(
-        grounded_attempts=grounded_attempts,
-        attempts=attempts,
-        canonical_text=canonical_text,
-        source_view=source_view,
-        model_alias=model_alias,
+    return (
+        *_combine_grounded_attempts(
+            grounded_attempts=grounded_attempts,
+            attempts=attempts,
+            canonical_text=canonical_text,
+            source_view=source_view,
+            model_alias=model_alias,
+        ),
+        mode,
     )
 
 
 async def _generate_and_ground_async(
     *,
     facade: Any,
+    response_format: _ResponseFormatSwitch | None = None,
     prompt: str,
     system_prompt: str | None,
     canonical_text: str,
     source_view: SourceView,
     model_alias: str,
-) -> tuple[AugmentedEntitiesSchema, DetectionResult, AugmentationAttempts]:
-    recipe = PydanticResponseRecipe(data_type=AugmentedEntitiesSchema)
+    max_conversation_restarts: int,
+    max_correction_steps: int,
+) -> tuple[AugmentedEntitiesSchema, DetectionResult, AugmentationAttempts, ResponseFormatMode]:
     repair_message = ""
     attempts: list[AugmentationAttemptTrace] = []
     grounded_attempts: list[_GroundedAugmentationItems] = []
+    mode: ResponseFormatMode = "unconstrained"
     for attempt_index in range(_MAX_GROUNDING_ATTEMPTS):
-        attempt_prompt = prompt + repair_message
-        output, _trace = await facade.agenerate(
-            prompt=recipe.apply_recipe_to_user_prompt(attempt_prompt),
-            parser=recipe.parse,
-            system_prompt=recipe.apply_recipe_to_system_prompt(system_prompt),
+        output, attempt_mode = await _call_async(
+            facade,
+            response_format,
+            prompt=prompt + repair_message,
+            system_prompt=system_prompt,
             purpose=f"entity-augmentation-attempt-{attempt_index}",
+            max_conversation_restarts=max_conversation_restarts,
+            max_correction_steps=max_correction_steps,
         )
+        mode = max(mode, attempt_mode, key=_MODE_PRECEDENCE.__getitem__)
         grounded = _ground_augmentation_items(canonical_text=canonical_text, source_view=source_view, output=output)
         grounded_attempts.append(grounded)
         attempts.append(
@@ -419,12 +597,15 @@ async def _generate_and_ground_async(
             break
         if attempt_index + 1 < _MAX_GROUNDING_ATTEMPTS:
             repair_message = _repair_message(output=output, failures=grounded.failures)
-    return _combine_grounded_attempts(
-        grounded_attempts=grounded_attempts,
-        attempts=attempts,
-        canonical_text=canonical_text,
-        source_view=source_view,
-        model_alias=model_alias,
+    return (
+        *_combine_grounded_attempts(
+            grounded_attempts=grounded_attempts,
+            attempts=attempts,
+            canonical_text=canonical_text,
+            source_view=source_view,
+            model_alias=model_alias,
+        ),
+        mode,
     )
 
 
@@ -440,8 +621,7 @@ def _trace_grounding_attempt(
         )
         summary = ", ".join(f"item {failure.item_index}: {failure.category.value}" for failure in grounded.failures)
         logger.warning(
-            "augmenter alias=%s grounding attempt=%d failed: augmentation response could not be grounded (%s)",
-            model_alias,
+            "augmenter grounding attempt=%d failed: augmentation response could not be grounded (%s)",
             attempt_index,
             summary,
         )
@@ -482,6 +662,7 @@ def _store_augmentation_lifecycle(
     policy: EffectiveLabelPolicy,
     attempts: AugmentationAttempts,
     regex_constrained_entity_labels: list[str] | None = None,
+    response_format_mode: ResponseFormatMode | None = None,
 ) -> dict[str, Any]:
     admissions = AdmissionResults(
         results=apply_validation_admission(
@@ -507,6 +688,7 @@ def _store_augmentation_lifecycle(
     row[COL_AUGMENTATION_ADMISSION_RESULTS] = admissions.model_dump(mode="json")
     row[COL_AUGMENTATION_ATTEMPTS] = attempts.model_dump(mode="json")
     row[COL_AUGMENTED_CANDIDATES] = AdmittedCandidates(candidates=candidates).model_dump(mode="json")
+    row[COL_AUGMENTATION_RESPONSE_FORMAT] = response_format_mode
     return row
 
 

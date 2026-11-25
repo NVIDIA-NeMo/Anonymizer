@@ -4,9 +4,13 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
+from typing import Any
 
 import pandas as pd
+import pyarrow as pa
 from data_designer.config.models import ModelConfig
 
 from anonymizer.config.models import EvaluateModelSelection, ReplaceModelSelection, RewriteModelSelection
@@ -16,43 +20,81 @@ from anonymizer.engine.constants import (
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_VALID,
     COL_ENTITIES_BY_VALUE,
+    COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
+    COL_LATENT_ENTITIES,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
+    COL_PRIVACY_ITEMS_OMITTED,
     COL_PRIVACY_QA_REANSWER,
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
+    COL_REPLACEMENT_MAP,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
+    COL_SENSITIVITY_DISPOSITION,
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
-    RECORD_ID_COLUMN,
 )
+from anonymizer.engine.detection.detect_step import DetectState, detect_step
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
+from anonymizer.engine.graph_core.authoring import (
+    DATUM,
+    TEXT,
+    Assessment,
+    Datum,
+    Limits,
+    Operation,
+    ProtectionGraph,
+    Requests,
+    Workflow,
+)
+from anonymizer.engine.graph_core.execution import ProtectionResult, TargetOutcome
+from anonymizer.engine.graph_core.kernel import register_kind
+from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+from anonymizer.engine.ndd.backend import (
+    call_on_empty_input,
+    per_target,
+    raise_if_cancelled,
+    rows_as_graph,
+    run_invocation,
+)
+from anonymizer.engine.ndd.model_response import no_response
+from anonymizer.engine.ndd.workflow_utils import run_columns
+from anonymizer.engine.protection_policy import ReviewFlag, missed_repeat
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow, placeholder_in_text
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
-from anonymizer.engine.rewrite.findings import needs_human_review
-from anonymizer.engine.rewrite.parsers import normalize_payload
+from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
+from anonymizer.engine.rewrite.response_summary import mark_evaluation_unavailable, warn_kept_without_response
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
-    restore_empty_skipped_span_label_counts,
 )
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
-from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
-from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
-from anonymizer.engine.schemas import EntitiesByValueSchema
-from anonymizer.measurement import stage_timer
+from anonymizer.engine.row_partitioning import (
+    ROW_ORDER_COL,
+    merge_and_reorder,
+    resolve_source_positions,
+    restore_diagnostic_columns,
+    split_rows,
+)
+from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
+from anonymizer.engine.spans import Spans
+from anonymizer.engine.value_matching import Leftover, MatchMode, count_values, entity_spans, format_cause
+from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.rewrite.workflow")
+
+REWRITE_METRICS = register_kind("rewrite-metrics", lambda v: isinstance(v, dict), copy=dict)
 
 _PASSTHROUGH_DEFAULTS: dict[str, object] = {
     COL_UTILITY_SCORE: 1.0,
@@ -92,7 +134,6 @@ def _detection_valid_fraction(row: pd.Series) -> float | None:
     except Exception:
         logger.warning(
             "Could not parse entities_by_value to compute detection_valid fraction; defaulting to None.",
-            exc_info=True,
         )
         return None
     if total == 0 or invalid_count == 0:
@@ -107,12 +148,41 @@ def _detection_valid_fraction(row: pd.Series) -> float | None:
 def _has_entities(entities_by_value: object) -> bool:
     """Return True if this record has at least one detected entity."""
     entities_by_value = normalize_payload(entities_by_value)
-    if not entities_by_value or not isinstance(entities_by_value, dict):
+    if entities_by_value is pd.NA or not entities_by_value or not isinstance(entities_by_value, dict):
         return False
     items = entities_by_value.get("entities_by_value")
     if not isinstance(items, list):
         return False
     return len(items) > 0
+
+
+def _has_latent_entities(latent: object) -> bool:
+    """Return True if this record has at least one latent entity; a missing or malformed cell has none."""
+    latent = normalize_payload(latent)
+    if not isinstance(latent, dict):
+        return False
+    items = latent.get("latent_entities")
+    return isinstance(items, list) and len(items) > 0
+
+
+def routes_to_rewrite(entities_by_value: object, latent: object = None) -> bool:
+    """Whether a Rewrite row takes the model route: it has an explicit or a latent entity.
+
+    Only a row with neither passes through unchanged. A latent entity defers to the privacy goal: the disposition
+    decides whether it is protected, as it does for latent entries on a row with explicit entities.
+    """
+    return _has_entities(entities_by_value) or _has_latent_entities(latent)
+
+
+_ROUTE_COL = "_anonymizer_routes_to_rewrite"
+
+
+def _split_rewrite_rows(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split ``df`` into (model-route, passthrough) rows by ``routes_to_rewrite``, with row-order tracking."""
+    latent = df[COL_LATENT_ENTITIES] if COL_LATENT_ENTITIES in df.columns else [None] * len(df)
+    marked = df.assign(**{_ROUTE_COL: [routes_to_rewrite(e, la) for e, la in zip(df[COL_ENTITIES_BY_VALUE], latent)]})
+    routed, passthrough = split_rows(marked, column=_ROUTE_COL, predicate=bool)
+    return routed.drop(columns=_ROUTE_COL), passthrough.drop(columns=_ROUTE_COL)
 
 
 def _normalize_evaluation_payloads(df: pd.DataFrame) -> None:
@@ -125,33 +195,32 @@ def _join_new_columns(
     target: pd.DataFrame,
     source: pd.DataFrame,
     *,
+    source_positions: tuple[int, ...] | None = None,
     overwrite: bool = False,
     seed_cols: list[str] | None = None,
 ) -> pd.DataFrame:
-    """Copy columns from source into target using positional alignment.
+    """Copy columns from source into target by the adapter's declared correspondence.
 
-    When the adapter drops rows (tracked via ``failed_records``), source
-    will be shorter than target. We align on ``RECORD_ID_COLUMN`` to
-    drop the failed rows from target, then join the new columns from
-    source onto the surviving rows.
+    ``source_positions`` (else unique record IDs, see ``resolve_source_positions``) names the
+    target row of each source row; target rows the adapter dropped (tracked via
+    ``failed_records``) are removed and source is reordered to match the surviving target rows.
 
     Set ``overwrite=True`` to update existing columns that the workflow
     produced (e.g. re-evaluate after repair). Seed columns passed through
     the adapter are excluded from overwrite to prevent re-serialization artifacts.
     """
+    positions = resolve_source_positions(target, source, source_positions)
     if len(source) != len(target):
-        dropped = len(target) - len(source)
         logger.warning(
             "Row count mismatch: target=%d, source=%d; dropping %d failed row(s).",
             len(target),
             len(source),
-            dropped,
+            len(target) - len(source),
         )
-        surviving_ids = set(source[RECORD_ID_COLUMN].astype(str))
-        target = target[target[RECORD_ID_COLUMN].astype(str).isin(surviving_ids)].reset_index(drop=True)
-        source = source.copy()
-        source.index = source[RECORD_ID_COLUMN].astype(str)
-        source = source.loc[target[RECORD_ID_COLUMN].astype(str)].reset_index(drop=True)
+    if positions != tuple(range(len(target))):
+        order = sorted(range(len(positions)), key=positions.__getitem__)
+        target = target.iloc[[positions[i] for i in order]].reset_index(drop=True)
+        source = source.iloc[order].reset_index(drop=True)
 
     skip = set(seed_cols) if seed_cols else set()
     for col in source.columns:
@@ -166,47 +235,13 @@ def _join_preserving(
     target: pd.DataFrame,
     source: pd.DataFrame,
     defaults: dict[str, object],
+    *,
+    source_positions: tuple[int, ...] | None = None,
 ) -> pd.DataFrame:
-    """Left-join source columns onto target, preserving all target rows.
-
-    When source returns fewer rows than target (e.g. a judge timed out or the
-    NDD adapter dropped a row), missing rows receive the values in ``defaults``
-    instead of being removed from the result.  Used for non-critical/diagnostic
-    steps where losing a row from the output is worse than surfacing a null.
-    """
+    """Keep complete-stage trace columns; default diagnostics after row drops."""
     if len(source) == len(target):
-        return _join_new_columns(target, source)
-
-    logger.warning(
-        "Source returned %d of %d rows; defaulting %d missing row(s).",
-        len(source),
-        len(target),
-        len(target) - len(source),
-    )
-    result = target.copy()
-    source_by_id = source.set_index(RECORD_ID_COLUMN)
-    known_ids = set(source_by_id.index)
-
-    for col, default in defaults.items():
-        result[col] = default
-
-    for idx, record_id in result[RECORD_ID_COLUMN].items():
-        if record_id in known_ids:
-            row = source_by_id.loc[record_id]
-            for col in defaults:
-                result.at[idx, col] = row.get(col)
-
-    return result
-
-
-def _join_judge_columns(target: pd.DataFrame, source: pd.DataFrame) -> pd.DataFrame:
-    """Merge holistic judge columns preserving all rows.
-
-    Thin wrapper around ``_join_preserving`` with the holistic-judge defaults.
-    ``COL_NEEDS_HUMAN_REVIEW`` is not touched here; it is set by the
-    evaluate-repair loop based on objective metrics.
-    """
-    return _join_preserving(target, source, defaults={COL_JUDGE_EVALUATION: None})
+        defaults = dict.fromkeys(column for column in source if column not in target)
+    return restore_diagnostic_columns(target, source, defaults, source_positions=source_positions)
 
 
 def _apply_passthrough_defaults(
@@ -231,6 +266,332 @@ def _apply_passthrough_defaults(
 class RewriteResult:
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    source_positions: tuple[int, ...] | None = None
+    detection: EntityDetectionResult | None = None  # set when detection ran in the same invocation
+    detection_elapsed: float = 0.0
+    outcomes: tuple[TargetOutcome, ...] | None = None  # one per output row, when the rows ran as one invocation
+
+
+# ---------------------------------------------------------------------------
+# Kernel sequence
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _Rows:
+    """The rows a sequence of stages works on, and the failures they have reported."""
+
+    frame: pd.DataFrame
+    failed: list[FailedRecord] = field(default_factory=list)
+    passing: pd.DataFrame = field(default_factory=pd.DataFrame)
+    failing: pd.DataFrame = field(default_factory=pd.DataFrame)
+    converged: bool = False
+
+
+def _withhold_rewritten_text(df: pd.DataFrame) -> None:
+    """Null the rewritten text of rows whose replacements could not be applied.
+
+    When every rewrite in a DataDesigner batch is withheld, the rewritten column arrives as ``null[pyarrow]``
+    and a masked assignment into it aborts the process inside pyarrow. That column holds only nulls, so give it
+    the Arrow string dtype a partially withheld batch has: that of the batch's source text.
+    """
+    column = df[COL_REWRITTEN_TEXT]
+    if isinstance(column.dtype, pd.ArrowDtype) and pa.types.is_null(column.dtype.pyarrow_dtype):
+        text = df[COL_TEXT].dtype if COL_TEXT in df.columns else None
+        dtype = (
+            text
+            if isinstance(text, pd.ArrowDtype)
+            and (pa.types.is_string(text.pyarrow_dtype) or pa.types.is_large_string(text.pyarrow_dtype))
+            else pd.ArrowDtype(pa.string())
+        )
+        df[COL_REWRITTEN_TEXT] = pd.Series(pd.array([None] * len(df), dtype=dtype), index=df.index)
+        return
+
+
+class RewriteUnavailable(Exception):
+    """A row's extracted rewrite is not text; the reason is the message."""
+
+
+def _rewrite_entry(row: dict[str, object]) -> dict[str, object] | RewriteUnavailable:
+    """One target's ``rewrite`` output: its text and the metrics the final checks read."""
+    text = row[COL_REWRITTEN_TEXT]
+    if not isinstance(text, str):
+        return RewriteUnavailable("the rewritten text is not a string")
+    metrics = {
+        "utility_score": row.get(COL_UTILITY_SCORE),
+        "leakage_mass": row.get(COL_LEAKAGE_MASS),
+        "any_high_leaked": row.get(COL_ANY_HIGH_LEAKED),
+        "weighted_leakage_rate": row.get(COL_WEIGHTED_LEAKAGE_RATE),
+        **_leftover_metrics(row),
+        "placeholder_in_text": placeholder_in_text(text, row.get(COL_REPLACEMENT_MAP)),
+        # The final evaluation left a privacy question unanswered; False when it was not asked (passthrough rows).
+        "privacy_items_omitted": _set(row.get(COL_PRIVACY_ITEMS_OMITTED)),
+    }
+    return {"text": text, "metrics": metrics}
+
+
+def _set(flag: object) -> bool:
+    return not no_response(flag) and bool(flag)
+
+
+def _leftover_metrics(row: Mapping[str, object]) -> dict[str, bool | str | None]:
+    """The leftover metrics of one record, from ``rewrite_leftovers``: ``replacements_applied``, no value the policy
+    replaces is over the bound in the rewritten text (``None`` when the disposition is unavailable), with
+    ``replacements_applied_cause`` naming each value over it; and ``undetected_value_kept``, the rewritten text holds
+    such a value that the source also holds outside the detected spans."""
+    leftovers = rewrite_leftovers(
+        row.get(COL_TEXT), row.get(COL_FINAL_ENTITIES), row[COL_REWRITTEN_TEXT], row.get(COL_SENSITIVITY_DISPOSITION)
+    )
+    over = [x for x in leftovers or () if x.over_bound]
+    return {
+        "replacements_applied": None if leftovers is None else not over,
+        "replacements_applied_cause": format_cause(over),
+        "undetected_value_kept": any(x.undetected_kept for x in leftovers or ()),
+    }
+
+
+def rewrite_leftovers(
+    source: object, final_entities: object, rewritten: object, disposition: object
+) -> tuple[Leftover, ...] | None:
+    """``count_values`` for one Rewrite record: the values the policy replaces (non-latent disposition entries
+    suggesting ``replace``) in the rewritten text, bounded by the source text and its detected spans; ``None`` when
+    the disposition is unavailable. When no value has a position (no usable detected span is the value or holds one of
+    its matches), every occurrence counts as detected (``undetected_spans`` is empty, though no detected span holds
+    the matches), so any occurrence in the rewritten text is over the bound."""
+    payload = normalize_payload(disposition)
+    if isinstance(payload, dict) and payload.get("sensitivity_disposition") == []:
+        return ()  # no detected entities: nothing is replaced
+    try:
+        entries = parse_sensitivity_disposition(payload).sensitivity_disposition
+    except (ValueError, TypeError):
+        return None
+    values = [e.entity_value for e in entries if e.protection_method_suggestion == "replace" and e.source != "latent"]
+    source = source if isinstance(source, str) else ""
+    try:
+        entities = entity_spans(source, EntitiesSchema.from_raw(final_entities).entities)
+    except (ValueError, TypeError):
+        entities = []
+    leftovers = count_values(source, entities, str(rewritten), values, mode=MatchMode.FOLDED)
+    if any(x.position is not None for x in leftovers):
+        return leftovers
+    return tuple(replace(x, undetected_spans=Spans()) for x in leftovers)
+
+
+def _unavailable(value: Any) -> bool:
+    return value is None or (isinstance(value, float) and value != value)
+
+
+def _high_leak(metrics: dict[str, Any]) -> bool | None:
+    value = metrics["any_high_leaked"]
+    return None if _unavailable(value) else not bool(value)
+
+
+def _replacements_applied(metrics: dict[str, Any]) -> bool | None:
+    value = metrics["replacements_applied"]
+    return None if _unavailable(value) else bool(value)
+
+
+def _leakage_within(metrics: dict[str, Any], limit: float | None) -> bool | None:
+    value = metrics["leakage_mass"]
+    return None if _unavailable(value) else limit is None or float(value) <= limit
+
+
+def _privacy_coverage(metrics: dict[str, Any]) -> bool | None:
+    return None if metrics.get("privacy_items_omitted") else True
+
+
+# The cause a check that could not assess states; ``metric_unavailable`` for the others.
+_MISSING_CAUSE = {
+    "replacements_applied": "replacement_policy_unavailable",
+    "privacy_coverage": "privacy_items_omitted",
+}
+
+
+def _final_checks(evaluation: EvaluationCriteria) -> tuple[Operation, ...]:
+    """The privacy criteria over the final candidate's metrics, one model-free verifier per check. A failed check
+    states the metric ``<check>_cause`` when the metrics carry one. ``privacy_coverage`` cannot assess a candidate
+    whose final privacy evaluation left a question unanswered (cause ``privacy_items_omitted``)."""
+    limit = evaluation.flag_leakage_above
+    predicates: dict[str, Callable[[dict[str, Any]], bool | None]] = {
+        "high_leak": _high_leak,
+        "replacements_applied": _replacements_applied,
+        "leakage_within_threshold": lambda metrics: _leakage_within(metrics, limit),
+        "privacy_coverage": _privacy_coverage,
+    }
+
+    def verifier(check: str, predicate: Callable[[dict[str, Any]], bool | None]) -> Operation:
+        def assess(metrics: dict[str, Any], target: Datum) -> Assessment:
+            satisfied = predicate(metrics)
+            missing = _MISSING_CAUSE.get(check, "metric_unavailable")
+            if satisfied is None:
+                return Assessment(None, target, missing)
+            return Assessment(satisfied, target, "" if satisfied else str(metrics.get(f"{check}_cause", "")))
+
+        inputs = {"metrics": REWRITE_METRICS, "target": DATUM}
+        return Operation.verifier(f"assess-{check}", assess, inputs, checks=(check,), subject=("metrics",))
+
+    return tuple(verifier(check, predicate) for check, predicate in predicates.items())
+
+
+def _protect_rewrite(
+    graph: ProtectionGraph,
+    rewrite: Callable[[tuple[Datum, ...]], list[dict[str, object] | RewriteUnavailable | None]],
+    evaluation: EvaluationCriteria,
+    *leading: Operation,
+) -> ProtectionResult:
+    """Run ``leading``, the ``rewrite`` operation and the final checks over ``graph``; raise a non-verifier error,
+    then a cancellation."""
+    checks = _final_checks(evaluation)
+    operations = (
+        *leading,
+        Operation.phase_scoped(
+            "rewrite", rewrite, {"target": DATUM}, {"text": TEXT, "metrics": REWRITE_METRICS}, Requests.opaque()
+        ),
+        *checks,
+    )
+    workflow = Workflow("rewrite", operations, requires=tuple(op.checks[0] for op in checks))
+    limits = Limits(
+        max_operations=len(operations),
+        max_targets=len(graph.targets),
+        max_mentions=sum(len(d.text) for d in graph.targets),
+        max_context_items=0,
+    )
+    return run_invocation(graph, workflow, limits, tolerate=(RewriteUnavailable,))
+
+
+def _flag_review(
+    frame: pd.DataFrame, result: ProtectionResult, target_of: Mapping[int, Datum], evaluation: EvaluationCriteria
+) -> None:
+    """Assign ``needs_human_review``: the row's target outcome is not qualified, its rewritten text keeps a replaced
+    value that the source also holds outside the detected spans (``undetected_value_kept``) or a placeholder of its
+    replacement map (``placeholder_in_text``), or its utility is unavailable or below the flag."""
+    floor = evaluation.flag_utility_below
+    review = [
+        _needs_review(result, target_of[record[ROW_ORDER_COL]])
+        or _unavailable(record.get(COL_UTILITY_SCORE))
+        or (floor is not None and float(record[COL_UTILITY_SCORE]) < floor)
+        for record in frame.to_dict("records")
+    ]
+    # The combined finalizer's column keeps its dtype under the overwrite.
+    dtype = frame[COL_NEEDS_HUMAN_REVIEW].dtype if COL_NEEDS_HUMAN_REVIEW in frame.columns else bool
+    frame[COL_NEEDS_HUMAN_REVIEW] = pd.Series(review, index=frame.index, dtype=dtype)
+
+
+def _withhold_unassessed(frame: pd.DataFrame) -> None:
+    """Null the rewritten text of rows whose privacy evaluation had no usable response.
+
+    The final checks have already run on the text and could not assess it; without a privacy verdict it is not
+    released. Rows whose text is already null are left alone (see ``_withhold_rewritten_text`` on null columns).
+    """
+    if COL_PRIVACY_QA_REANSWER not in frame.columns:
+        return
+    unassessed = frame[COL_PRIVACY_QA_REANSWER].map(no_response).astype(bool) & frame[COL_REWRITTEN_TEXT].notna()
+    if unassessed.any():
+        frame.loc[unassessed, COL_REWRITTEN_TEXT] = None
+
+
+_PRIVACY_CHECKS = frozenset({"high_leak", "leakage_within_threshold"})
+# Rewrite's runners take no detector kind: Rewrite releases a missed repeat for both kinds.
+_REWRITE_REPEATS = missed_repeat("rewrite", "builtin")
+
+
+def _withhold_failed_repairs(frame: pd.DataFrame, result: ProtectionResult, target_of: Mapping[int, Datum]) -> None:
+    """Null the rewritten text of rows whose final candidate fails a privacy check, repaired or not.
+
+    Their outcome is already ``not_met`` and flagged; the failing candidate is not released, whether the repair loop
+    ran out of rounds, the preset does not send the row to repair, or ``max_repair_iterations`` is 0. Call it after
+    the summary, which counts a repaired row without text as an unparsed repair.
+    """
+    failed = [
+        any(
+            reason.code == "failed" and reason.check in _PRIVACY_CHECKS
+            for reason in result.outcome(target_of[record[ROW_ORDER_COL]]).reasons
+        )
+        for record in frame.to_dict("records")
+    ]
+    withheld = pd.Series(failed, index=frame.index, dtype=bool) & frame[COL_REWRITTEN_TEXT].notna()
+    if withheld.any():
+        frame.loc[withheld, COL_REWRITTEN_TEXT] = None
+
+
+def _withhold_incomplete(frame: pd.DataFrame, result: ProtectionResult, target_of: Mapping[int, Datum]) -> None:
+    """Null the rewritten text of rows whose final privacy evaluation left a question unanswered.
+
+    Their outcome is ``not_met`` with ``privacy_coverage`` unassessed, and flagged. An omission in an earlier round
+    does not count against a repaired candidate whose own evaluation is complete.
+    """
+    incomplete = [
+        any(
+            reason.code == "could_not_assess" and reason.check == "privacy_coverage"
+            for reason in result.outcome(target_of[record[ROW_ORDER_COL]]).reasons
+        )
+        for record in frame.to_dict("records")
+    ]
+    withheld = pd.Series(incomplete, index=frame.index, dtype=bool) & frame[COL_REWRITTEN_TEXT].notna()
+    if withheld.any():
+        frame.loc[withheld, COL_REWRITTEN_TEXT] = None
+
+
+def _none_for_missing_text(frame: pd.DataFrame) -> None:
+    """Give a withheld or missing rewritten text as ``None`` in both modes.
+
+    Combined mode's column has a string dtype, which stores ``None`` as ``pd.NA``; an object column keeps ``None``.
+    """
+    column = frame[COL_REWRITTEN_TEXT]
+    if column.isna().any():
+        frame[COL_REWRITTEN_TEXT] = column.astype(object).where(column.notna(), None)
+
+
+def _unavailable_if(outcome: TargetOutcome, withheld: bool) -> TargetOutcome:
+    """``outcome`` with ``available`` False when the row's rewritten text was withheld after the final checks."""
+    return replace(outcome, available=False) if withheld and outcome.available else outcome
+
+
+def _needs_review(result: ProtectionResult, target: Datum) -> bool:
+    metrics = result.value(target, "metrics") or {}
+    flagged = (bool(metrics.get(flag)) for flag in ReviewFlag)
+    return result.outcome(target).qualification != "met" or any(flagged)
+
+
+def _rewrite_lowered(
+    entity_rows: pd.DataFrame,
+    passthrough_rows: pd.DataFrame,
+    rows: _Rows,
+    produce: Callable[[], None],
+    evaluation: EvaluationCriteria,
+) -> RewriteResult:
+    """Run ``produce`` (the frame stages, leaving the final candidates in ``rows.frame``) as the ``rewrite`` operation.
+
+    One target per entity row. The final checks qualify each target from its final evaluation, and
+    ``_flag_review`` sets ``needs_human_review`` from that outcome and the row's utility.
+    """
+    graph = rows_as_graph(entity_rows[COL_TEXT])
+    order = list(entity_rows[ROW_ORDER_COL])
+    position = {value: i for i, value in enumerate(order)}
+
+    def rewrite(target: tuple[Datum, ...]) -> list[dict[str, object] | RewriteUnavailable | None]:
+        produce()
+        # After a partial repair the frame is passing rows then repaired rows: key on the row order, not position.
+        rows.frame = rows.frame.sort_values(ROW_ORDER_COL).reset_index(drop=True)
+        records = rows.frame.to_dict("records")
+        entries = [_rewrite_entry(record) for record in records]
+        return per_target(entries, [position[record[ROW_ORDER_COL]] for record in records], len(target))
+
+    result = _protect_rewrite(graph, rewrite, evaluation)
+    frame = rows.frame
+    target_of = dict(zip(order, graph.targets))
+    _flag_review(frame, result, target_of, evaluation)
+    warn_kept_without_response(frame)
+    _withhold_unassessed(frame)
+    _withhold_failed_repairs(frame, result, target_of)
+    _withhold_incomplete(frame, result, target_of)
+    _none_for_missing_text(frame)
+    _apply_passthrough_defaults(passthrough_rows)
+    return RewriteResult(
+        dataframe=merge_and_reorder(frame, passthrough_rows),
+        failed_records=rows.failed,
+        source_positions=tuple(sorted([*frame[ROW_ORDER_COL], *passthrough_rows[ROW_ORDER_COL]])),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -273,193 +634,327 @@ class RewriteWorkflow:
         strict_entity_protection: bool = False,
     ) -> RewriteResult:
         with stage_timer("RewriteWorkflow.run", input_row_count=len(dataframe)) as measurement:
-            all_failed: list[FailedRecord] = []
-
-            entity_rows, passthrough_rows = split_rows(dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
+            entity_rows, passthrough_rows = _split_rewrite_rows(dataframe)
             measurement.update(
                 entity_row_count=len(entity_rows),
                 passthrough_row_count=len(passthrough_rows),
             )
 
-            # Fast path: no entities anywhere
+            # Fast path: no explicit or latent entities anywhere
             if entity_rows.empty:
                 _apply_passthrough_defaults(passthrough_rows)
-                result_df = merge_and_reorder(passthrough_rows)
-                result = RewriteResult(dataframe=result_df, failed_records=all_failed)
-                measurement.update(
-                    output_row_count=len(result.dataframe),
-                    failed_record_count=len(result.failed_records),
+                result = RewriteResult(
+                    dataframe=merge_and_reorder(passthrough_rows),
+                    failed_records=[],
+                    source_positions=tuple(sorted(passthrough_rows[ROW_ORDER_COL])),
                 )
+                measurement.update(output_row_count=len(result.dataframe), failed_record_count=0)
                 return result
 
-            label_categories = self._entity_classification_wf.classify_dataset(
-                entity_rows, adapter=self._adapter, model_configs=model_configs, selected_models=selected_models
-            )
-
-            # --- Step 1: replacement map (needs only detection output) ---
-            replace_workflow = LlmReplaceWorkflow(adapter=self._adapter)
-            replace_result = replace_workflow.generate_map_only(
-                entity_rows,
-                model_configs=model_configs,
-                selected_models=replace_model_selection,
-            )
-            entity_rows = _join_new_columns(entity_rows, replace_result.dataframe)
-            all_failed.extend(replace_result.failed_records)
-
-            # --- Step 2: domain, entity classification, disposition, QA, rewrite (single adapter call) ---
-            pipeline_columns = [
-                *self._domain_wf.columns(selected_models=selected_models, data_summary=data_summary),
-                *self._entity_classification_wf.columns(
-                    selected_models=selected_models, label_categories=label_categories
-                ),
-                *self._disposition_wf.columns(
-                    selected_models=selected_models,
-                    privacy_goal=privacy_goal,
-                    strict_entity_protection=strict_entity_protection,
-                    data_summary=data_summary,
-                ),
-                *self._qa_wf.columns(selected_models=selected_models),
-                *self._rewrite_gen_wf.columns(
-                    selected_models=selected_models,
-                    privacy_goal=privacy_goal,
-                    data_summary=data_summary,
-                ),
-            ]
-
-            pipeline_seed = select_seed_cols(entity_rows, derive_seed_columns(pipeline_columns, entity_rows))
-            pipeline_result = self._adapter.run_workflow(
-                pipeline_seed,
-                model_configs=model_configs,
-                columns=pipeline_columns,
-                workflow_name="rewrite-pipeline",
-                preview_num_records=preview_num_records,
-            )
-            restore_empty_skipped_span_label_counts(pipeline_result.dataframe)
-            entity_rows = _join_new_columns(entity_rows, pipeline_result.dataframe)
-            all_failed.extend(pipeline_result.failed_records)
-
-            # --- Step 5: evaluate-repair loop ---
-            entity_rows, eval_repair_failed = self._run_evaluate_repair_loop(
-                entity_rows,
+            rows = _Rows(entity_rows)
+            produce = self._produce(
+                rows,
                 model_configs=model_configs,
                 selected_models=selected_models,
+                replace_model_selection=replace_model_selection,
                 privacy_goal=privacy_goal,
                 evaluation=evaluation,
+                data_summary=data_summary,
                 preview_num_records=preview_num_records,
+                strict_entity_protection=strict_entity_protection,
             )
-            all_failed.extend(eval_repair_failed)
-
-            # --- Merge and return ---
-            _apply_passthrough_defaults(passthrough_rows)
-            combined = merge_and_reorder(entity_rows, passthrough_rows)
-            result = RewriteResult(dataframe=combined, failed_records=all_failed)
+            result = _rewrite_lowered(entity_rows, passthrough_rows, rows, produce, evaluation)
             measurement.update(
                 output_row_count=len(result.dataframe),
                 failed_record_count=len(result.failed_records),
             )
             return result
 
+    def run_with_detection(
+        self, dataframe: pd.DataFrame, *, detect: Callable[[pd.DataFrame], EntityDetectionResult], **options: Any
+    ) -> RewriteResult:
+        """Detect entities with ``detect`` and rewrite as one graph invocation; ``options`` are ``run``'s keywords."""
+        return self._run_detected(dataframe, detect, "RewriteWorkflow.run", options)
+
+    def _run_detected(
+        self,
+        dataframe: pd.DataFrame,
+        detect: Callable[[pd.DataFrame], EntityDetectionResult],
+        stage: str,
+        options: dict[str, Any],
+    ) -> RewriteResult:
+        """Run ``detect``, then ``rewrite`` and the final checks over every input row as one invocation.
+
+        ``rewrite`` splits the detection frame with ``routes_to_rewrite``: rows with neither an explicit nor a latent
+        entity take the passthrough defaults and the rest go through ``_produce``, the stages ``run`` uses. A row the
+        detector drops, or whose mentions the graph rejects, fails at ``detect`` and is absent from the output.
+        ``stage`` names the measurement.
+        """
+        started = time.perf_counter()
+        evaluation = options["evaluation"]
+        graph = rows_as_graph(dataframe[COL_TEXT])
+        state = DetectState()
+        detect_op = detect_step(dataframe, detect, state, repeats=_REWRITE_REPEATS)
+        rows = _Rows(pd.DataFrame())
+        parts: list[tuple[pd.DataFrame, pd.DataFrame]] = []
+
+        def split(keep: set[Datum]) -> tuple[pd.DataFrame, pd.DataFrame]:
+            if not parts:  # only rows whose target reached ``rewrite``: a target that failed ``detect`` is dropped
+                halves = _split_rewrite_rows(state.detected[0].dataframe)
+                parts.append(
+                    tuple(f[f[ROW_ORDER_COL].map(lambda o: state.owners[o] in keep).astype(bool)] for f in halves)
+                )
+                rows.frame = parts[0][0]
+            return parts[0]
+
+        def rewrite(target: tuple[Datum, ...]) -> list[dict[str, object] | RewriteUnavailable | None]:
+            entity_rows, passthrough_rows = split(set(target))
+            if not entity_rows.empty:
+                self._produce(rows, **options)()
+                rows.frame = rows.frame.sort_values(ROW_ORDER_COL).reset_index(drop=True)
+            entries = {state.owners[r[ROW_ORDER_COL]]: _rewrite_entry(r) for r in rows.frame.to_dict("records")}
+            for order in passthrough_rows[ROW_ORDER_COL]:
+                owner = state.owners[order]
+                entries[owner] = _rewrite_entry(
+                    {
+                        COL_REWRITTEN_TEXT: owner.text,
+                        COL_SENSITIVITY_DISPOSITION: {"sensitivity_disposition": []},
+                        **_PASSTHROUGH_DEFAULTS,
+                    }
+                )
+            return [entries.get(datum) for datum in target]
+
+        result = _protect_rewrite(graph, rewrite, evaluation, detect_op)
+        call_on_empty_input(graph, detect_op)
+        detection, detection_elapsed = state.detected[0], state.elapsed[0]
+        entity_rows, passthrough_rows = split(set())  # empty only if ``rewrite`` never ran
+        rejected = {a.target: a.reason for a in result.attempts if a.operation == "detect" and a.status == "failed"}
+        rows.failed.extend(
+            FailedRecord(state.rows[datum].record_id, "detect", rejected[datum])
+            for datum in state.owners
+            if datum in rejected and rejected[datum] != "missing_output"
+        )
+        _apply_passthrough_defaults(passthrough_rows)
+        frame = rows.frame
+        if entity_rows.empty:
+            output = merge_and_reorder(passthrough_rows)
+        else:
+            target_of = dict(enumerate(state.owners))
+            _flag_review(frame, result, target_of, evaluation)
+            warn_kept_without_response(frame)
+            _withhold_unassessed(frame)
+            _withhold_failed_repairs(frame, result, target_of)
+            _withhold_incomplete(frame, result, target_of)
+            _none_for_missing_text(frame)
+            output = merge_and_reorder(frame, passthrough_rows)
+        record_stage(
+            stage,
+            elapsed_sec=time.perf_counter() - started - detection_elapsed,  # detection records its own stage
+            input_row_count=len(detection.dataframe),
+            entity_row_count=len(entity_rows),
+            passthrough_row_count=len(passthrough_rows),
+            output_row_count=len(output),
+            failed_record_count=len(rows.failed),
+        )
+        positions = tuple(sorted([*frame[ROW_ORDER_COL], *passthrough_rows[ROW_ORDER_COL]]))
+        withheld = set() if entity_rows.empty else set(frame.loc[frame[COL_REWRITTEN_TEXT].isna(), ROW_ORDER_COL])
+        outcomes = tuple(_unavailable_if(result.outcome(state.owners[order]), order in withheld) for order in positions)
+        failed = [*state.failures, *rows.failed]
+        return RewriteResult(output, failed, positions, detection, detection_elapsed, outcomes)
+
+    def _produce(
+        self,
+        rows: _Rows,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: RewriteModelSelection,
+        replace_model_selection: ReplaceModelSelection,
+        privacy_goal: PrivacyGoal,
+        evaluation: EvaluationCriteria,
+        data_summary: str | None = None,
+        preview_num_records: int | None = None,
+        strict_entity_protection: bool = False,
+    ) -> Callable[[], None]:
+        """The frame stages over ``rows``: label classification, replacement map, pipeline, then the evaluate-repair
+        loop."""
+
+        def classify() -> None:
+            self._entity_classification_wf.classify_rows(
+                rows.frame, adapter=self._adapter, model_configs=model_configs, selected_models=selected_models
+            )
+
+        stages = [
+            ("label-classification", classify),
+            ("replacement-map", lambda: self._replacement_map(rows, model_configs, replace_model_selection)),
+            (
+                "pipeline",
+                lambda: self._pipeline(
+                    rows,
+                    model_configs=model_configs,
+                    selected_models=selected_models,
+                    privacy_goal=privacy_goal,
+                    data_summary=data_summary,
+                    preview_num_records=preview_num_records,
+                    strict_entity_protection=strict_entity_protection,
+                ),
+            ),
+            *self._evaluate_repair_stages(
+                rows,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                privacy_goal=privacy_goal,
+                evaluation=evaluation,
+                preview_num_records=preview_num_records,
+            ),
+        ]
+
+        def produce() -> None:
+            for _, stage in stages:
+                stage()
+
+        return produce
+
+    # --- Step 1: replacement map (needs only detection output) ---
+    def _replacement_map(
+        self, rows: _Rows, model_configs: list[ModelConfig], replace_model_selection: ReplaceModelSelection
+    ) -> None:
+        replace_result = LlmReplaceWorkflow(adapter=self._adapter).generate_map_only(
+            rows.frame,
+            model_configs=model_configs,
+            selected_models=replace_model_selection,
+        )
+        rows.frame = _join_new_columns(
+            rows.frame, replace_result.dataframe, source_positions=replace_result.source_positions
+        )
+        rows.failed.extend(replace_result.failed_records)
+
+    # --- Step 2: domain, disposition, QA, rewrite (single adapter call) ---
+    def _pipeline(
+        self,
+        rows: _Rows,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: RewriteModelSelection,
+        privacy_goal: PrivacyGoal,
+        data_summary: str | None,
+        preview_num_records: int | None,
+        strict_entity_protection: bool,
+    ) -> None:
+        pipeline_columns = [
+            *self._domain_wf.columns(selected_models=selected_models, data_summary=data_summary),
+            *self._disposition_wf.columns(
+                selected_models=selected_models,
+                privacy_goal=privacy_goal,
+                data_summary=data_summary,
+                strict_entity_protection=strict_entity_protection,
+            ),
+            *self._qa_wf.columns(selected_models=selected_models),
+            *self._rewrite_gen_wf.columns(
+                selected_models=selected_models,
+                privacy_goal=privacy_goal,
+                data_summary=data_summary,
+            ),
+        ]
+        pipeline_result, _ = run_columns(
+            self._adapter,
+            rows.frame,
+            pipeline_columns,
+            model_configs=model_configs,
+            workflow_name="rewrite-pipeline",
+            preview_num_records=preview_num_records,
+        )
+        rows.frame = _join_new_columns(
+            rows.frame, pipeline_result.dataframe, source_positions=pipeline_result.source_positions
+        )
+        rows.failed.extend(pipeline_result.failed_records)
+
     # ---------------------------------------------------------------------------
     # Evaluate-repair loop
     # ---------------------------------------------------------------------------
 
-    def _run_evaluate_repair_loop(
+    def _evaluate_repair_stages(
         self,
-        df: pd.DataFrame,
+        rows: _Rows,
         *,
         model_configs: list[ModelConfig],
         selected_models: RewriteModelSelection,
         privacy_goal: PrivacyGoal,
         evaluation: EvaluationCriteria,
         preview_num_records: int | None,
-    ) -> tuple[pd.DataFrame, list[FailedRecord]]:
-        all_failed: list[FailedRecord] = []
+    ) -> list[tuple[str, Callable[[], None]]]:
+        """The initial evaluate, then one repair and one re-evaluate per allowed iteration, then the null-dtype guard.
 
-        if COL_REPAIR_ITERATIONS not in df.columns:
-            df[COL_REPAIR_ITERATIONS] = 0
-
-        eval_columns = self._evaluate_wf.columns(
-            selected_models=selected_models,
-            evaluation=evaluation,
-        )
-        eval_seed_cols = derive_seed_columns(eval_columns, df)
-
-        # Always run initial evaluate -- metrics must be produced even when max_repair_iterations=0
-        eval_seed = select_seed_cols(df, eval_seed_cols)
-        eval_result = self._adapter.run_workflow(
-            eval_seed,
-            model_configs=model_configs,
-            columns=eval_columns,
-            workflow_name="rewrite-evaluate-0",
-            preview_num_records=preview_num_records,
-        )
-        df = _join_new_columns(df, eval_result.dataframe, overwrite=True, seed_cols=eval_seed_cols)
-        _normalize_evaluation_payloads(df)
-        all_failed.extend(eval_result.failed_records)
-
+        Every iteration is a stage that does nothing once no row needs repair, so the loop runs at most
+        ``max_repair_iterations`` repairs and the initial evaluate runs even when that is 0.
+        """
+        eval_columns = self._evaluate_wf.columns(selected_models=selected_models, evaluation=evaluation)
         repair_columns = self._repair_wf.columns(
             selected_models=selected_models,
             privacy_goal=privacy_goal,
             effective_threshold=evaluation.repair_threshold,
         )
 
-        for iteration in range(evaluation.max_repair_iterations):
+        def run_and_join(df: pd.DataFrame, columns: list, name: str, *, overwrite: bool = False) -> pd.DataFrame:
+            result, seed_cols = run_columns(
+                self._adapter,
+                df,
+                columns,
+                model_configs=model_configs,
+                workflow_name=name,
+                preview_num_records=preview_num_records,
+            )
+            rows.failed.extend(result.failed_records)
+            return _join_new_columns(
+                df, result.dataframe, overwrite=overwrite, seed_cols=seed_cols, source_positions=result.source_positions
+            )
+
+        def evaluate(df: pd.DataFrame, iteration: int) -> pd.DataFrame:
+            df = run_and_join(df, eval_columns, f"rewrite-evaluate-{iteration}", overwrite=True)
+            _normalize_evaluation_payloads(df)
+            mark_evaluation_unavailable(df)  # the next round overwrites this round's columns
+            return df
+
+        def initial_evaluate() -> None:
+            if COL_REPAIR_ITERATIONS not in rows.frame.columns:
+                rows.frame[COL_REPAIR_ITERATIONS] = 0
+            rows.frame = evaluate(rows.frame, 0)
+            _withhold_rewritten_text(rows.frame)
+
+        def repair(iteration: int) -> None:
+            if rows.converged:
+                return
+            df = rows.frame
             needs_repair_mask = df[COL_NEEDS_REPAIR].apply(bool)
             if not needs_repair_mask.any():
                 logger.info("Evaluate-repair loop: all rows pass at iteration %d", iteration)
-                break
-
-            failing_rows = df[needs_repair_mask].copy()
-            passing_rows = df[~needs_repair_mask].copy()
-
+                rows.converged = True
+                return
+            rows.failing, rows.passing = df[needs_repair_mask].copy(), df[~needs_repair_mask].copy()
             logger.info(
                 "Evaluate-repair loop iteration %d: %d/%d rows need repair",
                 iteration,
-                len(failing_rows),
+                len(rows.failing),
                 len(df),
             )
-
             # Repair failing rows only
-            repair_seed_cols = derive_seed_columns(repair_columns, failing_rows)
-            repair_seed = select_seed_cols(failing_rows, repair_seed_cols)
-            repair_result = self._adapter.run_workflow(
-                repair_seed,
-                model_configs=model_configs,
-                columns=repair_columns,
-                workflow_name=f"rewrite-repair-{iteration}",
-                preview_num_records=preview_num_records,
-            )
-            all_failed.extend(repair_result.failed_records)
+            repaired = run_and_join(rows.failing, repair_columns, f"rewrite-repair-{iteration}", overwrite=True)
+            if COL_REWRITTEN_TEXT_NEXT in repaired.columns:
+                repaired[COL_REWRITTEN_TEXT] = repaired[COL_REWRITTEN_TEXT_NEXT]
+            repaired[COL_REPAIR_ITERATIONS] = repaired[COL_REPAIR_ITERATIONS].apply(lambda x: int(x) + 1)
+            rows.failing = repaired
 
-            repaired = repair_result.dataframe
-            failing_rows = _join_new_columns(failing_rows, repaired, overwrite=True, seed_cols=repair_seed_cols)
-            if COL_REWRITTEN_TEXT_NEXT in failing_rows.columns:
-                failing_rows[COL_REWRITTEN_TEXT] = failing_rows[COL_REWRITTEN_TEXT_NEXT]
-            failing_rows[COL_REPAIR_ITERATIONS] = failing_rows[COL_REPAIR_ITERATIONS].apply(lambda x: int(x) + 1)
-
+        def reevaluate(iteration: int) -> None:
+            if rows.converged:
+                return
             # Re-evaluate only repaired rows (passing rows' metrics are unchanged)
-            reeval_seed_cols = derive_seed_columns(eval_columns, failing_rows)
-            reeval_seed = select_seed_cols(failing_rows, reeval_seed_cols)
-            eval_result = self._adapter.run_workflow(
-                reeval_seed,
-                model_configs=model_configs,
-                columns=eval_columns,
-                workflow_name=f"rewrite-evaluate-{iteration + 1}",
-                preview_num_records=preview_num_records,
-            )
-            failing_rows = _join_new_columns(
-                failing_rows, eval_result.dataframe, overwrite=True, seed_cols=reeval_seed_cols
-            )
-            _normalize_evaluation_payloads(failing_rows)
-            all_failed.extend(eval_result.failed_records)
+            rows.frame = pd.concat([rows.passing, evaluate(rows.failing, iteration + 1)], ignore_index=True)
 
-            df = pd.concat([passing_rows, failing_rows], ignore_index=True)
-
-        # Flag for human review from the preset's flag findings after the loop exhausts.
-        flags = [needs_human_review(row, evaluation) for row in df.to_dict("records")]
-        df[COL_NEEDS_HUMAN_REVIEW] = pd.Series(flags, index=df.index, dtype=bool)
-
-        return df, all_failed
+        stages: list[tuple[str, Callable[[], None]]] = [("evaluate-0", initial_evaluate)]
+        for iteration in range(evaluation.max_repair_iterations):
+            stages.append((f"repair-{iteration}", lambda i=iteration: repair(i)))
+            stages.append((f"evaluate-{iteration + 1}", lambda i=iteration: reevaluate(i)))
+        stages.append(("withhold-rewritten-text", lambda: _withhold_rewritten_text(rows.frame)))
+        return stages
 
     def _run_final_judge(
         self,
@@ -476,18 +971,27 @@ class RewriteWorkflow:
                 privacy_goal=privacy_goal,
             )
             effective_preview = min(preview_num_records, len(df)) if preview_num_records is not None else None
-            judge_seed = select_seed_cols(df, derive_seed_columns(judge_columns, df))
-            judge_result = self._adapter.run_workflow(
-                judge_seed,
+            judge_result, _ = run_columns(
+                self._adapter,
+                df,
+                judge_columns,
                 model_configs=model_configs,
-                columns=judge_columns,
                 workflow_name="rewrite-final-judge",
                 preview_num_records=effective_preview,
             )
-            df = _join_judge_columns(df, judge_result.dataframe)
+            df = _join_preserving(
+                df,
+                judge_result.dataframe,
+                {COL_JUDGE_EVALUATION: None},
+                source_positions=judge_result.source_positions,
+            )
             return df, judge_result.failed_records
-        except Exception:
-            logger.debug("Rewrite judge workflow failed; scores may be unavailable.", exc_info=True)
+        except Exception as exc:
+            logger.warning(
+                "Rewrite final judge failed (%s); judge_evaluation is unavailable for %d row(s).",
+                type(exc).__name__,
+                len(df),
+            )
             df[COL_JUDGE_EVALUATION] = None
             return df, []
 
@@ -513,7 +1017,7 @@ class RewriteWorkflow:
         COL_NEEDS_HUMAN_REVIEW is not modified — it was set during run() based on
         objective metrics and judge scores do not influence it.
         """
-        entity_rows, passthrough_rows = split_rows(df, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
+        entity_rows, passthrough_rows = _split_rewrite_rows(df)
 
         passthrough_rows = passthrough_rows.copy()
         if compute_detection_validity:
@@ -530,40 +1034,64 @@ class RewriteWorkflow:
             combined = merge_and_reorder(passthrough_rows)
             return RewriteResult(dataframe=combined, failed_records=[])
 
-        all_failed: list[FailedRecord] = []
+        rows = _Rows(entity_rows)
 
         # --- Detection validity judge (opt-in) ---
-        if compute_detection_validity:
+        def detection_judge() -> None:
+            # The judge reads explicit entities only: a latent-only row has none to judge and is trivially valid.
+            explicit = rows.frame[COL_ENTITIES_BY_VALUE].map(_has_entities).astype(bool)
+            latent_only = rows.frame[~explicit].copy()
+            latent_only[COL_DETECTION_VALID] = 1.0
+            latent_only[COL_DETECTION_INVALID_ENTITIES] = [[] for _ in range(len(latent_only))]
+            judged = rows.frame[explicit]
+            if judged.empty:
+                rows.frame = latent_only
+                return
             try:
                 detection_result = self._detection_judge_wf.evaluate(
-                    entity_rows,
+                    judged,
                     model_configs=model_configs,
                     selected_models=selected_models,
                     preview_num_records=preview_num_records,
                 )
-                entity_rows = _join_preserving(
-                    entity_rows,
+                judged = _join_preserving(
+                    judged,
                     detection_result.dataframe,
                     defaults={COL_DETECTION_VALID: None, COL_DETECTION_INVALID_ENTITIES: None},
+                    source_positions=detection_result.source_positions,
                 )
-                all_failed.extend(detection_result.failed_records)
+                rows.failed.extend(detection_result.failed_records)
                 # Convert bool all_valid → 0–1 fraction so detection validity sits on the
                 # same scale as utility_score and leakage_mass in the rewrite scores section.
-                entity_rows[COL_DETECTION_VALID] = entity_rows.apply(_detection_valid_fraction, axis=1)
-            except Exception:
-                logger.debug("Detection validity judge failed; scores may be unavailable.", exc_info=True)
-                entity_rows[COL_DETECTION_VALID] = None
-                entity_rows[COL_DETECTION_INVALID_ENTITIES] = None
+                judged[COL_DETECTION_VALID] = judged.apply(_detection_valid_fraction, axis=1)
+            except Exception as exc:
+                logger.warning(
+                    "Detection validity judge failed (%s); detection_valid is unavailable for %d row(s).",
+                    type(exc).__name__,
+                    len(judged),
+                )
+                judged = judged.copy()
+                judged[COL_DETECTION_VALID] = None
+                judged[COL_DETECTION_INVALID_ENTITIES] = None
+            if not latent_only.empty:
+                judged = pd.concat([judged, latent_only]).sort_values(ROW_ORDER_COL).reset_index(drop=True)
+            rows.frame = judged
 
         # --- Holistic judge (privacy / quality / style) ---
-        entity_rows, judge_failed = self._run_final_judge(
-            entity_rows,
-            model_configs=model_configs,
-            selected_models=selected_models,
-            privacy_goal=privacy_goal,
-            preview_num_records=preview_num_records,
-        )
-        all_failed.extend(judge_failed)
+        def final_judge() -> None:
+            rows.frame, judge_failed = self._run_final_judge(
+                rows.frame,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                privacy_goal=privacy_goal,
+                preview_num_records=preview_num_records,
+            )
+            rows.failed.extend(judge_failed)
 
-        combined = merge_and_reorder(entity_rows, passthrough_rows)
-        return RewriteResult(dataframe=combined, failed_records=all_failed)
+        stages: list[tuple[str, Callable[[], None]]] = [("final-judge", final_judge)]
+        if compute_detection_validity:
+            stages.insert(0, ("detection-judge", detection_judge))
+        raise_if_cancelled(run_stages("rewrite-evaluate", stages))
+
+        combined = merge_and_reorder(rows.frame, passthrough_rows)
+        return RewriteResult(dataframe=combined, failed_records=rows.failed)

@@ -58,6 +58,7 @@ from anonymizer.engine.schemas import (
     SourceTextRef,
     SourceView,
 )
+from anonymizer.engine.spans import Span
 
 
 @pytest.mark.parametrize("category", list(AugmentationGroundingFailureCategory))
@@ -313,10 +314,7 @@ def test_grounding_materializes_every_exact_contextual_occurrence() -> None:
     )
 
     assert result.failures == ()
-    assert [
-        (text[item.start_position : item.end_position], item.start_position, item.end_position)
-        for item in result.occurrences
-    ] == [
+    assert [(text[item.span.slice], item.span.start, item.span.end) for item in result.occurrences] == [
         ("May", 9, 12),
         ("May", 41, 44),
     ]
@@ -369,7 +367,7 @@ def test_empty_context_is_valid_only_when_value_is_the_entire_view() -> None:
     )
     assert result.failures == ()
     assert result.grounded_entities.entities[0].value == "May"
-    assert [(item.start_position, item.end_position) for item in result.occurrences] == [(0, 3)]
+    assert [item.span for item in result.occurrences] == [Span(0, 3)]
 
     result = _ground_augmentation_items(
         canonical_text="Ask May now",
@@ -499,6 +497,7 @@ def test_targeted_retry_preserves_grounded_items_and_records_only_safe_diagnosti
     for value in ("Alice", "Bob", "Carol", "BOB", "CAROL"):
         assert value not in json.dumps(trace)
         assert value not in caplog.text
+    assert "augmenter-model" not in caplog.text
 
 
 @pytest.mark.parametrize("use_async", [False, True])

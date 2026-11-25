@@ -33,7 +33,7 @@ regulatory and business context.
 - **Always preview before running the full pipeline.** Preview is cheap; a full run can be expensive and slow.
 - **If `result.failed_records` is non-empty after preview, inspect each failure's `step` and `reason` before quality tuning.** Failed rows can indicate model/provider/infra issues (rate limits, auth, etc.) or invalid or incomplete substitution maps. Treat them as failed records, not successful anonymization. See `docs/troubleshooting.md` "Did the run actually complete cleanly?" or the [published troubleshooting guide](https://nvidia-nemo.github.io/Anonymizer/dev/troubleshooting/).
 - **Ask the user which mode.** Briefly describe both: Replace detects entities and replaces each in place (faster, cheaper, keeps shape); Rewrite transforms the full text to also remove inferable identifiers (more expensive, may restructure). Use the data shape as a hint — free-text with implicit identifiers (clinical notes, biographies, depositions) leans Rewrite; structured records / log lines lean Replace — but the user picks.
-- **For cross-record consistency** (same value → same replacement everywhere), use `Hash`, not `Substitute`. `Substitute` is consistent within a row only.
+- **For cross-record consistency** (same value → same replacement everywhere), use `Hash` (it needs a secret key: write `Hash(key=os.environ["ANONYMIZER_HASH_KEY"])` and never put the key itself in the script), or `Substitute(consistency="run")` when linking records across the output is acceptable. Default `Substitute` is consistent within a row only.
 - **In Replace mode, default to `Substitute`** if the user hasn't specified a strategy. It's the most general-purpose choice and matches the bulk of production usage.
 - **`Substitute` can fail a record whose replacement map stays incomplete.** If the model omits an entity, Anonymizer retries the missing entities once; a record still incomplete is reported in `failed_records` with step `replace-map-generation`. Re-run those records; don't treat them as anonymized.
 - **`Annotate` is for inspection, not production.** Its output keeps the original entity text and is not privacy-safe. Use it during iteration to confirm detection is working, then switch.
@@ -148,7 +148,7 @@ def build_config() -> tuple[AnonymizerInput, AnonymizerConfig]:
 
     # ---- Pick ONE of the two strategies below ----
 
-    # Replace mode (Substitute | Redact | Annotate | Hash):
+    # Replace mode (Substitute | Redact | Annotate | Hash; a Redact template must render nonempty text):
     # config = AnonymizerConfig(detect=detect, replace=Substitute(
     #     instructions="TODO: short hint about the domain (e.g. names should remain plausible "
     #                  "for the original cultural context)",

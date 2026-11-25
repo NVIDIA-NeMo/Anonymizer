@@ -51,6 +51,7 @@
 # %%
 import getpass
 import os
+import secrets
 import subprocess
 import sys
 
@@ -200,12 +201,14 @@ annotate_custom_preview.display_record(0)
 # %% [markdown]
 # ## #️⃣ Hash
 #
-# - Deterministic -- same input always produces the same hash.
-# - Customize with `format_template` (must include `{digest}`),
-#   `algorithm` (`sha256`/`sha1`/`md5`), and `digest_length` (6-64 characters).
+# - Keyed -- HMAC-SHA256 with a secret `key`, which is required. The same key and input always produce the same hash.
+# - Keep the key secret and reuse it when tokens must match across runs; this notebook makes a throwaway key
+#   when `ANONYMIZER_HASH_KEY` is not set.
+# - Customize with `format_template` (must include `{digest}`) and `digest_length` (6-64 characters).
 
 # %%
-hash_config = AnonymizerConfig(replace=Hash())
+hash_key = os.environ.get("ANONYMIZER_HASH_KEY") or secrets.token_hex(32)
+hash_config = AnonymizerConfig(replace=Hash(key=hash_key))
 
 hash_preview = anonymizer.preview(
     config=hash_config,
@@ -218,10 +221,10 @@ hash_preview.display_record(0)
 # %% [markdown]
 # ### Custom template
 #
-# - Override the algorithm, digest length, and output format.
+# - Override the digest length and output format.
 
 # %%
-hash_custom_config = AnonymizerConfig(replace=Hash(algorithm="md5", digest_length=8, format_template="[{digest}]"))
+hash_custom_config = AnonymizerConfig(replace=Hash(key=hash_key, digest_length=8, format_template="[{digest}]"))
 hash_custom_preview = anonymizer.preview(
     config=hash_custom_config,
     data=input_data,

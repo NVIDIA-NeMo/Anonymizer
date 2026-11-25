@@ -32,11 +32,12 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
-from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
+from tests.conftest import stub_run_with_detection
+from tests.detector_results import returns_detector_result
 
 
 def _mock_method(method: object) -> Mock:
@@ -71,7 +72,7 @@ def _make_logging_anonymizer(
             COL_FINAL_ENTITIES: entities,
         }
     )
-    detection_workflow = Mock(spec=EntityDetectionWorkflow)
+    detection_workflow = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
     detection_workflow.run.return_value = EntityDetectionResult(
         dataframe=det_df,
         failed_records=detection_failures or [],
@@ -83,6 +84,7 @@ def _make_logging_anonymizer(
         }
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
+    stub_run_with_detection(replace_runner)
     replace_runner.run.return_value = ReplacementResult(dataframe=_replace_df, failed_records=replace_failures or [])
     _replace_eval_df = _replace_df.copy()
     _replace_eval_df[COL_ENTITY_COVERAGE] = [1.0, 1.0]
@@ -98,6 +100,7 @@ def _make_logging_anonymizer(
         }
     )
     rewrite_runner = Mock(spec=RewriteWorkflow)
+    stub_run_with_detection(rewrite_runner)
     rewrite_runner.run.return_value = RewriteResult(dataframe=_rewrite_df, failed_records=[])
     _rewrite_eval_df = _rewrite_df.copy()
     _rewrite_eval_df[COL_ENTITIES_BY_VALUE] = [
@@ -122,18 +125,18 @@ def test_run_logs_pipeline_stages(stub_input: AnonymizerInput, caplog: pytest.Lo
         anonymizer.run(config=config, data=stub_input)
 
     messages = caplog.text
-    assert "📂 Loaded 2 records from" in messages
-    assert "🔎 detector:" in messages
-    assert "✅ validator:" in messages
-    assert "🧩 augmenter:" in messages
+    assert "📂 Loaded 2 records" in messages
+    assert "🔎 detector configured" in messages
+    assert "✅ validator pool size:" in messages
+    assert "🧩 augmenter configured" in messages
     assert "🔍 Running entity detection on 2 records" in messages
     assert "📋 Detection complete" in messages
     assert "3 entities" in messages
     assert re.search(r"\[\d+\.\ds\]", messages), "Detection timing not found"
-    assert "labels:" in messages
-    assert "first_name=2" in messages
-    assert "organization=1" in messages
-    assert "🔄 Running Redact replacement" in messages
+    assert "distinct entity labels: 2" in messages
+    assert "first_name=2" not in messages
+    assert "organization=1" not in messages
+    assert "🔄 Running replacement" in messages
     assert "📋 Replacement complete" in messages
     assert re.search(r"Replacement complete.*\[\d+\.\ds\]", messages), "Replacement timing not found"
     assert "🎉 Pipeline complete" in messages
@@ -179,8 +182,8 @@ def test_run_logs_effective_detection_scope_after_exclusions(
         record.getMessage() for record in caplog.records if "effective detection scope" in record.getMessage()
     ]
     assert scope_messages
-    assert "effective detection scope: 1 label (configured: 2, removed by exclusions: 1):" in scope_messages[-1]
-    assert "vendor_api_key" in scope_messages[-1]
+    assert "effective detection scope: 1 label (configured: 2, removed by exclusions: 1)" in scope_messages[-1]
+    assert "vendor_api_key" not in scope_messages[-1]
     assert "email" not in scope_messages[-1]
 
 
@@ -201,16 +204,17 @@ def test_interface_resolves_custom_rule_only_detection_scope(
 
     with caplog.at_level(logging.INFO, logger="anonymizer"):
         if operation == "run":
-            anonymizer.run(config=config, data=stub_input)
+            result = anonymizer.run(config=config, data=stub_input)
         else:
-            anonymizer.preview(config=config, data=stub_input, num_records=1)
+            result = anonymizer.preview(config=config, data=stub_input, num_records=1)
 
     scope_messages = [
         record.getMessage() for record in caplog.records if "effective detection scope" in record.getMessage()
     ]
     assert scope_messages
     assert "effective detection scope: 1 label" in scope_messages[-1]
-    assert "support_case" in scope_messages[-1]
+    assert result.detection_scope is not None
+    assert result.detection_scope.effective_labels == ("support_case",)
 
 
 def test_run_logs_numpy_wrapped_entity_counts(stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture) -> None:
@@ -229,8 +233,9 @@ def test_run_logs_numpy_wrapped_entity_counts(stub_input: AnonymizerInput, caplo
         anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
 
     assert "3 entities" in caplog.text
-    assert "first_name=2" in caplog.text
-    assert "organization=1" in caplog.text
+    assert "distinct entity labels: 2" in caplog.text
+    assert "first_name=2" not in caplog.text
+    assert "organization=1" not in caplog.text
 
 
 def test_run_logs_failure_counts(stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture) -> None:
@@ -250,6 +255,34 @@ def test_run_logs_failure_counts(stub_input: AnonymizerInput, caplog: pytest.Log
     assert "2 total failures" in messages
 
 
+def test_run_failure_warning_counts_steps_and_reasons_without_values(
+    stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture
+) -> None:
+    anonymizer = _make_logging_anonymizer(
+        detection_failures=[FailedRecord(record_id="r1", step="entity-detection", reason="Record dropped")],
+        replace_failures=[
+            FailedRecord(record_id="r2", step="detect", reason="mention_slice_mismatch"),
+            FailedRecord(record_id="r3", step="detect", reason="mention_slice_mismatch"),
+            FailedRecord(record_id="r4", step="replace", reason="malformed entities: input_value='Alice'"),
+            FailedRecord(record_id="r5", step="Alice Smith", reason="mention_slice_mismatch"),
+            # Code-shaped but not known: a caller's own detector may report a value as a step or a reason.
+            FailedRecord(record_id="r6", step="detect", reason="alice"),
+            FailedRecord(record_id="r7", step="alice", reason="smith"),
+        ],
+    )
+
+    with caplog.at_level(logging.INFO, logger="anonymizer"):
+        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    # Only known steps and reason codes are named: anything else may carry record content.
+    assert warnings == [
+        "7 record(s) failed during pipeline processing: "
+        "detect=1, detect/mention_slice_mismatch=2, entity-detection=1, other=2, replace=1."
+    ]
+    assert not [word for word in ("Alice", "alice", "smith", "r4", "r5", "r6", "r7") if word in caplog.text]
+
+
 def test_run_without_replacement_skips_replace_logs(
     stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -262,7 +295,7 @@ def test_run_without_replacement_skips_replace_logs(
     messages = caplog.text
     assert "🔍 Running entity detection" in messages
     assert "✏️ Running rewrite pipeline" in messages
-    assert "🔄 Running Redact replacement" not in messages
+    assert "🔄 Running replacement" not in messages
     assert "📋 Replacement complete" not in messages
     assert "🎉 Pipeline complete" in messages
 
@@ -287,7 +320,7 @@ def test_evaluate_replace_logs_stages(stub_input: AnonymizerInput, caplog: pytes
         anonymizer.evaluate(run_result)
 
     messages = caplog.text
-    assert "🧪 Running Redact evaluation on 2 records" in messages
+    assert "🧪 Running replace evaluation on 2 records" in messages
     assert "⚖️ Running replace judges" in messages
     assert "📋 Replace judges complete" in messages
     assert re.search(r"Replace judges complete.*\[\d+\.\ds\]", messages), "Replace evaluation timing not found"
@@ -360,12 +393,12 @@ def test_evaluate_debug_logs_config_and_failures_without_sensitive_context(
         anonymizer.evaluate(run_result)
 
     messages = caplog.text
-    assert "evaluation config: mode=Redact" in messages
+    assert "evaluation config: mode=replace" in messages
     assert "data_summary_provided=True" in messages
     assert "active evaluation judges: entity_coverage_judge" in messages
-    assert "evaluation models:" in messages
+    assert "evaluation models configured" in messages
     assert "1 evaluation failed record(s)" in messages
-    assert "r1 (entity-coverage-judge: timeout)" in messages
+    assert "r1 (entity-coverage-judge: timeout)" not in messages
     assert "confidential dataset description" not in messages
 
 
@@ -496,16 +529,19 @@ def test_evaluate_caught_replace_workflow_exception_logs_debug_and_public_warnin
     )
     caplog.clear()
 
-    with (
-        patch.object(EntityCoverageWorkflow, "column_config", return_value=Mock()),
-        caplog.at_level(logging.DEBUG, logger="anonymizer"),
-    ):
+    with caplog.at_level(logging.DEBUG, logger="anonymizer"):
         evaluated = anonymizer.evaluate(run_result)
 
+    adapter.run_workflow.assert_called_once()
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert "Replace judges workflow failed (RuntimeError); judge scores are unavailable for 2 row(s)." in warnings
     messages = caplog.text
-    assert "Replace judges workflow failed; evaluation scores may be unavailable." in messages
+    assert all("simulated workflow outage" not in record.getMessage() for record in caplog.records)
+    assert "simulated workflow outage" not in messages
     assert "Entity coverage score unavailable for 2/2 records" in messages
     assert evaluated.trace_dataframe[COL_ENTITY_COVERAGE].isna().all()
+    for column in run_result.dataframe.columns:
+        assert evaluated.dataframe[column].equals(run_result.dataframe[column])
 
 
 def test_preview_set_preview_num_records_capped(stub_input: AnonymizerInput) -> None:
@@ -519,7 +555,7 @@ def test_preview_set_preview_num_records_capped(stub_input: AnonymizerInput) -> 
     det_call_kwargs = _call_kwargs(anonymizer._detection_workflow.run)
     assert det_call_kwargs["preview_num_records"] == 2
 
-    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run)
+    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run_with_detection)
     assert rep_call_kwargs["preview_num_records"] == 2
 
 
@@ -534,7 +570,7 @@ def test_preview_set_preview_num_records_not_capped(stub_input: AnonymizerInput)
     det_call_kwargs = _call_kwargs(anonymizer._detection_workflow.run)
     assert det_call_kwargs["preview_num_records"] == 1
 
-    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run)
+    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run_with_detection)
     assert rep_call_kwargs["preview_num_records"] == 1
 
 
@@ -548,7 +584,7 @@ def test_run_set_preview_num_records(stub_input: AnonymizerInput) -> None:
     det_call_kwargs = _call_kwargs(anonymizer._detection_workflow.run)
     assert det_call_kwargs["preview_num_records"] is None
 
-    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run)
+    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run_with_detection)
     assert rep_call_kwargs["preview_num_records"] is None
 
 
@@ -580,7 +616,7 @@ def test_preview_with_large_input_only_loads_preview_rows(tmp_path: Path, caplog
             COL_FINAL_ENTITIES: entities,
         }
     )
-    detection_workflow = Mock(spec=EntityDetectionWorkflow)
+    detection_workflow = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
     detection_workflow.run.return_value = EntityDetectionResult(dataframe=det_df, failed_records=[])
     _replace_df = pd.DataFrame(
         {
@@ -589,6 +625,7 @@ def test_preview_with_large_input_only_loads_preview_rows(tmp_path: Path, caplog
         }
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
+    stub_run_with_detection(replace_runner)
     replace_runner.run.return_value = ReplacementResult(dataframe=_replace_df, failed_records=[])
     anonymizer = Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
     config = AnonymizerConfig(replace=Redact())
@@ -620,8 +657,10 @@ def test_local_replace_logs_progress_for_large_datasets(tmp_path: Path, caplog: 
             COL_FINAL_ENTITIES: [{"entities": e} for e in entities],
         }
     )
-    detection_workflow = Mock(spec=EntityDetectionWorkflow)
-    detection_workflow.run.return_value = EntityDetectionResult(dataframe=det_df, failed_records=[])
+    detection_workflow = returns_detector_result(Mock(spec=EntityDetectionWorkflow))
+    detection_workflow.run.return_value = EntityDetectionResult(
+        dataframe=det_df, failed_records=[], source_positions=tuple(range(num_records))
+    )
     replace_runner = ReplacementWorkflow()
     anonymizer = Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
     config = AnonymizerConfig(replace=Redact())

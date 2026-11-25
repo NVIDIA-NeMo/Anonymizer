@@ -327,6 +327,9 @@ def test_verify_disposition_coverage_restores_identity_on_mismatch(
     assert entry.protection_method_suggestion == original["protection_method_suggestion"]
     assert "does not match supplied entity" in caplog.text
     assert "restoring supplied identity" in caplog.text
+    assert "entry 1 " in caplog.text
+    assert "Portland" not in caplog.text
+    assert "teacher" not in caplog.text
 
 
 def test_verify_disposition_column_marks_row_verified() -> None:

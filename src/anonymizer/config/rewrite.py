@@ -43,10 +43,12 @@ DEFAULT_PRESERVE_TEXT = "General utility, content quality, and semantic meaning 
 
 
 class Finding(str, Enum):
-    """Named conditions on an evaluated rewrite row that a preset can repair on or flag for review.
+    """Named conditions on an evaluated rewrite row.
 
-    Any finding can flag a row for review; only a ``RepairFinding`` can send it to repair. What each
-    one means is written once, in ``present_findings`` (``anonymizer.engine.rewrite.findings``).
+    Only a ``RepairFinding`` can send a row to repair. No finding decides ``needs_human_review``: the
+    rewrite's final checks, the ``undetected_value_kept`` and ``placeholder_in_text`` metrics and the utility
+    score do. What each finding means is written once, in ``present_findings``
+    (``anonymizer.engine.rewrite.findings``).
     """
 
     rewrite_missing = "rewrite_missing"
@@ -64,25 +66,13 @@ RepairFinding = Literal[Finding.high_leak, Finding.leakage_above_repair]
 
 @dataclass(frozen=True)
 class _RiskToleranceBundle:
-    """Internal: one risk_tolerance preset: its thresholds and the findings that act on a row."""
+    """Internal: one risk_tolerance preset: its thresholds and the findings that send a row to repair."""
 
     repair_threshold: float
     flag_utility_below: float
     flag_leakage_above: float
     repair_on: tuple[RepairFinding, ...]
-    flag_on: tuple[Finding, ...]
 
-
-# Every preset flags the same findings. ``unavailable_evidence`` is not a ``RepairFinding``: a row
-# whose metrics are missing or NaN cannot be judged, so it goes to a human instead.
-_FLAG_ON = (
-    Finding.rewrite_missing,
-    Finding.replacement_unavailable,
-    Finding.high_leak,
-    Finding.leakage_above_flag,
-    Finding.utility_below_flag,
-    Finding.unavailable_evidence,
-)
 
 _RISK_TOLERANCE_BUNDLES: dict[RiskTolerance, _RiskToleranceBundle] = {
     RiskTolerance.minimal: _RiskToleranceBundle(
@@ -90,28 +80,24 @@ _RISK_TOLERANCE_BUNDLES: dict[RiskTolerance, _RiskToleranceBundle] = {
         flag_utility_below=0.6,
         flag_leakage_above=1.0,
         repair_on=(Finding.high_leak, Finding.leakage_above_repair),
-        flag_on=_FLAG_ON,
     ),
     RiskTolerance.low: _RiskToleranceBundle(
         repair_threshold=1.0,
         flag_utility_below=0.5,
         flag_leakage_above=2.0,
         repair_on=(Finding.high_leak, Finding.leakage_above_repair),
-        flag_on=_FLAG_ON,
     ),
     RiskTolerance.moderate: _RiskToleranceBundle(
         repair_threshold=1.5,
         flag_utility_below=0.4,
         flag_leakage_above=2.5,
         repair_on=(Finding.high_leak, Finding.leakage_above_repair),
-        flag_on=_FLAG_ON,
     ),
     RiskTolerance.high: _RiskToleranceBundle(
         repair_threshold=2.0,
         flag_utility_below=0.3,
         flag_leakage_above=3.0,
         repair_on=(Finding.leakage_above_repair,),
-        flag_on=_FLAG_ON,
     ),
 }
 
@@ -180,11 +166,6 @@ class EvaluationCriteria(BaseModel):
     def repair_on(self) -> tuple[RepairFinding, ...]:
         """Findings that send a row to repair."""
         return self._bundle.repair_on
-
-    @property
-    def flag_on(self) -> tuple[Finding, ...]:
-        """Findings that flag a row for human review."""
-        return self._bundle.flag_on
 
     @property
     def flag_utility_below(self) -> float:

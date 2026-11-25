@@ -12,8 +12,8 @@ import tempfile
 import time
 import uuid
 from collections import Counter
-from collections.abc import Generator, Mapping
-from contextlib import contextmanager
+from collections.abc import Generator, Mapping, Sequence
+from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
@@ -31,9 +31,14 @@ from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
+from anonymizer.config.regex import REGEX_WALL_CEILING_FACTOR
 from anonymizer.engine.constants import COL_REGEX_ENTITIES, RECORD_ID_COLUMN
+from anonymizer.engine.errors import AnonymizerWorkflowError
+from anonymizer.engine.graph_core.observe import report_requests
+from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame, designer_hook
+from anonymizer.engine.ndd.failed_record import FailedRecord as FailedRecord
+from anonymizer.engine.ndd.model_response import STOPPED_EARLY, Refusals, RunStop, run_stop
 from anonymizer.engine.ndd.storage import prepare_json_storage_column, prepare_json_storage_seed
-from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
 
 if TYPE_CHECKING:
@@ -41,6 +46,28 @@ if TYPE_CHECKING:
     from data_designer.interface.data_designer import DataDesigner
 
 logger = logging.getLogger("anonymizer.ndd")
+
+_BACKEND_PACKAGE = "data_designer"
+_BACKEND_CLASS_PREFIX = "DataDesigner"
+
+
+def exception_class_label(exc: BaseException) -> str:
+    """Return the exception class name for a log line, never the message.
+
+    Classes from the workflow backend package lose the backend prefix so log lines do not name the backend:
+    ``DataDesignerGenerationError`` becomes ``GenerationError`` and the bare base class becomes ``BackendError``.
+    Classes from other modules keep their name.
+    """
+    cls = type(exc)
+    name = cls.__name__
+    module = cls.__module__ or ""
+    if module != _BACKEND_PACKAGE and not module.startswith(_BACKEND_PACKAGE + "."):
+        return name
+    if not name.startswith(_BACKEND_CLASS_PREFIX):
+        return name
+    stripped = name.removeprefix(_BACKEND_CLASS_PREFIX)
+    return "BackendError" if stripped in ("", "Error") else stripped
+
 
 # DataDesigner records the cause of a failed task only while task tracing is on.
 # Tracing keeps one small record per task attempt for the whole run, so this
@@ -52,6 +79,9 @@ _UNTRACED_REASON = (
     f"{_MISSING_RECORD_REASON}: not completed: no error was recorded for this row; other rows in the run failed"
 )
 _MAX_REASON_CHARS = 500
+# Like the summaries below, these only choose a fixed regex reason; the matched text is never returned.
+_REGEX_CPU_BUDGET_FAILURE = re.compile(r"(?:^|: )Regex rule '[^'\n]*' timed out after \S+ CPU seconds? ")
+_REGEX_STARVED_FAILURE = re.compile(r"(?:^|: )Regex rule '[^'\n]*' was starved: ")
 _CAUSE_LINE = re.compile(r"^\s*\|\s*Cause:\s*(.+)", re.MULTILINE)
 _SOLUTION_LINE = re.compile(r"^\s*\|\s*Solution:\s*(.+)", re.MULTILINE)
 # Task traces retain only strings. Exception text can impersonate even a complete classified error,
@@ -107,7 +137,10 @@ _SAFE_FAILURE_SUMMARIES = {
     ),
 }
 # Anonymizer's own failure text, safe to show because it carries only offsets.
-_KNOWN_FAILURE = re.compile(r"Detector entity text does not match the source span at offsets \[\d+, \d+\)")
+_KNOWN_FAILURE = re.compile(
+    r"Detector entity text does not match the source span at offsets \[\d+, \d+\)"
+    r"|Detector entity span \[[0-9]+, [0-9]+\) ends past the source text of length [0-9]+(?![0-9])"
+)
 
 _TRACEABLE_LLM_COLUMN_TYPES = (LLMTextColumnConfig, LLMStructuredColumnConfig)
 _MODEL_TRACE_COLUMN: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_column", default=None)
@@ -115,19 +148,8 @@ _MODEL_TRACE_PURPOSE: ContextVar[str | None] = ContextVar("anonymizer_dd_model_t
 
 
 def _normalize_column_for_data_designer(column: ColumnConfigT) -> ColumnConfigT:
-    """Convert marked private config subclasses to DataDesigner's registered types."""
-    if getattr(type(column), "_normalize_for_data_designer", False):
-        column = LLMStructuredColumnConfig.model_validate(column.model_dump())
+    """Prepare a column config for DataDesigner's JSON storage."""
     return prepare_json_storage_column(column)
-
-
-@dataclass(frozen=True)
-class FailedRecord:
-    """A record that did not appear in workflow output."""
-
-    record_id: str
-    step: str
-    reason: str
 
 
 @dataclass(frozen=True)
@@ -136,6 +158,8 @@ class WorkflowRunResult:
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    source_positions: tuple[int, ...] | None = None
+    observed_requests: int | None = None
 
 
 @dataclass(frozen=True)
@@ -351,7 +375,7 @@ class NddAdapter:
         self._run_lock = RLock()
         self._input_tokens_lock = Lock()
         self._cumulative_input_tokens: int = 0
-        logger.debug("NDD adapter: artifact_path=%s", getattr(data_designer, "_artifact_path", "unknown"))
+        logger.debug("NDD adapter initialized")
 
     @property
     def total_input_tokens(self) -> int:
@@ -420,9 +444,12 @@ class NddAdapter:
             `WorkflowRunResult` with the output DataFrame and any `FailedRecord` entries.
         """
         workflow_input_df = self._attach_record_ids(df=df)
-        logger.debug("NDD workflow '%s' starting with %d records", workflow_name, len(workflow_input_df))
+        if workflow_input_df.empty:  # e.g. an earlier stage stopped early before any row finished
+            return WorkflowRunResult(_empty_output(workflow_input_df, columns), [], (), 0)
+        source_frame = WorkflowSourceFrame.capture(workflow_input_df)
+        logger.debug("NDD workflow starting with %d records", len(workflow_input_df))
         col_names = [c.name for c in columns]
-        logger.debug("NDD workflow '%s': %d columns %s", workflow_name, len(col_names), col_names)
+        logger.debug("NDD workflow column count: %d", len(col_names))
         available_model_aliases = [m.alias for m in model_configs]
         model_aliases = _extract_workflow_model_aliases(columns) or available_model_aliases
         record_count = (
@@ -430,6 +457,7 @@ class NddAdapter:
             if preview_num_records is not None
             else len(workflow_input_df)
         )
+        buffer_size = record_count if preview_num_records is not None else _run_buffer_size(self._data_designer)
         started = time.perf_counter()
         collector = current_collector()
         trace_plan = _DDMessageTracePlan.from_columns(
@@ -446,76 +474,42 @@ class NddAdapter:
             private_trace_columns=trace_plan.private_columns,
         )
         trace_plan.record_coverage(workflow_name=workflow_name, collector=collector)
+        account = _RunAccount(
+            adapter=self,
+            usage_probe=usage_probe,
+            workflow_name=workflow_name,
+            model_aliases=model_aliases,
+            record_count=record_count,
+            seed_row_count=len(workflow_input_df),
+            preview_num_records=preview_num_records,
+            column_names=col_names,
+            started=started,
+        )
 
         with tempfile.TemporaryDirectory(prefix=f"anonymizer_{workflow_name}_") as tmp_dir:
-            seed_path = str(Path(tmp_dir) / "seed.parquet")
-            task_traces: list[_TaskTrace] = []
+            stop = RunStop.from_run_config(
+                getattr(self._data_designer, "run_config", None), row_key=source_frame.key_column
+            )
             try:
-                workflow_input_df = prepare_json_storage_seed(workflow_input_df)
-                seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, seed_path)
-
-                config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
-                config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
-                for column in columns:
-                    # DataDesigner resolves built-in generators by exact config
-                    # type. A private subclass can keep sensitive prompt fields
-                    # out of reprs in our workflow specs, then become the
-                    # registered built-in config at the execution boundary.
-                    config_builder.add_column(_normalize_column_for_data_designer(column))
-
-                with self._run_lock, usage_probe, _temporary_dd_task_trace(self._data_designer, collector=collector):
-                    if preview_num_records is None:
-                        run_results = self._data_designer.create(
-                            config_builder,
-                            num_records=len(workflow_input_df),
-                            dataset_name=workflow_name,
-                        )
-                        task_traces = _task_traces_from_result(run_results)
-                        output_df = run_results.load_dataset()
-                    else:
-                        preview_results = self._data_designer.preview(
-                            config_builder,
-                            num_records=record_count,
-                        )
-                        task_traces = _task_traces_from_result(preview_results)
-                        if preview_results.dataset is None:
-                            output_df = workflow_input_df.iloc[0:0].copy()
-                        else:
-                            output_df = preview_results.dataset
-            except Exception as exc:
-                logger.warning(
-                    "Workflow failed for %d input record(s) on model(s) %s: %s",
-                    record_count,
-                    available_model_aliases,
-                    exc,
-                )
-                logger.debug(
-                    "Workflow '%s' failure context: columns=%s",
-                    workflow_name,
-                    col_names,
-                )
-                try:
-                    usage_probe.flush_private_trace_records()
-                except Exception:
-                    logger.warning("Failed to write DataDesigner private message trace records after workflow failure")
-                _error_model_usage = usage_probe.model_usage()
-                with self._run_lock:
-                    self._add_input_tokens(_error_model_usage)
-                record_ndd_workflow(
+                output_df, source_positions, task_traces, refusals = self._execute(
+                    source_frame,
+                    model_configs=model_configs,
+                    columns=columns,
+                    seed_path=str(Path(tmp_dir) / "seed.parquet"),
                     workflow_name=workflow_name,
-                    model_aliases=model_aliases,
-                    input_row_count=record_count,
-                    seed_row_count=len(workflow_input_df),
-                    output_row_count=None,
-                    failed_record_count=None,
-                    elapsed_sec=time.perf_counter() - started,
-                    status="error",
                     preview_num_records=preview_num_records,
-                    column_count=len(col_names),
-                    column_names=col_names,
-                    model_usage=_error_model_usage,
+                    record_count=record_count,
+                    usage_probe=usage_probe,
+                    collector=collector,
+                    stop=stop,
                 )
-                raise AnonymizerWorkflowError(f"Workflow failed: {exc}") from exc
+            except Exception as exc:
+                raise account.failed(exc) from exc
+            refused = _refused_positions(source_frame.keys[:record_count], refusals)
+            if refused and not source_positions and len(refused) < record_count:
+                # The stop refused some rows and every other row failed: an error the stop did not cause.
+                error = AnonymizerWorkflowError("no row was returned, and a row the early stop did not refuse failed")
+                raise account.failed(error) from error
 
             output_df = trace_plan.record_and_strip_native_traces(
                 output_df=output_df,
@@ -529,35 +523,75 @@ class NddAdapter:
             )
             usage_probe.flush_private_trace_records()
 
-        logger.debug("NDD workflow '%s' returned %d records", workflow_name, len(output_df))
-        failed_records = self._detect_missing_records(
+        logger.debug("NDD workflow returned %d records", len(output_df))
+        failed_records = _missing_records(
             workflow_name=workflow_name,
-            input_df=(
-                workflow_input_df.iloc[:preview_num_records].copy()
-                if preview_num_records is not None
-                else workflow_input_df
-            ),
-            output_df=output_df,
+            record_ids=workflow_input_df[RECORD_ID_COLUMN].astype(str).tolist()[:record_count],
+            surviving_positions=set(source_positions),
             task_traces=task_traces,
-            buffer_size=record_count if preview_num_records is not None else _run_buffer_size(self._data_designer),
+            buffer_size=buffer_size,
+            refused=refused,
         )
-        _success_model_usage = usage_probe.model_usage()
-        with self._run_lock:
-            self._add_input_tokens(_success_model_usage)
-        record_ndd_workflow(
-            workflow_name=workflow_name,
-            model_aliases=model_aliases,
-            input_row_count=record_count,
-            seed_row_count=len(workflow_input_df),
-            output_row_count=len(output_df),
-            failed_record_count=len(failed_records),
-            elapsed_sec=time.perf_counter() - started,
-            preview_num_records=preview_num_records,
-            column_count=len(col_names),
-            column_names=col_names,
-            model_usage=_success_model_usage,
+        observed_requests = account.succeeded(output_row_count=len(output_df), failed_record_count=len(failed_records))
+        return WorkflowRunResult(
+            dataframe=output_df,
+            failed_records=failed_records,
+            source_positions=source_positions,
+            observed_requests=observed_requests,
         )
-        return WorkflowRunResult(dataframe=output_df, failed_records=failed_records)
+
+    def _execute(
+        self,
+        source_frame: WorkflowSourceFrame,
+        *,
+        model_configs: list[ModelConfig],
+        columns: list[ColumnConfigT],
+        seed_path: str,
+        workflow_name: str,
+        preview_num_records: int | None,
+        record_count: int,
+        usage_probe: _DataDesignerUsageProbe,
+        collector: Any | None,
+        stop: RunStop,
+    ) -> tuple[pd.DataFrame, tuple[int, ...], list[_TaskTrace], Refusals]:
+        """Run the workflow once: write the seed, build the config, create or preview under ``stop``, and project the
+        output onto its source rows, leaving out the rows the stop refused.
+
+        Returns the projected output, its source positions, the run's task traces and the stop's refusals.
+        """
+        seed_df = prepare_json_storage_seed(source_frame.seed())
+        seed_source = LocalFileSeedSource.from_dataframe(seed_df, seed_path)
+
+        config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
+        config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
+        for column in columns:
+            config_builder.add_column(_normalize_column_for_data_designer(column))
+
+        with (
+            self._run_lock,
+            usage_probe,
+            _temporary_dd_task_trace(self._data_designer, collector=collector),
+            source_frame.bind_generators(self._data_designer),
+            run_stop(stop) as refusals,
+        ):
+            if preview_num_records is None:
+                run_results = self._data_designer.create(
+                    config_builder,
+                    num_records=len(source_frame.dataframe),
+                    dataset_name=workflow_name,
+                )
+                task_traces = _task_traces_from_result(run_results)
+                output_df = run_results.load_dataset()
+            else:
+                preview_results = self._data_designer.preview(config_builder, num_records=record_count)
+                task_traces = _task_traces_from_result(preview_results)
+                if preview_results.dataset is None:
+                    output_df = _empty_output(source_frame.dataframe, columns)
+                else:
+                    output_df = preview_results.dataset
+            # A refused row completed in DataDesigner with empty cells; it is listed, not returned.
+            output_df, source_positions = source_frame.project(output_df, requested=record_count, excluded=refusals)
+        return output_df, source_positions, task_traces, refusals
 
     def build_config(
         self,
@@ -638,11 +672,11 @@ class NddAdapter:
             return df.copy()
 
         dataframe = df.copy()
-        dataframe[RECORD_ID_COLUMN] = dataframe.apply(self._compute_record_id, axis=1)
+        dataframe[RECORD_ID_COLUMN] = dataframe.apply(self.compute_record_id, axis=1)
         return dataframe
 
     @staticmethod
-    def _compute_record_id(row: pd.Series) -> str:
+    def compute_record_id(row: pd.Series) -> str:
         # uuid5 is deterministic so input/output IDs match for missing-record tracking.
         # Include row index so duplicate rows get distinct IDs.
         # TODO: consider whether id_column from AnonymizerInput should be used here instead.
@@ -650,82 +684,141 @@ class NddAdapter:
         serialized = json.dumps(row_data, default=str, sort_keys=True, separators=(",", ":"))
         return uuid.uuid5(uuid.NAMESPACE_URL, serialized).hex
 
-    def _detect_missing_records(
-        self,
-        *,
-        workflow_name: str,
-        input_df: pd.DataFrame,
-        output_df: pd.DataFrame,
-        task_traces: list[_TaskTrace] | None = None,
-        buffer_size: int | None = None,
-    ) -> list[FailedRecord]:
-        if RECORD_ID_COLUMN not in input_df.columns:
-            logger.warning(
-                "Missing-record detection skipped: input DataFrame lacks the record-tracking "
-                "column, so the adapter cannot verify whether any of %d input record(s) were "
-                "dropped.",
-                len(input_df),
-            )
-            logger.debug(
-                "Workflow '%s' detection skipped: input missing '%s'; input_columns=%s",
-                workflow_name,
-                RECORD_ID_COLUMN,
-                list(input_df.columns),
-            )
-            return []
-        if RECORD_ID_COLUMN not in output_df.columns:
-            input_cols = set(input_df.columns)
-            output_cols = set(output_df.columns)
-            other_dropped = sorted((input_cols - output_cols) - {RECORD_ID_COLUMN})
-            added = sorted(output_cols - input_cols)
-            logger.warning(
-                "Missing-record detection disabled: workflow output does not contain "
-                "the record-tracking column, so all %d input record(s) are being marked as "
-                "failed. This typically means seed-column pass-through is disabled or a "
-                "user-supplied column config overwrote it. Other input columns that were "
-                "also dropped: %s. Columns added by the workflow: %s.",
-                len(input_df),
-                other_dropped,
-                added,
-            )
-            logger.debug(
-                "Workflow '%s' detection disabled: output missing '%s'; input_columns=%s output_columns=%s",
-                workflow_name,
-                RECORD_ID_COLUMN,
-                list(input_df.columns),
-                list(output_df.columns),
-            )
-            return [
-                FailedRecord(
-                    record_id=record_id,
-                    step=workflow_name,
-                    reason=f"Output is missing required tracking column '{RECORD_ID_COLUMN}'",
-                )
-                for record_id in input_df[RECORD_ID_COLUMN].astype(str).tolist()
-            ]
 
-        ordered_ids = input_df[RECORD_ID_COLUMN].astype(str).tolist()
-        output_ids = set(output_df[RECORD_ID_COLUMN].astype(str).tolist())
-        missing_ids = sorted(set(ordered_ids) - output_ids)
-        reasons = _failure_reasons_by_record(
-            record_ids=ordered_ids,
-            task_traces=task_traces or [],
-            buffer_size=buffer_size or len(ordered_ids),
+def _empty_output(frame: pd.DataFrame, columns: list[ColumnConfigT]) -> pd.DataFrame:
+    """A workflow's output with no rows: ``frame``'s columns plus the ones ``columns`` declare, so a later stage
+    still finds the columns it reads. Used for a run on no rows and for a preview that returns no dataset."""
+    declared = [name for c in columns for name in (c.name, *getattr(c, "side_effect_columns", []))]
+    return frame.iloc[0:0].reindex(columns=list(dict.fromkeys([*frame.columns, *declared])))
+
+
+def _refused_positions(keys: Sequence[str], refusals: Refusals) -> dict[int, str]:
+    """The position of each row in ``keys`` the stop refused, with the step that refused it."""
+    return {position: refusals[key] for position, key in enumerate(keys) if key in refusals}
+
+
+@dataclass(frozen=True)
+class _RunAccount:
+    """One run's accounting: input tokens, observed requests and the workflow record, for a failed or a finished
+    run."""
+
+    adapter: NddAdapter
+    usage_probe: _DataDesignerUsageProbe
+    workflow_name: str
+    model_aliases: list[str]
+    record_count: int
+    seed_row_count: int
+    preview_num_records: int | None
+    column_names: list[str]
+    started: float
+
+    def failed(self, exc: Exception) -> AnonymizerWorkflowError:
+        """Log and record a failed run; return the error to raise from ``exc``."""
+        logger.warning(
+            "Workflow failed for %d input record(s): %s.",
+            self.record_count,
+            exception_class_label(exc),
         )
-        untraced = [record_id for record_id in missing_ids if record_id not in reasons]
-        if untraced:
-            default_reason = _untraced_reason(list(reasons.values())) if reasons else _MISSING_RECORD_REASON
-            reasons.update(dict.fromkeys(untraced, default_reason))
-        return [
-            FailedRecord(record_id=record_id, step=workflow_name, reason=reasons[record_id])
-            for record_id in missing_ids
-        ]
+        logger.debug(
+            "Workflow failure context: input_records=%d column_count=%d",
+            self.record_count,
+            len(self.column_names),
+        )
+        try:
+            self.usage_probe.flush_private_trace_records()
+        except Exception:
+            logger.warning("Failed to write DataDesigner private message trace records after workflow failure")
+        model_usage = self._model_usage()
+        _report_observed_requests(model_usage)
+        self._record(model_usage, status="error", output_row_count=None, failed_record_count=None)
+        return AnonymizerWorkflowError(f"Workflow failed: {exc}")
+
+    def succeeded(self, *, output_row_count: int, failed_record_count: int) -> int | None:
+        """Record a finished run; return its observed request count."""
+        model_usage = self._model_usage()
+        observed_requests = _report_observed_requests(model_usage)
+        self._record(
+            model_usage, status="completed", output_row_count=output_row_count, failed_record_count=failed_record_count
+        )
+        return observed_requests
+
+    def _model_usage(self) -> dict[str, Any] | None:
+        model_usage = self.usage_probe.model_usage()
+        with self.adapter._run_lock:
+            self.adapter._add_input_tokens(model_usage)
+        return model_usage
+
+    def _record(
+        self,
+        model_usage: dict[str, Any] | None,
+        *,
+        status: str,
+        output_row_count: int | None,
+        failed_record_count: int | None,
+    ) -> None:
+        record_ndd_workflow(
+            workflow_name=self.workflow_name,
+            model_aliases=self.model_aliases,
+            input_row_count=self.record_count,
+            seed_row_count=self.seed_row_count,
+            output_row_count=output_row_count,
+            failed_record_count=failed_record_count,
+            elapsed_sec=time.perf_counter() - self.started,
+            status=status,
+            preview_num_records=self.preview_num_records,
+            column_count=len(self.column_names),
+            column_names=self.column_names,
+            model_usage=model_usage,
+        )
 
 
-def _untraced_reason(reasons: list[str]) -> str:
-    """Describe a row dropped without a trace by the most common classified cause among the other rows."""
+def _missing_records(
+    *,
+    workflow_name: str,
+    record_ids: list[str],
+    surviving_positions: set[int],
+    task_traces: list[_TaskTrace],
+    buffer_size: int | None,
+    refused: Mapping[int, str] | None = None,
+) -> list[FailedRecord]:
+    """Fail each input row absent from the output, with the cause its own task traces recorded.
+
+    A row at a position in ``refused`` was refused by a stopped step and is listed as ``stopped_early (<step>)``,
+    naming that step, unless its traces recorded another failure, whose reason it keeps.
+    """
+    refused = refused or {}
+    reasons = _failure_reasons_by_position(
+        record_count=len(record_ids), task_traces=task_traces, buffer_size=buffer_size or len(record_ids)
+    )
+    missing = [position for position in range(len(record_ids)) if position not in surviving_positions]
+    untraced = [position for position in missing if position not in reasons and position not in refused]
+    if untraced and reasons:
+        logger.warning(
+            "%d record(s) in '%s' failed with no recorded error; the run's most common failure was: %s",
+            len(untraced),
+            workflow_name,
+            _most_common_cause(list(reasons.values())),
+        )
+    untraced_reason = _UNTRACED_REASON if reasons else _MISSING_RECORD_REASON
+    failed = [
+        FailedRecord(
+            record_id=record_ids[position],
+            step=workflow_name,
+            reason=reasons[position]
+            if position in reasons
+            else f"{STOPPED_EARLY} ({refused[position]})"
+            if position in refused
+            else untraced_reason,
+        )
+        for position in missing
+    ]
+    return sorted(failed, key=lambda record: record.record_id)
+
+
+def _most_common_cause(reasons: list[str]) -> str:
+    """The most common classified cause among ``reasons``, the first recorded on a tie."""
     causes = [reason.removeprefix(f"{_MISSING_RECORD_REASON}: ") for reason in reasons]
-    return f"{_UNTRACED_REASON} (most common: {Counter(causes).most_common(1)[0][0]})"
+    return Counter(causes).most_common(1)[0][0]
 
 
 def _run_buffer_size(data_designer: DataDesigner) -> int | None:
@@ -733,13 +826,25 @@ def _run_buffer_size(data_designer: DataDesigner) -> int | None:
     return buffer_size if isinstance(buffer_size, int) else None
 
 
-def _failure_reasons_by_record(
+def _failure_reasons_by_position(
     *,
-    record_ids: list[str],
+    record_count: int,
     task_traces: list[_TaskTrace],
     buffer_size: int,
-) -> dict[str, str]:
-    """Map each record to the reason of its earliest failed column, leaving out columns that later recovered."""
+) -> dict[int, str]:
+    """Map each row position to the reason of its earliest failed column, leaving out columns that later recovered."""
+    errors = _unrecovered_errors(record_count=record_count, task_traces=task_traces, buffer_size=buffer_size)
+    return {position: _failure_reason(next(iter(by_column.values()))) for position, by_column in errors.items()}
+
+
+def _unrecovered_errors(
+    *,
+    record_count: int,
+    task_traces: list[_TaskTrace],
+    buffer_size: int,
+) -> dict[int, dict[object, _TaskTrace]]:
+    """Each row position's failed columns, in order of failure, with their traces; a column that later recovered is
+    left out."""
     errors: dict[int, dict[object, _TaskTrace]] = {}
     for trace in task_traces:
         status = _trace_attr(trace, "status")
@@ -748,20 +853,14 @@ def _failure_reasons_by_record(
         if status not in ("error", "ok") or not isinstance(row_group, int):
             continue
         start = row_group * buffer_size
-        positions = (
-            range(start, min(start + buffer_size, len(record_ids))) if row_index is None else [start + row_index]
-        )
+        positions = range(start, min(start + buffer_size, record_count)) if row_index is None else [start + row_index]
         column = _trace_attr(trace, "column")
         for position in positions:
             if status == "error":
                 errors.setdefault(position, {})[column] = trace
             else:
                 errors.get(position, {}).pop(column, None)
-    return {
-        record_ids[position]: _failure_reason(next(iter(by_column.values())))
-        for position, by_column in errors.items()
-        if by_column and position < len(record_ids)
-    }
+    return {position: by_column for position, by_column in errors.items() if by_column and position < record_count}
 
 
 def _failure_reason(trace: _TaskTrace) -> str:
@@ -770,6 +869,19 @@ def _failure_reason(trace: _TaskTrace) -> str:
     if _trace_attr(trace, "column") == COL_REGEX_ENTITIES:
         # Trace strings are untrusted, including custom-validator exceptions.
         # Give fixed guidance without echoing exception text into public results.
+        error = str(_trace_attr(trace, "error") or "")
+        if _REGEX_STARVED_FAILURE.search(error):
+            return (
+                f"{prefix}Regex rule was starved: the process was too busy to run its scan within the wall-clock "
+                f"ceiling of {REGEX_WALL_CEILING_FACTOR} times its CPU budget; reduce concurrent load. "
+                "No partial regex result was returned."
+            )
+        if _REGEX_CPU_BUDGET_FAILURE.search(error):
+            return (
+                f"{prefix}Regex rule used its CPU-time budget; review custom pattern efficiency, or raise "
+                "detect.regex_limits.min_timeout_seconds or detect.regex_limits.timeout_seconds_per_million_characters "
+                "(CPU seconds). No partial regex result was returned."
+            )
         return (
             f"{prefix}Regex detection failed; review detect.regex_limits.max_matches_per_rule, "
             "detect.regex_limits.min_timeout_seconds, detect.regex_limits.timeout_seconds_per_million_characters "
@@ -838,7 +950,7 @@ class _DataDesignerUsageProbe:
         self._collector = collector
         self._workflow_name = workflow_name
         self._private_trace_column_names = {column.column_name for column in private_trace_columns or []}
-        self._original_create_resource_provider: Any | None = None
+        self._hook = ExitStack()
         self._resource_providers: list[Any] = []
         self._model_registry_patches: list[tuple[Any, Any]] = []
         self._facade_patches: dict[int, tuple[Any, dict[str, Any]]] = {}
@@ -848,25 +960,21 @@ class _DataDesignerUsageProbe:
         if not self._enabled:
             return self
 
-        original = getattr(self._data_designer, "_create_resource_provider", None)
-        if not callable(original):
+        if not callable(getattr(self._data_designer, "_create_resource_provider", None)):
             return self
 
-        self._original_create_resource_provider = original
-
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
+        def wrapper(original: Any, *args: Any, **kwargs: Any) -> Any:
             resource_provider = original(*args, **kwargs)
             self._resource_providers.append(resource_provider)
             self._install_private_model_trace(resource_provider)
             return resource_provider
 
-        setattr(self._data_designer, "_create_resource_provider", wrapper)
+        self._hook.enter_context(designer_hook(self._data_designer, "_create_resource_provider", wrapper))
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         self._restore_private_trace_patches()
-        if self._original_create_resource_provider is not None:
-            setattr(self._data_designer, "_create_resource_provider", self._original_create_resource_provider)
+        self._hook.close()
 
     def model_usage(self) -> dict[str, Any] | None:
         usage: dict[str, Any] = {}
@@ -1074,6 +1182,26 @@ def _get_model_usage_snapshot_by_alias(model_registry: object) -> Mapping[str, o
     return snapshot or None
 
 
+def _report_observed_requests(model_usage: Mapping[str, Any] | None) -> int | None:
+    """Report this run's request count to the running graph step, or return ``None`` if the probe cannot tell.
+
+    The count is DataDesigner model requests as the usage probe reports them, not strictly LLM calls made through
+    DataDesigner; counting those strictly needs further work.
+    """
+    reported = [
+        usage["request_usage"]
+        for usage in (model_usage or {}).values()
+        if isinstance(usage, Mapping) and isinstance(usage.get("request_usage"), Mapping)
+    ]
+    if not reported:
+        return None
+    total = sum(
+        int(r.get("total_requests") or r.get("successful_requests", 0) + r.get("failed_requests", 0)) for r in reported
+    )
+    report_requests(total)
+    return total
+
+
 def _model_usage_as_json(stats: object) -> Any:
     model_dump = getattr(stats, "model_dump", None)
     if callable(model_dump):
@@ -1205,18 +1333,20 @@ def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | No
         yield
         return
 
-    original_run_config = getattr(data_designer, "run_config", None)
-    set_run_config = getattr(data_designer, "set_run_config", None)
-    if original_run_config is None or not callable(set_run_config):
+    if not callable(getattr(data_designer, "_create_resource_provider", None)):
         yield
         return
 
-    traced_run_config = _run_config_with_async_trace(original_run_config)
-    set_run_config(traced_run_config)
-    try:
+    def traced(original: Any, *args: Any, **kwargs: Any) -> Any:
+        # The run's own resources carry the trace flag; the designer's run config, shared by other runs, is untouched.
+        resource_provider = original(*args, **kwargs)
+        run_config = getattr(resource_provider, "run_config", None)
+        if run_config is not None:
+            resource_provider.run_config = _run_config_with_async_trace(run_config)
+        return resource_provider
+
+    with designer_hook(data_designer, "_create_resource_provider", traced):
         yield
-    finally:
-        set_run_config(original_run_config)
 
 
 def _run_config_with_async_trace(run_config: Any) -> Any:

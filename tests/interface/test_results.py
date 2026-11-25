@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import pickle
+
 import pandas as pd
 
+from anonymizer.config.replace_strategies import Hash
 from anonymizer.engine.constants import COL_DETECTED_ENTITIES
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 
@@ -88,3 +91,69 @@ def test_preview_result_preserves_positional_data_summary_contract() -> None:
 
     assert result.data_summary == "Customer support transcripts."
     assert result.excluded_entity_labels is None
+
+
+def test_anonymizer_result_positional_label_list_lands_in_effective_entity_labels() -> None:
+    result = AnonymizerResult(
+        pd.DataFrame(),
+        pd.DataFrame(),
+        "bio",
+        [],
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        ["custom_id"],
+    )
+
+    assert result.effective_entity_labels == ["custom_id"]
+    assert result.detection_scope is None
+
+
+def test_preview_result_positional_label_list_lands_in_effective_entity_labels() -> None:
+    result = PreviewResult(
+        pd.DataFrame(),
+        pd.DataFrame(),
+        "bio",
+        [],
+        3,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        ["custom_id"],
+    )
+
+    assert result.effective_entity_labels == ["custom_id"]
+    assert result.detection_scope is None
+
+
+def _results_with(method: Hash) -> list[AnonymizerResult | PreviewResult]:
+    frame = pd.DataFrame({"bio": ["a"]})
+    return [
+        AnonymizerResult(
+            dataframe=frame, trace_dataframe=frame, resolved_text_column="bio", failed_records=[], replace_method=method
+        ),
+        PreviewResult(
+            dataframe=frame,
+            trace_dataframe=frame,
+            resolved_text_column="bio",
+            failed_records=[],
+            preview_num_records=1,
+            replace_method=method,
+        ),
+    ]
+
+
+def test_a_saved_result_keeps_no_hash_key() -> None:
+    for result in _results_with(Hash(key="s3cr3t-key-material")):
+        assert isinstance(result.replace_method, Hash)
+        assert result.replace_method.key is None
+        saved = pickle.dumps(result)
+        assert b"s3cr3t-key-material" not in saved
+        restored = pickle.loads(saved)
+        assert isinstance(restored.replace_method, Hash) and restored.replace_method.key is None

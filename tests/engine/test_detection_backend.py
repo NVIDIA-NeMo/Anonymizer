@@ -138,7 +138,6 @@ def test_gliner_backend_ignores_non_object_entities() -> None:
         {"label": ""},
         {"start": -1},
         {"start": 3, "end": 3},
-        {"end": 999},
         {"start": "abc"},
         {"end": "abc"},
     ],
@@ -237,7 +236,7 @@ def test_gliner_source_value_projection_is_redacted_after_detector_normalization
         "targeted_span_count": 1,
         "applied_span_count": 1,
         "skipped_span_count": 0,
-        "skipped_span_label_counts": {},
+        "skipped_span_label_counts": "{}",
     }
 
 
@@ -353,6 +352,43 @@ def test_gliner_backend_rejects_source_mismatch_even_with_valid_observations(
 
     assert str(exc_info.value) == (f"Detector entity text does not match the source span at offsets [{start}, {end})")
     assert all(value not in str(exc_info.value) for value in ("Alice", "Carol", "Bob", "first_name"))
+
+
+@pytest.mark.parametrize(
+    ("canonical_text", "view_start", "view_end", "start", "end"),
+    [
+        ("Alice met Bob", 0, 13, 10, 14),
+        ("Alice met Bob", 0, 13, 20, 25),
+        ("prefix Alice suffix", 7, 12, 0, 6),
+    ],
+    ids=["one-past-end", "wholly-past-end", "past-view-end"],
+)
+def test_gliner_backend_fails_when_span_ends_past_source_text(
+    canonical_text: str, view_start: int, view_end: int, start: int, end: int
+) -> None:
+    with pytest.raises(ValueError) as exc_info:
+        _build_result(
+            canonical_text=canonical_text,
+            view_start=view_start,
+            view_end=view_end,
+            raw_entities=[
+                {"text": "Bob", "label": "first_name", "start": start, "end": end, "score": 0.9},
+            ],
+        )
+
+    assert str(exc_info.value) == (
+        f"Detector entity span [{start}, {end}) ends past the source text of length {view_end - view_start}"
+    )
+    assert all(value not in str(exc_info.value) for value in ("Alice", "Bob", "first_name"))
+
+
+def test_gliner_backend_keeps_span_ending_at_text_end() -> None:
+    result = _build_result(
+        canonical_text="Alice met Bob",
+        raw_entities=[{"text": "Bob", "label": "first_name", "start": 10, "end": 13, "score": 0.9}],
+    )
+
+    assert [(o.value, o.start_position, o.end_position) for o in result.observations] == [("Bob", 10, 13)]
 
 
 def test_gliner_backend_publishes_empty_result_for_no_valid_observations() -> None:

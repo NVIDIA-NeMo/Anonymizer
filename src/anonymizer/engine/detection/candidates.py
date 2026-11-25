@@ -6,6 +6,7 @@ from __future__ import annotations
 from bisect import bisect_left
 from collections import defaultdict
 from collections.abc import Iterable
+from operator import attrgetter
 
 from anonymizer.engine.constants import SOURCE_KIND_AUGMENTER
 from anonymizer.engine.schemas import (
@@ -19,6 +20,7 @@ from anonymizer.engine.schemas import (
     ObservationRef,
     SourceTextRef,
 )
+from anonymizer.engine.spans import Span
 
 # Source only breaks ties between candidates with identical source geometry.
 # Regex roles are included now so PR #265 can reuse this policy unchanged.
@@ -60,7 +62,7 @@ def materialize_admitted_candidates(
             raise ValueError("admission route does not match its observation")
         if result.status is AdmissionStatus.rejected:
             continue
-        if canonical_text[observation.start_position : observation.end_position] != observation.value:
+        if canonical_text[observation.span.slice] != observation.value:
             raise ValueError("observation value does not match canonical source offsets")
         label = normalize_candidate_label(result.effective_label or "")
         if not label:
@@ -109,22 +111,15 @@ def materialize_admitted_candidates(
 
 def coalesce_exact_candidates(candidates: Iterable[AdmittedCandidate]) -> tuple[AdmittedCandidate, ...]:
     """Combine admitted claims with the same source, normalized label, and bounds."""
-    grouped: dict[tuple[SourceTextRef, str, int, int], list[AdmittedCandidate]] = defaultdict(list)
+    grouped: dict[tuple[SourceTextRef, str, Span], list[AdmittedCandidate]] = defaultdict(list)
     for candidate in candidates:
         normalized_label = normalize_candidate_label(candidate.label)
         if not normalized_label:
             raise ValueError("candidate label must not be empty after normalization")
-        grouped[
-            (
-                candidate.source_text_ref,
-                normalized_label,
-                candidate.start_position,
-                candidate.end_position,
-            )
-        ].append(candidate)
+        grouped[(candidate.source_text_ref, normalized_label, candidate.span)].append(candidate)
 
     coalesced: list[AdmittedCandidate] = []
-    for (source_ref, label, start, end), equivalents in grouped.items():
+    for (source_ref, label, span), equivalents in grouped.items():
         values = {candidate.value for candidate in equivalents}
         if len(values) != 1:
             raise ValueError("exact candidate identities disagree on source value")
@@ -133,8 +128,8 @@ def coalesce_exact_candidates(candidates: Iterable[AdmittedCandidate]) -> tuple[
                 source_text_ref=source_ref,
                 value=values.pop(),
                 label=label,
-                start_position=start,
-                end_position=end,
+                start_position=span.start,
+                end_position=span.end,
                 lineage=tuple(sorted({ref for candidate in equivalents for ref in candidate.lineage}, key=_ref_key)),
                 accepted_origins=tuple(
                     sorted(
@@ -162,20 +157,17 @@ def reconcile_candidates(candidates: Iterable[AdmittedCandidate]) -> tuple[Admit
 
     reconciled: list[AdmittedCandidate] = []
     for source_ref in sorted(by_source, key=_source_ref_key):
-        ordered = _rank_candidates(by_source[source_ref])
         accepted: list[AdmittedCandidate] = []
-        # Accepted spans are disjoint, so keeping their bounds sorted by start (and therefore by end) lets
-        # a candidate be checked against its two neighbours instead of every accepted span.
-        accepted_starts: list[int] = []
-        accepted_ends: list[int] = []
-        for candidate in ordered:
-            index = bisect_left(accepted_starts, candidate.start_position)
-            if index > 0 and accepted_ends[index - 1] > candidate.start_position:
+        # Accepted spans are disjoint, so keeping them sorted by start (and therefore by end) lets a candidate be
+        # checked against its two neighbours instead of every accepted span: the one before ``index`` and the one at it.
+        accepted_spans: list[Span] = []
+        for candidate in _rank_candidates(by_source[source_ref]):
+            span = candidate.span
+            index = bisect_left(accepted_spans, span.start, key=attrgetter("start"))
+            neighbours = accepted_spans[max(index - 1, 0) : index + 1]
+            if any(span.overlaps(neighbour) for neighbour in neighbours):
                 continue
-            if index < len(accepted_starts) and accepted_starts[index] < candidate.end_position:
-                continue
-            accepted_starts.insert(index, candidate.start_position)
-            accepted_ends.insert(index, candidate.end_position)
+            accepted_spans.insert(index, span)
             accepted.append(candidate)
         reconciled.extend(sorted(accepted, key=_publication_key))
     return tuple(reconciled)
@@ -197,9 +189,9 @@ def representative_source(candidate: AdmittedCandidate) -> str:
 
 
 def _rank_candidates(candidates: list[AdmittedCandidate]) -> list[AdmittedCandidate]:
-    by_geometry: dict[tuple[int, int], list[AdmittedCandidate]] = defaultdict(list)
+    by_geometry: dict[Span, list[AdmittedCandidate]] = defaultdict(list)
     for candidate in candidates:
-        by_geometry[(candidate.start_position, candidate.end_position)].append(candidate)
+        by_geometry[candidate.span].append(candidate)
 
     identical_rank: dict[int, int] = {}
     for equivalents in by_geometry.values():
@@ -270,10 +262,6 @@ def _effective_native_score(candidate: AdmittedCandidate) -> float | None:
         return None
     scores = [score.score for score in candidate.native_scores if (score.source_kind, score.source_instance) == domain]
     return max(scores) if scores else None
-
-
-def _overlaps(left: AdmittedCandidate, right: AdmittedCandidate) -> bool:
-    return left.start_position < right.end_position and right.start_position < left.end_position
 
 
 def _source_ref_key(source_ref: SourceTextRef) -> tuple[str, str]:

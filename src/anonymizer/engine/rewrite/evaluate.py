@@ -19,6 +19,7 @@ from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_LEAKAGE_MASS,
     COL_NEEDS_REPAIR,
+    COL_PRIVACY_ITEMS_OMITTED,
     COL_PRIVACY_QA,
     COL_PRIVACY_QA_REANSWER,
     COL_QUALITY_QA,
@@ -30,6 +31,14 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.ndd.model_response import (
+    ModelResponse,
+    RetryBudget,
+    ask,
+    log_unavailable,
+    no_response,
+    row_key,
+)
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.findings import needs_repair
 from anonymizer.engine.rewrite.parsers import (
@@ -40,6 +49,7 @@ from anonymizer.engine.rewrite.parsers import (
     parse_quality_qa,
 )
 from anonymizer.engine.schemas.rewrite import (
+    NULL_PRIVACY_ANSWER_REASON,
     PrivacyAnswer,
     PrivacyAnswerItemSchema,
     PrivacyAnswersSchema,
@@ -50,6 +60,10 @@ from anonymizer.engine.schemas.rewrite import (
 )
 
 logger = logging.getLogger("anonymizer.rewrite.evaluate")
+
+# Each evaluate call: the first request and 3 corrections, in at most 2 conversations (8 requests). The one restart
+# also covers a correction turn that exceeds the context window, which DataDesigner restarts instead of raising.
+EVALUATE_BUDGET = RetryBudget(corrections=3, restarts=1)
 
 # ---------------------------------------------------------------------------
 # Generator params
@@ -230,19 +244,17 @@ def _make_quality_answer_parser(
     recipe: PydanticResponseRecipe,
     expected_ids: list[int],
 ) -> Any:
-    def parser(response: str) -> QualityAnswersSchema:
+    def parser(response: str) -> tuple[QualityAnswersSchema, bool]:
         obj = recipe.parse(response)
         payload = obj.model_dump() if hasattr(obj, "model_dump") else obj
+        defaulted = _omits(payload.get("answers"), expected_ids)
         payload["answers"] = _normalize_answer_items(
             payload.get("answers"),
             expected_ids=expected_ids,
             label="quality answer",
             default_item_factory=lambda item_id: {"id": item_id, "answer": "unknown"},
         )
-        return QualityAnswersSchema.model_validate(
-            payload,
-            context={"expected_ids": expected_ids},
-        )
+        return QualityAnswersSchema.model_validate(payload, context={"expected_ids": expected_ids}), defaulted
 
     return parser
 
@@ -251,9 +263,10 @@ def _make_privacy_answer_parser(
     recipe: PydanticResponseRecipe,
     expected_ids: list[int],
 ) -> Any:
-    def parser(response: str) -> PrivacyAnswersSchema:
+    def parser(response: str) -> tuple[PrivacyAnswersSchema, bool]:
         obj = recipe.parse(response)
         payload = obj.model_dump() if hasattr(obj, "model_dump") else obj
+        omitted = _omits(payload.get("answers"), expected_ids)
         payload["answers"] = _normalize_answer_items(
             payload.get("answers"),
             expected_ids=expected_ids,
@@ -266,10 +279,10 @@ def _make_privacy_answer_parser(
                 "evidence": [],
             },
         )
-        return PrivacyAnswersSchema.model_validate(
-            payload,
-            context={"expected_ids": expected_ids},
-        )
+        # An explicit null answer leaves the question as unanswered as an omitted id: both count as defaulted. Only the
+        # kept items count: normalization drops ids nobody asked about and every copy of a duplicate id but the first.
+        defaulted = omitted or _null_answer(payload["answers"])
+        return PrivacyAnswersSchema.model_validate(payload, context={"expected_ids": expected_ids}), defaulted
 
     return parser
 
@@ -278,9 +291,10 @@ def _make_qa_compare_parser(
     recipe: PydanticResponseRecipe,
     expected_ids: list[int],
 ) -> Any:
-    def parser(response: str) -> QACompareResultsSchema:
+    def parser(response: str) -> tuple[QACompareResultsSchema, bool]:
         obj = recipe.parse(response)
         payload = obj.model_dump() if hasattr(obj, "model_dump") else obj
+        defaulted = _omits(payload.get("per_item"), expected_ids)
         payload["per_item"] = _normalize_answer_items(
             payload.get("per_item"),
             expected_ids=expected_ids,
@@ -291,12 +305,23 @@ def _make_qa_compare_parser(
                 "reason": "Model omitted comparison; defaulted conservatively.",
             },
         )
-        return QACompareResultsSchema.model_validate(
-            payload,
-            context={"expected_ids": expected_ids},
-        )
+        return QACompareResultsSchema.model_validate(payload, context={"expected_ids": expected_ids}), defaulted
 
     return parser
+
+
+def _omits(raw_items: Any, expected_ids: list[int]) -> bool:
+    """Whether a response's items leave out an expected id, which ``_normalize_answer_items`` then defaults."""
+    given = {item.get("id") for item in raw_items if isinstance(item, dict)} if isinstance(raw_items, list) else set()
+    return not set(expected_ids) <= given
+
+
+def _null_answer(items: Any) -> bool:
+    """Whether the normalized items of a privacy response hold one whose explicit null ``answer`` the schema
+    defaulted."""
+    return isinstance(items, list) and any(
+        isinstance(item, dict) and item.get("reason") == NULL_PRIVACY_ANSWER_REASON for item in items
+    )
 
 
 def _normalize_answer_items(
@@ -332,11 +357,10 @@ def _normalize_answer_items(
     missing_ids = [item_id for item_id in expected_ids if item_id not in by_id]
     if missing_ids or duplicate_ids or extra_ids:
         logger.warning(
-            "Evaluator returned malformed %s set; missing=%s duplicate=%s extra=%s. Applying conservative normalization.",
-            label,
-            missing_ids,
-            sorted(set(duplicate_ids)),
-            sorted(set(extra_ids)),
+            "Evaluator returned malformed set; missing=%d duplicate=%d extra=%d. Applying conservative normalization.",
+            len(missing_ids),
+            len(set(duplicate_ids)),
+            len(set(extra_ids)),
         )
 
     for item_id in missing_ids:
@@ -429,14 +453,19 @@ def _make_quality_reanswer_column(evaluator_alias: str) -> Any:
         model_aliases=[evaluator_alias],
     )
     async def _quality_reanswer(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
+        if no_response(row.get(COL_QUALITY_QA)) or no_response(row.get(COL_REWRITTEN_TEXT)):
+            row[COL_QUALITY_QA_REANSWER] = None  # no quality questions, or no rewrite, to answer from
+            return row
         qa = parse_quality_qa(row.get(COL_QUALITY_QA, {}))
         expected_ids = [item.id for item in qa.items]
 
         recipe = PydanticResponseRecipe(data_type=QualityAnswersSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_quality_reanswer_prompt(row))
         parser = _make_quality_answer_parser(recipe, expected_ids)
-        result, _ = await models[evaluator_alias].agenerate(prompt=prompt, parser=parser, max_correction_steps=3)
-        row[COL_QUALITY_QA_REANSWER] = result.model_dump()
+        response = await ask(
+            models[evaluator_alias], prompt, parser, EVALUATE_BUDGET, step=COL_QUALITY_QA_REANSWER, key=row_key(row)
+        )
+        row[COL_QUALITY_QA_REANSWER] = _stored(response, COL_QUALITY_QA_REANSWER)
         return row
 
     return _quality_reanswer
@@ -445,17 +474,29 @@ def _make_quality_reanswer_column(evaluator_alias: str) -> Any:
 def _make_privacy_reanswer_column(evaluator_alias: str) -> Any:
     @custom_column_generator(
         required_columns=[COL_PRIVACY_QA, COL_REWRITTEN_TEXT],
+        side_effect_columns=[COL_PRIVACY_ITEMS_OMITTED],
         model_aliases=[evaluator_alias],
     )
     async def _privacy_reanswer(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
+        """Also marks whether the response left a question unanswered, which its stored payload cannot show:
+        ``True`` when an item was omitted or null (and scored as leaked), ``False`` when complete, ``None`` when
+        not asked or unavailable."""
+        row[COL_PRIVACY_ITEMS_OMITTED] = None
+        if no_response(row.get(COL_REWRITTEN_TEXT)):
+            row[COL_PRIVACY_QA_REANSWER] = None  # no rewrite to assess; its text is unavailable already
+            return row
         qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
         expected_ids = [item.id for item in qa.items]
 
         recipe = PydanticResponseRecipe(data_type=PrivacyAnswersSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_privacy_reanswer_prompt(row))
         parser = _make_privacy_answer_parser(recipe, expected_ids)
-        result, _ = await models[evaluator_alias].agenerate(prompt=prompt, parser=parser, max_correction_steps=3)
-        row[COL_PRIVACY_QA_REANSWER] = result.model_dump()
+        response = await ask(
+            models[evaluator_alias], prompt, parser, EVALUATE_BUDGET, step=COL_PRIVACY_QA_REANSWER, key=row_key(row)
+        )
+        row[COL_PRIVACY_QA_REANSWER] = _stored(response, COL_PRIVACY_QA_REANSWER)
+        if response.value is not None:
+            row[COL_PRIVACY_ITEMS_OMITTED] = response.state == "defaulted"
         return row
 
     return _privacy_reanswer
@@ -467,17 +508,32 @@ def _make_quality_compare_column(evaluator_alias: str) -> Any:
         model_aliases=[evaluator_alias],
     )
     async def _quality_compare(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
+        if no_response(row.get(COL_QUALITY_QA_REANSWER)):
+            row[COL_QUALITY_QA_COMPARE] = None  # nothing to compare
+            return row
         qa = parse_quality_qa(row.get(COL_QUALITY_QA, {}))
         expected_ids = [item.id for item in qa.items]
 
         recipe = PydanticResponseRecipe(data_type=QACompareResultsSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_quality_compare_prompt(row))
         parser = _make_qa_compare_parser(recipe, expected_ids)
-        result, _ = await models[evaluator_alias].agenerate(prompt=prompt, parser=parser, max_correction_steps=3)
-        row[COL_QUALITY_QA_COMPARE] = result.model_dump()
+        response = await ask(
+            models[evaluator_alias], prompt, parser, EVALUATE_BUDGET, step=COL_QUALITY_QA_COMPARE, key=row_key(row)
+        )
+        row[COL_QUALITY_QA_COMPARE] = _stored(response, COL_QUALITY_QA_COMPARE)
         return row
 
     return _quality_compare
+
+
+def _stored(response: ModelResponse[BaseModel], column: str) -> dict[str, Any] | None:
+    """The column value for ``response``: its payload, or ``None`` when unavailable, which keeps the row."""
+    if response.value is None:
+        log_unavailable(logger, column, response)
+        return None
+    if response.state == "defaulted":
+        logger.debug("%s defaulted omitted items after %d responses.", column, response.requests)
+    return response.value.model_dump()
 
 
 # ---------------------------------------------------------------------------
@@ -490,15 +546,21 @@ def _make_quality_compare_column(evaluator_alias: str) -> Any:
     side_effect_columns=[COL_LEAKAGE_MASS, COL_WEIGHTED_LEAKAGE_RATE, COL_ANY_HIGH_LEAKED],
 )
 def _compute_metrics_columns(row: dict[str, Any], generator_params: MetricsParams) -> dict[str, Any]:
-    """Compute utility_score, leakage_mass, weighted_leakage_rate, and any_high_leaked from evaluation outputs."""
-    ids, compare_scores = parse_quality_compare(row.get(COL_QUALITY_QA_COMPARE))
+    """Compute utility_score, leakage_mass, weighted_leakage_rate, and any_high_leaked from evaluation outputs.
+
+    A metric whose model response is unavailable is ``None``, which the findings read as unavailable evidence.
+    """
+    row[COL_UTILITY_SCORE] = row[COL_LEAKAGE_MASS] = row[COL_WEIGHTED_LEAKAGE_RATE] = row[COL_ANY_HIGH_LEAKED] = None
+    if not no_response(row.get(COL_QUALITY_QA_COMPARE)):
+        ids, compare_scores = parse_quality_compare(row.get(COL_QUALITY_QA_COMPARE))
+        qa = parse_quality_qa(row.get(COL_QUALITY_QA, {}))
+        importance_lookup = {item.id: item.importance for item in qa.items}
+        importance_levels = [importance_lookup.get(i, "important") for i in ids]
+        row[COL_UTILITY_SCORE] = compute_utility_score(compare_scores, importance_levels)
+    if no_response(row.get(COL_PRIVACY_QA_REANSWER)):
+        return row
     privacy_answers = parse_privacy_answers(row.get(COL_PRIVACY_QA_REANSWER))
     privacy_qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
-    qa = parse_quality_qa(row.get(COL_QUALITY_QA, {}))
-    importance_lookup = {item.id: item.importance for item in qa.items}
-    importance_levels = [importance_lookup.get(i, "important") for i in ids]
-
-    row[COL_UTILITY_SCORE] = compute_utility_score(compare_scores, importance_levels)
     leakage_mass = compute_leakage_mass(privacy_answers, privacy_qa, generator_params.sensitivity_weights)
     row[COL_LEAKAGE_MASS] = leakage_mass
     row[COL_WEIGHTED_LEAKAGE_RATE] = compute_weighted_leakage_rate(
@@ -525,10 +587,11 @@ class EvaluateWorkflow:
 
     LLM calls use custom columns (not LLMStructuredColumnConfig) so we can
     build a per-row parser that passes ``context={"expected_ids": [...]}`` to
-    Pydantic's ``model_validate``. This enforces that the LLM answers every
-    question ID -- DD's correction loop retries with the exact missing IDs
-    if the LLM skips any. LLMStructuredColumnConfig does not support passing
-    Pydantic validation context, which is why custom columns are required.
+    Pydantic's ``model_validate``. The parser fills an omitted question ID with
+    its fail-closed default (a privacy item is scored as leaked) instead of
+    asking again; the privacy column marks such a response in
+    ``COL_PRIVACY_ITEMS_OMITTED``. LLMStructuredColumnConfig does not support
+    passing Pydantic validation context, which is why custom columns are required.
 
     The orchestrator uses the output metrics and COL_NEEDS_REPAIR flag to
     decide whether to run RepairWorkflow on failing rows.

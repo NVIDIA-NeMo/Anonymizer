@@ -24,8 +24,10 @@ from pydantic import BaseModel
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.models import DetectionModelSelection
+from anonymizer.config.regex import RegexRule
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_REGEX_ENTITIES, COL_TEXT
+from anonymizer.engine.detection import regex_detection
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.detection.regex_detection import resolve_regex_rules
 from anonymizer.engine.ndd import adapter
@@ -33,6 +35,7 @@ from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter, Workflow
 from anonymizer.engine.workflow_columns.detection.config import RegexDetectionConfig
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.measurement import MeasurementConfig, configured_measurement_session
+from tests.detector_results import builtin_stub
 from tests.engine.ndd.stub_provider import COMPLETE, Script, cut_off, stub_provider
 
 _PREFIX = "Record missing from workflow output"
@@ -164,7 +167,7 @@ def test_reasons_map_to_rows_across_row_groups(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("collector", [False, True])
-def test_early_shutdown_rows_name_the_most_common_cause(tmp_path: Path, collector: bool) -> None:
+def test_early_shutdown_rows_without_a_trace_get_the_untraced_reason(tmp_path: Path, collector: bool) -> None:
     # Rows 0-1 finish first, rows 2-7 fail next and trip the shutdown, rows 8-11 are still running.
     df = _inputs(12, bad=set(range(2, 8)), slow=set(range(8, 12)))
 
@@ -188,8 +191,7 @@ def test_early_shutdown_rows_name_the_most_common_cause(tmp_path: Path, collecto
     reasons = _reasons_by_position(tagged, result)
     explained = {position: reason for position, reason in reasons.items() if not reason.startswith(_UNTRACED)}
     assert 0 not in reasons and 1 not in reasons
-    assert all(reasons[position].startswith(f"{_UNTRACED} (most common: {_COLUMN}: ") for position in range(8, 12))
-    assert all("max_tokens" in reasons[position] for position in range(8, 12))
+    assert all(reasons[position] == _UNTRACED for position in range(8, 12))
     assert explained, "expected rows that failed before the shutdown to carry their cause"
     assert all(position in range(2, 8) for position in explained)
     assert all(reason.startswith(f"{_PREFIX}: {_COLUMN}: ") and "max_tokens" in reason for reason in explained.values())
@@ -333,6 +335,37 @@ def test_regex_limit_failure_has_safe_actionable_public_reason(tmp_path: Path) -
     assert "192.0.2" not in reasons[1]
 
 
+def _regex_budget_reasons(tmp_path: Path) -> dict[int, str]:
+    df = pd.DataFrame({COL_TEXT: ["no matches", "a" * 20000 + "!"]})
+    rules = resolve_regex_rules(
+        labels=["ticket"], builtin_regexes=False, rules=[RegexRule(label="ticket", pattern=r"(a+)+$")]
+    )
+    columns = cast(
+        list[ColumnConfigT],
+        [RegexDetectionConfig(name=COL_REGEX_ENTITIES, rules=rules, timeout_seconds=0.005, max_matches_per_rule=5)],
+    )
+    tagged, result = _run(tmp_path, lambda *_: COMPLETE, df, columns=columns)
+    return _reasons_by_position(tagged, result)
+
+
+def test_regex_cpu_budget_and_starved_failures_have_distinct_reasons(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An expensive rule and a machine too busy to run it lead to different advice."""
+    expensive = _regex_budget_reasons(tmp_path / "expensive")
+    assert list(expensive) == [1]
+    assert "used its CPU-time budget" in expensive[1]
+    assert "detect.regex_limits.min_timeout_seconds" in expensive[1]
+
+    # As if other threads had used the CPU time that regex's process clock charged to each scan.
+    monkeypatch.setattr(regex_detection, "_rule_cpu_time", lambda: 0.0)
+    starved = _regex_budget_reasons(tmp_path / "starved")
+    assert list(starved) == [1]
+    assert "process was too busy" in starved[1]
+    assert "CPU-time budget" not in starved[1]
+    assert "a" * 20 not in starved[1]
+
+
 def test_provider_error_echoing_a_cause_marker_cannot_steer_the_reason(tmp_path: Path) -> None:
     df = _inputs(3, bad={1})
     df.loc[1, COL_TEXT] = "note" + _SPOOFED_CAUSE + " FAILS"
@@ -380,7 +413,7 @@ def test_custom_column_exception_echoing_a_cause_marker_cannot_steer_the_reason(
 def test_multiline_exception_markers_do_not_leak_into_reasons_or_warnings(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, payload: str
 ) -> None:
-    """PR #349 promises input-free reasons; Anonymizer also publishes them in WARNING counts."""
+    """Reasons stay input-free, and no WARNING carries a failed record's id or input."""
     sensitive_values = _inputs(3, bad={1})
     df = sensitive_values.copy()
     df.loc[1, COL_TEXT] = "note" + payload.format(text=df.loc[1, COL_TEXT])
@@ -391,8 +424,15 @@ def test_multiline_exception_markers_do_not_leak_into_reasons_or_warnings(
     reasons = _reasons_by_position(tagged, result)
     assert list(reasons) == [1]
 
-    detector = Mock(spec=EntityDetectionWorkflow)
-    detector.run.return_value = EntityDetectionResult(dataframe=result.dataframe, failed_records=result.failed_records)
+    detector = builtin_stub(
+        Mock(
+            return_value=EntityDetectionResult(
+                dataframe=result.dataframe,
+                failed_records=result.failed_records,
+                source_positions=tuple(result.source_positions or ()),
+            )
+        )
+    )
     csv_path = tmp_path / "input.csv"
     df.to_csv(csv_path, index=False)
     anonymizer = Anonymizer(detection_workflow=detector)
@@ -404,7 +444,6 @@ def test_multiline_exception_markers_do_not_leak_into_reasons_or_warnings(
         )
     warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
     assert output.failed_records == result.failed_records
-    assert any(reasons[1] in message for message in warnings)
     assert not any(result.failed_records[0].record_id in message for message in warnings)
     _assert_quotes_no_input([*reasons.values(), *warnings], sensitive_values)
 
@@ -430,7 +469,7 @@ def test_row_dropped_without_an_error_keeps_the_generic_reason_when_other_errors
     assert _reasons_by_position(tagged, result) == {1: _PREFIX}
 
 
-def test_row_dropped_without_an_error_names_the_common_cause_not_an_early_stop(tmp_path: Path) -> None:
+def test_row_dropped_without_an_error_gets_the_untraced_reason(tmp_path: Path) -> None:
     df = _inputs(3, bad={0})
     df.loc[1, COL_TEXT] += " DROP"
     columns: list[ColumnConfigT] = [
@@ -445,15 +484,15 @@ def test_row_dropped_without_an_error_names_the_common_cause_not_an_early_stop(t
     reasons = _reasons_by_position(tagged, result)
     assert set(reasons) == {0, 1}
     cause = reasons[0].removeprefix(f"{_PREFIX}: ")
-    assert reasons[1] == f"{_UNTRACED} (most common: {cause})"
-    assert "stopped early" not in reasons[1] and "max_tokens" in reasons[1]
+    assert "max_tokens" in cause
+    assert reasons[1] == _UNTRACED
     _assert_quotes_no_input(list(reasons.values()), df)
 
 
-def test_untraced_reason_breaks_ties_by_first_recorded_cause() -> None:
+def test_most_common_cause_breaks_ties_by_first_recorded_cause() -> None:
     reasons = [f"{_PREFIX}: b: x", f"{_PREFIX}: a: y", f"{_PREFIX}: a: y", f"{_PREFIX}: b: x"]
 
-    assert adapter._untraced_reason(reasons) == f"{_UNTRACED} (most common: b: x)"
+    assert adapter._most_common_cause(reasons) == "b: x"
 
 
 def test_concurrent_column_failures_keep_the_permanent_cause(tmp_path: Path) -> None:
@@ -520,3 +559,60 @@ def test_detector_offset_mismatch_reason_is_reported(tmp_path: Path) -> None:
     assert reason.startswith(_PREFIX)
     assert "does not match the source span" in reason
     assert text not in reason
+
+
+def test_detector_span_past_text_reason_is_reported(tmp_path: Path) -> None:
+    text = "Hollingsworth-Featherstonehaugh lives at 17 Marlborough Crescent"
+    healthy = "Quillfeather-Ashworth was born in Lancaster"
+
+    def script(model: str, prompt: str, _earlier: int) -> tuple[int, str, str]:
+        if model == "gliner":
+            if healthy in prompt:
+                return 200, json.dumps({"entities": []}), "stop"
+            # Offsets that run past the end of the text.
+            entity = {"text": "Crescent", "label": "street_address", "start": 56, "end": 66, "score": 0.9}
+            return 200, json.dumps({"entities": [entity]}), "stop"
+        return 200, json.dumps({"decisions": [], "entities": []}), "stop"
+
+    with stub_provider(script) as provider:
+        data_designer = DataDesigner(
+            artifact_path=tmp_path / "artifacts", model_providers=[provider], auto_configure_logging=False
+        )
+        result = EntityDetectionWorkflow(NddAdapter(data_designer)).detect_and_validate_entities(
+            pd.DataFrame({COL_TEXT: [text, healthy]}),
+            model_configs=[
+                ModelConfig(alias="gliner", model="gliner", provider="stub"),
+                ModelConfig(alias="llm", model="llm", provider="stub"),
+            ],
+            selected_models=DetectionModelSelection(
+                entity_detector="gliner", entity_validator="llm", entity_augmenter="llm", latent_detector="llm"
+            ),
+            gliner_detection_threshold=0.3,
+        )
+
+    assert [record.step for record in result.failed_records] == ["entity-detection"]
+    reason = result.failed_records[0].reason
+    assert reason.startswith(_PREFIX)
+    assert reason.endswith(": Detector entity span [56, 66) ends past the source text of length 64")
+    assert text not in reason
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "Detector entity span [Alice, 66) ends past the source text of length 64",
+        "Detector entity span [56, 66) ends past the source text of length first_name",
+        "Detector entity span 'Alice' ends past the source text",
+        "Detector entity span [56, 66) ends past the source text of length \u0666\u0664",
+    ],
+)
+def test_known_failure_allowlist_rejects_non_offset_content(error: str) -> None:
+    assert adapter._KNOWN_FAILURE.search(error) is None
+
+
+def test_known_failure_allowlist_keeps_only_offsets_and_length() -> None:
+    error = "boom: Detector entity span [56, 66) ends past the source text of length 64 (text='Alice')"
+    known = adapter._KNOWN_FAILURE.search(error)
+
+    assert known is not None
+    assert known.group(0) == "Detector entity span [56, 66) ends past the source text of length 64"

@@ -1,0 +1,442 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# Graph SDK reference
+
+This page lists every public name in `anonymizer.graph`, the fields of the values you receive, the limits, and every
+rejection code. Use it to look things up; the [guides](../graph-sdk.md#where-to-go-next) explain how to use them.
+
+!!! warning "Provisional"
+
+    The graph SDK is provisional. Items marked (provisional) below are marked so in the code itself; everything else
+    may also change before the SDK is declared stable.
+
+Import the module as `from anonymizer import graph as g`.
+
+## Public names
+
+| Name | What it is |
+|---|---|
+| `GraphScope` | Namespace for datums and records. `datum(text)`, `record(members)`. |
+| `Datum` | One text with an identity. Field `text`. Made only by `GraphScope.datum`. |
+| `Mention` | A labelled span of a target's original text. |
+| `ContextScope` | The context one target may read. |
+| `ContextView` | A span of a datum delivered as context. |
+| `ContextSource` | A named provider of context items, with item and byte bounds, called once per run. |
+| `Dependency` | Withhold `dependent` when `on` is withheld. |
+| `OutputGroup` | Release `members` together or not at all. |
+| `Record` | A group of targets that belong together. Made only by `GraphScope.record`. It does not change release for now: each target is released on its own checks; use `OutputGroup` for all-or-none release. Releasing a complete record is planned as the default. |
+| `ProtectionGraph` | The targets of one run and their relations. |
+| `Operation` | One step. Also `Operation.verifier` and `Operation.phase_scoped`. |
+| `Workflow` | An ordered sequence of operations and nested workflows. |
+| `Requests` | A step's declared external requests per call. |
+| `Assessment` | A verifier's verdict for one target. |
+| `Limits` | Bounds on one run. |
+| `prepare` | Validate a graph and workflow; returns `PreparedProtection`. |
+| `PreparedProtection` | A validated workflow, accepted only by `protect`. |
+| `protect` | Run a prepared workflow; returns `ProtectionResult`. |
+| `CancelToken` | Stops a run between calls. |
+| `ProtectionResult` | The result of one run. |
+| `TargetOutcome` | The outcome of one target. |
+| `Reason` | One cause of not qualifying or not being released. |
+| `Advisory` | The verdict on a check the workflow does not require. |
+| `InspectionSummary` | Content-free counts for a plan or a run. |
+| `GraphRejection` | The error raised for invalid declarations and workflows. |
+| `register_kind` | Register a port value kind. |
+| `Session` | Caller-held state that keeps assignments across runs (provisional). |
+| `SessionMode` | The mode of a `Session`. |
+| `SessionView` | The read-only view of a `Session` an operation receives. |
+| `SessionSnapshot` | A Session's state as bytes, for moving it between processes. |
+| `SubjectKey` | The subject part of a Session slot. |
+| `Decision` | An assignment an operation returns for the Session to accept. |
+| `Identity` | A span of a target declared to belong to one subject. |
+
+## Declaring the graph
+
+**`GraphScope()`**
+
+- `datum(text: str) -> Datum`. A non-string raises `GraphRejection("datum_not_text")`, which is also a `TypeError`.
+- `record(members: tuple[Datum, ...]) -> Record`. Members are kept in the given order. Not a tuple of datums:
+  `invalid_record`; empty: `empty_record`. A record of one member is allowed. Each target is in exactly one record:
+  a target in no declared record is its own one-member record.
+
+**`Datum`**: field `text`. Equality and hashing use identity only; two datums with the same text are not equal. Its
+`repr` hides the text.
+
+**`Mention(datum, start, end, label, text=None)`**: `[start, end)` is a character range of `datum.text`. `label`
+must not be empty (`mention_unlabelled`). When `text` is given it must equal that slice.
+
+**`ContextView(target, over, start, end)`**: the span `[start, end)` of datum `over`, delivered as context to
+`target`.
+
+**`ContextSource(name, provider, max_items, max_bytes=None, kind="text")`**: `provider()` returns an iterable of
+items of kind `kind`. More than `max_items` items closes the retrieval as `overflow`; never truncated. `max_bytes`
+is an optional UTF-8 ceiling on this source's items. One name is one source across the graph.
+
+**`ContextScope(target, items)`**: `items` is a sequence of `Datum`, `ContextView` and `ContextSource`, in the order
+delivered.
+
+**`Dependency(dependent, on)`**, **`OutputGroup(members)`**: see
+[Release related texts together](guide-release-together.md).
+
+**`ProtectionGraph(scope, targets, mentions=(), context=(), dependencies=(), groups=(), *, records=(), identities=())`**
+
+- Sequences are copied into tuples, so changing your lists later has no effect. The same holds for the sequences
+  passed to the relation types, to `Operation` and to `Workflow`. Constructing any of these values has no effect:
+  no callback or provider runs.
+- `record_of(target) -> Record`: the declared record holding `target`, else its own one-member record.
+- `all_records -> tuple[Record, ...]`: every target's record once, ordered by each record's earliest target.
+- Construction raises `GraphRejection` for the codes listed under [Rejection codes](#rejection-codes).
+
+## Composing the workflow
+
+**`Operation(name, fn, inputs={"text": "text"}, outputs={"text": "text"}, requests=Requests(), scope="target", checks=(), subject=())`**
+
+- `fn` is called with one keyword argument per input port.
+- With one output port, `fn` returns the value; with several, a mapping with exactly those port names.
+- `scope` is `"target"` (once per target) or `"phase_scoped"` (once for all ready targets).
+- `checks`: the checks a verifier's assessment answers. `subject`: the input ports it is about. Both are tuples.
+- `is_verifier`: `True` when an output has kind `"assessment"`.
+- An output named `session`, `identities` or `record` raises `seed_output_reserved`. An `assessment` output alongside other outputs or under
+  another port name, or an output port named `assessment` of another kind, raises
+  `GraphRejection("verifier_ports")`.
+
+**`Operation.verifier(name, fn, inputs=None, requests=Requests(), checks=(), subject=())`**: an operation with
+outputs `{"assessment": "assessment"}`. `inputs` defaults to `{"text": "text"}`.
+
+**`Operation.phase_scoped(name, fn, inputs=None, outputs=None, requests=Requests())`**: `fn` receives each input as a
+tuple of per-target values in target order and returns a sequence of one entry per target: a value, `None`
+(`missing_output`) or an `Exception` instance (`raised`). If `fn` raises, every target it was given fails with
+`raised`. If it returns something that is not a sequence of one entry per target, every target it was given fails
+with `invalid_output`, and the error is kept on each outcome's `error`. Targets that failed an earlier step are not
+passed in and stay blocked. Declared requests count once per run. The older name
+`Operation.per_invocation` is an alias.
+
+**`Workflow(name, steps, release="protected", requires=())`**
+
+- `steps`: operations and nested workflows, in order.
+- `release`: `"protected"` or `"annotation"`. An annotation workflow is for content that keeps the source text,
+  such as labels or measurements; it never releases output. A protected workflow may not contain a workflow with
+  any other `release`, at any depth (`annotation_in_protected`).
+- `requires`: the checks a target must pass to qualify. A nested workflow's `requires` apply to the whole run.
+- `flatten() -> tuple[tuple[str, Operation], ...]`: steps with their path names, such as `inner/step`.
+
+**`Requests`** (fields `bound`, `count`)
+
+| Constructor | `bound` | Plan effect |
+|---|---|---|
+| `Requests.none()` (default) | `none` | adds 0 |
+| `Requests.exact(n)` | `exact` | adds `n` |
+| `Requests.at_most(n)` | `upper` | adds `n`; the plan becomes an upper bound |
+| `Requests.unknown()` | `unknown` | the plan becomes unknown |
+| `Requests.opaque(n=None)` | `opaque` | the plan becomes unknown |
+
+`exact(0)` and `at_most(0)` return `Requests.none()`. A negative or non-integer count raises
+`invalid_request_count`.
+
+**`Assessment(satisfied, target=None, reason="")`**: `satisfied` is `True`, `False` or `None` (could not decide).
+`target` must be the target the verifier was called for. A verifier must assess the candidate it is given in that
+call: a verdict computed for an earlier candidate is not checked again.
+
+**`register_kind(name, check, measure=None, copy=None) -> str`**: registers a kind for the whole process and returns
+its name. Registering a name again returns it unchanged and keeps the first definition. `check(value) -> bool`;
+`measure(value) -> int`, a UTF-8 byte size, needed under a byte ceiling; `copy(value)`, applied to each accepted
+value.
+
+### Built-in kinds and seeds
+
+The built-in kinds are `text`, `mentions`, `context`, `datum`, `assessment`, `session-view`, `decisions`,
+`identities` and `record`.
+
+| Seed | Kind | Value |
+|---|---|---|
+| `text` | `text` | The current candidate (the original text before any step outputs `text`) |
+| `source` | `text` | The original text |
+| `mentions` | `mentions` | Mentions declared on the graph for the target, by start offset |
+| `context` | `context`, or the structured kind of the graph's context sources | Tuple of context items |
+| `target` | `datum` | The target |
+| `session` | `session-view` | A read-only view of the run's Session (see [Session](#session-provisional)) |
+| `identities` | `identities` | The target's identity declarations |
+| `record` | `record` | The target's record |
+
+An input port binds to the latest earlier output of the same name, else to the seed of that name.
+
+### What a verifier's subject traces to (provisional)
+
+`prepare` decides whether a verifier checked the final candidate from declared ports only. The seeds `text`,
+`source`, `mentions` and `target` trace to the original text; `context`, `session`, `identities` and `record` trace to no text. Each step with
+a `text` output makes a new candidate, and every output of that step traces to that candidate; this rule, that
+evidence returned beside a text is about that text, is marked interim in the code. Any other step's outputs trace
+to everything its inputs trace to. A verifier counts for required checks only when every subject port traces to the
+final candidate.
+
+A verifier with neither `checks` nor `subject` is allowed and answers no check. A verifier of earlier text is a
+diagnostic: its assessment is readable with `value(target, "assessment", producer=name)` but answers no required
+check. `prepare` checks the declaration, not what the callback reads: a verifier that declares `text` as its subject
+but bases its verdict on an earlier value is still accepted. To stop a target early, raise from an operation.
+
+## Limits (default values provisional)
+
+**`Limits(max_operations=32, max_targets=1000, max_mentions=10000, max_context_items=256, max_text_bytes=None, max_context_bytes=None)`**
+
+| Field | Bounds | Rejection |
+|---|---|---|
+| `max_operations` | Steps after flattening | `over_limit` |
+| `max_targets` | Targets | `over_limit` |
+| `max_mentions` | Declared mentions; during the run, also mentions detectors return | `over_limit` (at run time, a target reason) |
+| `max_context_items` | Static context items plus the sum of sources' `max_items` | `over_limit` |
+| `max_text_bytes` | UTF-8 size of each target | `over_byte_ceiling` |
+| `max_context_bytes` | UTF-8 size of all context | `over_byte_ceiling` (at run time, a retrieval status) |
+
+## Preparing and running
+
+**`prepare(graph, workflow, *, limits=None, capabilities=None, request_budget=None, session=None) -> PreparedProtection`**
+
+- Runs no callback and no context provider.
+- `limits`: defaults to `Limits()`.
+- `capabilities`: a tuple of flattened operation names allowed to run, as in `PreparedProtection.names` (such as
+  `inner/step`); default, all operations of the workflow. An operation
+  not listed raises `capability_not_admitted`.
+- `request_budget`: refuses a plan above it (`over_request_budget`) or one that is unknown
+  (`hard_budget_without_visibility`). Not enforced during the run.
+
+**`PreparedProtection`**: fields `limits`, `names` (flattened operation names), `planned_requests`, `capabilities`;
+`summary() -> InspectionSummary`. It cannot be pickled or copied (`TypeError`), and `protect` refuses a value with
+any field replaced after `prepare` (`not_prepared`).
+
+**`protect(prepared, *, cancel=None, session=None) -> ProtectionResult`**: runs on the calling thread. Rechecks limits and
+capabilities first. A callback's `Exception` fails its target; `protect` does not raise it. `BaseException`, such
+as `KeyboardInterrupt`, propagates. Every `Assessment` a verifier returns must name the target it was produced
+for; one without a target, or naming another target, makes the whole run inconsistent, so no target qualifies,
+while the assessments stay readable on the result. An `Anonymizer.run()`, `preview()` or `evaluate()` called from
+a callback, whose steps the cancellation stops, raises `AnonymizerWorkflowError` instead of returning partial
+output.
+
+**`CancelToken()`**: `cancel()`, settable from any thread; `cancelled` property. Checked before each call.
+
+## Session (provisional)
+
+A `Session` is caller-held state that lets an assignment outlive one `protect` call; it is provisional and may
+change. Pass the same object to `prepare(..., session=s)` and `protect(prepared, session=s)`.
+
+- `Session()` retains nothing; `Session(stable_replacements=True)` keeps each assignment an operation decides, so a
+  later call can reuse it. An invalid mode raises `session_mode_invalid`. `SessionMode` is the mode of a Session.
+- Operations read a `SessionView` from the `session` seed with `lookup(slot)`, where a slot is
+  `(SubjectKey, label, normalized value)` (otherwise `invalid_slot`; a value that is not a `str`: `invalid_value`);
+  `assigned_elsewhere(value, slot)` and `is_original(value)` ask whether a value, normalized, is another slot's
+  assignment or any slot's source value, `assigned_to_other_value(value, slot)` whether it is the assignment of a
+  slot for another subject or normalized source value (a fallback entry always counts), and the view offers no
+  listing.
+- `SubjectKey` takes a non-empty string (`invalid_subject_key`) and rejects the names the SDK reserves for itself,
+  `by-value` and `substitute-fallback` (`reserved_subject_key`). A `substitute-fallback` entry is bookkeeping, not
+  an assignment: Substitute writes one for a substitute it used in one record in place of a value's assignment, no
+  lookup for a value returns it, it only keeps that substitute from going to another value in a later call, and it
+  counts in `session_changes.accepted` and again in `session_changes.fallbacks`.
+- `s.size` is the number of assignments the Session holds and `s.label_counts()` the same by label; both leave out
+  fallback entries. An empty Session is still truthy, so test `s is None` rather than `s`.
+- Operations change the Session only by returning a tuple of `Decision(slot, value, supersedes=False)` values on an
+  output port of kind `decisions` (`invalid_decision` otherwise). `protect` finds decisions by kind: it accepts every
+  output port of kind `decisions`, whatever its name, and ignores a port named `decisions` of another kind. It
+  accepts them once, after the run, in target order: the first decision fixes a new slot, a different later one is
+  ignored unless it sets `supersedes=True`, and `result.session_changes` counts what happened. A cancelled or
+  inconsistent run accepts nothing; a withheld target's decisions are still accepted.
+- `prepare` rejects a stable Session whose workflow has no `decisions` output (`session_without_resolution`) and
+  `identity_matching=True` (`session_mode_unsupported`); `protect` rejects a Session of another mode
+  (`session_mismatch`) and one that another execution is using (`session_busy`). A `session=` that is not a
+  `Session` raises `not_a_session`. Without `session=`, `protect` runs with a fresh Session that retains nothing.
+- A Session cannot be pickled; `s.snapshot().to_bytes()` and `Session.restore(SessionSnapshot.from_bytes(data))`
+  move it between processes (`snapshot_incompatible` otherwise), and the bytes hold original values in plain text.
+- `ProtectionGraph(..., identities=(Identity(target, start, end, subject_key), ...))` declares that mentions inside a
+  span of a target are that subject's; operations read a target's declarations from the `identities` seed, and spans
+  of different subjects on one target may not overlap (`identity_conflict`). `identities` is not copied: it must be
+  a tuple of `Identity` values whose subject is a `SubjectKey` (`invalid_identity`), each span inside its target
+  (`identity_out_of_range`).
+
+## Results
+
+**`ProtectionResult`**
+
+| Member | Returns |
+|---|---|
+| `targets` | The graph's targets, in order |
+| `outcomes` | One `TargetOutcome` per target, in target order |
+| `outcome(target)` | The target's `TargetOutcome`; a foreign target raises `unknown_reference` |
+| `consistent` | `False` when a verifier returned an assessment for another target or none |
+| `protected` | `dict[Datum, str]` of released targets to final candidates; the original text when no step outputs `text` |
+| `content()` | `((target, final candidate or None), ...)`; `None` when the last step that outputs `text` produced nothing for the target, and an earlier candidate is never substituted; no protection claim |
+| `value(target, port="text", producer=None)` | The latest value of `port`, or the value from the step named `producer`; `None` if never produced or when no step is named `producer` |
+| `compose(parts)` | Final candidates of `parts` joined in the given order |
+| `reconstruct(parts, source)` | Final candidates joined in the order of the positions `source` maps them to |
+| `assemble_regions(source, regions)` | `source` with each `(start, end, target)` range replaced by that target's final candidate |
+| `ledger()` | `((target, operation, status), ...)` for every target and step |
+| `attempts` | One `Attempt` per target for each step call that happened; a phase-scoped call records one per target it received |
+| `retrievals` | One `Retrieval` per context source |
+| `summary()` | `InspectionSummary` |
+| `session_changes` | What the run's decisions did to its Session (see [Session](#session-provisional)) |
+
+The read methods (`content`, `value`, `compose`, `reconstruct`, `assemble_regions`, `ledger`) read the saved
+result and never run a callback again. `assemble_regions` keeps the text outside the listed ranges, and ranges
+always refer to positions in the original `source`, whatever the replacement lengths. A listed target without an
+available candidate is refused (`unavailable_input`); it is never filled with source text.
+
+**`TargetOutcome`**: `terminal` (`success`, `failed`, `cancelled`, `blocked`); `qualification` (`met`, `not_met`,
+`not_assessed`); `available` (has a final candidate); `protected`; `reasons`; `reason` (last code or `""`);
+`withheld_by`; `advisories`; `error` (never rendered).
+
+**`Reason(code, check="", verifier="", cause="")`**: `check` and `verifier` name the check a code concerns; `cause`
+is the verifier's stated reason for `failed` and `could_not_assess`, and empty otherwise. The codes:
+
+| Code | Cause |
+|---|---|
+| `failed` | A required check returned `False`. |
+| `could_not_assess` | A required check returned `None`. |
+| `missing` | A required check has no assessment from a verifier of the final candidate for this target. |
+| `raised` | A step raised, or a phase-scoped step returned an exception for this target. |
+| `missing_output` | A phase-scoped step returned `None` for this target. |
+| `invalid_output` | A step returned a value of the wrong kind or port names, or a detector returned an entry that is not a `Mention`. |
+| `mention_not_on_target`, `mention_out_of_range`, `mention_slice_mismatch`, `mention_unlabelled`, `overlapping_output_ownership` | Mentions a step returned broke a mention rule. |
+| `over_limit` | Mentions returned in one call passed `Limits.max_mentions`. |
+| `unspanned_value` | Replace with a custom detector: a value the detector reported occurs in the text outside every kept span. |
+| `dropped_output` | A custom detector's result neither answered nor failed this input record. |
+| `unplaced_output` | A custom runner's `run()` returned no row that can be placed for this input record (no id, an unknown id or a repeated id). |
+| `binding_failed` | A context source this target reads did not return usable items. |
+| `cancelled` | The run was cancelled before this target finished. |
+| `blocked` | The target did not finish and no step of it failed, for example because it was never dispatched. |
+| `inconsistent_invocation` | A verifier in the run returned an assessment naming another target or none. |
+| `withheld` | The target is `met`, but a dependency or a member of its output group was withheld. |
+| `annotation` | The target is `met`, but the workflow is an annotation workflow, which never releases. |
+
+[Find out why a target was withheld](guide-read-outcomes.md#the-fields-of-a-targetoutcome) shows them in a program.
+
+**`Advisory(check, verifier, status, cause="")`**: `status` is `passed`, `failed` or `could_not_assess`; `cause`
+is the assessment's `reason` for `failed` and `could_not_assess`. Results of `Anonymizer.evaluate()` also use the
+statuses `scored` and `not_applicable` for their judges; see [Evaluation](../evaluation.md#outcomes-after-evaluate).
+
+**`InspectionSummary`**: `operations`, `targets`, `planned_requests`, `terminals`, `qualifications`, `reasons`,
+`observed`, `protected`, `consistent`, `budget`; `render() -> str`. Before a run only the first three are set.
+`reasons` counts each target's `reason`, the code of its last `Reason`; the summary holds no text content. In
+`observed`, `requests` is the sum of the requests steps reported: exact when every step that could make requests
+reported (a step that declares no requests counts as reported), a lower bound when only some did, and unknown when
+none did. `total` adds the context retrievals (`binding`) to that sum with the same exactness. Reported counts are
+used as reported, whatever the step declared. `budget` compares the observed requests with the planned count:
+`exceeded` when the requests reported so far already pass a known plan, `within` when every step that could make
+requests reported and their sum stays within it, and `unknown` otherwise.
+
+The rows of `observed`, in the order `render()` prints them:
+
+| Row | Counts | Reads |
+|---|---|---|
+| `binding` | Context sources retrieved | Always exact |
+| `correction` | Corrections the SDK made to a step's output | `exact 0` when every step that ran declares no requests, else `unknown` |
+| `retry` | Calls the SDK repeated | `exact 0` when every step that ran declares no requests, else `unknown` |
+| `total` | `binding` plus `requests` | As exact as `requests` |
+| `requests` | The external requests steps reported | Exact, a lower bound, or unknown, as above |
+
+The SDK itself never corrects an output or repeats a call, so `correction` and `retry` never count anything. A
+repair or retry your own function makes inside one call is part of that call: it is invisible to these rows and
+counts only through the requests the step reports. The two rows read `unknown`, not `exact 0`, once a step that can
+make requests has run, because such a step may retry internally.
+
+### Values without an exported type
+
+These arrive from the SDK but their classes are not exported. Read their fields; do not construct them.
+
+| Value | Where | Fields |
+|---|---|---|
+| Context item | Elements of the `context` input | `source` (source name, `"datum"` or `"view"`), `index`, `text` (a value of kind `kind`), `kind` |
+| Retrieval | `ProtectionResult.retrievals` | `source`, `status` (`ok`, `failed`, `overflow`, `over_byte_ceiling`, `invalid_item`, `not_started`), `declared_max_items`, `observed_items`, `observed_bytes` |
+| Attempt | `ProtectionResult.attempts` | `target`, `operation`, `status` (`succeeded` or `failed`; the type also names `running`, `blocked` and `cancelled`, which a finished result does not contain), `reason`, `ref` (a random identifier for the entry) |
+| Count | `planned_requests`, `observed` | `value` (`int` or `None`), `bound` (`exact`, `upper`, `lower`, `unknown`); prints as `exact 3` or `unknown` |
+
+## In the `Anonymizer` class
+
+`run()` and `preview()` results of the `Anonymizer` class carry one `TargetOutcome` per output row:
+`result.outcome(row)`. What `not_met` and the advisories mean there depends on the mode: see
+[Replace](../replace.md#reading-each-rows-outcome), [Rewrite](../rewrite.md#reading-each-rows-outcome), and, for the
+judges that `evaluate()` appends, [Evaluation](../evaluation.md#outcomes-after-evaluate).
+In Replace and Rewrite modes, detection runs as the first phase-scoped step of the same call that replaces or
+rewrites.
+Anonymizer's own detection step may also put an internal refusal entry in place of a target's mentions, which
+fails that target with the refusal's reason (`unspanned_value`); it is not part of the public API.
+
+## Rejection codes
+
+`GraphRejection` is a `ValueError` with `code` and `detail`. For `datum_not_text` and `names_not_tuple` it is also a
+`TypeError`. Catch `GraphRejection` and read `code`.
+
+**When building values**
+
+| Code | Raised by | Cause |
+|---|---|---|
+| `datum_not_text` | `GraphScope.datum` | Text is not a `str`. |
+| `invalid_record` | `GraphScope.record`, `ProtectionGraph` | Members are not a tuple of datums, or `records` is not a tuple of `Record`. |
+| `empty_record` | `GraphScope.record`, `ProtectionGraph` | A record has no members. |
+| `invalid_request_count` | `Requests` | Count is negative or not an integer. |
+| `names_not_tuple` | `Operation`, `Workflow`, `prepare` | `checks`, `subject`, `requires` or `capabilities` given as a string. |
+| `verifier_ports` | `Operation` | An `assessment` output alongside other outputs or under another name, or an output port named `assessment` of another kind. |
+| `seed_output_reserved` | `Operation` | An output named `session`, `identities` or `record`. |
+| `invalid_subject_key`, `reserved_subject_key` | `SubjectKey` | An empty key, or `by-value` or `substitute-fallback`. |
+| `invalid_slot`, `invalid_value` | `SessionView` | A slot that is not `(SubjectKey, str, str)`, or a value that is not a `str`. |
+| `invalid_slot`, `invalid_decision` | `Decision` | A slot that is not `(SubjectKey, str, str)`; a value that is not a `str`, or `supersedes` that is not a `bool`. |
+| `session_mode_invalid` | `Session` | An invalid mode. |
+| `snapshot_incompatible` | `Session.restore`, `SessionSnapshot.from_bytes` | Not a snapshot, or bytes this version cannot read. |
+
+**When building the graph** (`ProtectionGraph`)
+
+| Code | Cause |
+|---|---|
+| `duplicate_target` | A datum listed twice as a target. |
+| `foreign_datum` | A datum or record member from another scope. `detail` says where. |
+| `unknown_reference` | A relation names a datum that is not a target. Also raised by `outcome` for any datum that is not a target, and by `record_of` for a datum of this scope that is not a target (another scope's datum: `foreign_datum`). |
+| `view_out_of_range` | A context view outside its datum. |
+| `duplicate_context_source` | Two different sources with one name. |
+| `mention_not_on_target` | A declared mention on a context datum. |
+| `mention_out_of_range`, `mention_slice_mismatch`, `mention_unlabelled`, `overlapping_output_ownership` | A declared mention breaks a mention rule. Declared mentions must be `Mention` values. |
+| `dependency_cycle` | Dependencies form a cycle. |
+| `group_overlap` | A target in two output groups. |
+| `foreign_record` | A record from another scope. |
+| `record_overlap` | A target in two records, or twice in one. |
+| `invalid_identity` | `identities` is not a tuple of `Identity` values whose subject is a `SubjectKey`. |
+| `identity_out_of_range` | An identity span outside its target. |
+| `identity_conflict` | Spans of different subjects overlap on one target. |
+
+**At `prepare`** (limit and capability codes are checked again by `protect`)
+
+| Code | Cause |
+|---|---|
+| `annotation_in_protected` | A protected workflow contains an annotation workflow. |
+| `duplicate_operation_name` | Two steps share a flattened name. `detail` names it. |
+| `over_limit` | A count limit is passed. `detail` names the field. |
+| `over_byte_ceiling` | A byte ceiling is passed by targets or static context. |
+| `unsupported_context_kind` | Mixed context kinds, or a source kind with no byte measure under a byte ceiling. |
+| `unknown_kind` | A port or source names a kind never registered. |
+| `capability_not_admitted` | The workflow is empty, or a step is not in `capabilities`. |
+| `hard_budget_without_visibility` | `request_budget` given but the plan is unknown. |
+| `over_request_budget` | The plan is above `request_budget`. |
+| `unbound_port` | An input port has no earlier output or seed of its name. |
+| `port_kind_mismatch` | An input port's kind differs from the value it would receive. |
+| `final_text_not_text` | The last `text` output has a kind other than `text`. |
+| `verifier_subject_invalid` | A verifier with `checks` but no `subject`; a subject port that is not an input or traces to no text; or `subject` on a non-verifier. |
+| `required_check_not_final` | A required check with no verifier of the final candidate. `detail` names it. |
+| `not_a_session` | `session=` is not a `Session` (also at `protect`). |
+| `session_without_resolution` | A stable Session with no `decisions` output in the workflow. |
+| `session_mode_unsupported` | A Session with `identity_matching=True`. |
+| `session_mismatch` | At `protect`: a Session of another mode than the one prepared. |
+| `session_busy` | At `protect` or `snapshot`: another execution is using the Session. |
+
+**At `protect`**
+
+| Code | Cause |
+|---|---|
+| `not_prepared` | The argument is not an unaltered value returned by `prepare`. |
+
+**When joining results**
+
+| Code | Raised by | Cause |
+|---|---|---|
+| `unavailable_input` | `compose`, `reconstruct`, `assemble_regions` | A listed target did not succeed or has no final candidate. `detail` is its reason. |
+| `not_in_source` | `reconstruct` | A part missing from `source`. |
+| `conflicting_position` | `reconstruct` | Two parts at one position. |
+| `missing_source_part` | `reconstruct` | A position in `source` with no part. |
+| `region_out_of_bounds` | `assemble_regions` | A range outside `source`. |
+| `overlapping_region` | `assemble_regions` | Two ranges overlap. |

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Literal
 from unittest.mock import Mock
 
 import pandas as pd
@@ -339,7 +340,8 @@ def test_retry_keeps_record_positions_when_ids_repeat_and_output_is_reordered(
             }
             for position in output[ROW_ORDER_COL]
         ]
-        return WorkflowRunResult(dataframe=output, failed_records=[])
+        positions = tuple(reversed(range(len(frame))))
+        return WorkflowRunResult(dataframe=output, failed_records=[], source_positions=positions)
 
     adapter = Mock()
     adapter.run_workflow.side_effect = generate
@@ -525,4 +527,98 @@ def test_retry_preserves_shared_non_original_substitutions(
     assert result.dataframe[COL_REPLACEMENT_MAP].iloc[0]["replacements"] == [
         {"original": "Paris", "label": "city", "synthetic": "Lyon"},
         {"original": "Berlin", "label": "city", "synthetic": "Lyon"},
+    ]
+
+
+def _cities_frame(*records: list[str]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            RECORD_ID_COLUMN: [f"r{index}" for index in range(len(records))],
+            COL_TEXT: [" and ".join(cities) for cities in records],
+            COL_TAGGED_TEXT: [" and ".join(cities) for cities in records],
+            COL_ENTITIES_BY_VALUE: [
+                {"entities_by_value": [{"value": city, "labels": ["city"]} for city in cities]} for cities in records
+            ],
+            COL_FINAL_ENTITIES: [
+                {
+                    "entities": [
+                        {
+                            "value": city,
+                            "label": "city",
+                            "start_position": " and ".join(cities).index(city),
+                            "end_position": " and ".join(cities).index(city) + len(city),
+                        }
+                        for city in cities
+                    ]
+                }
+                for cities in records
+            ],
+        }
+    )
+
+
+def _scripted_adapter(rounds: list[dict[str, list[tuple[str, str]]]]) -> Mock:
+    """An adapter whose n-th call answers each record ID with ``rounds[n]``'s (original, synthetic) pairs."""
+
+    def generate(frame: pd.DataFrame, **_: object) -> WorkflowRunResult:
+        answers = rounds[adapter.run_workflow.call_count - 1]
+        output = frame.copy()
+        output[COL_REPLACEMENT_MAP] = [
+            {"replacements": [{"original": o, "label": "city", "synthetic": s} for o, s in answers.get(rid, [])]}
+            for rid in output[RECORD_ID_COLUMN]
+        ]
+        return WorkflowRunResult(output, [], tuple(range(len(output))))
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = generate
+    return adapter
+
+
+@pytest.mark.parametrize(
+    ("consistency", "expected"),
+    [
+        pytest.param("record", ["Lyon and Lyon"], id="record-may-share"),
+        pytest.param("run", ["Lyon and [SUBSTITUTE_CITY_1]"], id="run-never-shares"),
+    ],
+)
+def test_retry_shares_a_substitute_only_in_record_mode(
+    consistency: Literal["record", "run"],
+    expected: list[str],
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    adapter = _scripted_adapter([{"r0": [("Paris", "Lyon")]}, {"r0": [("Berlin", "Lyon")]}])
+    result = ReplacementWorkflow(llm_workflow=LlmReplaceWorkflow(adapter=adapter)).run(
+        _cities_frame(["Paris", "Berlin"]),
+        replace_method=Substitute(consistency=consistency),
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+    assert adapter.run_workflow.call_count == 2
+    assert result.failed_records == []
+    assert result.dataframe[COL_REPLACED_TEXT].tolist() == expected
+
+
+def test_run_mode_retry_keeps_run_wide_uniqueness_and_placeholder_numbers(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """A retried pair in a later record cannot take another value's substitute or restart placeholder numbers."""
+    adapter = _scripted_adapter(
+        [
+            {"r0": [("Paris", "Paris"), ("Rome", "Lyon")], "r1": [("Oslo", "Oslo")]},
+            {"r1": [("Berlin", "Lyon")]},
+        ]
+    )
+    result = ReplacementWorkflow(llm_workflow=LlmReplaceWorkflow(adapter=adapter)).run(
+        _cities_frame(["Paris", "Rome"], ["Oslo", "Berlin"]),
+        replace_method=Substitute(consistency="run"),
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+    assert adapter.run_workflow.call_count == 2
+    assert result.failed_records == []
+    assert result.dataframe[COL_REPLACED_TEXT].tolist() == [
+        "[SUBSTITUTE_CITY_1] and Lyon",
+        "[SUBSTITUTE_CITY_2] and [SUBSTITUTE_CITY_3]",
     ]

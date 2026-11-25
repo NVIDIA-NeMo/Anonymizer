@@ -27,6 +27,12 @@ Augmenter suggestions must match the source text and their supplied context exac
 
 Unknown fields in augmentation responses are ignored, but required fields and their types are still checked. Passing those checks does not guarantee that a suggestion is grounded in the source or correctly classified.
 
+On OpenAI-compatible providers, the augmenter requests schema-constrained output: each request carries a `response_format` with the response JSON schema, and the prompt no longer asks for a fenced code block. It is not sent to Anthropic providers. Setting `response_format` in an alias's or provider's `extra_body`, even to `null`, turns this off and your setting is sent instead. If the provider rejects the field (an HTTP 400 or 422 that names `response_format`, `json_schema`, `guided`, or `grammar`), Anonymizer retries that request once without it; when the retry succeeds, later augmenter requests in the same run omit it. Any other error is raised as before, and a failed retry raises the original error.
+
+The schema is sent without strict mode, and Anonymizer checks every reply against it itself.
+
+Schema-constrained output has not been measured on reasoning models with thinking enabled. Anonymizer sends the constraint the same way; the `_augmentation_response_format` trace column records, per row, whether the constraint was sent, fell back, or appears to have been ignored.
+
 When rewrite is configured, an additional step identifies **latent entities** -- sensitive information inferable from context but not explicitly stated in the text.
 
 ### Occurrences and boundaries
@@ -42,6 +48,75 @@ Published values are sliced from the original source at their character offsets.
 Label eligibility is checked before overlap selection. Eligible detections with the same normalized label and source bounds are combined while retaining their independently accepted origins. Labels are normalized by trimming surrounding whitespace and case-folding.
 
 The final selection is deterministic and greedy: longer spans are considered first, with earlier starts breaking equal-length ties, and any later candidate overlapping a selected span is discarded. This is not an optimizer for maximum total covered characters. For identical bounds, explicit acceptance outranks fallback protection, then source priority applies; native confidence scores break ties only within a shared source/model calibration domain. Touching spans do not overlap.
+
+### Custom detection workflows
+
+A custom `detection_workflow` returns a `DetectorResult` (exported from `anonymizer`). It holds one `DetectorRow` per
+input record it answers, named by that record's `_anonymizer_record_id` (the `TextRecord` id for `TextRecordsInput`,
+a generated id for file input; the detector receives it as a column), plus the records it could not process as
+`FailedRecord`s (also exported from `anonymizer`) with step `detect`:
+
+```python
+from anonymizer import TEXT_COLUMN, DetectedSpan, DetectorResult, DetectorRow, FailedRecord
+
+def run(self, dataframe, **kwargs):
+    rows = []
+    for record_id, text in zip(dataframe["_anonymizer_record_id"], dataframe[TEXT_COLUMN]):
+        start = text.find("Alice")
+        spans = (DetectedSpan(start, start + 5, "first_name", "Alice"),) if start >= 0 else ()
+        rows.append(DetectorRow(record_id=record_id, spans=spans))
+    return DetectorResult(rows=tuple(rows))
+```
+
+`DetectorRow.extra_values` lists `(value, label)` pairs the detector reports without a span, and `DetectorRow.latent`
+carries latent entities for Rewrite. The engine renders `final_entities`, `_entities_by_value` and `tagged_text` from
+them; a detector no longer returns those columns. Any detector other than the built-in `EntityDetectionWorkflow`
+class itself, its subclasses included, returns a `DetectorResult`.
+
+In Rewrite, a row with latent entries and no spans is rewritten under the privacy goal. `latent=()` means the detector
+found no latent entity, so a row with no spans, no extra values and `latent=()` passes through unchanged.
+
+A result that cannot be placed against the input raises `InvalidDetectorResultError` before any model is called: a
+return value that is not a `DetectorResult`, a row or failure naming an id that is not an input id, or an id answered
+or failed twice. An input record the result neither answers nor fails fails at `detect` with `dropped_output`.
+
+Each span is half-open (`start` inclusive, `end` exclusive), lies within the record's text, is non-empty, and the text
+slice it covers equals its `value` exactly. Each span needs a non-empty `label`: an unlabelled span never covers
+another, and one that is not identical to or inside a labelled span fails its record. Spans with identical bounds
+collapse into one, keeping the first labelled span in the detector's order with its label, and a span contained in a
+labelled span gives way to the outer span. Replacement, the Substitute map, rewriting and the result's
+`final_entities` all see the collapsed spans. Any other overlap, and any span that breaks the contract, fails its
+record at the `detect` step with the reason `overlapping_output_ownership`, `mention_out_of_range` (a zero-width span
+counts as out of range), `mention_slice_mismatch` or `mention_unlabelled`. The record is listed in
+`result.failed_records` and left out of the output, and the rest of the run continues.
+
+Every value the detector reports for a row, from a span or an extra value, that occurs in the row's text is either in
+Rewrite's replacement view or protected. Two rules say where a value occurs, both whole words. Rewrite's replacement
+view follows the leftover check's rule, with case and accents folded, so "Ann" does not occur in "Annual" and "Jose"
+occurs in "José". What edits the text or fails a row matches the reported spelling exactly, so "May" does not occur in
+"may" and "Hàn" does not occur in "hạn". The spelling includes whitespace and compatibility forms, with no Unicode
+normalization: "Mary Jane" does not occur in "Mary Jane" split across two lines, "Alice" does not occur in fullwidth
+"Ａlice", and "Le" does not occur in a decomposed "Lê". A one-character value in an unspaced script, such as 王, which
+neither rule matches, counts wherever it appears as spelled. The Replace modes (Redact, Hash, Annotate, Substitute)
+replace spans only, so with a custom detector a row with a reported value that occurs, as spelled, in its text outside
+every kept span fails at the `detect` step with the reason `unspanned_value`. That includes a span's value repeated
+without a span, and a value that crosses two spans (`Paris/Rome` over spans on `Paris` and `Rome`). A case or accent
+variant outside every span does not fail the row. With built-in detection, the Replace modes instead add a span at each
+such occurrence (a missed repeat), with the label of the first detected span of the same value, so `final_entities` can
+hold spans the detector did not return (marked `"source": "repeat"`). A variant spelling gets no span and keeps its
+text: with `May` detected, "May said she may come back in May." keeps "may". The row is not failed and stays met, but
+the advisory `undetected_value_kept` fails for it, counted with case and accents folded, and `result.leftovers(row)`
+shows the count. An occurrence that partly overlaps a kept span (it crosses a span's edge, as the first "New York" does
+in "New York University is in New York." with spans on "York University" and the second "New York") gets no span: the
+row fails at the `detect` step with `unspanned_value`, as with a custom detector. The added span replaces the whole
+matched word, so text around a detected value, such as `#` in `order #W3916020`, is replaced with it. Rewrite passes a
+missed repeat to the rewriter in its replacement view, as before.
+
+Custom runners (`replace_runner`, `rewrite_runner`) are an advanced and testing seam. A runner that overrides `run()`
+must keep `_anonymizer_record_id` on every row it returns. A row with no id, an id that is not an input id, or an id
+returned twice is not released, and each input record that no released row answers fails at the runner's step with
+`unplaced_output`. The rows a runner's `evaluate()` returns are matched by record id only; Anonymizer never matches
+rows by order or text.
 
 ### Example: standard vs. latent entities
 
@@ -235,7 +310,7 @@ Patterns use the third-party `regex` dialect, except that fuzzy matching groups
 and match reset (`\K`) are unsupported. Invalid, zero-width, or oversized
 patterns are rejected during configuration, as are constructs whose consumed
 width cannot be established conservatively. Runtime matching has a per-rule
-timeout and match-count limit; exceeding either fails the record rather than
+CPU-time budget and match-count limit; exceeding either fails the record rather than
 silently omitting detections. This is not a sandbox for arbitrary validator
 code.
 
@@ -253,15 +328,30 @@ detect = Detect(regex_limits=RegexLimits(
 
 These are the defaults. The cap counts matches that pass local validation, before
 any LLM validation; rejected candidates do not count. Each rule gets one budget per
-record: `max(min_timeout_seconds, len(text) / 1_000_000 * timeout_seconds_per_million_characters)`.
+record, in CPU seconds: `max(min_timeout_seconds, len(text) / 1_000_000 * timeout_seconds_per_million_characters)`.
 Length is measured in Unicode code points, not UTF-8 bytes or model tokens.
-For example, 10,000 characters get 50 ms; 300,000 get 300 ms. Limits apply equally
-to run, preview and exported workflows. Errors identify the rule, the exhausted
-limit and the setting to review without including record text. No partial regex
-result is returned after a limit failure. Review inefficient custom patterns or
-validators before increasing limits. One shared search budget is consumed across
-bounded matching batches; Python validation callbacks and time between batches
-do not consume it. This is not a sandbox or execution timeout for validator code.
+For example, 10,000 characters get 0.05 CPU seconds; 300,000 get 0.3 CPU seconds.
+The budget counts CPU time used by the thread that scans the record. Time spent
+waiting for other threads or for Python's global interpreter lock is not charged,
+and neither is a garbage collection that happens to run during the scan, so many
+records scanned in parallel do not time each other out. A wall-clock
+ceiling of 20 times the budget (1 second at the default minimum) still fails a
+record whose scan the process was too busy to run, with its own "starved" error.
+Like the budget, the ceiling does not count the thread's own garbage collections or
+the time validators run between batches.
+Limits apply equally to run, preview and exported workflows. Errors identify the
+rule, the exhausted limit and the setting to review without including record text.
+No partial regex result is returned after a limit failure. Review inefficient
+custom patterns or validators before increasing limits. One shared search budget
+is consumed across bounded matching batches; Python validation callbacks and time
+between batches do not consume it. This is not a sandbox or execution timeout for
+validator code.
+
+<Note>
+The `main` branch measures this budget in wall-clock time until the graph SDK
+(#319) merges: the same settings there also charge time spent waiting for other
+threads, so more records time out under parallel load.
+</Note>
 
 ## Chunked validation
 
@@ -292,7 +382,7 @@ In an otherwise successful response, a missing/unusable decision or an empty rec
 
 If every alias fails on any required validation chunk, the row is **dropped from the output** rather than returned as a successful partial result. This differs from an omitted decision in a successful response, which can use the exact-span fallback described above. Transport failures, invalid required response fields, and unresolved duplicate assigned aliases are failures, not omissions.
 
-A detector text/source mismatch also fails the record instead of silently skipping the observation. This check allows case-folded comparison and surrounding-whitespace normalization of detector-echoed text, then publishes the actual source substring. It does not mean every malformed detector payload is rejected: malformed entries and unusable bounds can still be ignored by the parser.
+A detector text/source mismatch also fails the record instead of silently skipping the observation. This check allows case-folded comparison and surrounding-whitespace normalization of detector-echoed text, then publishes the actual source substring. It does not mean every malformed detector payload is rejected: malformed entries and unusable bounds can still be ignored by the parser. A detector span that ends past the text also fails the record.
 
 Dropped rows show up on `result.failed_records` with `step="entity-detection"`, so you can tell which inputs didn't make it through by comparing input IDs against output IDs and reprocess those on a follow-up pass.
 
@@ -302,7 +392,7 @@ See [Validator pools](/concepts/models#validator-pools) for the YAML syntax and 
 
 Use `result.dataframe["final_entities"]` for the public entity output. Its representative `source` can be `detector`, `augmenter`, or `fallback`; it is not a full provenance ledger. `score` is the available native score, or `0.0` when none is available, not a universal probability of correctness. Augmenter-only findings are no longer assigned synthetic confidence `1.0`.
 
-For internal debugging, `result.trace_dataframe` can include `_seed_detection_result`, `_validation_request_inventories`, `_validation_decisions`, `_admission_results`, `_admitted_candidates`, `_augmentation_detection_result`, `_augmentation_admission_results`, `_augmentation_attempts`, `_augmented_candidates`, and `_reconciled_candidates`. These underscore-prefixed structures are internal and may change between releases. `_augmentation_attempts` records attempt outcomes and grounding-failure categories without embedding suggested values or context; other trace columns and explicitly enabled raw message traces can contain sensitive source text.
+For internal debugging, `result.trace_dataframe` can include `_seed_detection_result`, `_validation_request_inventories`, `_validation_decisions`, `_admission_results`, `_admitted_candidates`, `_augmentation_detection_result`, `_augmentation_admission_results`, `_augmentation_attempts`, `_augmented_candidates`, `_augmentation_response_format`, and `_reconciled_candidates`. These underscore-prefixed structures are internal and may change between releases. `_augmentation_attempts` records attempt outcomes and grounding-failure categories without embedding suggested values or context; `_augmentation_response_format` is `sent` (the schema was sent and the reply was not fenced), `fallback`, `ignored` (a fenced reply although the schema was sent), `unconstrained` (not sent), or empty when augmentation did not run; other trace columns and explicitly enabled raw message traces can contain sensitive source text.
 
 
 ## Entity labels
@@ -422,6 +512,10 @@ Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["c
 Exclusions always win. Configured examples for an excluded label are ignored with a warning that names the label but never the example values. A total overlap with the default or explicit label set raises a `ValueError` instead of silently detecting nothing.
 </Warning>
 
+### Resolved detection scope
+
+`result.detection_scope` on `run()` and `preview()` results reports the scope the run used: `effective_labels` (after exclusions), `allowed_labels`, `excluded_labels`, and `gliner_threshold`. `allowed_labels` is None when `entity_labels` is unset; validation and augmentation may then produce labels outside `effective_labels`. With explicit `entity_labels`, `allowed_labels` equals `effective_labels` and final entities are restricted to them. In Rewrite mode, latent entities come from a prompt that does not receive the label list, and only exclusions are applied to them. The scope describes final detected entities; `allowed_labels` does not bound the latent entities a rewrite may act on. Finding no entities describes the result under this scope, not proof that the text contains no sensitive information.
+
 ## Tuning the threshold
 
 For `gliner_threshold`, start with the default `0.3`. If you're seeing too many false positives, raise it to `0.5`. If entities are being missed, try lowering to `0.2`. The LLM validation step catches many false positives, so erring on the side of lower thresholds is usually safe.
@@ -430,7 +524,7 @@ For `gliner_threshold`, start with the default `0.3`. If you're seeing too many 
 
 ## Model roles
 
-The detection pipeline uses three model roles, each mapped to a model alias in the default config:
+The detection pipeline uses three model roles, each mapped to a model alias in the bundled configs:
 
 | Role | Default alias | Purpose |
 |------|--------------|---------|

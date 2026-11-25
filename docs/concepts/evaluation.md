@@ -119,7 +119,7 @@ Detection validity is disabled by default. To enable it, set `compute_detection_
 
 ### Entity Replacement Judges
 
-When the source result used the **Substitute** mode, three additional LLM judges run in parallel — one per quality dimension.
+When the source result used the **Substitute** mode, three additional LLM judges run, one per quality dimension. Each judge runs on its own, so a judge that cannot answer for a record leaves the other judges' scores for that record in place.
 
 #### Type Fidelity
 
@@ -267,6 +267,7 @@ Same judge as in replace mode — see [Entity Detection Judge](#entity-detection
 | Scenario | `detection_valid` | Display | Log |
 |---|---|---|---|
 | No entities detected in this record | `1.0` | 1.00 | `INFO`: "N passthrough row(s) have no detected entities — detection_valid set to 1.0 (trivially valid)" |
+| Only latent entities detected (Rewrite) | `1.0` | 1.00 | — (the detection judge reads explicit entities only and is not asked) |
 | Judge ran and all detections passed | `1.0` | 1.00 | — |
 | Judge ran and flagged one or more detections | 0–1 fraction | numeric score | — |
 | Judge call failed or entity data unreadable | `None` | Unavailable | `WARNING`: "Could not parse entities_by_value to compute detection_valid fraction" |
@@ -357,3 +358,43 @@ selected_models:
     detection_validity_judge: your-model-alias
     rewrite_judge: your-model-alias
 ```
+
+---
+
+## Outcomes after `evaluate()`
+
+`outcome(row)` on an `evaluate()` result is that row's outcome from the evaluated `run()` or `preview()` result
+(see [Replace](replace.md#reading-each-rows-outcome) and [Rewrite](rewrite.md#reading-each-rows-outcome)), with
+each judge appended as an advisory. The advisory's `check` and `verifier` name the judge: `coverage`,
+`rewrite-judge`, `detection-validity`, `type-fidelity`, `relational-consistency` or `attribute-fidelity`. Its
+`status` is one of:
+
+| Status | Meaning |
+|---|---|
+| `passed` | The judge passed the row. |
+| `failed` | The judge failed the row; `cause` says why, such as `entities_leaked`. |
+| `could_not_assess` | `cause` is `judge_unavailable` (the judge gave no score), `raised` (its check raised) or `blocked` (an earlier judge check of the row raised, so this one never ran). |
+| `scored` | The rewrite judge, which has no pass threshold, returned scores; read them in the `judge_evaluation` column. |
+| `not_applicable` | The rewrite judge skips a row with neither explicit nor latent entities by design. |
+
+A judge never changes the row's qualification or release: `qualification` and `protected` still say whether the run
+released the row. Treat a judge's `failed` advisory as evidence to review before using the row. Evaluating an
+`evaluate()` result again replaces each judge's advisory rather than adding a second one, and the input result is
+not changed.
+
+Rows are matched by record id, never by order or text, since records can share their text:
+
+- The run outcome is found by the row's record id, so reordering or filtering the result's rows before `evaluate()`
+  keeps each row's own outcome.
+- Each judge's rows are matched to records only by a non-null record id that occurs once in the evaluated result
+  and once among the judge's rows. Ids compare as text.
+- A row without such an id is reported unassessed: its outcome is `not_assessed` and unprotected, and each judge
+  reads `could_not_assess` with cause `unplaced`.
+- A row starts from a `not_assessed`, unprotected outcome when the evaluated result carries no outcomes (a custom
+  runner's result, or one pickled before outcomes were kept), or when its record id matches no single row of the
+  evaluated result's outcomes. The outcome is the run's verdict on the run's own text, and is not re-derived for a
+  row whose text was edited under the same id.
+
+The `replace_runner` and `rewrite_runner` arguments of `Anonymizer` are for advanced use and testing. A custom
+runner's `evaluate()` must keep each row's record id, as every built-in runner does. A row that a custom runner gives
+another record's id, including by retyping ids so that they compare equal as text, is reported as that record.

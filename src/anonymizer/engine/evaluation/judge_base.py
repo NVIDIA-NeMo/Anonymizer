@@ -19,7 +19,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import ClassVar, Protocol
+from typing import ClassVar, Protocol, cast
 
 import pandas as pd
 from data_designer.config.column_types import ColumnConfigT
@@ -27,9 +27,10 @@ from data_designer.config.models import ModelConfig
 from pydantic import BaseModel
 
 from anonymizer.config.models import EvaluateModelSelection
-from anonymizer.engine.constants import COL_REPLACEMENT_APPLICATION
-from anonymizer.engine.ndd.adapter import FailedRecord
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.ndd.backend import BackendRun
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
+from anonymizer.engine.ndd.workflow_utils import run_columns
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder
 from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeColumnConfig, JudgeKind
 
@@ -42,6 +43,7 @@ class JudgeResult:
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    source_positions: tuple[int, ...] | None = None
 
 
 class _JudgeRunResult(Protocol):
@@ -51,8 +53,20 @@ class _JudgeRunResult(Protocol):
     @property
     def failed_records(self) -> list[FailedRecord]: ...
 
+    @property
+    def source_positions(self) -> tuple[int, ...] | None: ...
+
+    @property
+    def observed_requests(self) -> int | None: ...
+
 
 class _JudgeAdapter(Protocol):
+    """What the judges need from an adapter: ``run_columns`` calls ``run_workflow``.
+
+    The result must say which input row each returned row came from, through
+    ``source_positions`` (or unique record IDs when that is ``None``).
+    """
+
     def run_workflow(
         self,
         dataframe: pd.DataFrame,
@@ -208,34 +222,47 @@ class _BaseJudgeWorkflow(ABC):
 
         if with_content.empty:
             combined = merge_and_reorder(passthrough_rows)
-            return JudgeResult(dataframe=combined, failed_records=[])
+            return JudgeResult(dataframe=combined, failed_records=[], source_positions=tuple(range(len(dataframe))))
 
         effective_preview_num_records = (
             min(preview_num_records, len(with_content)) if preview_num_records is not None else None
         )
-        # Judges do not read replacement telemetry, whose all-empty nested
-        # skipped-label mappings cannot be written to DataDesigner's Parquet seed.
-        workflow_input = with_content.drop(columns=[COL_REPLACEMENT_APPLICATION], errors="ignore")
-        run_result = self._adapter.run_workflow(
-            workflow_input,
+        run_result, judged_df = self._run_seeded(
+            with_content,
             model_configs=model_configs,
-            columns=[self.column_config(selected_models)],
-            workflow_name=self.WORKFLOW_NAME,
+            selected_models=selected_models,
             preview_num_records=effective_preview_num_records,
         )
-
-        judged_df = run_result.dataframe.copy()
-        if COL_REPLACEMENT_APPLICATION in with_content.columns:
-            judged_df = judged_df.merge(
-                with_content[[ROW_ORDER_COL, COL_REPLACEMENT_APPLICATION]],
-                on=ROW_ORDER_COL,
-                how="left",
-                sort=False,
-                validate="one_to_one",
-            )
+        positions = tuple(sorted([*judged_df[ROW_ORDER_COL], *passthrough_rows[ROW_ORDER_COL]]))
         flattened = judged_df[self.RAW_COL].apply(self._flatten_judgment)
         judged_df[self.VALID_COL] = flattened.apply(lambda pair: pair[0])
         judged_df[self.INVALID_COL] = flattened.apply(lambda pair: pair[1])
 
         combined = merge_and_reorder(judged_df, passthrough_rows)
-        return JudgeResult(dataframe=combined, failed_records=run_result.failed_records)
+        return JudgeResult(dataframe=combined, failed_records=run_result.failed_records, source_positions=positions)
+
+    def _run_seeded(
+        self,
+        frame: pd.DataFrame,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: EvaluateModelSelection,
+        preview_num_records: int | None,
+    ) -> tuple[BackendRun, pd.DataFrame]:
+        """Run the judge on only the columns its prompt reads; return the run and *frame*'s surviving rows.
+
+        The surviving rows keep every column of *frame* with its original values,
+        plus ``RAW_COL`` from the run, so callers still see the full trace.
+        """
+        # run_columns is typed for NddAdapter; any _JudgeAdapter meets what it uses.
+        run, _ = run_columns(
+            cast(NddAdapter, self._adapter),
+            frame,
+            [self.column_config(selected_models)],
+            model_configs=model_configs,
+            workflow_name=self.WORKFLOW_NAME,
+            preview_num_records=preview_num_records,
+        )
+        judged = frame.iloc[list(run.source_positions)].reset_index(drop=True)
+        judged[self.RAW_COL] = run.dataframe[self.RAW_COL].tolist()
+        return run, judged

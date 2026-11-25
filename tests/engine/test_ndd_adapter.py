@@ -10,16 +10,27 @@ from unittest.mock import Mock
 
 import pandas as pd
 import pytest
-from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTextColumnConfig
+from data_designer.config.column_configs import LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
+from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
+from data_designer.config.preview_results import PreviewResults
+from data_designer.config.seed_source import LocalFileSeedSource
+from data_designer.engine.errors import DataDesignerRuntimeError
+from data_designer.errors import DataDesignerError
 from data_designer.interface.data_designer import DataDesigner
+from data_designer.interface.errors import (
+    DataDesignerEarlyShutdownError,
+    DataDesignerGenerationError,
+    DataDesignerProfilingError,
+    DataDesignerWorkflowError,
+)
 
 from anonymizer.engine.constants import RECORD_ID_COLUMN
-from anonymizer.engine.detection.detection_workflow import _PrivatePromptLLMStructuredColumnConfig
 from anonymizer.engine.ndd import adapter as ndd_adapter
+from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
 from anonymizer.engine.ndd.adapter import NddAdapter
-from anonymizer.engine.schemas import AugmentedEntitiesSchema
+from anonymizer.engine.ndd.model_response import _RUN_STOP, RunStop
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
 _FORBIDDEN_BACKEND_STRINGS = ("Data Designer", "DataDesigner", "data_designer", "DD")
@@ -68,25 +79,6 @@ def _make_columns() -> list[ColumnConfigT]:
 
 def test_as_alias_list_drops_none_items_before_stringifying() -> None:
     assert ndd_adapter._as_alias_list(["validator", None, "", 0]) == ["validator", "0"]
-
-
-def test_private_structured_config_normalizes_to_registered_type() -> None:
-    prompt = "Sensitive prompt content"
-    private_config = _PrivatePromptLLMStructuredColumnConfig(
-        name="entities",
-        prompt=prompt,
-        model_alias="test-model-alias",
-        output_format=AugmentedEntitiesSchema,
-    )
-
-    normalized = ndd_adapter._normalize_column_for_data_designer(private_config)
-
-    assert type(normalized) is LLMStructuredColumnConfig
-    assert normalized.prompt == prompt
-    assert normalized.output_format == private_config.output_format
-    assert isinstance(normalized.output_format, dict)
-    assert normalized.output_format["title"] == "AugmentedEntitiesSchema"
-    assert prompt not in repr(private_config)
 
 
 def test_attach_record_ids_adds_deterministic_ids() -> None:
@@ -166,9 +158,11 @@ def test_run_workflow_accumulates_input_tokens_without_measurement_collector() -
         def _create_resource_provider(self, *_args: object, **_kwargs: object) -> SimpleNamespace:
             return SimpleNamespace(model_registry=ModelRegistry())
 
-        def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
+        def preview(self, _config_builder: DataDesignerConfigBuilder, *, num_records: int) -> SimpleNamespace:
             self._create_resource_provider("preview-dataset", _config_builder)
-            return SimpleNamespace(dataset=input_df.iloc[:num_records].copy())
+            seed = _config_builder.get_seed_config()
+            assert seed is not None and isinstance(seed.source, LocalFileSeedSource)
+            return SimpleNamespace(dataset=pd.read_parquet(seed.source.path).iloc[:num_records].copy())
 
     adapter = NddAdapter(data_designer=cast(DataDesigner, UsageDataDesigner()))
 
@@ -224,43 +218,10 @@ def test_run_workflow_accumulates_input_tokens_on_error() -> None:
     assert adapter.total_input_tokens == 7
 
 
-def test_detect_missing_records_returns_missing_ids() -> None:
-    adapter = NddAdapter(data_designer=Mock(spec=DataDesigner))
-    input_df = adapter._attach_record_ids(pd.DataFrame({"text": ["a", "b", "c"]}))
-    output_df = input_df.iloc[[0, 2]].copy()
-
-    failed_records = adapter._detect_missing_records(
-        workflow_name="replace-workflow",
-        input_df=input_df,
-        output_df=output_df,
-    )
-
-    assert len(failed_records) == 1
-    assert failed_records[0].step == "replace-workflow"
-
-
-def test_detect_missing_records_for_preview_subset_has_no_false_failures() -> None:
-    adapter = NddAdapter(data_designer=Mock(spec=DataDesigner))
-    full_input_df = adapter._attach_record_ids(pd.DataFrame({"text": ["a", "b", "c"]}))
-    preview_input_df = full_input_df.iloc[:1].copy()
-    preview_output_df = preview_input_df.copy()
-
-    failed_records = adapter._detect_missing_records(
-        workflow_name="detect-workflow",
-        input_df=preview_input_df,
-        output_df=preview_output_df,
-    )
-
-    assert len(failed_records) == 0
-
-
 def test_preview_exception_wraps_in_workflow_error_and_logs(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
-
-    class DataDesignerRuntimeError(Exception):
-        pass
 
     mock_dd = Mock(spec=DataDesigner)
     mock_dd.preview.side_effect = DataDesignerRuntimeError("endpoint unreachable")
@@ -284,8 +245,8 @@ def test_preview_exception_wraps_in_workflow_error_and_logs(
     assert len(warning_records) == 1
     warning_msg = warning_records[0].getMessage()
     assert "3" in warning_msg
-    assert "test-model-alias" in warning_msg
-    assert "endpoint unreachable" in warning_msg
+    assert "test-model-alias" not in warning_msg
+    assert "endpoint unreachable" not in warning_msg
     assert "Check endpoint reachability" not in warning_msg
     assert "detect-workflow" not in warning_msg
     _assert_no_backend_reference(warning_msg)
@@ -293,8 +254,8 @@ def test_preview_exception_wraps_in_workflow_error_and_logs(
     debug_records = _unique_records(caplog, level=logging.DEBUG, message_contains="failure context")
     assert len(debug_records) == 1
     debug_msg = debug_records[0].getMessage()
-    assert "detect-workflow" in debug_msg
-    assert "output" in debug_msg
+    assert "detect-workflow" not in debug_msg
+    assert "output" not in debug_msg
     _assert_no_backend_reference(debug_msg)
 
 
@@ -302,9 +263,6 @@ def test_create_exception_wraps_in_workflow_error_and_logs(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
-
-    class DataDesignerRuntimeError(Exception):
-        pass
 
     mock_dd = Mock(spec=DataDesigner)
     mock_dd.create.side_effect = DataDesignerRuntimeError("quota exceeded")
@@ -328,8 +286,8 @@ def test_create_exception_wraps_in_workflow_error_and_logs(
     assert len(warning_records) == 1
     warning_msg = warning_records[0].getMessage()
     assert "2" in warning_msg
-    assert "test-model-alias" in warning_msg
-    assert "quota exceeded" in warning_msg
+    assert "test-model-alias" not in warning_msg
+    assert "quota exceeded" not in warning_msg
     assert "Check endpoint reachability" not in warning_msg
     assert "replace-workflow" not in warning_msg
     _assert_no_backend_reference(warning_msg)
@@ -337,8 +295,8 @@ def test_create_exception_wraps_in_workflow_error_and_logs(
     debug_records = _unique_records(caplog, level=logging.DEBUG, message_contains="failure context")
     assert len(debug_records) == 1
     debug_msg = debug_records[0].getMessage()
-    assert "replace-workflow" in debug_msg
-    assert "output" in debug_msg
+    assert "replace-workflow" not in debug_msg
+    assert "output" not in debug_msg
     _assert_no_backend_reference(debug_msg)
 
 
@@ -346,9 +304,6 @@ def test_load_dataset_exception_wraps_in_workflow_error_and_logs(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
-
-    class DataDesignerRuntimeError(Exception):
-        pass
 
     mock_dd = Mock(spec=DataDesigner)
     mock_create_results = Mock()
@@ -374,8 +329,8 @@ def test_load_dataset_exception_wraps_in_workflow_error_and_logs(
     assert len(warning_records) == 1
     warning_msg = warning_records[0].getMessage()
     assert "2" in warning_msg
-    assert "test-model-alias" in warning_msg
-    assert "corrupt parquet" in warning_msg
+    assert "test-model-alias" not in warning_msg
+    assert "corrupt parquet" not in warning_msg
     assert "Check local storage" not in warning_msg
     assert "Check endpoint reachability" not in warning_msg
     assert "replace-workflow" not in warning_msg
@@ -384,96 +339,239 @@ def test_load_dataset_exception_wraps_in_workflow_error_and_logs(
     debug_records = _unique_records(caplog, level=logging.DEBUG, message_contains="failure context")
     assert len(debug_records) == 1
     debug_msg = debug_records[0].getMessage()
-    assert "replace-workflow" in debug_msg
-    assert "output" in debug_msg
+    assert "replace-workflow" not in debug_msg
+    assert "output" not in debug_msg
     _assert_no_backend_reference(debug_msg)
 
 
-def test_detect_missing_records_short_circuit_warns_when_input_missing_id(
+def test_workflow_failure_warning_names_exception_class_but_not_message(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    adapter = NddAdapter(data_designer=Mock(spec=DataDesigner))
     caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
-    caplog.clear()
 
-    input_df = pd.DataFrame({"text": ["a", "b", "c"], "label": [1, 2, 3]})
-    output_df = pd.DataFrame({"text": ["a", "b", "c"]})
+    class EndpointUnreachableError(Exception):
+        pass
 
-    result = adapter._detect_missing_records(
-        workflow_name="detect-workflow",
-        input_df=input_df,
-        output_df=output_df,
-    )
+    mock_dd = Mock(spec=DataDesigner)
+    mock_dd.create.side_effect = EndpointUnreachableError("SENTINEL-RECORD-TEXT")
 
-    assert result == []
+    adapter = NddAdapter(data_designer=mock_dd)
+    input_df = pd.DataFrame({"text": ["row-1", "row-2"]})
 
-    warning_records = _unique_records(caplog, level=logging.WARNING)
+    with pytest.raises(AnonymizerWorkflowError):
+        adapter.run_workflow(
+            input_df,
+            model_configs=[_make_model_config()],
+            columns=_make_columns(),
+            workflow_name="replace-workflow",
+            preview_num_records=None,
+        )
+
+    warning_records = _unique_records(caplog, level=logging.WARNING, message_contains="Workflow failed")
     assert len(warning_records) == 1
     warning_msg = warning_records[0].getMessage()
-    assert "3" in warning_msg
-    assert "detection skipped" in warning_msg
-    assert "cannot verify" in warning_msg
-    _assert_no_backend_reference(warning_msg)
-
-    debug_records = _unique_records(caplog, level=logging.DEBUG)
-    assert len(debug_records) == 1
-    debug_msg = debug_records[0].getMessage()
-    assert "detect-workflow" in debug_msg
-    assert RECORD_ID_COLUMN in debug_msg
-    assert "text" in debug_msg
-    assert "label" in debug_msg
-    _assert_no_backend_reference(debug_msg)
+    assert "EndpointUnreachableError" in warning_msg
+    assert "SENTINEL-RECORD-TEXT" not in caplog.text
 
 
-def test_detect_missing_records_short_circuit_warns_when_output_missing_id(
-    caplog: pytest.LogCaptureFixture,
+_BACKEND_EXCEPTION_LABELS = [
+    (DataDesignerError, "BackendError"),
+    (DataDesignerGenerationError, "GenerationError"),
+    (DataDesignerRuntimeError, "RuntimeError"),
+    (DataDesignerWorkflowError, "WorkflowError"),
+    (DataDesignerEarlyShutdownError, "EarlyShutdownError"),
+    (DataDesignerProfilingError, "ProfilingError"),
+]
+
+
+@pytest.mark.parametrize(("exc_class", "label"), _BACKEND_EXCEPTION_LABELS)
+def test_workflow_failure_warning_shortens_backend_exception_class(
+    caplog: pytest.LogCaptureFixture, exc_class: type[Exception], label: str
 ) -> None:
-    adapter = NddAdapter(data_designer=Mock(spec=DataDesigner))
     caplog.set_level(logging.DEBUG, logger="anonymizer.ndd")
-    caplog.clear()
+    mock_dd = Mock(spec=DataDesigner)
+    mock_dd.create.side_effect = exc_class("SENTINEL-RECORD-TEXT")
 
-    input_df = pd.DataFrame(
-        {
-            RECORD_ID_COLUMN: ["id-1", "id-2", "id-3"],
-            "text": ["a", "b", "c"],
-            "label": [1, 2, 3],
-        }
-    )
-    output_df = pd.DataFrame(
-        {
-            "text": ["a", "b", "c"],
-            "rewrite": ["A", "B", "C"],
-        }
-    )
+    adapter = NddAdapter(data_designer=mock_dd)
+    with pytest.raises(AnonymizerWorkflowError):
+        adapter.run_workflow(
+            pd.DataFrame({"text": ["row-1"]}),
+            model_configs=[_make_model_config()],
+            columns=_make_columns(),
+            workflow_name="replace-workflow",
+            preview_num_records=None,
+        )
 
-    result = adapter._detect_missing_records(
-        workflow_name="rewrite-workflow",
-        input_df=input_df,
-        output_df=output_df,
-    )
-
-    assert len(result) == 3
-    for record in result:
-        assert record.step == "rewrite-workflow"
-        assert RECORD_ID_COLUMN in record.reason
-    assert {r.record_id for r in result} == {"id-1", "id-2", "id-3"}
-
-    warning_records = _unique_records(caplog, level=logging.WARNING)
+    warning_records = _unique_records(caplog, level=logging.WARNING, message_contains="Workflow failed")
     assert len(warning_records) == 1
     warning_msg = warning_records[0].getMessage()
-    assert "3" in warning_msg
-    assert "detection disabled" in warning_msg
-    assert "'label'" in warning_msg
-    assert "'rewrite'" in warning_msg
-    assert RECORD_ID_COLUMN not in warning_msg
+    assert warning_msg.endswith(f": {label}.")
     _assert_no_backend_reference(warning_msg)
+    assert "SENTINEL-RECORD-TEXT" not in caplog.text
 
-    debug_records = _unique_records(caplog, level=logging.DEBUG)
-    assert len(debug_records) == 1
-    debug_msg = debug_records[0].getMessage()
-    assert "rewrite-workflow" in debug_msg
-    assert RECORD_ID_COLUMN in debug_msg
-    assert "'text'" in debug_msg
-    assert "'label'" in debug_msg
-    assert "'rewrite'" in debug_msg
-    _assert_no_backend_reference(debug_msg)
+
+def test_run_workflow_on_no_rows_returns_the_declared_columns_without_running() -> None:
+    """A stage after one that stopped early before any row finished runs on nothing."""
+    mock_dd = Mock(spec=DataDesigner)
+    adapter = NddAdapter(data_designer=mock_dd)
+
+    result = adapter.run_workflow(
+        pd.DataFrame({"text": pd.Series([], dtype=object)}),
+        model_configs=[_make_model_config()],
+        columns=_make_columns(),
+        workflow_name="rewrite-evaluate-0",
+    )
+
+    mock_dd.create.assert_not_called()
+    assert result.dataframe.empty
+    assert {"text", RECORD_ID_COLUMN, "output"} <= set(result.dataframe.columns)
+    assert result.failed_records == []
+
+
+def test_run_workflow_on_an_empty_preview_returns_the_declared_columns() -> None:
+    """A preview that returns no dataset gives the same empty frame as a run on no rows, declared columns included."""
+    mock_dd = Mock(spec=DataDesigner)
+    mock_dd.preview.side_effect = lambda builder, **_: PreviewResults(config_builder=builder, dataset=None)
+
+    result = NddAdapter(data_designer=mock_dd).run_workflow(
+        pd.DataFrame({"text": ["row-1"]}),
+        model_configs=[_make_model_config()],
+        columns=_make_columns(),
+        workflow_name="replace-workflow",
+        preview_num_records=1,
+    )
+
+    assert result.dataframe.empty
+    assert {"text", RECORD_ID_COLUMN, "output"} <= set(result.dataframe.columns)
+    assert [r.reason for r in result.failed_records] == ["Record missing from workflow output"]
+
+
+_BUG = "Custom generator function failed for column '_later': TypeError: bug in a later column"
+
+
+def _trace(row: int, column: str, error: str, status: str = "error") -> SimpleNamespace:
+    return SimpleNamespace(status=status, row_group=0, row_index=row, column=column, error=error)
+
+
+def _trip() -> RunStop:
+    stop = _RUN_STOP.get()
+    assert stop is not None
+    for _ in range(stop.window):
+        stop.record("_domain", True)
+    return stop
+
+
+def _stop_refusing(monkeypatch: pytest.MonkeyPatch, refused: list[int], dropped: dict[int, str] | None = None) -> Mock:
+    """A designer whose run stops ``_domain`` and has it refuse the rows at ``refused``; DataDesigner keeps every row
+    but those in ``dropped``, whose traces record the given error."""
+    frames: list[WorkflowSourceFrame] = []
+    capture = WorkflowSourceFrame.capture
+
+    def capturing(dataframe: pd.DataFrame) -> WorkflowSourceFrame:
+        frames.append(capture(dataframe))
+        return frames[-1]
+
+    monkeypatch.setattr(ndd_adapter.WorkflowSourceFrame, "capture", capturing)
+    dropped = dropped or {}
+
+    def create(*args: object, **kwargs: object) -> Mock:
+        stop = _trip()
+        seed = frames[-1].seed()
+        for position in refused:
+            assert stop.refuses("_domain", seed.iloc[position][frames[-1].key_column])
+        results = Mock()
+        results.load_dataset.return_value = seed.drop(index=list(dropped)).assign(output="out")
+        results.task_traces = [_trace(position, "_later", error) for position, error in dropped.items()]
+        return results
+
+    mock_dd = Mock(spec=DataDesigner)
+    mock_dd.create.side_effect = create
+    return mock_dd
+
+
+def _run_two_rows(mock_dd: Mock) -> ndd_adapter.WorkflowRunResult:
+    return NddAdapter(data_designer=mock_dd).run_workflow(
+        pd.DataFrame({"text": ["row-1", "row-2"]}),
+        model_configs=[_make_model_config()],
+        columns=_make_columns(),
+        workflow_name="rewrite-pipeline",
+    )
+
+
+def test_run_workflow_returns_the_rows_past_a_stopped_step_and_lists_the_refused_ones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _run_two_rows(_stop_refusing(monkeypatch, refused=[1]))
+
+    assert result.dataframe["text"].tolist() == ["row-1"]
+    assert result.source_positions == (0,)
+    assert [(r.step, r.reason) for r in result.failed_records] == [("rewrite-pipeline", "stopped_early (_domain)")]
+    assert _RUN_STOP.get() is None  # the stop belongs to that run only
+
+
+def test_run_workflow_lists_every_row_when_the_stop_refused_them_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    result = _run_two_rows(_stop_refusing(monkeypatch, refused=[0, 1]))
+
+    assert result.dataframe.empty
+    assert "output" in result.dataframe.columns
+    assert [r.reason for r in result.failed_records] == ["stopped_early (_domain)"] * 2
+
+
+def test_run_workflow_raises_when_no_row_is_returned_and_one_failed_for_another_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stop refused one row and a bug dropped the other: an error the stop did not cause still fails the run."""
+    with pytest.raises(AnonymizerWorkflowError, match="no row was returned"):
+        _run_two_rows(_stop_refusing(monkeypatch, refused=[0], dropped={1: _BUG}))
+
+
+def test_run_workflow_lists_a_row_dropped_for_another_reason_by_its_own_cause(monkeypatch: pytest.MonkeyPatch) -> None:
+    result = _run_two_rows(_stop_refusing(monkeypatch, refused=[], dropped={1: _BUG}))
+
+    assert result.dataframe["text"].tolist() == ["row-1"]
+    assert [r.reason for r in result.failed_records] == [
+        "Record missing from workflow output: _later: generation failed"
+    ]
+
+
+def test_run_workflow_lists_a_refused_row_by_its_recorded_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A row the stop refused while another step's request for it was already failing keeps that step's reason."""
+    result = _run_two_rows(_stop_refusing(monkeypatch, refused=[1], dropped={1: _BUG}))
+
+    assert result.dataframe["text"].tolist() == ["row-1"]
+    assert [(r.step, r.reason) for r in result.failed_records] == [
+        ("rewrite-pipeline", "Record missing from workflow output: _later: generation failed")
+    ]
+
+
+def _raise_after_stop(error: Exception) -> object:
+    def create(*args: object, **kwargs: object) -> None:
+        _trip()
+        raise error
+
+    return create
+
+
+def _load_fails_after_stop(*args: object, **kwargs: object) -> object:
+    _trip()
+    results = Mock()
+    results.load_dataset.side_effect = KeyError("adapter-side bug")
+    results.task_traces = []
+    return results
+
+
+@pytest.mark.parametrize(
+    "create",
+    [
+        pytest.param(_raise_after_stop(ValueError("bug in a later column")), id="value-error"),
+        pytest.param(_raise_after_stop(DataDesignerProfilingError("profiling failed")), id="profiling-error"),
+        pytest.param(_raise_after_stop(DataDesignerEarlyShutdownError("early shutdown")), id="shutdown"),
+        pytest.param(_load_fails_after_stop, id="load-dataset-key-error"),
+    ],
+)
+def test_run_workflow_raises_an_error_the_stop_did_not_cause(create: object) -> None:
+    mock_dd = Mock(spec=DataDesigner)
+    mock_dd.create.side_effect = create
+
+    with pytest.raises(AnonymizerWorkflowError):
+        _run_two_rows(mock_dd)

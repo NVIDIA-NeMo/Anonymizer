@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import re
 from typing import cast
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
@@ -46,6 +46,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.augmentation import _ground_augmentation_items
 from anonymizer.engine.detection.chunked_validation import VALIDATION_EXCERPT_VAR
 from anonymizer.engine.detection.detection_workflow import (
+    EntityDetectionResult,
     EntityDetectionWorkflow,
     _filter_excluded_latent_entities,
     _format_label_examples,
@@ -54,8 +55,12 @@ from anonymizer.engine.detection.detection_workflow import (
     _get_validation_prompt,
     _materialize_final_entities,
 )
-from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
+from anonymizer.engine.detection.entity_label_examples import (
+    ResolvedEntityLabelConfig,
+    resolve_entity_label_config,
+)
 from anonymizer.engine.detection.postprocess import TagNotation, _format_entity_tag
+from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import (
     load_default_model_selection,
@@ -69,6 +74,14 @@ from anonymizer.engine.workflow_columns.detection.config import (
     DetectionTransformConfig,
     DetectionTransformOperation,
 )
+from anonymizer.interface.errors import AnonymizerWorkflowError
+
+
+def _positional(dataframe: pd.DataFrame, failed_records: list) -> WorkflowRunResult:
+    """An adapter result that reports one source position per returned row, in input order."""
+    return WorkflowRunResult(
+        dataframe=dataframe, failed_records=failed_records, source_positions=tuple(range(len(dataframe)))
+    )
 
 
 @pytest.fixture
@@ -79,7 +92,7 @@ def _detection_with_novel_augmented_label(
     """Workflow whose detector returns an entity with a label (server_name) outside the user's list."""
     input_df = pd.DataFrame({COL_TEXT: ["Connect to srv01.internal on 10.0.0.5"]})
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Connect to srv01.internal on 10.0.0.5"],
@@ -110,7 +123,7 @@ def test_run_with_latent_detection_calls_second_workflow(
 ) -> None:
     adapter = Mock()
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(
+        _positional(
             dataframe=pd.DataFrame(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
@@ -120,7 +133,7 @@ def test_run_with_latent_detection_calls_second_workflow(
             ),
             failed_records=[],
         ),
-        WorkflowRunResult(
+        _positional(
             dataframe=pd.DataFrame(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
@@ -157,6 +170,44 @@ def test_run_with_latent_detection_calls_second_workflow(
     assert COL_LATENT_ENTITIES in result.dataframe.columns
     assert COL_FINAL_ENTITIES in result.dataframe.columns
     assert len(result.failed_records) == 1
+
+
+@pytest.mark.parametrize("with_ids", [True, False], ids=["record-ids", "no-record-ids"])
+def test_run_with_latent_detection_accepts_a_result_without_positions(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+    with_ids: bool,
+) -> None:
+    """A subclass returning the older two-argument result reports no positions: unique record IDs resolve them, and
+    without IDs the run still returns its rows, reporting no positions either."""
+
+    class OlderResult(EntityDetectionWorkflow):
+        def detect_and_validate_entities(self, dataframe: pd.DataFrame, **_: object) -> EntityDetectionResult:
+            out = dataframe.iloc[::-1].reset_index(drop=True)
+            out[COL_DETECTED_ENTITIES] = [{"entities": []} for _ in range(len(out))]
+            return EntityDetectionResult(out, [])
+
+    def latent(dataframe: pd.DataFrame, **_: object) -> WorkflowRunResult:
+        return _positional(dataframe.assign(**{COL_LATENT_ENTITIES: [{"latent_entities": []}] * len(dataframe)}), [])
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = latent
+    input_df = pd.DataFrame({COL_TEXT: ["The sky is blue.", "Grass is green."]})
+    if with_ids:
+        input_df[RECORD_ID_COLUMN] = ["r1", "r2"]
+
+    result = OlderResult(adapter=adapter).run(
+        input_df,
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        tag_latent_entities=True,
+        privacy_goal=PrivacyGoal(protect="Protect direct identifiers here.", preserve="Keep the general meaning."),
+    )
+
+    assert list(result.dataframe[COL_TEXT]) == ["Grass is green.", "The sky is blue."]
+    assert result.source_positions == ((1, 0) if with_ids else ())
+    assert result.failed_records == []
 
 
 def test_latent_prompt_includes_summary_and_goal() -> None:
@@ -213,7 +264,7 @@ def test_identify_latent_entities_filters_excluded_labels(
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["The patient works at Acme."],
@@ -253,7 +304,7 @@ def test_run_without_latent_detection_materializes_final_entities(
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works in Seattle"],
@@ -287,7 +338,7 @@ def test_run_compute_grouped_entities_false_drops_grouped_column(
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works in Seattle"],
@@ -314,7 +365,7 @@ def test_run_with_latent_detection_merges_failures_in_order(
 ) -> None:
     adapter = Mock()
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(
+        _positional(
             dataframe=pd.DataFrame(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
@@ -323,7 +374,7 @@ def test_run_with_latent_detection_merges_failures_in_order(
             ),
             failed_records=[FailedRecord(record_id="d1", step="entity-detection", reason="detected failure")],
         ),
-        WorkflowRunResult(
+        _positional(
             dataframe=pd.DataFrame(
                 {
                     COL_TEXT: ["Alice works in Seattle"],
@@ -347,6 +398,50 @@ def test_run_with_latent_detection_merges_failures_in_order(
         ),
     )
     assert [item.record_id for item in result.failed_records] == ["d1", "l1"]
+
+
+@pytest.mark.parametrize("cancel_at", ["before-first-stage", "between-stages"])
+def test_run_in_cancelled_frame_raises_and_skips_later_stages(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+    cancel_at: str,
+) -> None:
+    token = CancelToken()
+    adapter = Mock()
+
+    def detect(*args, **kwargs) -> WorkflowRunResult:
+        token.cancel()
+        return _positional(
+            dataframe=pd.DataFrame(
+                {
+                    COL_TEXT: ["Alice works in Seattle"],
+                    COL_DETECTED_ENTITIES: [{"entities": [{"value": "Alice", "label": "first_name"}]}],
+                }
+            ),
+            failed_records=[],
+        )
+
+    adapter.run_workflow.side_effect = detect
+    if cancel_at == "before-first-stage":
+        token.cancel()
+
+    with pytest.raises(AnonymizerWorkflowError):
+        run_in_frame(
+            EntityDetectionWorkflow(adapter=adapter).run,
+            pd.DataFrame({COL_TEXT: ["Alice works in Seattle"]}),
+            model_configs=stub_detector_model_configs,
+            selected_models=stub_detection_model_selection,
+            gliner_detection_threshold=0.5,
+            tag_latent_entities=True,
+            privacy_goal=PrivacyGoal(
+                protect="Protect direct and latent identifiers from disclosure.",
+                preserve="General utility and semantic meaning of the original text.",
+            ),
+            token=token,
+        )
+
+    # Before the first stage nothing runs; between stages only detection ran, not latent tagging.
+    assert adapter.run_workflow.call_count == (0 if cancel_at == "before-first-stage" else 1)
 
 
 def test_run_requires_privacy_goal_for_latent_path(
@@ -783,10 +878,9 @@ def test_plain_augment_prompt_examples_ground_exact_source(notation: TagNotation
     expected_values = ["Jane", "Doe", "Santa Clara"] if strict_labels else ["Jane", "Doe", "Santa Clara", "full-time"]
     assert result.failures == ()
     assert [item.value for item in result.grounded_entities.entities] == expected_values
-    assert [
-        (source[item.start_position : item.end_position], item.start_position, item.end_position)
-        for item in result.occurrences
-    ] == [(value, source.index(value), source.index(value) + len(value)) for value in expected_values]
+    assert [(source[item.span.slice], item.span.start, item.span.end) for item in result.occurrences] == [
+        (value, source.index(value), source.index(value) + len(value)) for value in expected_values
+    ]
     if not strict_labels:
         assert output.entities[3].context_before == "in Santa Clara. She works "
 
@@ -968,6 +1062,35 @@ def test_defaults_plus_non_default_examples_use_strict_augmentation(
     assert "acme_live_abc123" not in repr(augmenter)
 
 
+@pytest.mark.parametrize(("entity_labels", "strict"), [(None, False), (["first_name", "city"], True)])
+def test_run_marks_labels_strict_only_when_entity_labels_are_given(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+    entity_labels: list[str] | None,
+    strict: bool,
+) -> None:
+    """Detection receives the resolved scope already marked, before any stage builds its own columns."""
+    frame = pd.DataFrame({COL_TEXT: ["Alice"]})
+    received: list[bool] = []
+
+    def detect(dataframe: pd.DataFrame, **kwargs: object) -> EntityDetectionResult:
+        received.append(cast(ResolvedEntityLabelConfig, kwargs["_resolved_label_config"]).strict_labels)
+        return EntityDetectionResult(dataframe=dataframe, failed_records=[], source_positions=(0,))
+
+    workflow = EntityDetectionWorkflow(adapter=Mock())
+    with patch.object(workflow, "detect_and_validate_entities", side_effect=detect):
+        workflow.run(
+            frame,
+            model_configs=stub_detector_model_configs,
+            selected_models=stub_detection_model_selection,
+            gliner_detection_threshold=0.5,
+            entity_labels=entity_labels,
+            tag_latent_entities=False,
+        )
+
+    assert received == [strict]
+
+
 # ── excluded_entity_labels ────────────────────────────────────────────────────
 
 
@@ -1034,7 +1157,7 @@ def test_excluded_labels_are_removed_from_final_entities(
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works at Acme, her email is alice@example.com"],
@@ -1073,7 +1196,7 @@ def test_excluded_labels_do_not_affect_col_detected_entities(
 ) -> None:
     """COL_DETECTED_ENTITIES is the raw pre-filter output and must be untouched."""
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice, alice@example.com"],
@@ -1110,7 +1233,7 @@ def test_exclusions_combined_with_allowlist_preserve_other_allowed_labels(
 ) -> None:
     """entity_labels restricts to an allowlist; exclusions further remove from that set."""
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice in Houston, alice@example.com"],
@@ -1150,9 +1273,7 @@ def test_excluded_labels_are_removed_from_gliner_labels(
 ) -> None:
     """Denied labels must be absent from the label list injected into GLiNER."""
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
-        dataframe=pd.DataFrame({COL_TEXT: ["Alice"]}), failed_records=[]
-    )
+    adapter.run_workflow.return_value = _positional(dataframe=pd.DataFrame({COL_TEXT: ["Alice"]}), failed_records=[])
     workflow = EntityDetectionWorkflow(adapter=adapter)
 
     workflow.run(
@@ -1202,7 +1323,7 @@ def test_detection_workflow_uses_plugin_transform_columns(
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],
@@ -1258,7 +1379,7 @@ def test_detection_workflow_columns_are_json_serializable(
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],
@@ -1287,7 +1408,7 @@ def test_validation_column_is_chunked_validation_plugin(
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],
@@ -1328,7 +1449,7 @@ def test_validator_pool_kwargs_thread_through_to_plugin_config(
     """Explicit ``validation_max_entities_per_call`` and ``validation_excerpt_window_chars``
     propagate from ``run()`` to ``ChunkedValidationConfig``."""
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],
@@ -1358,7 +1479,7 @@ def test_validation_single_chunk_full_text_threads_to_config(
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],
@@ -1450,7 +1571,7 @@ def test_pool_size_greater_than_one_emits_warning(
         update={"entity_validator": [*stub_detection_model_selection.entity_validator, "extra-validator"]}
     )
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],
@@ -1487,7 +1608,7 @@ def test_pool_size_one_does_not_emit_warning(
 ) -> None:
     """Default single-alias configurations must not spam the warning: it's a pool caveat, not advice for everyone."""
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice"],
