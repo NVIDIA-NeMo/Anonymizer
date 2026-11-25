@@ -74,7 +74,7 @@ def _read_record_ids(dataframe: pd.DataFrame, id_column: str | None) -> list[str
     if id_column not in dataframe.columns:
         raise InvalidInputError(f"Input id column '{id_column}' not found.")
     column = dataframe[id_column]
-    if column.isna().any():
+    if column.isna().any() or any(not str(value).strip() for value in column):
         raise InvalidInputError(f"Input id column '{id_column}' has empty values; every record needs an id.")
     record_ids = [str(value) for value in column]
     if len(set(record_ids)) != len(record_ids):
@@ -231,7 +231,14 @@ def _load_dataframe(input_data: AnonymizerInput, *, nrows: int | None = None) ->
         logger.debug("nrows=%d; returning empty DataFrame", nrows)
     try:
         if suffix == ".csv":
-            df = pd.read_csv(source_str, nrows=nrows)
+            # Ids keep their exact text: "001" and "1" stay two ids.
+            id_column = input_data.id_column
+            if id_column is None:
+                df = pd.read_csv(source_str, nrows=nrows)
+            else:
+                df = pd.read_csv(source_str, nrows=nrows, dtype={id_column: "string"})
+                if id_column in df.columns:
+                    df[id_column] = df[id_column].astype(object)
         else:
             df = _read_parquet_partial(source_str, nrows=nrows)
     except (OSError, pd.errors.ParserError, ValueError) as error:

@@ -440,10 +440,10 @@ read and has no flag.
 no `--key` flag, so the key stays out of argv and shell history.
 
 **`id_column` sets the record ids.** `AnonymizerInput(id_column=...)` and `--id-column` now name the records: the
-column's values, compared as text, name them in failures, outcomes and a custom detector's input. A missing column,
-an empty id or a duplicate id raises `InvalidInputError`. The id column is kept in `result.dataframe` and in the
-written output, and `result.id_column` names it. The option used to be accepted and never read: file records got
-generated ids, the output did not keep the id column, and `result.id_column` was `None`.
+column's values, as written (`001` and `1` are two ids), name them in failures, outcomes and a custom detector's input.
+A missing column, an empty or whitespace-only id, or a duplicate id raises `InvalidInputError`. The id column is kept in
+`result.dataframe` and in the written output, and `result.id_column` names it. The option used to be accepted and never
+read: file records got generated ids, the output did not keep the id column, and `result.id_column` was `None`.
 - What to do: make the id column's values present and unique, or leave `id_column` unset.
 
 **CLI errors no longer echo input values.** A rejected flag or environment value is reported by location and

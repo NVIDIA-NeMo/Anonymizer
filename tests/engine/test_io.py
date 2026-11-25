@@ -581,3 +581,25 @@ def test_read_input_rejects_an_unusable_id_column(tmp_path: Path, frame: pd.Data
     inp = _write_input(frame, tmp_path, id_column="doc_id")
     with pytest.raises(InvalidInputError, match=message):
         read_input(inp)
+
+
+def test_read_input_keeps_csv_ids_as_written(tmp_path: Path) -> None:
+    path = tmp_path / "data.csv"
+    path.write_text("doc,text\n001,a\n1,b\n", encoding="utf-8")
+    resolved = read_input(AnonymizerInput(source=str(path), id_column="doc"))
+    assert resolved.dataframe[RECORD_ID_COLUMN].tolist() == ["001", "1"]
+    assert resolved.dataframe["doc"].tolist() == ["001", "1"]
+
+
+@pytest.mark.parametrize("blank", ["", "  "])
+def test_read_input_refuses_blank_ids(tmp_path: Path, blank: str) -> None:
+    inp = _write_input(pd.DataFrame({"doc": [blank, "x"], "text": ["a", "b"]}), tmp_path, ".parquet", id_column="doc")
+    with pytest.raises(InvalidInputError, match="empty values"):
+        read_input(inp)
+
+
+def test_read_input_refuses_a_whitespace_csv_id(tmp_path: Path) -> None:
+    path = tmp_path / "data.csv"
+    path.write_text('doc,text\n"  ",a\nx,b\n', encoding="utf-8")
+    with pytest.raises(InvalidInputError, match="empty values"):
+        read_input(AnonymizerInput(source=str(path), id_column="doc"))
