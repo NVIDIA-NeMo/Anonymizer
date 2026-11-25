@@ -39,7 +39,14 @@ from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.schemas.detection import EntitySchema
 from anonymizer.engine.schemas.shared import to_python
-from anonymizer.engine.value_matching import MatchMode, count_values, entity_spans, normalized, value_key
+from anonymizer.engine.value_matching import (
+    MatchMode,
+    count_values,
+    entity_spans,
+    normalized,
+    occurrences,
+    value_key,
+)
 
 RecordId = NewType("RecordId", str)
 """The facade's label for one input record, from its ``_anonymizer_record_id``; it lives within one call."""
@@ -348,12 +355,7 @@ def values_outside_spans(text: str, entities: EntitiesSchema, values: Iterable[s
 
 
 def _found_outside(value: str, text: str, kept: list[tuple[int, int]]) -> bool:
-    start = text.find(value)
-    while start >= 0:
-        if not any(s <= start and start + len(value) <= e for s, e in kept):
-            return True
-        start = text.find(value, start + 1)
-    return False
+    return any(not any(s <= start and start + len(value) <= e for s, e in kept) for start in occurrences(text, value))
 
 
 def _listed_pairs(listed: object) -> list[tuple[str, list[str]]]:
@@ -416,12 +418,10 @@ def _repeat_spans(text: str, kept: EntitiesSchema, values: list[str], labels: di
         found.extend((u.start, u.end, leftover.value) for u in leftover.undetected_spans)
     for value in distinct:
         if value_key(value, MatchMode.EXACT) not in judged:
-            start = text.find(value)
-            while start >= 0:
+            for start in occurrences(text, value):
                 end = start + len(value)
                 if not any(s <= start and end <= e for s, e in taken):
                     found.append((start, end, value))
-                start = text.find(value, start + 1)
     added: list[EntitySchema] = []
     for start, end, value in sorted(set(found)):
         label = labels.get(normalized(value))

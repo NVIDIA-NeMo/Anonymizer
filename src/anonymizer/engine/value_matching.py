@@ -137,6 +137,15 @@ def count_values(
     return tuple(leftover for _, leftover in leftovers)
 
 
+def occurrences(text: str, key: str) -> Iterator[int]:
+    """Every start index of ``key`` in ``text``, in order, overlapping occurrences included ("aa" in "aaaa" starts at 0,
+    1 and 2); an empty ``key`` starts at every index from 0 to ``len(text)``."""
+    start = text.find(key)
+    while start >= 0:
+        yield start
+        start = text.find(key, start + 1)
+
+
 def entity_spans(source: str, entities: Iterable[EntitySchema]) -> list[tuple[Span | None, str]]:
     """``entities`` as ``count_values`` takes them: ``(span, label)`` in position order (sorted by start). An entity
     whose offsets are not a non-empty span of ``source`` holding its value has ``None``: it keeps its position but
@@ -398,11 +407,10 @@ class _Matcher:
     pattern: Callable[[str, int], object] | None  # a compiled pattern's ``match``
 
     def spans(self, view: _View) -> Iterator[Span]:
-        """Every match in ``view``, overlapping ones included, as a span of the original text. ``str.find`` proposes
-        each start; the cluster edges and the pattern check it."""
+        """Every match in ``view``, overlapping ones included, as a span of the original text. ``occurrences``
+        proposes each start; the cluster edges and the pattern check it."""
         text, size = view.text, len(self.key)
-        pos = text.find(self.key)
-        while pos >= 0:
+        for pos in occurrences(text, self.key):
             end = pos + size
             if (
                 (
@@ -415,7 +423,6 @@ class _Matcher:
             ):
                 covered = view.origin[pos:end]  # canonical reordering can move marks across sources
                 yield Span(min(covered), max(covered) + 1)
-            pos = text.find(self.key, pos + 1)
 
 
 def _compiled(keys: Iterable[str], pipeline: _Pipeline) -> dict[str, _Matcher]:
