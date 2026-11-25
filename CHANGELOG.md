@@ -105,13 +105,13 @@ validation drops it and augmentation does not add it.
 the detection, rewrite and evaluation prompt templates, so it was dropped, changed, or failed the run. It now reaches
 every model verbatim.
 - What to do: nothing.
-- Changed in: #NNN.
+- Changed in: #454.
 
 **Custom label names are sent as written.** Template syntax in a custom entity label, such as `{{ x }}`, used to be
 rendered by the augmentation, validation, latent-detection and entity-coverage prompt templates. It now reaches each
 model verbatim. Prompts built from the default labels, or labels with no `{`, are unchanged.
 - What to do: nothing.
-- Changed in: #NNN.
+- Changed in: #454.
 
 **The augmenter asks for schema-constrained output.** On OpenAI-compatible providers, augmenter requests send the
 response JSON schema as `response_format`. If the provider rejects the field, the request is retried once without it.
@@ -155,7 +155,7 @@ of time fail with different reasons. `RegexLimits` is new since v0.5.0, so no re
 **`Substitute.instructions` is sent as written.** Template syntax in it, such as `{{ x }}` or `{% ... %}`, used to be
 rendered by the prompt template, so it was dropped, changed, or failed the run. It now reaches the model verbatim.
 - What to do: nothing.
-- Changed in: #NNN.
+- Changed in: #454.
 
 **Variants of a value share one substitute within a record.** Case, whitespace and Unicode-space variants of a value
 (for example `Paris`, `PARIS`, and a value spelled with a narrow no-break space) get one substitute, re-cased to each
@@ -215,7 +215,7 @@ or `{% ... %}`, used to be rendered by the rewrite, disposition, latent-detectio
 it was dropped, changed, or failed the run. It now reaches each model verbatim. Prompts built from a goal with no `{`
 are unchanged.
 - What to do: nothing.
-- Changed in: #NNN.
+- Changed in: #454.
 
 **`Rewrite.instructions` reaches the rewrite.** It used to be accepted and never read. It is now given to the rewrite
 and repair models as literal text, after the privacy goal, which takes precedence. The evaluator, the QA generator,
@@ -223,7 +223,7 @@ the disposition and domain steps and the judges do not see it. `run rewrite --in
 - What to do: nothing, unless you set it before; then expect it to change the rewritten text. A caller's runner
   or `build_graph` override with the 0.4.0 signature keeps working while `instructions` is unset; to use
   `instructions`, the override must accept it, or it raises `TypeError` for the unexpected keyword.
-- Changed in: #NNN.
+- Changed in: #454.
 
 **The review flag follows the final checks.** `needs_human_review` is set when a required check on the final text
 does not pass, when the row keeps a replaced value or a placeholder as described below, or when the utility score is
