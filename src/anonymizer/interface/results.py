@@ -220,9 +220,9 @@ class AnonymizerResult(_DisplayMixin):
         excluded_entity_labels: Labels that were explicitly excluded from
             detection. Preserved for ``evaluate()`` so the coverage judge does
             not penalise the output for not anonymizing excluded labels.
-        id_column: Record identifier column retained in ``dataframe`` for
-            in-memory record input. File-backed input currently leaves this as
-            ``None``.
+        id_column: Record identifier column retained in ``dataframe``: ``"id"`` for
+            in-memory record input, ``AnonymizerInput.id_column`` for file input
+            (its values are the record ids), or ``None`` when file input sets none.
         effective_entity_labels: Resolved detection labels used as coverage-prompt
             guidance, without restricting permissive evaluation.
         detection_scope: The resolved detection scope the run used: effective
@@ -294,9 +294,9 @@ class PreviewResult(_DisplayMixin):
         excluded_entity_labels: Labels that were explicitly excluded from
             detection. Preserved for ``evaluate()`` so the coverage judge does
             not penalise the output for not anonymizing excluded labels.
-        id_column: Record identifier column retained in ``dataframe`` for
-            in-memory record input. File-backed input currently leaves this as
-            ``None``.
+        id_column: Record identifier column retained in ``dataframe``: ``"id"`` for
+            in-memory record input, ``AnonymizerInput.id_column`` for file input
+            (its values are the record ids), or ``None`` when file input sets none.
         effective_entity_labels: Resolved detection labels used as coverage-prompt
             guidance, without restricting permissive evaluation.
         detection_scope: The resolved detection scope the run used: effective

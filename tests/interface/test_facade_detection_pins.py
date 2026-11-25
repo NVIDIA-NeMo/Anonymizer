@@ -39,6 +39,7 @@ from anonymizer.engine.detection.detection_workflow import (
 )
 from anonymizer.engine.detection.result import DetectorResult, DetectorRow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+from anonymizer.interface.cli._output import write_result
 from anonymizer.interface.errors import InvalidDetectorResultError
 from tests.detector_results import as_detector_result
 from tests.parity.harness import RECORDS, Case, scripted
@@ -252,6 +253,10 @@ def test_file_input_id_column_names_the_records(tmp_path: Path) -> None:
         config=_REPLACE, data=AnonymizerInput(source=str(csv_path), id_column="doc")
     )
     assert seen == [["a", "b"]]
+    assert result.id_column == "doc"
+    assert list(result.dataframe["doc"]) == ["a", "b"]
+    written = write_result(result, tmp_path / "out.csv")
+    assert list(pd.read_csv(written)["doc"]) == ["a", "b"]
     assert list(result.dataframe["text_replaced"]) == [
         "[REDACTED_FIRST_NAME] works here.",
         "[REDACTED_FIRST_NAME] lives there.",
