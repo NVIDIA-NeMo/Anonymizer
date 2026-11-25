@@ -30,7 +30,7 @@ logger = logging.getLogger("anonymizer.cli")
 
 import cyclopts
 import yaml
-from pydantic import BaseModel, Field, ValidationError, create_model
+from pydantic import BaseModel, Field, ValidationError, create_model, model_validator
 from rich.console import Console
 from rich.text import Text
 
@@ -77,6 +77,20 @@ _INPUT_FIELDS: dict[str, Any] = {
     for name, info in AnonymizerInput.model_fields.items()
 }
 _InputFlags: type[BaseModel] = create_model("_InputFlags", **_INPUT_FIELDS)
+
+
+class _DetectFlags(Detect):
+    """``Detect`` as the flags fill it: each field is checked as it is parsed, but the checks across fields wait for
+    the merge with the ``--config`` file. ``_config`` runs them once, on the merged settings. A flag such as
+    ``--entity-label-examples`` may need ``entity_labels`` from the file."""
+
+    @model_validator(mode="after")
+    def validate_entity_label_overlap(self) -> _DetectFlags:
+        return self
+
+    @model_validator(mode="after")
+    def validate_regex_rule_scope(self) -> _DetectFlags:
+        return self
 
 
 @dataclass(frozen=True)
@@ -413,12 +427,19 @@ def _config(
     merged["detect"] = _merge(file.get("detect") or {}, flags["detect"], Detect)
     if section == "replace":
         merged["replace"]["kind"] = mode
+    name_for = functools.partial(_flag_after_parse, mode, given=flags, path=path)
+    try:
+        # Detect's cross-field checks run here, once, on the merged settings (the flags were parsed without them).
+        # A check of the whole model has no flag to name: without a file it reads "value", as it did at parse time;
+        # with a file it reads "detect".
+        merged["detect"] = Detect.model_validate(merged["detect"])
+    except ValidationError as exc:
+        whole = "detect" if path is not None else None  # file and flags together: no single flag to name
+        raise InvalidConfigError(_describe(exc, lambda loc: name_for(("detect", *loc)) if loc else whole)) from None
     try:
         config = AnonymizerConfig.model_validate(merged)
     except ValidationError as exc:
-        raise InvalidConfigError(
-            _describe(exc, functools.partial(_flag_after_parse, mode, given=flags, path=path))
-        ) from None
+        raise InvalidConfigError(_describe(exc, name_for)) from None
     if not options.emit_telemetry and config.emit_telemetry:
         config = config.model_copy(update={"emit_telemetry": False})
     return config, _input(mode, data, file, path)
@@ -542,7 +563,7 @@ def _annotations(mode: str, extra: dict[str, Any]) -> dict[str, Any]:
         "data": Annotated[_InputFlags | None, cyclopts.Parameter(name="*", group=INPUT_GROUP)],  # ty: ignore[invalid-type-form]
         # The mode's model is a runtime value here, which a type checker cannot read as a type.
         "strategy": Annotated[MODES[mode] | None, cyclopts.Parameter(name="*", group=_mode_group(mode))],  # ty: ignore[invalid-type-form]
-        "detect": Annotated[Detect | None, cyclopts.Parameter(name="*", group=DETECT_GROUP)],
+        "detect": Annotated[_DetectFlags | None, cyclopts.Parameter(name="*", group=DETECT_GROUP)],
         "options": Annotated[RunOptions, cyclopts.Parameter(name="*", group=RUN_GROUP)],
         **extra,
         "return": None,

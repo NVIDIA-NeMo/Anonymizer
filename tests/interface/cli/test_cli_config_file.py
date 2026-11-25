@@ -345,3 +345,52 @@ def test_help_shows_the_input_defaults_and_puts_config_with_input(capsys: pytest
     out = capsys.readouterr().out
     input_panel = out.split("╭─ Input and output")[1].split("╰")[0]
     assert "[default: text]" in input_panel and "--config" in input_panel
+
+
+def test_flag_examples_for_labels_the_file_declares(csv_file: Path, tmp_path: Path) -> None:
+    """Greptile's case: the flags alone hold examples for a label only the file declares."""
+    config_path = _write(tmp_path, {"detect": {"entity_labels": ["ticket_id"]}})
+    code, config = _validated(
+        ["redact", "--config", str(config_path), "--source", str(csv_file),
+         "--entity-label-examples", '{"ticket_id": ["TKT-123"]}']
+    )  # fmt: skip
+    assert code == 0 and config is not None
+    assert config.detect.entity_labels == ["ticket_id"]
+    assert config.detect.entity_label_examples == {"ticket_id": ["TKT-123"]}
+
+
+def test_flag_exclusions_that_leave_only_the_files_custom_rule(csv_file: Path, tmp_path: Path) -> None:
+    """The flags alone exclude every default label; the file's custom rule keeps the merged set non-empty."""
+    from anonymizer import DEFAULT_ENTITY_LABELS
+
+    config_path = _write(tmp_path, {"detect": {"regex_rules": [{"label": "ticket_id", "pattern": "TKT-[0-9]+"}]}})
+    excluded = [arg for label in DEFAULT_ENTITY_LABELS for arg in ("--excluded-entity-labels", label)]
+    code, config = _validated(["redact", "--config", str(config_path), "--source", str(csv_file), *excluded])
+    assert code == 0 and config is not None
+    assert [rule.label for rule in config.detect.regex_rules] == ["ticket_id"]
+
+
+def test_flag_rules_that_conflict_only_while_builtins_are_on(csv_file: Path, tmp_path: Path) -> None:
+    """Two email rules disagree on detect_additional_matches; the file turns the built-in one off."""
+    config_path = _write(tmp_path, {"detect": {"builtin_regexes": False}})
+    code, config = _validated(
+        ["redact", "--config", str(config_path), "--source", str(csv_file),
+         "--regex-rules", '{"label": "email", "detect_additional_matches": false}',
+         "--regex-rules", '{"label": "email", "pattern": "[a-z]+@[a-z]+[.]com"}']
+    )  # fmt: skip
+    assert code == 0 and config is not None
+    assert config.detect.builtin_regexes is False
+
+
+def test_a_merged_cross_field_error_is_still_refused(
+    csv_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_path = _write(tmp_path, {"detect": {"entity_labels": ["first_name"]}})
+    code, config = _validated(
+        ["redact", "--config", str(config_path), "--source", str(csv_file),
+         "--entity-label-examples", '{"ticket_id": ["TKT-123"]}']
+    )  # fmt: skip
+    assert code == 2 and config is None
+    assert _error(capsys).startswith(
+        "Error: detect: entity_label_examples contains labels outside the active label set"
+    )
