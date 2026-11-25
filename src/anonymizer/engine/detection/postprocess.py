@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from enum import Enum
 from itertools import count
@@ -150,6 +151,27 @@ def build_tagged_text(
     return edits.apply()
 
 
+def conflict_group_ids() -> Iterator[str]:
+    """``g1``, ``g2``, ...: the ids of a prompt's conflict groups (groups of two or more), in order."""
+    return (f"g{n}" for n in count(1))
+
+
+def group_marker(group_id: str, text: str, spans: Iterable[Span], *, source: str, offset: int = 0) -> EntitySpan:
+    """The neutral ``NAGROUP_<group_id>`` marker over the span covering ``spans`` in ``text``, placed ``offset``
+    characters earlier (a prompt excerpt's start), with no score."""
+    bounds = Span.cover(spans)
+    placed = bounds.shifted(-offset)
+    return EntitySpan(
+        entity_id=group_id,
+        value=text[bounds.slice],
+        label=f"NAGROUP_{group_id}",
+        start_position=placed.start,
+        end_position=placed.end,
+        score=0.0,
+        source=source,
+    )
+
+
 def build_conflict_aware_tagged_text(text: str, entities: list[EntitySpan]) -> str:
     """Render one neutral marker for each connected group of overlapping spans."""
     ordered = sorted(
@@ -163,22 +185,12 @@ def build_conflict_aware_tagged_text(text: str, entities: list[EntitySpan]) -> s
     )
     groups = group_overlapping_spans(ordered, span=lambda entity: entity.span)
 
-    group_ids = (f"g{n}" for n in count(1))  # numbered over the groups of two or more, in order
+    group_ids = conflict_group_ids()
 
     def marker(group: tuple[EntitySpan, ...]) -> EntitySpan:
         if len(group) == 1:
             return group[0]
-        bounds = Span.cover(entity.span for entity in group)
-        group_id = next(group_ids)
-        return EntitySpan(
-            entity_id=group_id,
-            value=text[bounds.slice],
-            label=f"NAGROUP_{group_id}",
-            start_position=bounds.start,
-            end_position=bounds.end,
-            score=0.0,
-            source="prompt_marker",
-        )
+        return group_marker(next(group_ids), text, (entity.span for entity in group), source="prompt_marker")
 
     return build_tagged_text(text=text, entities=[marker(group) for group in groups])
 
