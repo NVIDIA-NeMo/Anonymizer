@@ -54,19 +54,6 @@ def _error_root(mode: str, loc: tuple[Any, ...]) -> tuple[str, tuple[Any, ...]]:
     return "strategy", loc
 
 
-def _error_root(mode: str, loc: tuple[Any, ...]) -> tuple[str, tuple[Any, ...]]:
-    """The command parameter a post-parse error location falls under, and the location inside it: ``AnonymizerConfig``
-    wraps the mode's model in ``replace`` (with its discriminator tag) or ``rewrite``, and ``Detect`` in ``detect``."""
-    if loc and loc[0] in ("replace", "rewrite"):
-        rest = loc[1:]
-        return "strategy", rest[1:] if rest and rest[0] == mode else rest
-    if loc and loc[0] == "detect":
-        return "detect", loc[1:]
-    if loc and loc[0] == "input":
-        return "data", loc[1:]
-    return "strategy", loc
-
-
 def _given_at(given: dict[str, Any], loc: tuple[Any, ...]) -> bool:
     """Whether the user gave a flag for the field at ``loc``."""
     value: Any = given
