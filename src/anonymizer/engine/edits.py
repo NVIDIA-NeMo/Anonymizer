@@ -22,6 +22,7 @@ from __future__ import annotations
 import operator
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, replace
+from itertools import accumulate, chain, pairwise, takewhile
 from typing import Literal, NoReturn, SupportsIndex, overload
 
 from anonymizer.engine.spans import BY_START_END, Order, Span, group_overlapping_spans
@@ -89,25 +90,38 @@ class Rejected:
     reason: Literal["out_of_bounds", "conflict"]
 
 
+def problems(length: int, spans: Iterable[Span]) -> Iterator[OutOfBounds | Conflicting]:
+    """Each problem of ``spans``, given in ``BY_START_END`` order, in that order: a span reaching past ``length``
+    (``OutOfBounds``), and a span inside it that the span before it, also inside, does not precede (``Conflicting``).
+    A span's own problem comes before its conflict with the next span, so the first problem is the one a walk meets
+    first. ``Span(0, 0)`` precedes every span, so the first span is checked for its bounds alone."""
+    for earlier, later in pairwise(chain((Span(0, 0),), spans)):
+        if later.end > length:
+            yield OutOfBounds(later.start, later.end, length)
+        elif earlier.end <= length and not earlier.precedes(later):
+            yield Conflicting(earlier, later)
+
+
 def check(length: int, bounds: Iterable[tuple[object, object]]) -> None:
     """Raise unless every ``(start, end)`` is a range of a text of ``length`` and, in ``BY_START_END`` order, each
     precedes the next. A bound that is not an integer (``bool`` included) raises ``OutOfBounds`` before any range is
     compared; then the first problem in order raises ``OutOfBounds`` or ``Conflicting``. For a caller that must know
     its ranges are sound before it renders any replacement."""
-    pairs: list[tuple[int, int]] = []
-    for start, end in bounds:
-        first, last = _index(start), _index(end)
-        if first is None or last is None:
-            raise OutOfBounds(start, end, length)
-        pairs.append((first, last))
-    previous: Span | None = None
-    for start, end in sorted(pairs):
-        if not 0 <= start <= end <= length:
-            raise OutOfBounds(start, end, length)
-        span = Span(start, end)
-        if previous is not None and not previous.precedes(span):
-            raise Conflicting(previous, span)
-        previous = span
+    ranges = sorted(_range(start, end, length) for start, end in bounds)
+    # Sorted, a range that cannot be a Span (negative or inverted) ends the walk: nothing after it is compared.
+    spans = [Span(start, end) for start, end in takewhile(lambda r: 0 <= r[0] <= r[1], ranges)]
+    if problem := next(problems(length, spans), None):
+        raise problem
+    if len(spans) < len(ranges):
+        raise OutOfBounds(*ranges[len(spans)], length)
+
+
+def _range(start: object, end: object, length: int) -> tuple[int, int]:
+    """``(start, end)`` as ints, or ``OutOfBounds`` when either is not an integer."""
+    first, last = _index(start), _index(end)
+    if first is None or last is None:
+        raise OutOfBounds(start, end, length)
+    return first, last
 
 
 def _index(value: object) -> int | None:
@@ -127,11 +141,8 @@ class Edits(Sequence[Edit]):
 
     def __init__(self, source: str, edits: Iterable[Edit] = ()) -> None:
         ordered = BY_START_END.sorted(edits, span=lambda e: e.span)
-        for i, edit in enumerate(ordered):
-            if edit.span.end > len(source):
-                raise OutOfBounds(edit.span.start, edit.span.end, len(source))
-            if i and not ordered[i - 1].span.precedes(edit.span):
-                raise Conflicting(ordered[i - 1].span, edit.span)
+        if problem := next(problems(len(source), (edit.span for edit in ordered)), None):
+            raise problem
         object.__setattr__(self, "source", source)
         object.__setattr__(self, "_edits", tuple(ordered))
 
@@ -204,12 +215,10 @@ class Edits(Sequence[Edit]):
 
     def applied(self) -> Edits:
         """The output as ``Edits`` on it: each edit moved to where its replacement landed."""
-        placed: list[Edit] = []
-        at = 0
-        for piece in self.pieces():
-            if isinstance(piece, Gap):
-                at += len(piece.text)
-            else:
-                placed.append(replace(piece, span=Span(at, at + len(piece.replacement))))
-                at += len(piece.replacement)
+        # Each edit moves by what the replacements before it added or removed.
+        shifts = accumulate((len(edit.replacement) - edit.span.length for edit in self._edits), initial=0)
+        placed = [
+            replace(edit, span=Span(edit.span.start + shift, edit.span.start + shift + len(edit.replacement)))
+            for edit, shift in zip(self._edits, shifts)
+        ]
         return Edits(self.apply(), placed)
