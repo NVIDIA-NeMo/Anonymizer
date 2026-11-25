@@ -95,6 +95,11 @@ class RunOptions:
 EXIT_USAGE = 2
 EXIT_INPUT = 1
 
+_PREVIEW_NUM_RECORDS: int = inspect.signature(Anonymizer.preview).parameters["num_records"].default
+
+
+# -- error messages: one line, named by flag, without input values ------------------------------------------------
+
 
 def _env_only(model: type[BaseModel]) -> dict[str, tuple[str, ...]]:
     """The fields of ``model`` read only from the environment, with their variables."""
@@ -107,8 +112,8 @@ def _env_only(model: type[BaseModel]) -> dict[str, tuple[str, ...]]:
 
 
 def _flag_for(argument: Any, loc: tuple[Any, ...]) -> str | None:
-    """The flag for a pydantic error location, from the argument cyclopts was converting: the child whose field
-    path is the longest prefix of ``loc``. A field with no flag (the hash key) is named by its variable."""
+    """The flag for a pydantic error location under ``argument``: the child whose field path is the longest prefix
+    of ``loc``. A field with no flag (the hash key) is named by its variable."""
     best: tuple[int, str] | None = None
     stack = [argument]
     while stack:
@@ -122,37 +127,29 @@ def _flag_for(argument: Any, loc: tuple[Any, ...]) -> str | None:
     return best[1] if best else None
 
 
-def _flag_for_path(mode: str, loc: tuple[Any, ...]) -> str | None:
-    """The flag for an error raised after parsing, from its location in ``AnonymizerConfig`` or the mode's model."""
-    parts = [str(part) for part in loc]
-    model: type[BaseModel] = MODES[mode]
-    if parts and parts[0] in ("replace", "rewrite"):
-        parts = parts[1:]
-        if parts and parts[0] == mode:  # the discriminator tag of a replace strategy
-            parts = parts[1:]
-    elif parts and parts[0] == "detect":
-        model, parts = Detect, parts[1:]
-    prefix = ""
-    for part in parts:
-        info = model.model_fields.get(part)
-        if info is None:
-            return None
-        if part in _env_only(model):
-            return " or ".join(_env_only(model)[part])
-        nested = _nested_model(info.annotation)
-        if nested is None:
-            return f"--{prefix}{part.replace('_', '-')}"
-        if not any(isinstance(meta, cyclopts.Parameter) and meta.name == ("*",) for meta in info.metadata):
-            prefix += f"{part.replace('_', '-')}."
-        model = nested
-    return None
+def _error_root(mode: str, loc: tuple[Any, ...]) -> tuple[str, tuple[Any, ...]]:
+    """The command parameter a post-parse error location falls under, and the location inside it: ``AnonymizerConfig``
+    wraps the mode's model in ``replace`` (with its discriminator tag) or ``rewrite``, and ``Detect`` in ``detect``."""
+    if loc and loc[0] in ("replace", "rewrite"):
+        rest = loc[1:]
+        return "strategy", rest[1:] if rest and rest[0] == mode else rest
+    if loc and loc[0] == "detect":
+        return "detect", loc[1:]
+    return "strategy", loc
 
 
-def _nested_model(annotation: Any) -> type[BaseModel] | None:
-    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-        return annotation
-    models = [arg for arg in get_args(annotation) if isinstance(arg, type) and issubclass(arg, BaseModel)]
-    return models[0] if len(models) == 1 else None
+@functools.cache
+def _command_arguments(mode: str) -> dict[str, Any]:
+    """The ``<mode>`` command's top-level arguments by parameter name. Every verb shares the config parameters, so
+    one verb's collection serves all three. Built once per mode, on the first post-parse error."""
+    collection = app["validate"][mode].assemble_argument_collection()
+    return {argument.field_info.name: argument for argument in collection if not argument.keys}
+
+
+def _flag_after_parse(mode: str, loc: tuple[Any, ...]) -> str | None:
+    """The flag for an error raised after parsing, such as from ``AnonymizerConfig``."""
+    parameter, rest = _error_root(mode, loc)
+    return _flag_for(_command_arguments(mode)[parameter], rest)
 
 
 def _describe(error: ValidationError, name_for: Callable[[tuple[Any, ...]], str | None]) -> str:
@@ -177,18 +174,6 @@ def _format_error(exc: cyclopts.CycloptsError) -> Text:
     return Text(f"Error: {message}")
 
 
-# ``--empty-<list>`` flags would only restate a list's empty default, so they are turned off.
-app = cyclopts.App(
-    help="NeMo Anonymizer CLI",
-    default_parameter=cyclopts.Parameter(negative_iterable=()),
-    # Field descriptions are plain text; markup rendering would drop tokens such as <LABEL>.
-    help_format="plaintext",
-    error_formatter=_format_error,
-    # Errors are plain, unwrapped lines, like the ones the commands print.
-    error_console=Console(stderr=True, soft_wrap=True, highlight=False),
-)
-
-
 def _cli_error_handler(mode: str, fn: Callable[..., None]) -> Callable[..., None]:
     """Errors raised after parsing: one line on stderr, no input values, and the exit codes above."""
 
@@ -199,7 +184,7 @@ def _cli_error_handler(mode: str, fn: Callable[..., None]) -> Callable[..., None
         except GraphRejection:
             raise  # a graph wiring fault keeps its traceback
         except ValidationError as exc:
-            print(f"Error: {_describe(exc, lambda loc: _flag_for_path(mode, loc))}", file=sys.stderr)
+            print(f"Error: {_describe(exc, lambda loc: _flag_after_parse(mode, loc))}", file=sys.stderr)
             raise SystemExit(EXIT_USAGE)
         except InvalidConfigError as exc:
             print(f"Error: {exc}", file=sys.stderr)
@@ -211,43 +196,42 @@ def _cli_error_handler(mode: str, fn: Callable[..., None]) -> Callable[..., None
     return wrapper
 
 
-def _default_strategy(mode: str) -> BaseModel:
-    """The mode's model from its defaults, for a command given no flag of it. A field read only from the
-    environment that is unset is named by its variable."""
-    model = MODES[mode]
-    missing = [env[0] for env in _env_only(model).values() if not any(os.environ.get(var) for var in env)]
-    if missing:
-        raise InvalidConfigError(
-            f"{' and '.join(missing)} is not set. run {mode} reads its secret key from it; there is no flag."
-        )
-    return model()
+# -- building the config and the Anonymizer ----------------------------------------------------------------------
 
 
-def _build(
-    mode: str, strategy: BaseModel | None, detect: Detect | None, options: RunOptions
-) -> tuple[AnonymizerConfig, Anonymizer]:
-    """Build the config and the Anonymizer. A model the user gave no flag for is built from its defaults."""
+def _config(mode: str, strategy: BaseModel | None, detect: Detect | None, options: RunOptions) -> AnonymizerConfig:
+    """The config from the parsed models. A model the user gave no flag for is built from its defaults; a field
+    read only from the environment that is unset is named by its variable."""
     if strategy is None:
-        strategy = _default_strategy(mode)
+        missing = [env[0] for env in _env_only(MODES[mode]).values() if not any(os.environ.get(var) for var in env)]
+        if missing:
+            raise InvalidConfigError(
+                f"{' and '.join(missing)} is not set. run {mode} reads its secret key from it; there is no flag."
+            )
+        strategy = MODES[mode]()
     detect = detect if detect is not None else Detect()
     if isinstance(strategy, Rewrite):
-        config = AnonymizerConfig(rewrite=strategy, detect=detect, emit_telemetry=options.emit_telemetry)
-    else:
-        config = AnonymizerConfig.model_validate(
-            {"replace": strategy, "detect": detect, "emit_telemetry": options.emit_telemetry}
-        )
+        return AnonymizerConfig(rewrite=strategy, detect=detect, emit_telemetry=options.emit_telemetry)
+    return AnonymizerConfig.model_validate(
+        {"replace": strategy, "detect": detect, "emit_telemetry": options.emit_telemetry}
+    )
+
+
+def _configure_logging(options: RunOptions) -> None:
     if options.debug:
         configure_logging(LoggingConfig.debug())
     elif options.verbose:
         configure_logging(LoggingConfig.verbose())
     else:
         configure_logging(LoggingConfig.default())
-    anonymizer = Anonymizer(
+
+
+def _anonymizer(options: RunOptions) -> Anonymizer:
+    return Anonymizer(
         model_configs=options.model_configs,
         model_providers=options.model_providers,
         artifact_path=options.artifact_path,
     )
-    return config, anonymizer
 
 
 def _output_path(data: AnonymizerInput, mode: str, output: str | None) -> str:
@@ -265,7 +249,31 @@ def _output_path(data: AnonymizerInput, mode: str, output: str | None) -> str:
     return output
 
 
-_PREVIEW_NUM_RECORDS: int = inspect.signature(Anonymizer.preview).parameters["num_records"].default
+# -- the verbs -----------------------------------------------------------------------------------------------------
+
+
+def _run(mode: str, *, data, strategy=None, detect=None, options=RunOptions(), output=None) -> None:
+    path = _output_path(data, mode, output)
+    config = _config(mode, strategy, detect, options)
+    _configure_logging(options)
+    result = _anonymizer(options).run(config=config, data=data)
+    print(f"Output written to: {write_result(result, path)}")
+
+
+def _preview(
+    mode: str, *, data, strategy=None, detect=None, options=RunOptions(), num_records=_PREVIEW_NUM_RECORDS
+) -> None:
+    config = _config(mode, strategy, detect, options)
+    _configure_logging(options)
+    result = _anonymizer(options).preview(config=config, data=data, num_records=num_records)
+    print(result.dataframe.to_string(max_colwidth=80))
+
+
+def _validate(mode: str, *, data, strategy=None, detect=None, options=RunOptions()) -> None:
+    config = _config(mode, strategy, detect, options)
+    _configure_logging(options)
+    _anonymizer(options).validate_config(config)
+    print("Config is valid.")
 
 
 # Help panels in reading order: what to read and write, the mode's own settings, detection, then run options.
@@ -283,28 +291,20 @@ DETECT_GROUP = cyclopts.Group(
 RUN_GROUP = cyclopts.Group("Run", sort_key=3)
 
 
-def _mode_group(mode: str, model: type[BaseModel]) -> cyclopts.Group:
-    """The mode's help panel. A field read only from the environment has no flag, so the panel names it."""
-    notes = [
-        f"The {name} is read from {' or '.join(meta.env_var)}; it has no flag."
-        for name, info in model.model_fields.items()
-        for meta in info.metadata
-        if isinstance(meta, cyclopts.Parameter) and meta.parse is False and meta.env_var
-    ]
-    return cyclopts.Group(mode.title(), sort_key=1, help=" ".join(notes))
+@dataclass(frozen=True)
+class Verb:
+    """One of ``run``, ``preview`` and ``validate``: its body, the parameters it adds, and its help."""
+
+    body: Callable[..., None]
+    extra: dict[str, Any]
+    summary: str
+    help: str
 
 
-def _command(verb: str, mode: str) -> Callable[..., None]:
-    """The ``<verb> <mode>`` command. Its annotations are set here, since the mode's model is only known now."""
-    if verb == "run":
-
-        def command(*, data, strategy=None, detect=None, options=RunOptions(), output=None) -> None:
-            path = _output_path(data, mode, output)
-            config, anonymizer = _build(mode, strategy, detect, options)
-            result = anonymizer.run(config=config, data=data)
-            print(f"Output written to: {write_result(result, path)}")
-
-        extra: dict[str, Any] = {
+VERBS: dict[str, Verb] = {
+    "run": Verb(
+        _run,
+        {
             "output": Annotated[
                 str | None,
                 cyclopts.Parameter(
@@ -315,54 +315,77 @@ def _command(verb: str, mode: str) -> Callable[..., None]:
                     ),
                 ),
             ]
-        }
-        summary = "Run the full pipeline"
-    elif verb == "preview":
+        },
+        "Run the full pipeline",
+        "Run the full anonymization pipeline (detection + replacement or rewrite).",
+    ),
+    "preview": Verb(
+        _preview,
+        {"num_records": Annotated[int, cyclopts.Parameter(group=INPUT_GROUP, help="Number of records to preview.")]},
+        "Run the pipeline on the first records for quick inspection",
+        "Run the pipeline on a subset of records for quick inspection.",
+    ),
+    "validate": Verb(
+        _validate,
+        {},
+        "Validate that the config is compatible with the model selections",
+        "Validate that the active config is compatible with model selections.",
+    ),
+}
 
-        def command(
-            *, data, strategy=None, detect=None, options=RunOptions(), num_records=_PREVIEW_NUM_RECORDS
-        ) -> None:
-            config, anonymizer = _build(mode, strategy, detect, options)
-            result = anonymizer.preview(config=config, data=data, num_records=num_records)
-            print(result.dataframe.to_string(max_colwidth=80))
 
-        extra = {
-            "num_records": Annotated[int, cyclopts.Parameter(group=INPUT_GROUP, help="Number of records to preview.")]
-        }
-        summary = "Run the pipeline on the first records for quick inspection"
-    else:
+def _mode_group(mode: str) -> cyclopts.Group:
+    """The mode's help panel. A field read only from the environment has no flag, so the panel names it."""
+    notes = [
+        f"The {name} is read from {' or '.join(env)}; it has no flag." for name, env in _env_only(MODES[mode]).items()
+    ]
+    return cyclopts.Group(mode.title(), sort_key=1, help=" ".join(notes))
 
-        def command(*, data, strategy=None, detect=None, options=RunOptions()) -> None:
-            config, anonymizer = _build(mode, strategy, detect, options)
-            anonymizer.validate_config(config)
-            print("Config is valid.")
 
-        extra = {}
-        summary = "Validate that the config is compatible with the model selections"
-
-    command.__annotations__ = {
+def _annotations(mode: str, extra: dict[str, Any]) -> dict[str, Any]:
+    """The command's parameters: the input, the mode's model, ``Detect`` and ``RunOptions``, each flattened into
+    flags, plus the verb's own. Set as ``__annotations__``, since the mode's model is only known at runtime."""
+    return {
         "data": Annotated[AnonymizerInput, cyclopts.Parameter(name="*", group=INPUT_GROUP)],
         # The mode's model is a runtime value here, which a type checker cannot read as a type.
-        "strategy": Annotated[MODES[mode] | None, cyclopts.Parameter(name="*", group=_mode_group(mode, MODES[mode]))],  # ty: ignore[invalid-type-form]
+        "strategy": Annotated[MODES[mode] | None, cyclopts.Parameter(name="*", group=_mode_group(mode))],  # ty: ignore[invalid-type-form]
         "detect": Annotated[Detect | None, cyclopts.Parameter(name="*", group=DETECT_GROUP)],
         "options": Annotated[RunOptions, cyclopts.Parameter(name="*", group=RUN_GROUP)],
         **extra,
         "return": None,
     }
-    label = "rewrite" if mode == "rewrite" else f"replace with {mode}"
-    command.__doc__ = f"{summary} ({label})."
+
+
+def _command(verb: Verb, mode: str) -> Callable[..., None]:
+    """The ``<verb> <mode>`` command: the verb's body with the mode bound, its keyword parameters and defaults, and
+    the annotations above."""
+
+    def command(**kwargs: Any) -> None:
+        verb.body(mode, **kwargs)
+
+    signature = inspect.signature(verb.body)
+    command.__signature__ = signature.replace(parameters=list(signature.parameters.values())[1:])  # ty: ignore[unresolved-attribute]
+    command.__annotations__ = _annotations(mode, verb.extra)
     command.__name__ = mode
     return _cli_error_handler(mode, command)
 
 
-for _verb, _help in (
-    ("run", "Run the full anonymization pipeline (detection + replacement or rewrite)."),
-    ("preview", "Run the pipeline on a subset of records for quick inspection."),
-    ("validate", "Validate that the active config is compatible with model selections."),
-):
-    _sub = cyclopts.App(name=_verb, help=_help)
+# ``--empty-<list>`` flags would only restate a list's empty default, so they are turned off.
+app = cyclopts.App(
+    help="NeMo Anonymizer CLI",
+    default_parameter=cyclopts.Parameter(negative_iterable=()),
+    # Field descriptions are plain text; markup rendering would drop tokens such as <LABEL>.
+    help_format="plaintext",
+    error_formatter=_format_error,
+    # Errors are plain, unwrapped lines, like the ones the commands print.
+    error_console=Console(stderr=True, soft_wrap=True, highlight=False),
+)
+
+for _name, _verb in VERBS.items():
+    _sub = cyclopts.App(name=_name, help=_verb.help)
     for _mode in MODES:
-        _sub.command(_command(_verb, _mode), name=_mode)
+        _label = "rewrite" if _mode == "rewrite" else f"replace with {_mode}"
+        _sub.command(_command(_verb, _mode), name=_mode, help=f"{_verb.summary} ({_label}).")
     app.command(_sub)
 
 
