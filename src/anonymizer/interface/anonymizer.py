@@ -1665,7 +1665,6 @@ def _build_user_dataframe(
 
 
 _REWRITE_REPAIR_RE = re.compile(r"^rewrite-repair-(\d+)$")
-_REWRITE_EVALUATE_RE = re.compile(r"^rewrite-evaluate-(\d+)$")
 
 
 def _transformation_type_string(config: AnonymizerConfig) -> str:
@@ -1725,31 +1724,8 @@ def _collect_step_models(
     }
 
 
-def _step_to_field(step: str) -> str:
-    """Map a FailedRecord.step (workflow_name) to a schema failure-count field key."""
-    match step:
-        case FailureStep.ENTITY_DETECTION | FailureStep.DETECT:
-            return "entity_detection"
-        case FailureStep.LATENT_ENTITY_DETECTION:
-            return "latent_detection"
-        case FailureStep.REPLACE_MAP_GENERATION | FailureStep.SUBSTITUTE_MAP:
-            return "replace_map_generation"
-        case FailureStep.REWRITE_PIPELINE | FailureStep.REWRITE_COMBINED | FailureStep.REWRITE_LABEL_CLASSIFICATION:
-            return "rewrite_pipeline"
-        case FailureStep.REWRITE_FINAL_JUDGE:
-            return "rewrite_final_judge"
-        case _ if _REWRITE_EVALUATE_RE.match(step):
-            return "rewrite_evaluate"
-        case _ if _REWRITE_REPAIR_RE.match(step):
-            return "rewrite_repair"
-        case _:
-            return "unknown"
-
-
-# Every reason Anonymizer gives a failed record, and the step names it gives besides the workflow names
-# ``_step_to_field`` knows.
+# Every reason Anonymizer gives a failed record.
 _KNOWN_FAILURE_REASONS = frozenset(FailureReason)
-_KNOWN_FAILURE_STEPS = frozenset(FailureStep)
 
 
 def _failure_tally(failed: list[FailedRecord]) -> str:
@@ -1762,7 +1738,7 @@ def _failure_tally(failed: list[FailedRecord]) -> str:
 
     def kind(failure: FailedRecord) -> str:
         step, reason = failure.step, failure.reason
-        if step not in _KNOWN_FAILURE_STEPS and _step_to_field(step) == "unknown":
+        if step not in FailureStep.__members__.values() and FailureStep.count_of(step) == "unknown":
             return "other"
         return f"{step}/{reason}" if reason in _KNOWN_FAILURE_REASONS else step
 
@@ -1771,18 +1747,9 @@ def _failure_tally(failed: list[FailedRecord]) -> str:
 
 def _collect_failure_counts(failed: list[FailedRecord]) -> dict[str, int]:
     """Aggregate FailedRecord.step values into per-workflow failure counts."""
-    counts = {
-        "entity_detection": 0,
-        "latent_detection": 0,
-        "replace_map_generation": 0,
-        "rewrite_pipeline": 0,
-        "rewrite_evaluate": 0,
-        "rewrite_repair": 0,
-        "rewrite_final_judge": 0,
-        "unknown": 0,
-    }
+    counts = dict.fromkeys((*(step.count_field for step in FailureStep), "rewrite_evaluate", "rewrite_repair"), 0)
     for fr in failed:
-        counts[_step_to_field(fr.step)] += 1
+        counts[FailureStep.count_of(fr.step)] += 1
     return counts
 
 

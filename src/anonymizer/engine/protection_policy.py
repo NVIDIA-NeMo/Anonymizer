@@ -14,11 +14,14 @@ are read.
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import Literal
 
 Mode = Literal["replace", "rewrite"]
 Detector = Literal["builtin", "custom"]
+
+_REWRITE_ROUND_RE = re.compile(r"rewrite-(evaluate|repair)-\d+")
 
 
 class RepeatHandling(StrEnum):
@@ -56,21 +59,44 @@ class FailureReason(StrEnum):
 
 
 class FailureStep(StrEnum):
-    """The step names Anonymizer gives a failed record besides a workflow's own name (``FailedRecord.step``)."""
+    """The step names Anonymizer gives a failed record besides a workflow's own name (``FailedRecord.step``).
 
-    DETECT = "detect"
-    ENTITY_DETECTION = "entity-detection"
-    LATENT_ENTITY_DETECTION = "latent-entity-detection"
-    REPLACE = "replace"
-    REPLACE_MAP_GENERATION = "replace-map-generation"
-    SUBSTITUTE_MAP = "substitute-map"
-    REWRITE = "rewrite"
-    REWRITE_PIPELINE = "rewrite-pipeline"
-    REWRITE_COMBINED = "rewrite-combined"
-    REWRITE_LABEL_CLASSIFICATION = "rewrite-label-classification"
-    REWRITE_FINAL_JUDGE = "rewrite-final-judge"
-    VERIFY_NO_ORIGINAL = "verify-no-original"
-    VERIFY_PATCHES = "verify-patches"
+    Each member carries the run-summary failure-count field it counts under (``count_field``). A member still equals,
+    formats and is stored as its plain step name.
+    """
+
+    count_field: str
+
+    def __new__(cls, value: str, count_field: str) -> FailureStep:
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.count_field = count_field
+        return member
+
+    DETECT = "detect", "entity_detection"
+    ENTITY_DETECTION = "entity-detection", "entity_detection"
+    LATENT_ENTITY_DETECTION = "latent-entity-detection", "latent_detection"
+    # Replace, Rewrite and the verifiers' steps have no run-summary field of their own, so they count as unknown.
+    REPLACE = "replace", "unknown"
+    REPLACE_MAP_GENERATION = "replace-map-generation", "replace_map_generation"
+    SUBSTITUTE_MAP = "substitute-map", "replace_map_generation"
+    REWRITE = "rewrite", "unknown"
+    REWRITE_PIPELINE = "rewrite-pipeline", "rewrite_pipeline"
+    REWRITE_COMBINED = "rewrite-combined", "rewrite_pipeline"
+    REWRITE_LABEL_CLASSIFICATION = "rewrite-label-classification", "rewrite_pipeline"
+    REWRITE_FINAL_JUDGE = "rewrite-final-judge", "rewrite_final_judge"
+    VERIFY_NO_ORIGINAL = "verify-no-original", "unknown"
+    VERIFY_PATCHES = "verify-patches", "unknown"
+
+    @classmethod
+    def count_of(cls, step: str) -> str:
+        """The run-summary field a failed record's step counts under: a member's ``count_field``, ``rewrite_evaluate`` or
+        ``rewrite_repair`` for a numbered Rewrite round, and ``unknown`` for any other step."""
+        try:
+            return cls(step).count_field
+        except ValueError:
+            round_ = _REWRITE_ROUND_RE.fullmatch(step)
+            return f"rewrite_{round_.group(1)}" if round_ else "unknown"
 
 
 class ReviewFlag(StrEnum):

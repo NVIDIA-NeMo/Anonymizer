@@ -10,9 +10,11 @@ from pathlib import Path
 from typing import get_args
 
 import anonymizer.engine.graph_core
+from anonymizer.engine.ndd.failed_record import FailedRecord
 from anonymizer.engine.protection_policy import (
     Detector,
     FailureReason,
+    FailureStep,
     RepeatHandling,
     ReviewFlag,
     missed_repeat,
@@ -80,3 +82,24 @@ def test_the_members_are_plain_strings_where_they_are_read() -> None:
         assert f"{member}" == str(member) == member.value
         assert {member.value: 1}[member] == 1
         assert type(member.value) is str
+
+
+def test_a_failure_step_is_its_plain_string_despite_its_count() -> None:
+    """A step's member value is the step name alone; the count field it carries stays off the string."""
+    assert str(FailureStep.DETECT) == f"{FailureStep.DETECT}" == FailureStep.DETECT.value == "detect"
+    assert FailureStep("detect") is FailureStep.DETECT
+    assert FailureStep.DETECT.count("e") == 2  # the field does not shadow str.count
+    assert all(type(step.value) is str and type(step.count_field) is str for step in FailureStep)
+    record = FailedRecord("r1", FailureStep.DETECT, FailureReason.DROPPED_OUTPUT)
+    assert (type(record.step), record.step) == (str, "detect")
+
+
+def test_a_failure_step_counts_under_its_field() -> None:
+    assert FailureStep.count_of("detect") == FailureStep.DETECT.count_field == "entity_detection"
+    assert FailureStep.count_of("rewrite-evaluate-2") == "rewrite_evaluate"
+    assert FailureStep.count_of("rewrite-repair-10") == "rewrite_repair"
+    assert FailureStep.count_of("rewrite-repair-") == "unknown"
+    assert FailureStep.count_of("some-future-step") == "unknown"
+    # No run-summary field of their own yet: these count as unknown, as they did before the counts moved here.
+    unknown = {"replace", "rewrite", "verify-no-original", "verify-patches"}
+    assert {step for step in FailureStep if step.count_field == "unknown"} == unknown
