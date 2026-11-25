@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
+from itertools import count
 
 from anonymizer.config.entity_labels import label_keys
 from anonymizer.config.entity_labels import normalize_entity_label as normalize_label
@@ -104,20 +105,18 @@ def project_detection_result_to_entity_spans(result: DetectionResult) -> list[En
 def build_validation_candidates(text: str, entities: list[EntitySpan]) -> list[dict[str, str]]:
     """Build per-entity validation payload with context windows."""
     # TODO(lramaswamy): make validation context window configurable from AnonymizerConfig.
-    candidates: list[dict[str, str]] = []
-    for entity in entities:
-        before_start = max(0, entity.start_position - VALIDATION_CONTEXT_WINDOW)
-        after_end = min(len(text), entity.end_position + VALIDATION_CONTEXT_WINDOW)
-        candidates.append(
-            {
-                "id": entity.entity_id,
-                "value": entity.value,
-                "label": entity.label,
-                "context_before": text[before_start : entity.start_position],
-                "context_after": text[entity.end_position : after_end],
-            }
-        )
-    return candidates
+    return [
+        {
+            "id": entity.entity_id,
+            "value": entity.value,
+            "label": entity.label,
+            "context_before": text[max(0, entity.start_position - VALIDATION_CONTEXT_WINDOW) : entity.start_position],
+            "context_after": text[
+                entity.end_position : min(len(text), entity.end_position + VALIDATION_CONTEXT_WINDOW)
+            ],
+        }
+        for entity in entities
+    ]
 
 
 def build_tagged_text(
@@ -164,27 +163,24 @@ def build_conflict_aware_tagged_text(text: str, entities: list[EntitySpan]) -> s
     )
     groups = group_overlapping_spans(ordered, span=lambda entity: entity.span)
 
-    markers: list[EntitySpan] = []
-    next_group_id = 1
-    for group in groups:
+    group_ids = (f"g{n}" for n in count(1))  # numbered over the groups of two or more, in order
+
+    def marker(group: tuple[EntitySpan, ...]) -> EntitySpan:
         if len(group) == 1:
-            markers.append(group[0])
-            continue
+            return group[0]
         bounds = Span.cover(entity.span for entity in group)
-        group_id = f"g{next_group_id}"
-        next_group_id += 1
-        markers.append(
-            EntitySpan(
-                entity_id=group_id,
-                value=text[bounds.slice],
-                label=f"NAGROUP_{group_id}",
-                start_position=bounds.start,
-                end_position=bounds.end,
-                score=0.0,
-                source="prompt_marker",
-            )
+        group_id = next(group_ids)
+        return EntitySpan(
+            entity_id=group_id,
+            value=text[bounds.slice],
+            label=f"NAGROUP_{group_id}",
+            start_position=bounds.start,
+            end_position=bounds.end,
+            score=0.0,
+            source="prompt_marker",
         )
-    return build_tagged_text(text=text, entities=markers)
+
+    return build_tagged_text(text=text, entities=[marker(group) for group in groups])
 
 
 def get_tag_notation(text: str) -> str:
