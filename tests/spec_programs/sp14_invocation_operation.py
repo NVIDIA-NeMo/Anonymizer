@@ -140,7 +140,7 @@ def program() -> list[dict[str, str]]:
         and (both.bound, both.value) == ("exact", 7)
         and (odd_only.bound, odd_only.value) == ("exact", 6)
         and (odd_both.bound, odd_both.value) == ("exact", 7)
-        and code is not None
+        and code == "over_request_budget"
         and rec.count() == 0,
         f"invocation only={only}, with per-target={both}, budget 6 rejection={code}, callbacks={rec.count()}, "
         f"unknown scope={odd_only}, with invocation={odd_both}",

@@ -15,9 +15,11 @@ def program() -> list[dict[str, str]]:
     g, (a,) = graph(f"{NAME} met Bob.")
     rec = Recorder()
     code = rejected(lambda: run(g, rec.transform(), rec.verifier(), limits=Limits(max_operations=1)))
-    c.check("E3.1", code is not None and rec.count() == 0, f"rejection={code}, callbacks={rec.count()}")
+    c.check("E3.1", code == "over_limit" and rec.count() == 0, f"rejection={code}, callbacks={rec.count()}")
     code = rejected(lambda: run(g, rec.transform(), capabilities=()))
-    c.check("E3.2", code is not None and rec.count() == 0, f"rejection={code}, callbacks={rec.count()}")
+    c.check(
+        "E3.2", code == "capability_not_admitted" and rec.count() == 0, f"rejection={code}, callbacks={rec.count()}"
+    )
     code = rejected(lambda: run(g, rec.transform(), limits=Limits(max_text_bytes=4)))
     c.check("E3.3", code == "over_byte_ceiling" and rec.count() == 0, f"rejection={code}")
 
@@ -49,7 +51,7 @@ def program() -> list[dict[str, str]]:
     silent = prepare(g, Workflow("w", (rec.transform(),)), request_budget=0)
     c.check(
         "E3.5'",
-        code is not None and rec.count() == 0 and silent.planned_requests.value == 0,
+        code == "hard_budget_without_visibility" and rec.count() == 0 and silent.planned_requests.value == 0,
         f"opaque+hard budget rejection={code}, zero-request implementation admitted under budget 0, callbacks={rec.count()}",
     )
     return c.lines

@@ -23,7 +23,7 @@ def program() -> list[dict[str, str]]:
     planned = p.summary().planned_requests
     c.check("E9.1", (planned.value, planned.bound) == (2, "exact"), f"admitted, planned={planned}")
     code = rejected(lambda: prepare(g, wf(Requests.exact(2)), request_budget=1))
-    c.check("E9.2", code is not None and rec.count() == 0, f"rejection={code}, callbacks={rec.count()}")
+    c.check("E9.2", code == "over_request_budget" and rec.count() == 0, f"rejection={code}, callbacks={rec.count()}")
     p = prepare(g, wf(Requests.unknown()))
     planned = p.summary().planned_requests
     c.check(
@@ -32,12 +32,12 @@ def program() -> list[dict[str, str]]:
         f"admitted, planned={planned}",
     )
     code = rejected(lambda: prepare(g, wf(Requests.unknown()), request_budget=10))
-    c.check("E9.4", code is not None and rec.count() == 0, f"rejection={code}")
+    c.check("E9.4", code == "hard_budget_without_visibility" and rec.count() == 0, f"rejection={code}")
     p = prepare(g, wf(Requests.at_most(3)), request_budget=3)
     planned = p.summary().planned_requests
     c.check("E9.5", (planned.value, planned.bound) == (3, "upper"), f"admitted, planned={planned}")
     code = rejected(lambda: prepare(g, wf(Requests.at_most(3)), request_budget=2))
-    c.check("E9.5b", code is not None and rec.count() == 0, f"rejection={code}")
+    c.check("E9.5b", code == "over_request_budget" and rec.count() == 0, f"rejection={code}")
 
     def observed(r) -> dict[str, str]:
         return {name: str(count) for name, count in r.summary().observed}

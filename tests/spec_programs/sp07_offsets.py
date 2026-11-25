@@ -35,10 +35,14 @@ def program() -> list[dict[str, str]]:
     code = rejected(
         lambda: run(ProtectionGraph(scope, (t,), mentions=(Mention(t, 1, 6, "first_name", "Alice"),)), rec.transform())
     )
-    c.check("E7.2", code is not None and rec.count() == 0, f"rejection={code}, callbacks={rec.count()}")
+    c.check("E7.2", code == "mention_slice_mismatch" and rec.count() == 0, f"rejection={code}, callbacks={rec.count()}")
     overlap = (Mention(t, 0, 5, "first_name"), Mention(t, 3, 9, "other"))
     code = rejected(lambda: run(ProtectionGraph(scope, (t,), mentions=overlap), rec.transform()))
-    c.check("E7.3", code is not None and rec.count() == 0, f"rejection={code}, callbacks={rec.count()}")
+    c.check(
+        "E7.3",
+        code == "overlapping_output_ownership" and rec.count() == 0,
+        f"rejection={code}, callbacks={rec.count()}",
+    )
     views = ContextScope(t, (ContextView(t, t, 0, 9), ContextView(t, t, 6, 14)))
     g4 = ProtectionGraph(scope, (t,), mentions=(Mention(t, 0, 5, "first_name"),), context=(views,))
     r4 = run(g4, rec.transform())
@@ -52,5 +56,5 @@ def program() -> list[dict[str, str]]:
             rec.transform(),
         )
     )
-    c.check("E7.5", code is not None and rec.count() == before, f"rejection={code}")
+    c.check("E7.5", code == "mention_not_on_target" and rec.count() == before, f"rejection={code}")
     return c.lines

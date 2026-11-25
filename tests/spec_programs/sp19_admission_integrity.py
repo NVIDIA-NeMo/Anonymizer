@@ -33,7 +33,7 @@ def program() -> list[dict[str, str]]:
     big, _ = graph(*["x" * 100] * 5)
     p2 = prepare(small, Workflow("w", (Operation("op", lambda text: calls.append(text) or text),)), limits=limits)
     code = rejected(lambda: protect(dataclasses.replace(p2, graph=big)))
-    c.check("E19.2", code is not None and not calls, f"rejection={code}, callbacks={len(calls)}")
+    c.check("E19.2", code == "not_prepared" and not calls, f"rejection={code}, callbacks={len(calls)}")
 
     # E19.3 a negative request count is rejected.
     code3 = rejected(lambda: Requests.exact(-50))
