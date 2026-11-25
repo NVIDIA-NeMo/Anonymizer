@@ -98,7 +98,7 @@ from anonymizer.engine.ndd.model_loader import (
     validate_model_alias_references,
     validate_model_configs_reference_providers,
 )
-from anonymizer.engine.protection_policy import FailureReason
+from anonymizer.engine.protection_policy import FailureReason, FailureStep
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow, require_detector_keyword
 from anonymizer.engine.resolved_input import ResolvedInput
@@ -1728,15 +1728,15 @@ def _collect_step_models(
 def _step_to_field(step: str) -> str:
     """Map a FailedRecord.step (workflow_name) to a schema failure-count field key."""
     match step:
-        case "entity-detection" | "detect":
+        case FailureStep.ENTITY_DETECTION | FailureStep.DETECT:
             return "entity_detection"
-        case "latent-entity-detection":
+        case FailureStep.LATENT_ENTITY_DETECTION:
             return "latent_detection"
-        case "replace-map-generation" | "substitute-map":
+        case FailureStep.REPLACE_MAP_GENERATION | FailureStep.SUBSTITUTE_MAP:
             return "replace_map_generation"
-        case "rewrite-pipeline" | "rewrite-combined" | "rewrite-label-classification":
+        case FailureStep.REWRITE_PIPELINE | FailureStep.REWRITE_COMBINED | FailureStep.REWRITE_LABEL_CLASSIFICATION:
             return "rewrite_pipeline"
-        case "rewrite-final-judge":
+        case FailureStep.REWRITE_FINAL_JUDGE:
             return "rewrite_final_judge"
         case _ if _REWRITE_EVALUATE_RE.match(step):
             return "rewrite_evaluate"
@@ -1746,24 +1746,10 @@ def _step_to_field(step: str) -> str:
             return "unknown"
 
 
-# The reasons a failed record can carry: the protection graph's own (an operation's failure or a rejected mention),
-# and every failure reason of the release policy (``FailureReason``).
-_GRAPH_FAILURE_REASONS = frozenset(
-    {
-        "invalid_output",
-        "mention_not_on_target",
-        "mention_out_of_range",
-        "mention_slice_mismatch",
-        "mention_unlabelled",
-        "missing_output",
-        "over_limit",
-        "overlapping_output_ownership",
-        "raised",
-    }
-)
-_KNOWN_FAILURE_REASONS = _GRAPH_FAILURE_REASONS | frozenset(FailureReason)
-# Graph operation names a failed record can carry besides the workflow names ``_step_to_field`` knows.
-_KNOWN_FAILURE_STEPS = frozenset({"replace", "rewrite", "verify-no-original", "verify-patches"})
+# Every reason Anonymizer gives a failed record, and the step names it gives besides the workflow names
+# ``_step_to_field`` knows.
+_KNOWN_FAILURE_REASONS = frozenset(FailureReason)
+_KNOWN_FAILURE_STEPS = frozenset(FailureStep)
 
 
 def _failure_tally(failed: list[FailedRecord]) -> str:

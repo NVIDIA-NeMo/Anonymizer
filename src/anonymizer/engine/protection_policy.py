@@ -7,7 +7,7 @@
 ``RepeatHandling``. The others have a fixed answer: a record fails with one of the ``FailureReason`` members, a
 Rewrite row is flagged for review by one of the ``ReviewFlag`` members and stays met, and Rewrite withholds a final
 candidate that fails a privacy check, whose privacy evaluation had no usable response, or whose privacy evaluation
-left a question unanswered. The fact checks that feed these decisions stay with their verifiers. The three enums are
+left a question unanswered. The fact checks that feed these decisions stay with their verifiers. The enums are
 ``StrEnum``: a member equals, hashes and serialises as its string, so reasons and flags stay plain codes wherever they
 are read.
 """
@@ -30,14 +30,47 @@ class RepeatHandling(StrEnum):
 
 
 class FailureReason(StrEnum):
-    """The reasons the release policy fails a record with; the protection graph has its own besides."""
+    """Every reason a failed record can carry that Anonymizer itself sets: the protection graph's (an operation's
+    failure or a rejected mention) and the release policy's. A model error, a custom detector's failure or a runner
+    override may still give free text (``FailedRecord.reason``). The graph package imports nothing outside itself, so
+    it writes its codes as strings; ``tests/engine/test_protection_policy.py`` keeps them in this set."""
 
+    INVALID_OUTPUT = "invalid_output"
+    """An operation returned a value that is not its declared outputs."""
+    MENTION_NOT_ON_TARGET = "mention_not_on_target"
+    MENTION_OUT_OF_RANGE = "mention_out_of_range"
+    MENTION_SLICE_MISMATCH = "mention_slice_mismatch"
+    MENTION_UNLABELLED = "mention_unlabelled"
+    MISSING_OUTPUT = "missing_output"
+    """An invocation operation returned ``None`` for the record."""
+    OVER_LIMIT = "over_limit"
+    OVERLAPPING_OUTPUT_OWNERSHIP = "overlapping_output_ownership"
+    RAISED = "raised"
+    """An operation raised for the record."""
     UNSPANNED_VALUE = "unspanned_value"
     """A Replace row with a custom detector's missed repeat, or with a repeat no added span can cover, fails with it."""
     DROPPED_OUTPUT = "dropped_output"
     """A record a custom detector neither answered nor failed fails at ``detect`` with it."""
     UNPLACED_OUTPUT = "unplaced_output"
     """An input record that no placed row of an override runner's output answers fails with it."""
+
+
+class FailureStep(StrEnum):
+    """The step names Anonymizer gives a failed record besides a workflow's own name (``FailedRecord.step``)."""
+
+    DETECT = "detect"
+    ENTITY_DETECTION = "entity-detection"
+    LATENT_ENTITY_DETECTION = "latent-entity-detection"
+    REPLACE = "replace"
+    REPLACE_MAP_GENERATION = "replace-map-generation"
+    SUBSTITUTE_MAP = "substitute-map"
+    REWRITE = "rewrite"
+    REWRITE_PIPELINE = "rewrite-pipeline"
+    REWRITE_COMBINED = "rewrite-combined"
+    REWRITE_LABEL_CLASSIFICATION = "rewrite-label-classification"
+    REWRITE_FINAL_JUDGE = "rewrite-final-judge"
+    VERIFY_NO_ORIGINAL = "verify-no-original"
+    VERIFY_PATCHES = "verify-patches"
 
 
 class ReviewFlag(StrEnum):

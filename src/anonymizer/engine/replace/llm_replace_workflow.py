@@ -40,6 +40,7 @@ from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import BackendRun, DataDesignerBackend
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.protection_policy import FailureStep
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema, EntityReplacementMapSchema
 from anonymizer.engine.schemas.shared import normalize_payload
@@ -154,7 +155,7 @@ class LlmReplaceWorkflow:
                     failed.append(
                         FailedRecord(
                             record_id=str(source[RECORD_ID_COLUMN].iloc[position]),
-                            step="replace-map-generation",
+                            step=FailureStep.REPLACE_MAP_GENERATION,
                             reason="Replacement map retry failed before a complete map was returned",
                         )
                     )
@@ -199,7 +200,9 @@ class LlmReplaceWorkflow:
                     reported[record_id] -= 1
                 else:
                     failed.append(
-                        FailedRecord(record_id, "replace-map-generation", "Record missing from workflow output")
+                        FailedRecord(
+                            record_id, FailureStep.REPLACE_MAP_GENERATION, "Record missing from workflow output"
+                        )
                     )
             pending = [position for position in pending if position in returned and missing[position]]
             if pending and attempt == 0:
@@ -216,7 +219,7 @@ class LlmReplaceWorkflow:
             failed.append(
                 FailedRecord(
                     record_id=str(source[RECORD_ID_COLUMN].iloc[position]),
-                    step="replace-map-generation",
+                    step=FailureStep.REPLACE_MAP_GENERATION,
                     reason=f"Replacement map incomplete after one retry: {len(missing[position])} requested pair(s) "
                     f"have no mapping (missing_by_label={labels})",
                 )

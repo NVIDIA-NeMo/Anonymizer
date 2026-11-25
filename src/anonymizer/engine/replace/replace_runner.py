@@ -37,6 +37,7 @@ from anonymizer.engine.graph_core.execution import TargetOutcome
 from anonymizer.engine.graph_core.session import Session, SessionChanges
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.workflow_utils import run_columns
+from anonymizer.engine.protection_policy import FailureStep
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 from anonymizer.engine.row_partitioning import restore_diagnostic_columns
@@ -73,7 +74,9 @@ def _drop_malformed_entities(dataframe: pd.DataFrame) -> tuple[pd.DataFrame, lis
         except ValueError as exc:
             keep.append(False)
             record_id = dataframe[RECORD_ID_COLUMN].iloc[position]
-            failed.append(FailedRecord(record_id=str(record_id), step="replace", reason=f"malformed entities: {exc}"))
+            failed.append(
+                FailedRecord(record_id=str(record_id), step=FailureStep.REPLACE, reason=f"malformed entities: {exc}")
+            )
     return (dataframe[keep] if failed else dataframe), failed
 
 

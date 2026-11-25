@@ -182,7 +182,7 @@ def placed_output(
     answered = {ids[p] for p in positions if p is not None}
     named = {f.record_id for f in (*detection_failures, *runner_failures)}
     unplaced = [
-        FailedRecord(i, step, FailureReason.UNPLACED_OUTPUT.value) for i in ids if i not in answered and i not in named
+        FailedRecord(i, step, FailureReason.UNPLACED_OUTPUT) for i in ids if i not in answered and i not in named
     ]
     released = output if len(placed) == len(output) else output.iloc[placed].reset_index(drop=True)
     return released, [*runner_failures, *unplaced]

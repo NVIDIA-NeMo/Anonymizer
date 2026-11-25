@@ -31,7 +31,7 @@ from anonymizer.engine.detection.postprocess import EntitySpan, build_tagged_tex
 from anonymizer.engine.errors import AnonymizerWorkflowError, InvalidDetectorResultError
 from anonymizer.engine.graph_core.authoring import span_problem
 from anonymizer.engine.ndd.failed_record import FailedRecord
-from anonymizer.engine.protection_policy import FailureReason
+from anonymizer.engine.protection_policy import FailureReason, FailureStep
 from anonymizer.engine.row_partitioning import cell_text, resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema, LatentEntitySchema
 from anonymizer.engine.schemas.detection import EntityByValueSchema
@@ -169,7 +169,7 @@ def render_detector_result(source: pd.DataFrame, result: DetectorResult) -> Enti
     ]
     named = {row.record_id for row in rows} | {failure.record_id for failure in result.failed}
     dropped = [
-        FailedRecord(record_id, "detect", FailureReason.DROPPED_OUTPUT.value)
+        FailedRecord(record_id, FailureStep.DETECT, FailureReason.DROPPED_OUTPUT)
         for record_id in ids
         if record_id not in named
     ]

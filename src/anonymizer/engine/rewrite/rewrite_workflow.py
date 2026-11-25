@@ -66,7 +66,7 @@ from anonymizer.engine.ndd.backend import (
 )
 from anonymizer.engine.ndd.model_response import no_response
 from anonymizer.engine.ndd.workflow_utils import run_columns
-from anonymizer.engine.protection_policy import ReviewFlag, missed_repeat
+from anonymizer.engine.protection_policy import FailureReason, FailureStep, ReviewFlag, missed_repeat
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow, placeholder_in_text
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
@@ -730,9 +730,9 @@ class RewriteWorkflow:
         entity_rows, passthrough_rows = split(set())  # empty only if ``rewrite`` never ran
         rejected = {a.target: a.reason for a in result.attempts if a.operation == "detect" and a.status == "failed"}
         rows.failed.extend(
-            FailedRecord(state.rows[datum].record_id, "detect", rejected[datum])
+            FailedRecord(state.rows[datum].record_id, FailureStep.DETECT, rejected[datum])
             for datum in state.owners
-            if datum in rejected and rejected[datum] != "missing_output"
+            if datum in rejected and rejected[datum] != FailureReason.MISSING_OUTPUT
         )
         _apply_passthrough_defaults(passthrough_rows)
         frame = rows.frame
