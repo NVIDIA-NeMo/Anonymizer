@@ -140,6 +140,11 @@ of time fail with different reasons. `RegexLimits` is new since v0.5.0, so no re
 
 ### Replace
 
+**`Substitute.instructions` is sent as written.** Template syntax in it, such as `{{ x }}` or `{% ... %}`, used to be
+rendered by the prompt template, so it was dropped, changed, or failed the run. It now reaches the model verbatim.
+- What to do: nothing.
+- Changed in: #NNN.
+
 **Variants of a value share one substitute within a record.** Case, whitespace and Unicode-space variants of a value
 (for example `Paris`, `PARIS`, and a value spelled with a narrow no-break space) get one substitute, re-cased to each
 mention. A mention keeps its own substitute only where the shared one would clash with another value of the record.

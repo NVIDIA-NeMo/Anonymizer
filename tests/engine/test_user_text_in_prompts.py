@@ -19,6 +19,7 @@ import pytest
 from data_designer.config.models import ModelConfig, ModelProvider
 from data_designer.engine.models.clients import factory as client_factory
 from data_designer.engine.models.clients.types import AssistantMessage, ChatCompletionRequest, ChatCompletionResponse
+from data_designer.engine.processing.ginja.environment import UserTemplateSandboxEnvironment
 from data_designer.interface.data_designer import DataDesigner
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Rewrite
@@ -26,6 +27,8 @@ from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelectio
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
+    COL_ENTITIES_FOR_REPLACE,
+    COL_ENTITY_EXAMPLES,
     COL_FULL_REWRITE,
     COL_LEAKAGE_MASS,
     COL_LEAKED_PRIVACY_ITEMS,
@@ -42,6 +45,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.prompt_utils import jinja_literal
+from anonymizer.engine.replace.llm_replace_workflow import _get_replacement_mapping_prompt
 from anonymizer.engine.rewrite import rewrite_workflow
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.repair import RepairParams, _render_repair_prompt
@@ -299,3 +303,25 @@ def test_anonymizer_passes_rewrite_instructions_to_the_runner(tmp_path: Path) ->
         )
 
     assert _RecordingRunner.options["instructions"] == USER_TEXT
+
+
+def _render_with_datadesigner(template: str, record: dict[str, Any]) -> str:
+    """``template`` rendered by DataDesigner's prompt environment, allowed to read ``record``'s columns."""
+    env = UserTemplateSandboxEnvironment(allowed_references=list(record))
+    env.validate_template(template)
+    return env.render_template(template, record)
+
+
+def test_substitute_instructions_are_sent_as_written() -> None:
+    prompt = _get_replacement_mapping_prompt(entities_column=COL_ENTITIES_FOR_REPLACE, instructions=USER_TEXT)
+
+    rendered = _render_with_datadesigner(
+        prompt,
+        {
+            "tagged_text": "<first_name>Alice</first_name> works here.",
+            COL_ENTITIES_FOR_REPLACE: [{"value": "Alice", "labels_str": "first_name"}],
+            COL_ENTITY_EXAMPLES: "first_name: Maria",
+        },
+    )
+
+    assert f"Additional instructions: {USER_TEXT}\n" in rendered
