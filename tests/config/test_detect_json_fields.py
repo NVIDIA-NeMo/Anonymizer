@@ -34,3 +34,11 @@ def test_regex_rules_accepts_a_json_list() -> None:
 def test_text_that_is_not_json_is_refused(field: str) -> None:
     with pytest.raises(ValidationError, match="must be JSON"):
         Detect.model_validate({field: "not json"})
+
+
+def test_regex_rules_accepts_a_json_list_as_one_item() -> None:
+    """The CLI passes ``--regex-rules '[...]'`` as one item holding a list."""
+    detect = Detect(
+        regex_rules=['[{"label": "ticket_id", "pattern": "TKT-[0-9]+"}, {"label": "email", "enabled": false}]']
+    )
+    assert [rule.label for rule in detect.regex_rules] == ["ticket_id", "email"]

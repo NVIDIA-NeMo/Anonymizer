@@ -265,7 +265,12 @@ class Detect(BaseModel):
         if isinstance(value, str):
             value = _decode_json(value, "regex_rules")
         if isinstance(value, list):
-            return [_decode_json(item, "regex_rules") if isinstance(item, str) else item for item in value]
+            rules: list[Any] = []
+            for item in value:
+                decoded = _decode_json(item, "regex_rules") if isinstance(item, str) else item
+                # One item may hold a whole list of rules: JSON text, or the list cyclopts decoded from it.
+                rules.extend(decoded if isinstance(decoded, list) else [decoded])
+            return rules
         return value
 
     @field_validator("entity_label_examples", mode="before")

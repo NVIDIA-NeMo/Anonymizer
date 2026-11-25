@@ -206,3 +206,11 @@ def test_cli_defaults_come_from_the_sdk() -> None:
 
     assert RunOptions().emit_telemetry is AnonymizerConfig.model_fields["emit_telemetry"].default
     assert _PREVIEW_NUM_RECORDS == 10
+
+
+def test_regex_rules_flag_takes_a_json_list(csv_file: Path) -> None:
+    code, config, _ = _validate(
+        ["redact", "--source", str(csv_file), "--regex-rules", '[{"label": "city", "pattern": "C-[0-9]+"}]']
+    )
+    assert code == 0 and config is not None
+    assert [rule.label for rule in config.detect.regex_rules] == ["city"]
