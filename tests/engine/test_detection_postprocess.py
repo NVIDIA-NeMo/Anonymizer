@@ -192,3 +192,13 @@ def test_group_entities_by_value_sorts_by_value() -> None:
 
 def test_group_entities_by_value_empty() -> None:
     assert group_entities_by_value(entities=[]) == []
+
+
+def test_tagged_text_drops_a_tag_past_the_end() -> None:
+    entities = [
+        EntitySpan("e1", "Paris", "city", 10, 15, 1.0, "detector"),
+        EntitySpan("e2", "", "late", 30, 30, 1.0, "detector"),
+        EntitySpan("e3", "is.", "tail", 13, 20, 1.0, "detector"),
+    ]
+    assert build_tagged_text("We met in Paris.", entities[:1], notation="xml") == "We met in <city>Paris</city>."
+    assert build_tagged_text("We met in Paris.", entities[1:], notation="xml") == "We met in Paris."

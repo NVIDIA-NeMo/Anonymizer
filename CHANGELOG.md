@@ -461,6 +461,23 @@ These are additions and break nothing.
 
 These are not on the #319 branch yet. Each lands with its change.
 
+### #NNN: one rule for applying edits
+
+**Five places that rebuild a text from replacement spans now follow one rule**: local replacement, tagged text for
+prompts, the `verify-patches` check and Rewrite's baseline use `anonymizer.engine.edits`, and `assemble_regions` keeps
+its own copy of the rule, since the graph package imports nothing outside itself. Three inputs give a different
+result:
+- A tag whose range is not in the text is dropped from the tagged text a prompt sees. Before, a tag past the end was
+  appended empty, a tag reaching past the end swallowed the tail, and an inverted range repeated text. Built-in
+  detection never produces such a range; a custom detector's or runner override's entity can.
+- On the Rewrite runner-override path, a row whose entities overlap is "not ready" (the rewrite gets the original
+  tagged text and no baseline). Before, the row stayed ready and one tag was dropped silently. Stock detection never
+  hands Rewrite overlapping entities.
+- `assemble_regions` (`anonymizer.graph`) refuses a range with a `bool` or float bound as `region_out_of_bounds`.
+  Before, `True` was sliced as 1 and a float raised `TypeError`.
+- What to do: nothing for built-in detection. A custom detector or runner should return in-range, non-overlapping
+  entities, and graph code should pass integer ranges.
+
 ### #NNN: privacy coverage reason
 
 **A Rewrite row whose final privacy evaluation left a question unanswered is withheld.** An omitted question or a

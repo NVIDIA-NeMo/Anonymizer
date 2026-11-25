@@ -4,42 +4,16 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
-from typing import TypeVar
 
 from anonymizer.config.entity_labels import normalize_entity_label as normalize_label
+from anonymizer.engine.edits import Edit, Edits, Prefer
 from anonymizer.engine.schemas import DetectionResult
-from anonymizer.engine.spans import Span
+from anonymizer.engine.spans import BY_START_END, Span, group_overlapping_spans
 
 VALIDATION_CONTEXT_WINDOW = 32
-_ItemT = TypeVar("_ItemT")
-
-
-def group_overlapping_spans(
-    ordered_items: Iterable[_ItemT],
-    *,
-    span: Callable[[_ItemT], Span],
-) -> list[tuple[_ItemT, ...]]:
-    """Group start-ordered items into connected components of overlapping spans.
-
-    Callers supply items sorted by span start and choose their own tie
-    ordering. An item joins the current group when its span starts before
-    the group's furthest end, so touching spans remain separate while nested
-    and transitively overlapping spans stay together.
-    """
-    groups: list[list[_ItemT]] = []
-    reach = 0  # the current group's furthest end; unread until the first item starts a group
-    for item in ordered_items:
-        item_span = span(item)
-        if groups and item_span.start < reach:
-            groups[-1].append(item)
-            reach = max(reach, item_span.end)
-        else:
-            groups.append([item])
-            reach = item_span.end
-    return [tuple(group) for group in groups]
 
 
 @dataclass(frozen=True)
@@ -154,22 +128,17 @@ def build_tagged_text(
         resolved_notation = notation
     else:
         resolved_notation = TagNotation(notation)
-    cursor = 0
-    parts: list[str] = []
-    for entity in sorted(entities, key=lambda item: (item.start_position, item.end_position)):
-        if entity.start_position < cursor:
-            continue
-        parts.append(text[cursor : entity.start_position])
-        parts.append(
-            _format_entity_tag(
-                value=text[entity.start_position : entity.end_position],
-                label=entity.label,
-                notation=resolved_notation,
-            )
+    tags: list[Edit] = []
+    for entity in entities:
+        if not 0 <= entity.start_position <= entity.end_position <= len(text):
+            continue  # a tag whose range is not in the text is dropped
+        span = Span(entity.start_position, entity.end_position)
+        tags.append(
+            Edit(span, _format_entity_tag(value=text[span.slice], label=entity.label, notation=resolved_notation))
         )
-        cursor = entity.end_position
-    parts.append(text[cursor:])
-    return "".join(parts)
+    # Among overlapping tags the earlier, then the shorter, stands; identical spans keep input order.
+    edits, _ = Edits.admit(text, tags, Prefer(BY_START_END))
+    return edits.apply()
 
 
 def build_conflict_aware_tagged_text(text: str, entities: list[EntitySpan]) -> str:

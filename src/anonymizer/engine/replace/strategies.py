@@ -16,8 +16,9 @@ from anonymizer.engine.constants import (
     COL_TEXT,
 )
 from anonymizer.engine.detection.postprocess import EntitySpan
+from anonymizer.engine.edits import Edit, Edits, Prefer
 from anonymizer.engine.schemas import EntitiesSchema, EntityReplacementMapSchema
-from anonymizer.engine.spans import Span
+from anonymizer.engine.spans import BY_START, Span
 
 logger = logging.getLogger("anonymizer")
 
@@ -124,7 +125,7 @@ def _apply_span_entries(
     by_value_label, by_value = _index_replacements(replacements)
     replaced, applied, skipped = _apply_indexed_replacements(
         text,
-        sorted(spans, key=lambda item: item[0]),
+        spans,
         by_value_label=by_value_label,
         by_value=by_value,
         allow_value_fallback=allow_value_fallback,
@@ -139,38 +140,37 @@ def _apply_span_entries(
 
 def _apply_indexed_replacements(
     text: str,
-    spans: list[tuple[int, int, str, str]],
+    spans: tuple[tuple[int, int, str, str], ...],
     *,
     by_value_label: dict[tuple[str, str], set[str]],
     by_value: dict[str, set[str]],
     allow_value_fallback: bool,
 ) -> tuple[str, int, Counter[str]]:
-
-    parts: list[str] = []
-    cursor = 0
-    applied = 0
+    """Each span that is a non-empty range of ``text`` holding its value, and has a substitute, becomes an edit;
+    among edits that overlap, the one that starts first stands (``Prefer(BY_START)``: at one start, the first in
+    input order). Every span that does not stand is counted as skipped under its label."""
     skipped: Counter[str] = Counter()
+    candidates: list[Edit] = []
     for start, end, value, label in spans:
         span = Span.in_text(start, end, text)
-        if span is None or span.start < cursor or text[span.slice] != value:
-            skipped[label or "unknown"] += 1
-            continue
-        synthetic = _resolve_synthetic(
-            value,
-            label,
-            by_value_label=by_value_label,
-            by_value=by_value,
-            allow_value_fallback=allow_value_fallback,
+        synthetic = (
+            None
+            if span is None or text[span.slice] != value
+            else _resolve_synthetic(
+                value,
+                label,
+                by_value_label=by_value_label,
+                by_value=by_value,
+                allow_value_fallback=allow_value_fallback,
+            )
         )
-        if synthetic is None:
+        if span is None or synthetic is None:
             skipped[label or "unknown"] += 1
-            continue
-        parts.append(text[cursor : span.start])
-        parts.append(synthetic)
-        cursor = span.end
-        applied += 1
-    parts.append(text[cursor:])
-    return "".join(parts), applied, skipped
+        else:
+            candidates.append(Edit(span, synthetic, label))
+    edits, rejected = Edits.admit(text, candidates, Prefer(BY_START))
+    skipped.update(r.edit.label or "unknown" for r in rejected)
+    return edits.apply(), len(edits), skipped
 
 
 def _index_replacements(

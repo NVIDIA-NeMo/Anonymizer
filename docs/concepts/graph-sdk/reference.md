@@ -438,5 +438,5 @@ fails that target with the refusal's reason (`unspanned_value`); it is not part 
 | `not_in_source` | `reconstruct` | A part missing from `source`. |
 | `conflicting_position` | `reconstruct` | Two parts at one position. |
 | `missing_source_part` | `reconstruct` | A position in `source` with no part. |
-| `region_out_of_bounds` | `assemble_regions` | A range outside `source`. |
-| `overlapping_region` | `assemble_regions` | Two ranges overlap. |
+| `region_out_of_bounds` | `assemble_regions` | A range outside `source`, or a bound that is not an integer (`bool` included). |
+| `overlapping_region` | `assemble_regions` | Two ranges overlap, or an empty range lies strictly inside another. Empty ranges at one point apply in the order given. |

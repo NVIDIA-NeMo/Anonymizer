@@ -17,7 +17,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 from functools import cached_property
 from itertools import islice
-from typing import Any, Literal, cast
+from typing import Any, Literal, SupportsIndex, cast
 
 from anonymizer.engine.graph_core import kernel as k
 from anonymizer.engine.graph_core.authoring import (
@@ -447,9 +447,15 @@ class ProtectionResult:
         """Region assembly: ``source`` with each ``(start, end, target)`` range replaced by that target's candidate.
 
         Ranges index the original ``source`` whatever the replacement lengths; text outside them is kept. A range
-        outside ``source`` (``region_out_of_bounds``) or overlapping another (``overlapping_region``) is rejected,
-        and a target without an available candidate is ``unavailable_input``, never filled with source text.
+        outside ``source`` or with a bound that is not an integer (``region_out_of_bounds``, checked for every range
+        first), or one that the range before it does not precede (``overlapping_region``), is rejected, and a target
+        without an available candidate is ``unavailable_input``, never filled with source text. An empty range may
+        touch another or share its point with one; ranges sorted equal keep the order given. This is the rule of
+        ``anonymizer.engine.edits``, written here because the graph package imports nothing outside itself.
         """
+        for start, end, _ in regions:
+            if any(isinstance(b, bool) or not isinstance(b, SupportsIndex) for b in (start, end)):
+                raise k.GraphRejection("region_out_of_bounds", f"{start}:{end}")
         out, at = [], 0
         for start, end, d in sorted(regions, key=lambda r: (r[0], r[1])):
             if not 0 <= start <= end <= len(source):

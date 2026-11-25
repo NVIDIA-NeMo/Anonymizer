@@ -30,6 +30,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.detection.postprocess import EntitySpan, build_tagged_text
+from anonymizer.engine.edits import Conflicting, Edit, Edits
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.ndd.model_response import no_response
 from anonymizer.engine.prompt_utils import substitute_placeholders
@@ -41,9 +42,9 @@ from anonymizer.engine.replace.strategies import (
 from anonymizer.engine.rewrite.parsers import parse_sensitivity_disposition
 from anonymizer.engine.schemas import (
     EntitiesSchema,
-    EntitySchema,
     RewriteOutputSchema,
 )
+from anonymizer.engine.spans import Span
 from anonymizer.engine.workflow_columns.response.config import ResponseColumnConfig
 
 logger = logging.getLogger("anonymizer.rewrite.generation")
@@ -217,10 +218,11 @@ def _prepare_rewrite_tagged_text(row: dict[str, Any]) -> dict[str, Any]:
     metrics: dict[str, Any] = application.to_metrics()
     row[COL_REPLACEMENT_APPLICATION] = metrics
     admitted_pairs = {(entity.value, entity.label) for entity in target_entities.entities}
-    row[COL_REWRITE_REPLACEMENT_READY] = (
-        replace_pairs <= admitted_pairs and application.applied_span_count == application.targeted_span_count
-    )
-    if not row[COL_REWRITE_REPLACEMENT_READY]:
+    placed = None
+    if replace_pairs <= admitted_pairs and application.applied_span_count == application.targeted_span_count:
+        placed = _placed_entities(str(row.get(COL_TEXT, "")), entities, replace_pairs, replacements)
+    row[COL_REWRITE_REPLACEMENT_READY] = placed is not None
+    if placed is None:
         # Use the original tagged text so the rewrite can protect unresolved entities;
         # retain the readiness flag for diagnostics and human review.
         row[COL_REWRITE_TAGGED_TEXT] = row.get(COL_TAGGED_TEXT, "")
@@ -228,9 +230,7 @@ def _prepare_rewrite_tagged_text(row: dict[str, Any]) -> dict[str, Any]:
         return row
     row[COL_REWRITE_BASELINE_TEXT] = baseline
     row[COL_REWRITE_TAGGED_TEXT] = build_tagged_text(
-        baseline,
-        _shift_entities(entities, replace_pairs=replace_pairs, replacements=replacements),
-        notation=str(row.get(COL_TAG_NOTATION, "bracket")),
+        baseline, placed, notation=str(row.get(COL_TAG_NOTATION, "bracket"))
     )
     return row
 
@@ -245,34 +245,31 @@ def _replace_pairs(disposition_block: object) -> set[tuple[str, str]]:
     }
 
 
-def _shift_entities(
+def _placed_entities(
+    text: str,
     entities: EntitiesSchema,
-    *,
     replace_pairs: set[tuple[str, str]],
     replacements: list[ReplacementEntry],
-) -> list[EntitySpan]:
+) -> list[EntitySpan] | None:
+    """Each entity's span in the baseline text: a replaced entity at its substitute, the others at their own text.
+
+    An entity whose range is not in ``text`` gets no tag; an empty range stays an insertion, as in tagged text. ``None`` when two entities conflict, since the baseline
+    cannot place both: the row is then not ready.
+    """
     replacement_by_pair = _unique_replacements(replacements)
-    shifted_entities = []
-    delta = 0
-    for entity in sorted(entities.entities, key=lambda item: item.start_position):
-        synthetic = replacement_by_pair.get((entity.value, entity.label))
-        value = synthetic if (entity.value, entity.label) in replace_pairs and synthetic is not None else entity.value
-        start = entity.start_position + delta
-        shifted_entities.append(_shifted_entity(entity, value=value, start=start))
-        delta += len(value) - (entity.end_position - entity.start_position)
-    return shifted_entities
-
-
-def _shifted_entity(entity: EntitySchema, *, value: str, start: int) -> EntitySpan:
-    return EntitySpan(
-        entity_id=entity.id,
-        value=value,
-        label=entity.label,
-        start_position=start,
-        end_position=start + len(value),
-        score=entity.score,
-        source=entity.source,
-    )
+    edits: list[Edit] = []
+    for entity in entities.entities:
+        if not 0 <= entity.start_position <= entity.end_position <= len(text):
+            continue
+        span = Span(entity.start_position, entity.end_position)
+        pair = (entity.value, entity.label)
+        synthetic = replacement_by_pair.get(pair) if pair in replace_pairs else None
+        edits.append(Edit(span, text[span.slice] if synthetic is None else synthetic, entity.label))
+    try:
+        placed = Edits(text, edits).applied()
+    except Conflicting:
+        return None
+    return [EntitySpan("", edit.replacement, edit.label, edit.span.start, edit.span.end, 0.0, "") for edit in placed]
 
 
 def _unique_replacements(replacements: list[ReplacementEntry]) -> dict[tuple[str, str], str]:
