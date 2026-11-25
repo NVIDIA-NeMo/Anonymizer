@@ -312,11 +312,21 @@ objects, not Arrow structs. They round-trip through `to_parquet` and `pd.read_pa
 - What to do: read these columns as Python dicts.
 - Changed in: #352.
 
-**`skipped_span_label_counts` is JSON text.** In `trace_dataframe`, in `_replacement_application`,
-`skipped_span_label_counts` is JSON text (for example `"{}"`) instead of a dict, so trace frames can be written to
-Parquet. An empty dict became a struct with no fields, which Parquet cannot store.
-- What to do: parse it with `json.loads`.
-- Changed in: #429.
+**Nested values in result frames follow one rule.** In `dataframe` and `trace_dataframe`, every nested column the
+library produces holds plain JSON types (dict, list, str, int, float, bool, None), keyed by names, never by data.
+A missing value and an empty object are both `None`, never NaN or `{}`. The user columns this affects are
+`final_entities`, `judge_evaluation`, `missed_entities`, `detection_invalid_entities`,
+`type_fidelity_invalid_replacements`, `relational_consistency_invalid_relations` and
+`attribute_fidelity_invalid_entities`. In `trace_dataframe`, the internal columns follow the same rule, and two
+values keyed by data become lists of records. `_entity_classification` becomes a list of `{label, classification}`.
+`skipped_span_label_counts` in `_replacement_application` becomes a list of `{label, count}` (it was JSON text such as
+`"{}"`, and a dict before that), or `None` when no span was skipped. Every frame writes to Parquet and reads back
+with the same values; a missing number in a numeric column reads back as NaN, as pandas reads any null double.
+`Anonymizer.evaluate()` accepts a result in this shape.
+- What to do: `== {}` no longer matches; `is None` and `pd.isna` both work. Read label counts as
+  `{r["label"]: r["count"] for r in counts or []}` instead of `json.loads(counts)`, and the entity classification
+  the same way with `"classification"`.
+- Changed in: #429, and this release.
 
 **Trace frame columns changed.** Internal columns of `trace_dataframe`, whose names start with `_`, were added,
 removed, renamed and reordered. For example, `_validated_entities` and `_seed_tagged_text` are gone, and

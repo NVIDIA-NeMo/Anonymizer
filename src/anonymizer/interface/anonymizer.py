@@ -86,6 +86,7 @@ from anonymizer.engine.graph_core.execution import (
 )
 from anonymizer.engine.graph_core.kernel import Status, register_kind
 from anonymizer.engine.graph_core.session import Session
+from anonymizer.engine.io.output_shape import from_output_shape, to_output_shape
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import (
@@ -844,7 +845,9 @@ class Anonymizer:
         # '__nemo_anonymizer_text_input__'). The judge prompts reference the
         # internal names, so reverse the rename before the DD call and re-apply
         # it on the result.
-        internal_df = _unrename_output_columns(output.trace_dataframe, resolved_text_column=text_column)
+        internal_df = from_output_shape(
+            _unrename_output_columns(output.trace_dataframe, resolved_text_column=text_column)
+        )
 
         if rewrite_config is not None:
 
@@ -978,7 +981,7 @@ class Anonymizer:
                     )
                 ],
             )
-        renamed_trace = _rename_output_columns(judged_df, resolved_text_column=text_column)
+        renamed_trace = to_output_shape(_rename_output_columns(judged_df, resolved_text_column=text_column))
         outcomes = _reported_outcomes(
             evaluation,
             internal_df,
@@ -1309,7 +1312,7 @@ class Anonymizer:
                 "%d record(s) failed during pipeline processing: %s.", len(all_failures), _failure_tally(all_failures)
             )
         text_col = context.resolved_text_column
-        renamed_trace = _rename_output_columns(final_df, resolved_text_column=text_col)
+        renamed_trace = to_output_shape(_rename_output_columns(final_df, resolved_text_column=text_col))
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
         record_record_metrics(
             final_df,

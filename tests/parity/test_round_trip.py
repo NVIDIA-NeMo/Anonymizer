@@ -17,10 +17,9 @@ from anonymizer import Anonymizer
 from anonymizer.config.anonymizer_config import TextRecord, TextRecordsInput
 from tests.parity.harness import CASES, PREVIEW_ROWS, RECORDS, Case, _cell, scripted
 
-# Two kinds of cell do not come back as written today. A missing cell changes its spelling (NaN in an object column
-# reads back as None, None in a numeric column as NaN), and a mapping keyed by label gains the other rows' labels with
-# None values, because Parquet stores it as one struct per column. Any other difference fails the test.
-LABEL_KEYED_COLUMNS = {"_entity_classification"}
+# One kind of cell does not come back as written: a missing number in a column of numbers. Parquet stores the column as
+# doubles, and pandas reads a null double back as NaN. Nested and text cells come back exactly; any other difference
+# fails the test.
 
 
 def _plain(value: Any) -> Any:
@@ -47,19 +46,13 @@ def _results(case: Case) -> dict[str, Any]:
     return {"run": run, "preview": preview, "evaluate": evaluated}
 
 
-_MISSING = (None, {"$": "NaN"})
-
-
-def _known(column: str, written: Any, read: Any) -> bool:
-    if written in _MISSING and read in _MISSING:
-        return True
-    if column in LABEL_KEYED_COLUMNS and isinstance(written, dict) and isinstance(read, dict):
-        return {k: v for k, v in read.items() if v is not None} == written
-    return False
+def _known(column: pd.Series, written: Any, read: Any) -> bool:
+    numbers = all(v is None or isinstance(v, (int, float)) and not isinstance(v, bool) for v in map(_plain, column))
+    return numbers and written is None and read == {"$": "NaN"}
 
 
 def _unexpected(frame: pd.DataFrame) -> list[str]:
-    """One line per cell that reads back differently, other than the two known kinds."""
+    """One line per cell that reads back differently, other than a missing number."""
     buffer = io.BytesIO()
     frame.to_parquet(buffer)
     back = pd.read_parquet(io.BytesIO(buffer.getvalue()))
@@ -68,7 +61,7 @@ def _unexpected(frame: pd.DataFrame) -> list[str]:
         f"{column}[{row}]: wrote {w!r}, read {r!r}"
         for column in frame.columns
         for row, (w, r) in enumerate(zip(map(_plain, frame[column]), map(_plain, back[column]), strict=True))
-        if w != r and not _known(str(column), w, r)
+        if w != r and not _known(frame[column], w, r)
     ]
 
 
