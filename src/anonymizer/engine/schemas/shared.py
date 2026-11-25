@@ -4,19 +4,15 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Protocol, TypeGuard, TypeVar, cast
+from typing import TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
+from anonymizer.engine.cells import is_list_convertible as _is_list_convertible
+from anonymizer.engine.cells import normalize_payload as normalize_payload
+from anonymizer.engine.cells import to_python as to_python
+
 T = TypeVar("T", bound=BaseModel)
-
-
-class _ListConvertible(Protocol):
-    def tolist(self) -> object: ...
-
-
-def _is_list_convertible(value: object) -> TypeGuard[_ListConvertible]:
-    return callable(getattr(value, "tolist", None))
 
 
 def _parse_raw_wrapper(
@@ -77,40 +73,12 @@ def _parse_raw_wrapper(
 
 
 def _is_empty(raw: object) -> bool:
+    # Kept apart from ``cells.is_missing`` on purpose: an empty string, dict or list is an empty payload here.
     if raw is None:
         return True
     if isinstance(raw, (str, dict, list)):
         return not raw
     return isinstance(raw, float) and raw != raw
-
-
-def to_python(raw: object) -> object:
-    """Recursively normalize nested model/array/scalar payloads to plain Python."""
-    if isinstance(raw, BaseModel):
-        return to_python(raw.model_dump(mode="python"))
-    if isinstance(raw, dict):
-        return {key: to_python(value) for key, value in raw.items()}
-    if isinstance(raw, (list, tuple)):
-        return [to_python(value) for value in raw]
-    if _is_list_convertible(raw):
-        return to_python(raw.tolist())
-    item = getattr(raw, "item", None)
-    if callable(item):
-        try:
-            return item()
-        except (TypeError, ValueError):
-            pass
-    return raw
-
-
-def normalize_payload(raw: Any) -> Any:
-    """Normalize values that may have been JSON-stringified by parquet round-trip."""
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            return raw
-    return to_python(raw)
 
 
 def read_cell(model: type[T], raw: object, *, error: type[Exception] = TypeError) -> T:

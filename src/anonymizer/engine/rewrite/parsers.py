@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from anonymizer.engine.cells import normalize_payload as normalize_payload
 from anonymizer.engine.schemas.rewrite import (
     PrivacyAnswerItemSchema,
     PrivacyAnswersSchema,
@@ -20,7 +21,6 @@ from anonymizer.engine.schemas.rewrite import (
     QualityQAPairsSchema,
     SensitivityDispositionSchema,
 )
-from anonymizer.engine.schemas.shared import normalize_payload as normalize_payload
 from anonymizer.engine.schemas.shared import read_cell
 
 logger = logging.getLogger("anonymizer.rewrite.parsers")

@@ -19,6 +19,7 @@ from typing import Any, NewType, cast
 
 import pandas as pd
 
+from anonymizer.engine.cells import to_python
 from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_FINAL_ENTITIES, RECORD_ID_COLUMN
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, _build_entities_by_value
 from anonymizer.engine.errors import AnonymizerWorkflowError
@@ -38,7 +39,6 @@ from anonymizer.engine.protection_policy import FailureReason, RepeatHandling
 from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.schemas.detection import EntitySchema
-from anonymizer.engine.schemas.shared import to_python
 from anonymizer.engine.value_matching import MatchMode, count_values, entity_spans, normalized, value_key
 
 RecordId = NewType("RecordId", str)

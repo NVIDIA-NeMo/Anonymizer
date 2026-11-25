@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from anonymizer.engine import constants
+from anonymizer.engine.cells import plain
 from anonymizer.engine.constants import (
     COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
     COL_DETECTION_INVALID_ENTITIES,
@@ -45,23 +46,6 @@ USER_NESTED_COLUMNS = frozenset(
     }
 )
 _LABEL_COUNTS = "skipped_span_label_counts"
-
-
-def _missing(value: object) -> bool:
-    return value is None or value is pd.NA or value is pd.NaT or (isinstance(value, float) and value != value)
-
-
-def plain(value: Any) -> Any:
-    """``value`` as plain JSON types; NaN and an empty object become None, at any depth."""
-    if isinstance(value, dict):
-        return {str(k): plain(v) for k, v in value.items()} or None
-    if isinstance(value, (list, tuple, np.ndarray)):
-        return [plain(v) for v in (value.tolist() if isinstance(value, np.ndarray) else value)]
-    if isinstance(value, np.generic):
-        value = value.item()
-    if _missing(value):
-        return None
-    return value
 
 
 def _records(mapping: object, key: str, value: str) -> list[dict[str, Any]] | None:

@@ -17,6 +17,7 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.utils.storage_encoding import read_dataframe_storage_plan
 from data_designer.config.utils.storage_schema import JSON_STORAGE_RUN_KEY, JsonStoragePlan, compile_json_storage_schema
 
+from anonymizer.engine.cells import is_missing, to_python
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
     COL_ADMITTED_CANDIDATES,
@@ -51,7 +52,6 @@ from anonymizer.engine.constants import (
     COL_VALIDATION_INVENTORIES,
     COL_VALIDATION_SKELETON,
 )
-from anonymizer.engine.schemas.shared import to_python
 
 if TYPE_CHECKING:
     from data_designer.config.column_types import ColumnConfigT
@@ -113,7 +113,7 @@ def prepare_json_storage_seed(
         if name in frame.columns:
             columns.setdefault(name, [[]])
     for name in columns:
-        values = [None if _is_missing(value) else to_python(value) for value in frame[name].tolist()]
+        values = [None if is_missing(value) else to_python(value) for value in frame[name].tolist()]
         frame[name] = pd.Series(values, index=frame.index, dtype=object)
     if columns:
         frame.attrs[JSON_STORAGE_RUN_KEY] = JsonStoragePlan(columns=columns).model_dump()
@@ -132,7 +132,3 @@ def prepare_json_storage_column(column: ColumnConfigT) -> ColumnConfigT:
     if column.name in JSON_STORAGE_COLUMNS and column.storage_encoding is None:
         return column.model_copy(update={"storage_encoding": "json"})
     return column
-
-
-def _is_missing(value: object) -> bool:
-    return value is None or value is pd.NA or (isinstance(value, float) and value != value)

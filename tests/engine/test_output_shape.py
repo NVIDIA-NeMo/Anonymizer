@@ -10,8 +10,9 @@ import json
 import numpy as np
 import pandas as pd
 
+from anonymizer.engine.cells import is_missing, plain
 from anonymizer.engine.constants import COL_ENTITY_CLASSIFICATION, COL_FINAL_ENTITIES, COL_REPLACEMENT_APPLICATION
-from anonymizer.engine.io.output_shape import from_output_shape, plain, to_output_shape
+from anonymizer.engine.io.output_shape import from_output_shape, to_output_shape
 
 
 def test_plain_gives_json_types_and_none_for_nan_and_empty_objects() -> None:
@@ -49,3 +50,8 @@ def test_label_keyed_values_become_lists_of_records_and_come_back() -> None:
     assert back[COL_ENTITY_CLASSIFICATION][0] == {"first_name": "direct_identifier"}
     assert back[COL_REPLACEMENT_APPLICATION][0] == application
     assert back[COL_REPLACEMENT_APPLICATION][1]["skipped_span_label_counts"] == "{}"
+
+
+def test_is_missing_names_null_markers_and_not_empty_containers() -> None:
+    assert [is_missing(v) for v in (None, float("nan"), pd.NA)] == [True, True, True]
+    assert [is_missing(v) for v in ({}, [], "", 0)] == [False, False, False, False]
