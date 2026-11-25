@@ -62,7 +62,7 @@ from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import raise_if_cancelled
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
-from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.prompt_utils import jinja_literal, substitute_placeholders
 from anonymizer.engine.row_partitioning import resolve_source_positions, try_resolve_source_positions
 from anonymizer.engine.schemas import (
     EntitiesByValueSchema,
@@ -793,7 +793,7 @@ def _format_label_examples(
     lines: list[str] = []
     for label in labels:
         examples = examples_by_label.get(label)
-        rendered_label = _prompt_safe_configured_value(label) if label in configured_examples else label
+        rendered_label = _prompt_safe_configured_value(label) if label in configured_examples else jinja_literal(label)
         if examples:
             configured_for_label = set(configured_examples.get(label, []))
             rendered = [
@@ -933,7 +933,7 @@ Template: <<VALIDATION_SKELETON>>
         "and otherwise using the generic guidance below. "
         "Drop candidates that the data summary explicitly identifies as not sensitive, "
         "even when their entity label is correct.\n\n"
-        f"Data summary: {data_summary}\n"
+        f"Data summary: {jinja_literal(data_summary)}\n"
         if data_summary
         else ""
     )
@@ -1157,7 +1157,8 @@ Input text: <<INPUT_TEXT>>
     # passing them into the single-pass substitution of the main prompt.
     configured_examples = configured_examples or {}
     rendered_labels = [
-        _prompt_safe_configured_value(label) if label in configured_examples else label for label in labels
+        _prompt_safe_configured_value(label) if label in configured_examples else jinja_literal(label)
+        for label in labels
     ]
     label_block = label_block.replace("<<VALID_CLASSES>>", ", ".join(rendered_labels))
     active_configured_examples = {
@@ -1191,7 +1192,7 @@ Input text: <<INPUT_TEXT>>
         if data_summary
         else "\n\nFocus on:"
     )
-    context_section = f"Data summary: {data_summary}\n\n" if data_summary else ""
+    context_section = f"Data summary: {jinja_literal(data_summary)}\n\n" if data_summary else ""
     return substitute_placeholders(
         prompt,
         {
@@ -1211,12 +1212,12 @@ def _get_latent_prompt(
     privacy_goal: PrivacyGoal | None,
     excluded_entity_labels: list[str] | None = None,
 ) -> str:
-    summary_line = data_summary.strip() if data_summary else "Not provided"
+    summary_line = jinja_literal(data_summary.strip()) if data_summary else "Not provided"
     privacy_goal_text = _format_privacy_goal(privacy_goal)
     excluded_labels = sorted(normalize_labels(excluded_entity_labels))
     exclusion_block = (
         "\n<excluded_entity_labels>\n"
-        f"Do NOT return latent entities with these labels: {', '.join(excluded_labels)}.\n"
+        f"Do NOT return latent entities with these labels: {', '.join(map(jinja_literal, excluded_labels))}.\n"
         "</excluded_entity_labels>\n"
         if excluded_labels
         else ""
@@ -1320,4 +1321,4 @@ Now produce the JSON for the input.
 def _format_privacy_goal(privacy_goal: PrivacyGoal | None) -> str:
     if privacy_goal is None:
         return "Not provided"
-    return privacy_goal.to_prompt_string()
+    return jinja_literal(privacy_goal.to_prompt_string())

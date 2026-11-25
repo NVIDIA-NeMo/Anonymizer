@@ -101,6 +101,18 @@ validation drops it and augmentation does not add it.
 - What to do: review summaries that describe sensitivity. They now change detection output.
 - Changed in: #389.
 
+**`data_summary` is sent as written.** Template syntax in it, such as `{{ x }}` or `{% ... %}`, used to be rendered by
+the detection, rewrite and evaluation prompt templates, so it was dropped, changed, or failed the run. It now reaches
+every model verbatim.
+- What to do: nothing.
+- Changed in: #454.
+
+**Custom label names are sent as written.** Template syntax in a custom entity label, such as `{{ x }}`, used to be
+rendered by the augmentation, validation, latent-detection and entity-coverage prompt templates. It now reaches each
+model verbatim. Prompts built from the default labels, or labels with no `{`, are unchanged.
+- What to do: nothing.
+- Changed in: #454.
+
 **The augmenter asks for schema-constrained output.** On OpenAI-compatible providers, augmenter requests send the
 response JSON schema as `response_format`. If the provider rejects the field, the request is retried once without it.
 A malformed augmenter response is retried under the run's restart and correction limits instead of dropping the record.
@@ -139,6 +151,11 @@ of time fail with different reasons. `RegexLimits` is new since v0.5.0, so no re
 - Changed in: #319 (`35d68f4e`).
 
 ### Replace
+
+**`Substitute.instructions` is sent as written.** Template syntax in it, such as `{{ x }}` or `{% ... %}`, used to be
+rendered by the prompt template, so it was dropped, changed, or failed the run. It now reaches the model verbatim.
+- What to do: nothing.
+- Changed in: #454.
 
 **Variants of a value share one substitute within a record.** Case, whitespace and Unicode-space variants of a value
 (for example `Paris`, `PARIS`, and a value spelled with a narrow no-break space) get one substitute, re-cased to each
@@ -192,6 +209,21 @@ and a repeat that crosses a kept span's edge fails the row with `unspanned_value
 scored again. Now each repair sees the previous repair's text.
 - What to do: nothing. With `max_repair_iterations` above 1 (the default is 3), output and metrics can differ.
 - Changed in: #354.
+
+**The privacy goal is sent as written.** Template syntax in `PrivacyGoal.protect` or `.preserve`, such as `{{ x }}`
+or `{% ... %}`, used to be rendered by the rewrite, disposition, latent-detection and final-judge prompt templates, so
+it was dropped, changed, or failed the run. It now reaches each model verbatim. Prompts built from a goal with no `{`
+are unchanged.
+- What to do: nothing.
+- Changed in: #454.
+
+**`Rewrite.instructions` reaches the rewrite.** It used to be accepted and never read. It is now given to the rewrite
+and repair models as literal text, after the privacy goal, which takes precedence. The evaluator, the QA generator,
+the disposition and domain steps and the judges do not see it. `run rewrite --instructions ...` sets it.
+- What to do: nothing, unless you set it before; then expect it to change the rewritten text. A caller's runner
+  or `build_graph` override with the 0.4.0 signature keeps working while `instructions` is unset; to use
+  `instructions`, the override must accept it, or it raises `TypeError` for the unexpected keyword.
+- Changed in: #454.
 
 **The review flag follows the final checks.** `needs_human_review` is set when a required check on the final text
 does not pass, when the row keeps a replaced value or a placeholder as described below, or when the utility score is
@@ -426,10 +458,9 @@ The CLI is generated from the config models (#453), so a config field is a flag 
 same holds for `preview` and `validate`.
 - What to do: move the strategy name, or `rewrite`, right after the command, and drop `--replace` and `--rewrite`.
 
-**A flag of another mode or strategy is an unknown option.** For example `run redact --digest-length 8`,
-`run rewrite --format-template ...` and `run rewrite --instructions ...` exit with `Unknown option`. They used to be
-dropped, most without a warning. `--instructions` now belongs to `substitute` only: `Rewrite.instructions` was never
-read and has no flag.
+**A flag of another mode or strategy is an unknown option.** For example `run redact --digest-length 8` and
+`run rewrite --format-template ...` exit with `Unknown option`. They used to be dropped, most without a warning.
+`--instructions` belongs to `substitute` and `rewrite`.
 - What to do: remove the flag, or use the subcommand it belongs to (`run substitute --help` lists its flags).
 
 **New flags from the models.** `substitute` gains `--consistency`; `rewrite` gains `--use-combined-graph` and
@@ -601,10 +632,8 @@ without echoing its value. `TextRecord` still ignores extra keys. Dumps written 
 that holds `Hash`, which needs its key (see "`Hash` requires a secret key").
 - What to do: remove or correct the key the error names.
 
-**`Rewrite.instructions` is removed.** It never reached the rewrite model. Passing a value raises an error that points
-to `privacy_goal`. A dump with `instructions: null` still loads. `Rewrite.privacy_goal` is typed `PrivacyGoal`, and
-`None` gives the default goal.
-- What to do: move the text into `privacy_goal.protect` and `privacy_goal.preserve`.
+**`Rewrite.privacy_goal` is typed `PrivacyGoal`.** `None` gives the default goal.
+- What to do: nothing.
 
 **Custom detection workflows take an options object.** An object passed as `Anonymizer(detection_workflow=...)` is
 called as `run(dataframe, *, options, context, latent_goal=None)`. Import `DetectionWorkflow`, `DetectionOptions` and
@@ -615,8 +644,8 @@ keywords. A detector that still takes the old keywords fails with `TypeError` at
 
 **Custom rewrite runners take options and context.** A `rewrite_runner` or `combined_rewrite_runner` that overrides
 `run()` is called as `run(dataframe, *, options, context)`, where `options` is the `Rewrite` config. It used to be
-called with eight keywords: `model_configs`, `selected_models`, `replace_model_selection`, `privacy_goal`,
-`evaluation`, `data_summary`, `preview_num_records` and `strict_entity_protection`.
+called with eight keywords (`model_configs`, `selected_models`, `replace_model_selection`, `privacy_goal`,
+`evaluation`, `data_summary`, `preview_num_records` and `strict_entity_protection`), and `instructions` when set.
 - What to do: change the override's signature.
 
 **Detection export needs the builders.** `export_detection_config` and `export_detection_builder_for_seed` raise

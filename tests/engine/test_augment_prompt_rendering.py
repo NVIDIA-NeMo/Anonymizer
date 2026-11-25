@@ -8,6 +8,7 @@ import json
 import pytest
 
 from anonymizer.engine.detection.detection_workflow import _get_augment_prompt, _get_validation_prompt
+from anonymizer.engine.prompt_utils import jinja_literal
 
 
 def _example_labels(prompt: str) -> set[str]:
@@ -54,7 +55,9 @@ def test_label_rules_render_only_for_active_labels() -> None:
 
 def test_missing_data_summary_is_omitted() -> None:
     assert "Data summary" not in _get_augment_prompt(data_summary=None, labels=["city"])
-    assert "Data summary: legal filings" in _get_augment_prompt(data_summary="legal filings", labels=["city"])
+    assert f"Data summary: {jinja_literal('legal filings')}" in _get_augment_prompt(
+        data_summary="legal filings", labels=["city"]
+    )
 
 
 def _validation_example_decisions(labels: list[str], excluded: list[str]) -> dict[str, dict[str, str]]:

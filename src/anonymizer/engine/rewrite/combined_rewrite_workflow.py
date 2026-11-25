@@ -306,6 +306,7 @@ def _repair_columns(
     evaluation: EvaluationCriteria,
     previous: EvaluationState,
     state: RepairState,
+    instructions: str | None = None,
 ) -> list[ColumnConfigT]:
     mapping = {
         COL_PRIVACY_QA_REANSWER: previous.privacy_reanswer,
@@ -321,6 +322,7 @@ def _repair_columns(
         selected_models=selected_models,
         privacy_goal=privacy_goal,
         effective_threshold=evaluation.repair_threshold,
+        instructions=instructions,
     )
     condition = SkipConfig(when=f"{{{{ not {previous.needs_repair} }}}}")
     return [
@@ -427,6 +429,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
         evaluation: EvaluationCriteria,
         data_summary: str | None = None,
         strict_entity_protection: bool = False,
+        instructions: str | None = None,
     ) -> CombinedRewriteGraph:
         columns = _replacement_columns(replace_model_selection)
         columns.extend(
@@ -446,6 +449,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
             selected_models=selected_models,
             privacy_goal=privacy_goal,
             data_summary=data_summary,
+            instructions=instructions,
         )
         columns.extend(
             _remap_custom_column(column, {COL_REWRITTEN_TEXT: COL_REWRITTEN_TEXT_INITIAL})
@@ -476,6 +480,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                     evaluation=evaluation,
                     previous=evaluation_states[-1],
                     state=repair_state,
+                    instructions=instructions,
                 )
             )
             evaluation_state = _evaluation_state(iteration + 1, repair_state.rewritten_text)
@@ -518,6 +523,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
         data_summary: str | None = None,
         preview_num_records: int | None = None,
         strict_entity_protection: bool = False,
+        instructions: str | None = None,
     ) -> RewriteResult:
         with stage_timer("CombinedRewriteWorkflow.run", input_row_count=len(dataframe)) as measurement:
             entity_rows, passthrough_rows = _split_rewrite_rows(dataframe)
@@ -546,6 +552,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 data_summary=data_summary,
                 preview_num_records=preview_num_records,
                 strict_entity_protection=strict_entity_protection,
+                instructions=instructions,
             )
             result = _rewrite_lowered(entity_rows, passthrough_rows, rows, produce, evaluation)
             measurement.update(
@@ -572,6 +579,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
         data_summary: str | None = None,
         preview_num_records: int | None = None,
         strict_entity_protection: bool = False,
+        instructions: str | None = None,
     ) -> Callable[[], None]:
         """Label classification, then one combined workflow call over ``rows``, leaving the final candidates in
         ``rows.frame``."""
@@ -587,6 +595,8 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 evaluation=evaluation,
                 data_summary=data_summary,
                 strict_entity_protection=strict_entity_protection,
+                # Only when set: a caller's build_graph override may keep the 0.4.0 signature, which lacks it.
+                **({"instructions": instructions} if instructions else {}),
             )
             run_result, _ = run_columns(
                 self._adapter,

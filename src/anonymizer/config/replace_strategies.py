@@ -63,7 +63,8 @@ class Substitute(ReplaceMethodBase):
 
     kind: Annotated[Literal["substitute"], _KIND_IS_THE_SUBCOMMAND] = "substitute"
     instructions: str | None = Field(
-        default=None, description="Additional instructions for the LLM replacement generator."
+        default=None,
+        description="Additional instructions for the LLM replacement generator, sent as literal text (template syntax is not interpreted).",
     )
     consistency: Literal["record", "run"] = Field(
         default="record",

@@ -58,6 +58,7 @@ from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.prompt_utils import jinja_literal
 from anonymizer.engine.replace.llm_replace_workflow import _fold_replacement_maps
 from anonymizer.engine.replace.llm_replace_workflow import placeholder_in_text as _placeholder_in_text
 from anonymizer.engine.rewrite.repair import RepairWorkflow
@@ -409,7 +410,7 @@ def test_calls_sub_workflows_in_order(
         for column in adapter.run_workflow.call_args_list[0].kwargs["columns"]
         if column.name == COL_RAW_SENSITIVITY_DISPOSITION
     )
-    assert "<data_summary>\nCustomer support conversations\n</data_summary>" in disposition.prompt
+    assert f"<data_summary>\n{jinja_literal('Customer support conversations')}\n</data_summary>" in disposition.prompt
 
     assert len(result.dataframe) == 1
 
@@ -1820,7 +1821,7 @@ def test_combined_runner_overriding_build_graph_with_release_signature_runs(
     calls = []
 
     class GraphOverride(CombinedRewriteWorkflow):
-        def build_graph(  # 0.4.0 public signature
+        def build_graph(  # 0.4.0 public signature  # ty: ignore[invalid-method-override]
             self,
             *,
             selected_models: RewriteModelSelection,

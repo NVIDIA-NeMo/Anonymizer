@@ -39,7 +39,7 @@ from anonymizer.engine.graph_core.session import normalize as _fold
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import BackendRun, DataDesignerBackend
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.prompt_utils import jinja_literal, substitute_placeholders
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema, EntityReplacementMapSchema
 from anonymizer.engine.schemas.shared import normalize_payload
@@ -833,7 +833,8 @@ def _get_replacement_mapping_prompt(
     instructions: str | None = None,
     retry: bool = False,
 ) -> str:
-    instruction_block = f"\nAdditional instructions: {instructions}\n" if instructions else ""
+    # DataDesigner renders this prompt as Jinja; the user's text is wrapped so it is sent as written.
+    instruction_block = f"\nAdditional instructions: {jinja_literal(instructions)}\n" if instructions else ""
     prompt = """Generate synthetic replacements for sensitive entities. ONE value per entity, used consistently.
 <<INSTRUCTION_BLOCK>><<RETRY_BLOCK>>
 

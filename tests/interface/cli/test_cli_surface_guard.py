@@ -20,7 +20,6 @@ from anonymizer.interface.cli.main import MODES, app
 NOT_A_FLAG: dict[tuple[str, str], str] = {
     **{(cls.__name__, "kind"): "the subcommand picks the strategy" for cls in MODES.values() if cls is not Rewrite},
     ("Hash", "key"): "read from ANONYMIZER_HASH_KEY only, to keep the key out of argv",
-    ("Rewrite", "instructions"): "never read by the rewrite (audit F10); removal is pending (#407)",
     ("AnonymizerConfig", "replace"): "the subcommand; its model is walked as the mode",
     ("AnonymizerConfig", "rewrite"): "the subcommand; its model is walked as the mode",
     ("AnonymizerConfig", "detect"): "walked as its own root",

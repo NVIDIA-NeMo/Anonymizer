@@ -29,7 +29,7 @@ from anonymizer.engine.detection.postprocess import normalize_label, normalize_l
 from anonymizer.engine.evaluation.judge_base import JudgeResult, _BaseJudgeWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, exception_class_label
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.prompt_utils import jinja_literal, substitute_placeholders
 from anonymizer.engine.row_partitioning import (
     ROW_ORDER_COL,
     merge_and_reorder,
@@ -101,12 +101,12 @@ def _entity_type_scope_block(
     if entity_labels is None:
         excluded = sorted(normalize_labels(excluded_entity_labels))
         exclusion = (
-            f"\nDo NOT report candidates with these explicitly excluded entity labels: {', '.join(excluded)}."
+            f"\nDo NOT report candidates with these explicitly excluded entity labels: {', '.join(map(jinja_literal, excluded))}."
             if excluded
             else ""
         )
         return f"<entity_type_scope>\nEvaluate for all PII and sensitive entity types.{exclusion}\n</entity_type_scope>"
-    labels_str = ", ".join(entity_labels)
+    labels_str = ", ".join(map(jinja_literal, entity_labels))
     return (
         "<entity_type_scope>\n"
         f"Detection was configured to target ONLY these entity types: {labels_str}.\n"
@@ -122,7 +122,7 @@ def _data_summary_block(data_summary: str | None) -> str:
         return ""
     return (
         "<data_summary_context>\n"
-        f"{data_summary.strip()}\n"
+        f"{jinja_literal(data_summary.strip())}\n"
         "Use this context only to interpret literal values and their semantic types. "
         "Do not infer or invent entities that are absent from the original text.\n"
         "</data_summary_context>"
@@ -142,7 +142,7 @@ def _coverage_prompt(
     active_labels = entity_labels if entity_labels is not None else DEFAULT_ENTITY_LABELS
     if entity_labels is None and effective_entity_labels is not None:
         active_labels = effective_entity_labels
-    labels_str = ", ".join(active_labels)
+    labels_str = ", ".join(map(jinja_literal, active_labels))
     if entity_labels is None:
         taxonomy_guidance = (
             f"Common entity types include: {labels_str}. This list is not exhaustive. "

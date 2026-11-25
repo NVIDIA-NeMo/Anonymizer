@@ -20,7 +20,7 @@ from anonymizer.engine.constants import (
     _jinja,
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.prompt_utils import jinja_literal, substitute_placeholders
 from anonymizer.engine.schemas import Domain, DomainClassificationSchema
 from anonymizer.engine.workflow_columns.response.config import ResponseColumnConfig
 
@@ -205,7 +205,7 @@ def _get_domain_classification_prompt(data_summary: str | None = None) -> str:
     if data_summary and data_summary.strip():
         # TODO: align entity detection prompts (validation, augment, latent) to use "Dataset description:" label
         data_context_section = (
-            f"\n<data_context>\nDataset description: {data_summary.strip()}\n\n"
+            f"\n<data_context>\nDataset description: {jinja_literal(data_summary.strip())}\n\n"
             "Use this context to help disambiguate when the text could fit multiple domains.\n"
             "</data_context>\n"
         )
