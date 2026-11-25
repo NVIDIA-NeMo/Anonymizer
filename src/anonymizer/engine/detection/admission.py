@@ -96,29 +96,28 @@ def apply_validation_admission(
                 decision=decision,
             )
 
-    results: list[AdmissionResult] = []
-    for observation in detection_result.observations:
+    def admitted(observation: Observation) -> AdmissionResult:
         if observation.admission_route is AdmissionRoute.direct_acceptance:
-            reason = (
-                AdmissionReason.augmenter_output
-                if observation.source_kind == SOURCE_KIND_AUGMENTER
-                else AdmissionReason.direct_acceptance
+            return AdmissionResult(
+                observation_ref=observation.ref,
+                route=observation.admission_route,
+                status=AdmissionStatus.accepted,
+                effective_label=observation.label,
+                reason=(
+                    AdmissionReason.augmenter_output
+                    if observation.source_kind == SOURCE_KIND_AUGMENTER
+                    else AdmissionReason.direct_acceptance
+                ),
             )
-            results.append(
-                AdmissionResult(
-                    observation_ref=observation.ref,
-                    route=observation.admission_route,
-                    status=AdmissionStatus.accepted,
-                    effective_label=observation.label,
-                    reason=reason,
-                )
-            )
-            continue
         admission = admissions_by_observation.get(observation.ref)
         if admission is None:
             raise ValueError("an LLM-validated observation was not assigned to a validation request")
-        results.append(admission)
-    eligible = tuple(_apply_label_eligibility(result, effective_label_policy) for result in results)
+        return admission
+
+    eligible = tuple(
+        _apply_label_eligibility(admitted(observation), effective_label_policy)
+        for observation in detection_result.observations
+    )
     return _apply_regex_label_eligibility(
         results=eligible,
         observations_by_ref=observations_by_ref,
@@ -154,8 +153,10 @@ def _apply_regex_label_eligibility(
         if candidate.source_text_ref == source_text_ref
         and any(origin.source_kind in {"regex_user", "regex_builtin"} for origin in candidate.accepted_origins)
     )
-    constrained_results: list[AdmissionResult] = []
-    for result in results:
+
+    def unsupported(result: AdmissionResult) -> bool:
+        """A retained result of a regex-only label with no regex evidence at its span (and not a regex's own
+        fallback)."""
         observation = observations_by_ref[result.observation_ref]
         label = normalize_entity_label(result.effective_label or "")
         original_regex_fallback = (
@@ -163,20 +164,24 @@ def _apply_regex_label_eligibility(
             and observation.source_kind in {"regex_user", "regex_builtin"}
             and label == normalize_entity_label(observation.label)
         )
-        if (
+        return (
             result.status is not AdmissionStatus.rejected
             and label in constrained
             and (observation.span, label) not in evidence
             and not original_regex_fallback
-        ):
-            result = AdmissionResult(
-                observation_ref=result.observation_ref,
-                route=result.route,
-                status=AdmissionStatus.rejected,
-                reason=AdmissionReason.missing_regex_evidence,
-            )
-        constrained_results.append(result)
-    return tuple(constrained_results)
+        )
+
+    return tuple(
+        AdmissionResult(
+            observation_ref=result.observation_ref,
+            route=result.route,
+            status=AdmissionStatus.rejected,
+            reason=AdmissionReason.missing_regex_evidence,
+        )
+        if unsupported(result)
+        else result
+        for result in results
+    )
 
 
 def _apply_label_eligibility(
