@@ -2612,7 +2612,7 @@ measurement = [
 requires-dist = [
     { name = "certifi", specifier = ">=2026.10.19" },
     { name = "cryptography", specifier = ">=46.0.6" },
-    { name = "cyclopts", specifier = ">=3" },
+    { name = "cyclopts", specifier = ">=4.10" },
     { name = "data-designer", specifier = ">=1.0.0,<1.1" },
     { name = "datasets", marker = "extra == 'notebooks'", specifier = ">=4.0.0,<6" },
     { name = "gliner2", marker = "extra == 'notebooks'", specifier = "==2.1.0" },
