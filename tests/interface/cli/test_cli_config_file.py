@@ -394,3 +394,65 @@ def test_a_merged_cross_field_error_is_still_refused(
     assert _error(capsys).startswith(
         "Error: detect: entity_label_examples contains labels outside the active label set"
     )
+
+
+def _sdk_dump(mode: str) -> Any:
+    from anonymizer.config.anonymizer_config import AnonymizerConfig, Rewrite
+    from anonymizer.config.replace_strategies import Annotate, Redact, Substitute
+
+    strategies = {"redact": Redact(), "annotate": Annotate(), "substitute": Substitute(), "hash": Hash(key="sdk-key")}
+    if mode == "rewrite":
+        return AnonymizerConfig(rewrite=Rewrite(risk_tolerance=RiskTolerance.high))
+    return AnonymizerConfig(replace=strategies[mode], detect={"gliner_threshold": 0.4})
+
+
+@pytest.mark.parametrize("suffix", [".yaml", ".json"])
+@pytest.mark.parametrize("mode", ["redact", "annotate", "substitute", "hash", "rewrite"])
+def test_an_sdk_dump_round_trips_through_config(
+    csv_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, suffix: str
+) -> None:
+    """AnonymizerConfig -> model_dump -> file -> --config. The dump writes the unused mode as null and, for hash,
+    the key masked; neither is refused."""
+    monkeypatch.setenv("ANONYMIZER_HASH_KEY", "from-the-environment")
+    sdk = _sdk_dump(mode)
+    path = tmp_path / f"dump{suffix}"
+    path.write_text(sdk.model_dump_json() if suffix == ".json" else yaml.safe_dump(sdk.model_dump(mode="json")))
+    code, config = _validated([mode, "--config", str(path), "--source", str(csv_file)])
+    assert code == 0 and config is not None
+    assert config.detect == sdk.detect
+    if mode == "rewrite":
+        assert config.rewrite == sdk.rewrite and config.replace is None
+    else:
+        assert config.rewrite is None and type(config.replace) is type(sdk.replace)
+        assert config.replace.model_dump(exclude={"key"}) == sdk.replace.model_dump(exclude={"key"})
+    if mode == "hash":
+        assert isinstance(config.replace, Hash) and config.replace.key is not None
+        assert config.replace.key.get_secret_value() == "from-the-environment"
+
+
+def test_a_keyless_hash_dump_takes_the_key_from_the_environment(
+    csv_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A result keeps its Hash without the key (key: null); that dump is accepted too."""
+    from anonymizer.config.anonymizer_config import AnonymizerConfig
+
+    monkeypatch.setenv("ANONYMIZER_HASH_KEY", "from-the-environment")
+    keyless = AnonymizerConfig(replace=Hash(key="sdk-key")).model_copy(
+        update={"replace": Hash(key="sdk-key").without_key()}
+    )
+    path = _write(tmp_path, keyless.model_dump(mode="json"))
+    code, config = _validated(["hash", "--config", str(path), "--source", str(csv_file)])
+    assert code == 0 and config is not None and isinstance(config.replace, Hash)
+    assert config.replace.key is not None and config.replace.key.get_secret_value() == "from-the-environment"
+
+
+def test_a_non_null_other_mode_is_still_refused(
+    csv_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write(tmp_path, {"replace": {"kind": "redact"}, "rewrite": {}})
+    code, config = _validated(["redact", "--config", str(path), "--source", str(csv_file)])
+    assert code == 2 and config is None
+    assert (
+        _error(capsys)
+        == f"Error: {path}: the file sets rewrite, but this command is redact; use the matching subcommand"
+    )

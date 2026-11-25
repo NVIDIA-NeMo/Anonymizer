@@ -154,7 +154,9 @@ emit_telemetry: false
 
 The file must match the subcommand: a `rewrite` file with `run redact`, or `replace.kind: annotate` with
 `run hash`, is refused. `kind` may be left out. A file for `run hash` must not hold the key, which is read from
-`ANONYMIZER_HASH_KEY` only. A key the settings do not have, such as a misspelt `glinr_threshold`, is refused. A bad
+`ANONYMIZER_HASH_KEY` only. A dump of an SDK config (`config.model_dump(mode="json")` or
+`config.model_dump_json()`) works as a file: the unused mode written as `null`, and a key written as `null` or
+masked, are ignored. A key the settings do not have, such as a misspelt `glinr_threshold`, is refused. A bad
 file prints one line naming the file and the field, and exits 2.
 
 ## Language And Regional Coverage

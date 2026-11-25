@@ -464,10 +464,11 @@ JSON list of rules.
 (`source`, `text_column`, `id_column`, `data_summary`). Flags given on the command line replace the file's values:
 nested settings merge field by field, while a list or mapping given by a flag replaces the file's whole value; a flag
 left out keeps the file's value. A relative `input.source` is read from the working directory. Telemetry is off if
-either the file or `--no-emit-telemetry` turns it off. A file whose mode differs from the subcommand, a hash key in
-the file (the key is read from `ANONYMIZER_HASH_KEY` only), an unknown key at any level, or a bad value is refused
-with one line naming the file and the field, exit 2. `--source` is no longer marked required in help: it may come from the file, and is required when neither
-gives it.
+either the file or `--no-emit-telemetry` turns it off. A file whose mode differs from the subcommand, a hash key in the
+file (the key is read from `ANONYMIZER_HASH_KEY` only; a dump's `null` or masked key is ignored), an unknown key at any
+level, or a bad value is refused with one line naming the file and the field, exit 2. A dump of an SDK config works as a
+file; its `null` sections are ignored. `--source` is no longer marked required in help: it may come from the file, and
+is required when neither gives it.
 
 **SDK-only.** A `RegexRule.validator` given as a Python callable, the `Anonymizer` arguments that take live objects
 (`data_designer`, `detection_workflow`, the runners) and in-memory `TextRecordsInput` have no CLI form. A test keeps

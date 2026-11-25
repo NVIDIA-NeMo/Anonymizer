@@ -118,6 +118,11 @@ def _settings_class(mode: str) -> type[_Layers]:
     return create_model(f"_{mode.title()}Settings", __base__=_Layers, **fields)
 
 
+def _no_key(value: Any) -> bool:
+    """A dump's stand-in for the hash key: null, or the mask SecretStr dumps as. Neither holds key material."""
+    return value is None or (isinstance(value, str) and value != "" and set(value) == {"*"})
+
+
 def _read_config_file(path: Path, mode: str, settings_class: type[_Layers]) -> PydanticBaseSettingsSource:
     """The ``--config`` file as a settings source: an ``AnonymizerConfig`` in YAML or JSON (JSON is YAML) plus an
     optional ``input`` section. The file may set only this subcommand's mode, and never the hash key."""
@@ -148,10 +153,16 @@ def _read_config_file(path: Path, mode: str, settings_class: type[_Layers]) -> P
         raise InvalidConfigError(
             f"{path}: the file sets {other}, but this command is {mode}; use the matching subcommand"
         )
+    # A dump of an AnonymizerConfig writes every field, the unused mode as null; a null section is no section.
+    for name in [name for name, value in data.items() if value is None]:
+        del data[name]
     body = data.get(section)
     if body is not None and not isinstance(body, dict):
         raise InvalidConfigError(f"{path}: {section}: expected a mapping")
     if section == "replace" and body:
+        # A dump writes the key as null (a result's keyless copy) or masked ("**********"); neither is a key.
+        for name in [name for name in body if str(name).lower() == "key" and _no_key(body[name])]:
+            del body[name]
         if any(str(key).lower() == "key" for key in body):
             raise InvalidConfigError(
                 f"{path}: replace.key is not read from a file; set {HASH_KEY_ENV} instead and remove the key from the "
