@@ -33,6 +33,8 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
+from itertools import groupby
+from operator import attrgetter
 
 from anonymizer.engine.spans import BY_START_END, Span
 
@@ -113,15 +115,14 @@ class Withheld:
 
 Reconciliation = Accepted | Withheld
 
+_SPAN = attrgetter("span")
+
 
 def group_observations(observations: Iterable[Observation]) -> tuple[ObservationGroup, ...]:
     """Observations grouped by span, in ``BY_START_END`` order; two equal values at different spans are two
     occurrences."""
-    by_span: dict[Span, list[Observation]] = {}
-    for observation in observations:
-        by_span.setdefault(observation.span, []).append(observation)
-    spans = BY_START_END.sorted(by_span, span=lambda span: span)
-    return tuple(ObservationGroup(span, tuple(by_span[span])) for span in spans)
+    ordered = BY_START_END.sorted(observations, span=_SPAN)  # stable: one span's observations keep input order
+    return tuple(ObservationGroup(span, tuple(group)) for span, group in groupby(ordered, key=_SPAN))
 
 
 def reconcile(
