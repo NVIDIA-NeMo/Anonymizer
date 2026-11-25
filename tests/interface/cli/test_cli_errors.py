@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 import anonymizer.graph as graph
+from anonymizer.engine.io.reader import read_input
 from anonymizer.interface.cli.main import _cli_error_handler, app
 from anonymizer.interface.errors import AnonymizerIOError, InvalidConfigError
 
@@ -147,3 +148,26 @@ def test_an_unknown_option_exits_through_the_entry_point(
         main()
     assert exc_info.value.code == 1
     assert "--digest-length" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("ids", [["a", "  "], ["a", "a"]])
+def test_an_unusable_id_column_is_one_error_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], ids: list[str]
+) -> None:
+    """InvalidInputError from the reader is reported like other input errors: one line, no traceback."""
+    from anonymizer.interface.cli.main import main
+
+    source = tmp_path / "data.csv"
+    pd.DataFrame({"doc": ids, "text": ["Alice", "Bob"]}).to_csv(source, index=False)
+    argv = ["anonymizer", "run", "redact", "--source", str(source), "--id-column", "doc"]
+    monkeypatch.setattr("sys.argv", argv)
+    with patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
+        mock_cls.return_value.run.side_effect = lambda *, config, data: read_input(data)
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    # Log lines may precede it; the error itself is one line.
+    assert [line for line in err.splitlines() if not line.startswith("[")] == [err.splitlines()[-1]]
+    assert err.splitlines()[-1].startswith("Error: Input id column 'doc'")
+    assert "Traceback" not in err

@@ -37,7 +37,7 @@ from anonymizer.engine.graph_core.kernel import GraphRejection
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.cli._output import write_result
-from anonymizer.interface.errors import AnonymizerIOError, InvalidConfigError
+from anonymizer.interface.errors import AnonymizerIOError, InvalidConfigError, InvalidInputError
 from anonymizer.logging import LoggingConfig, configure_logging
 
 # One subcommand per mode, from the members of ReplaceMethod (by their ``kind``) plus rewrite.
@@ -103,7 +103,7 @@ def _cli_error_handler(fn: Callable[..., None]) -> Callable[..., None]:
             return fn(*args, **kwargs)
         except GraphRejection:
             raise  # a graph wiring fault keeps its traceback
-        except (ValidationError, ValueError, InvalidConfigError, AnonymizerIOError, OSError) as exc:
+        except (ValidationError, ValueError, InvalidConfigError, InvalidInputError, AnonymizerIOError, OSError) as exc:
             print(f"Error: {exc}", file=sys.stderr)
             raise SystemExit(1)
 
