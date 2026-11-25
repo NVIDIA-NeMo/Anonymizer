@@ -68,7 +68,12 @@ def jinja_literal(text: str) -> str:
     validation and augmentation renderers), so user text such as ``instructions`` or ``data_summary`` placed in one
     would otherwise be read as template code. The text goes in a ``{% raw %}`` block; each ``{%`` inside it closes the
     block, emits ``{%`` as a string expression and reopens it, so the text cannot end the block itself.
+
+    Text with no ``{`` cannot open a Jinja tag, expression or comment, so it is returned unchanged; prompts built from
+    plain text (the default privacy goal and labels, most summaries) stay byte-identical.
     """
+    if "{" not in text:
+        return text
     return "{% raw %}" + text.replace("{%", "{% endraw %}{{ '{%' }}{% raw %}") + "{% endraw %}"
 
 

@@ -359,3 +359,90 @@ def test_data_summary_is_sent_as_written(name: str) -> None:
     rendered = Environment(undefined=ChainableUndefined).from_string(prompt).render()
 
     assert USER_TEXT in rendered
+
+
+def _render_leniently(prompt: str) -> str:
+    """``prompt`` rendered as Jinja, lenient on the prompt's own column references, which this render does not supply."""
+    from jinja2 import ChainableUndefined, Environment
+
+    return Environment(undefined=ChainableUndefined).from_string(prompt).render()
+
+
+TEMPLATE_GOAL = PrivacyGoal(
+    protect="Names of people, ids such as {{ 7*7 }} and {% endraw %} markers",
+    preserve="The general meaning, including {# notes #} and {{ x }}",
+)
+
+
+def _goal_prompts(goal: PrivacyGoal) -> dict[str, str]:
+    """Every prompt that carries the privacy goal and is rendered as Jinja (repair is not, and takes it as is)."""
+    from anonymizer.engine.detection import detection_workflow as detection
+    from anonymizer.engine.rewrite.final_judge import _judge_prompt
+    from anonymizer.engine.rewrite.rewrite_generation import _get_rewrite_prompt
+    from anonymizer.engine.rewrite.sensitivity_disposition import _get_sensitivity_disposition_prompt
+
+    return {
+        "rewrite": _get_rewrite_prompt(goal),
+        "disposition": _get_sensitivity_disposition_prompt(goal),
+        "latent": detection._get_latent_prompt(data_summary=None, privacy_goal=goal),
+        "final_judge": _judge_prompt(goal),
+    }
+
+
+@pytest.mark.parametrize("name", list(_goal_prompts(_GOAL)))
+def test_privacy_goal_is_sent_as_written(name: str) -> None:
+    rendered = _render_leniently(_goal_prompts(TEMPLATE_GOAL)[name])
+
+    assert f"PROTECT: {TEMPLATE_GOAL.protect}" in rendered
+    assert f"PRESERVE: {TEMPLATE_GOAL.preserve}" in rendered
+
+
+# sha256 of each prompt built from the default privacy goal and default labels at the base of this change. Text with
+# no "{" is not wrapped, so these prompts are unchanged.
+_DEFAULT_PROMPT_SHA256 = {
+    "augment": "52bafed25c9351777643910c32e730ec0d631e25c6a606dc6933d3ef75a9f8ab",
+    "augment_strict": "a613a3431b05f124d75ad506321dada275fac4b57179a19603b3e5b0d8ad98b6",
+    "coverage_all": "ef7e42dea5ce9ca78a1c8da496674e5c13cbf2de187e205c626fd5c2a79a0ce3",
+    "coverage_scoped": "148ccd078b84e7d8ef14a5b2c3970fe3d53d8fd23f381b0f4011ef2c0ae214cb",
+    "disposition": "005c4641712091e1550363c3b20a3efab01d4c6c5cf24151e3b23b550d35aee8",
+    "disposition_strict": "fb33682a533609543d743bf3050229617962a07cd34c4dccefb9d9622786c9bb",
+    "final_judge": "749967f77bb0ad1fa9e0cc13f091c759804c9d3bb40c2e17edd505a24ab3cfb0",
+    "latent": "c7a1bcd368b60f2a90cd32037f94121b20900f09c5c8d639aba1063bd567160d",
+    "latent_excluded": "af9690c3521b56d1daee29b2731ee600a065b5179b5aa95ef5e707c72bd63c4b",
+    "rewrite": "75d6b102d39341773ef7c3b8f0c4547a18b8e9ffb6e66bec97626c2ab507585f",
+    "validation": "0810b962ba86fd140d223118757d97db35e73a6d63b53303f6974fdc41a626de",
+}
+
+
+def _default_prompts() -> dict[str, str]:
+    from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
+    from anonymizer.engine.detection import detection_workflow as detection
+    from anonymizer.engine.evaluation.entity_coverage_judge import _coverage_prompt
+    from anonymizer.engine.rewrite.final_judge import _judge_prompt
+    from anonymizer.engine.rewrite.rewrite_generation import _get_rewrite_prompt
+    from anonymizer.engine.rewrite.sensitivity_disposition import _get_sensitivity_disposition_prompt
+
+    goal, labels = PrivacyGoal(), sorted(DEFAULT_ENTITY_LABELS)
+    return {
+        "rewrite": _get_rewrite_prompt(goal),
+        "disposition": _get_sensitivity_disposition_prompt(goal),
+        "disposition_strict": _get_sensitivity_disposition_prompt(goal, strict_entity_protection=True),
+        "final_judge": _judge_prompt(goal),
+        "latent": detection._get_latent_prompt(data_summary=None, privacy_goal=goal),
+        "latent_excluded": detection._get_latent_prompt(
+            data_summary=None, privacy_goal=goal, excluded_entity_labels=["occupation"]
+        ),
+        "validation": detection._get_validation_prompt(data_summary=None, labels=labels),
+        "augment": detection._get_augment_prompt(data_summary=None, labels=labels),
+        "augment_strict": detection._get_augment_prompt(data_summary=None, labels=labels, strict_labels=True),
+        "coverage_all": _coverage_prompt(entity_labels=None, excluded_entity_labels=["occupation"]),
+        "coverage_scoped": _coverage_prompt(entity_labels=labels),
+    }
+
+
+def test_prompts_from_default_goal_and_labels_are_unchanged() -> None:
+    import hashlib
+
+    observed = {name: hashlib.sha256(prompt.encode()).hexdigest() for name, prompt in _default_prompts().items()}
+
+    assert observed == _DEFAULT_PROMPT_SHA256

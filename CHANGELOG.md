@@ -204,6 +204,13 @@ scored again. Now each repair sees the previous repair's text.
 - What to do: nothing. With `max_repair_iterations` above 1 (the default is 3), output and metrics can differ.
 - Changed in: #354.
 
+**The privacy goal is sent as written.** Template syntax in `PrivacyGoal.protect` or `.preserve`, such as `{{ x }}`
+or `{% ... %}`, used to be rendered by the rewrite, disposition, latent-detection and final-judge prompt templates, so
+it was dropped, changed, or failed the run. It now reaches each model verbatim. Prompts built from a goal with no `{`
+are unchanged.
+- What to do: nothing.
+- Changed in: #NNN.
+
 **`Rewrite.instructions` reaches the rewrite.** It used to be accepted and never read. It is now given to the rewrite
 and repair models as literal text, after the privacy goal, which takes precedence. The evaluator, the QA generator,
 the disposition and domain steps and the judges do not see it. `run rewrite --instructions ...` sets it.

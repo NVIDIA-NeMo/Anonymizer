@@ -132,7 +132,7 @@ Rules:
     return substitute_placeholders(
         prompt,
         {
-            "<<PRIVACY_GOAL>>": privacy_goal.to_prompt_string(),
+            "<<PRIVACY_GOAL>>": jinja_literal(privacy_goal.to_prompt_string()),
             "<<DATA_CONTEXT>>": data_context_section,
             "<<USER_INSTRUCTIONS>>": user_instructions_section(instructions, jinja=True),
             "<<TAG_NOTATION>>": COL_TAG_NOTATION,

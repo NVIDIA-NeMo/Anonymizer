@@ -1320,4 +1320,4 @@ Now produce the JSON for the input.
 def _format_privacy_goal(privacy_goal: PrivacyGoal | None) -> str:
     if privacy_goal is None:
         return "Not provided"
-    return privacy_goal.to_prompt_string()
+    return jinja_literal(privacy_goal.to_prompt_string())
