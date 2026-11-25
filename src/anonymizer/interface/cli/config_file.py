@@ -36,6 +36,8 @@ def _given(model: BaseModel | None) -> dict[str, Any]:
     # with ``PrivacyGoal()``. That nested model has no fields set, so it contributes an empty mapping, which the
     # merge lays over the file's ``privacy_goal`` without changing it. A validator that filled a plain value would
     # replace the file's value; none does today (pinned by a test).
+    # cyclopts parses the flags into partial models, and this recovers what was given. If pydantic-settings also read
+    # the command line, as one more source over the file, the partial flag models and this function would go.
     if model is None:
         return {}
     return {
@@ -57,6 +59,7 @@ def _drop_replaced(file: dict[str, Any], given: dict[str, Any], model: type[Base
     """Remove from the file's values each one a flag replaces whole. pydantic-settings deep-merges every mapping;
     here only nested settings merge field by field, and a mapping a flag gives (``--entity-label-examples``)
     replaces the file's whole value, as a list or a plain value does."""
+    # Needed only while every source is deep-merged; a source that could mark a mapping as replacing would remove it.
     for key, value in given.items():
         info = model.model_fields.get(key)
         nested = _model_of(info.annotation) if info is not None else None
@@ -69,6 +72,8 @@ def _drop_replaced(file: dict[str, Any], given: dict[str, Any], model: type[Base
 def _unknown_fields(path: Path, data: dict[str, Any], model: type[BaseModel], where: str) -> None:
     """Refuse a key the target model does not have, recursing into model-typed fields. The SDK models still ignore
     unknown keys; a file is checked here so that a misspelt setting is not silently dropped."""
+    # extra="forbid" on the settings model reaches only its top-level keys. If the SDK models forbade unknown keys
+    # themselves, validation would refuse them at every depth and this walk would go.
     for key, value in data.items():
         info = model.model_fields.get(str(key))
         if info is None:
@@ -101,6 +106,8 @@ class _Layers(BaseSettings):
 def _settings_class(mode: str) -> type[_Layers]:
     """The settings model for ``mode``: the SDK's ``AnonymizerConfig`` shape with this mode's section, and the
     CLI's ``input`` section, which ``_input`` validates on its own."""
+    # Built per mode at run time. Config classes declared per mode on a shared base, each fixing its own section,
+    # would make the ``replace.kind`` match and the mode checks in ``_read_config_file`` unnecessary.
     section = "rewrite" if mode == "rewrite" else "replace"
     fields: dict[str, Any] = {
         "input": (dict[str, Any] | None, None),
