@@ -220,13 +220,14 @@ def _release_units(g: ProtectionGraph, partial: bool) -> tuple[tuple[Datum, ...]
     for i, members in enumerate(sets):
         merged.setdefault(root(i), set()).update(members)
     order = {d: n for n, d in enumerate(g.targets)}
+    with_record = {root(j) for j in range(len(groups), len(sets))}
     units: list[tuple[Datum, ...]] = []
     for i, members in enumerate(sets):
         r = root(i)
         if r not in merged:
             continue
         unit = merged.pop(r)
-        if i < len(groups) and unit == members and not any(root(j) == r for j in range(len(groups), len(sets))):
+        if i < len(groups) and unit == members and r not in with_record:
             units.append(groups[i])  # an untouched group keeps its declared member order
         else:
             units.append(tuple(sorted(unit, key=order.__getitem__)))
