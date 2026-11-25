@@ -87,7 +87,10 @@ class AnonymizerInput(BaseModel):
 
     source: str = Field(description="Local path or HTTP(S) URL for a .csv or .parquet input file.")
     text_column: str = Field(default="text", min_length=1, description="Column containing the text to anonymize.")
-    id_column: str | None = Field(default=None, description="Optional column to use as record identifier.")
+    id_column: str | None = Field(
+        default=None,
+        description="Optional column whose values, compared as text, are the record ids; they must be present and unique.",
+    )
     data_summary: str | None = Field(
         default=None, description="Short description of the data. Improves LLM detection accuracy."
     )

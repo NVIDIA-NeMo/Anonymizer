@@ -439,6 +439,12 @@ read and has no flag.
 **`--algorithm` takes only `sha256`, as before; the hash key still comes from `ANONYMIZER_HASH_KEY` only.** There is
 no `--key` flag, so the key stays out of argv and shell history.
 
+**`id_column` sets the record ids.** `AnonymizerInput(id_column=...)` and `--id-column` now name the records: the
+column's values, compared as text, name them in failures, outcomes and a custom detector's input. A missing column,
+an empty id or a duplicate id raises `InvalidInputError`. The option used to be accepted and never read, and file
+records got generated ids.
+- What to do: make the id column's values present and unique, or leave `id_column` unset.
+
 **SDK-only.** A `RegexRule.validator` given as a Python callable, the `Anonymizer` arguments that take live objects
 (`data_designer`, `detection_workflow`, the runners) and in-memory `TextRecordsInput` have no CLI form. A test keeps
 every other config field reachable as a flag.

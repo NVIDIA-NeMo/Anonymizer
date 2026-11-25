@@ -560,3 +560,24 @@ def test_read_input_empty_parquet_returns_empty(tmp_path: Path) -> None:
     result = read_input(inp, nrows=5)
     assert len(result.dataframe) == 0
     assert COL_TEXT in result.dataframe.columns
+
+
+def test_read_input_uses_the_id_column_as_the_record_id(tmp_path: Path) -> None:
+    inp = _write_input(pd.DataFrame({"doc_id": [7, 3], "text": ["a", "b"]}), tmp_path, id_column="doc_id")
+    resolved = read_input(inp)
+    assert resolved.dataframe[RECORD_ID_COLUMN].tolist() == ["7", "3"]
+    assert resolved.resolved_id_column == "doc_id"
+
+
+@pytest.mark.parametrize(
+    ("frame", "message"),
+    [
+        (pd.DataFrame({"text": ["a"]}), "not found"),
+        (pd.DataFrame({"doc_id": ["x", None], "text": ["a", "b"]}), "empty values"),
+        (pd.DataFrame({"doc_id": ["x", "x"], "text": ["a", "b"]}), "duplicate ids"),
+    ],
+)
+def test_read_input_rejects_an_unusable_id_column(tmp_path: Path, frame: pd.DataFrame, message: str) -> None:
+    inp = _write_input(frame, tmp_path, id_column="doc_id")
+    with pytest.raises(InvalidInputError, match=message):
+        read_input(inp)
