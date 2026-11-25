@@ -72,7 +72,12 @@ class RegexLimits(BaseModel):
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
-    max_matches_per_rule: int = Field(default=DEFAULT_MAX_MATCHES_PER_RULE, gt=0, strict=True)
+    max_matches_per_rule: int = Field(
+        default=DEFAULT_MAX_MATCHES_PER_RULE,
+        gt=0,
+        strict=True,
+        description="Most validated matches one rule may produce in one record; more fails the record.",
+    )
     min_timeout_seconds: float = Field(
         default=DEFAULT_REGEX_TIMEOUT_SECONDS,
         gt=0,
@@ -85,6 +90,14 @@ class RegexLimits(BaseModel):
         allow_inf_nan=False,
         description="Per-rule budget in CPU seconds per million Unicode code points of the record.",
     )
+
+    @field_validator("max_matches_per_rule", mode="before")
+    @classmethod
+    def parse_digit_string(cls, value: Any) -> Any:
+        """Accept a string of digits, as the CLI passes; floats and bools stay refused by the strict field."""
+        if isinstance(value, str) and value.strip().isascii() and value.strip().isdigit():
+            return int(value.strip())
+        return value
 
 
 class BuiltinRegex(BaseModel):

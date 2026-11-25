@@ -417,6 +417,13 @@ an `Error: ...` line. It ends the command with its traceback, as a wiring fault.
 `rewrite_pipeline`, not `unknown`.
 - Changed in: #373.
 
+### CLI and config surface
+
+The CLI is generated from the config models, so a config field is a flag under the field's own name.
+
+- `RegexLimits.max_matches_per_rule` accepts a string of digits, such as `"5"`. Floats and bools are still refused.
+  `--regex-limits.max-matches-per-rule` used to reject every value.
+
 ### Internal changes
 
 These change no public name and no behaviour for supported input.
