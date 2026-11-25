@@ -112,9 +112,9 @@ def test_error_handler_lets_graph_rejection_propagate() -> None:
         raise exc
 
     with pytest.raises(graph.GraphRejection):
-        _cli_error_handler(fail)(graph.GraphRejection("over_limit", "max_targets"))
+        _cli_error_handler("redact", fail)(graph.GraphRejection("over_limit", "max_targets"))
     with pytest.raises(SystemExit) as exit_info:
-        _cli_error_handler(fail)(ValueError("plain"))
+        _cli_error_handler("redact", fail)(ValueError("plain"))
     assert exit_info.value.code == 1
 
 
@@ -129,7 +129,7 @@ def test_a_hash_key_error_does_not_echo_the_key(
     monkeypatch.setattr("sys.argv", ["anonymizer", "validate", "hash", "--source", str(csv_file)])
     with patch("anonymizer.interface.cli.main.Anonymizer"), pytest.raises(SystemExit) as exc_info:
         main()
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2
     out = capsys.readouterr()
     assert "masked placeholder" in out.err
     assert rejected_key not in out.out + out.err
@@ -146,7 +146,7 @@ def test_an_unknown_option_exits_through_the_entry_point(
     )
     with pytest.raises(SystemExit) as exc_info:
         main()
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2
     assert "--digest-length" in capsys.readouterr().err
 
 
@@ -171,3 +171,42 @@ def test_an_unusable_id_column_is_one_error_line(
     assert [line for line in err.splitlines() if not line.startswith("[")] == [err.splitlines()[-1]]
     assert err.splitlines()[-1].startswith("Error: Input id column 'doc'")
     assert "Traceback" not in err
+
+
+def _error_lines(err: str) -> list[str]:
+    """stderr without log lines (which start with a timestamp in brackets)."""
+    return [line for line in err.splitlines() if line and not line.startswith("[")]
+
+
+@pytest.mark.parametrize(
+    ("argv", "code", "expected"),
+    [
+        (["validate", "redact", "--digest-length", "8"], 2, "Error: Unknown option: --digest-length"),
+        (["validate", "rewrite", "--protect", "short"], 2, "Error: --protect: String should have at least 10"),
+        (["validate", "redact", "--entity-label-examples", "nope"], 2, "Error: --entity-label-examples: "),
+        (["validate", "redact", "--regex-limits.max-matches-per-rule", "0"], 2, "Error: --regex-limits.max-matches"),
+    ],
+)
+def test_parse_errors_are_one_line_naming_the_flag_for_every_caller(
+    csv_file: Path, capsys: pytest.CaptureFixture[str], argv: list[str], code: int, expected: str
+) -> None:
+    """Calling ``app`` directly (as tests and embedders do) prints the same one-line errors as the entry point."""
+    with patch("anonymizer.interface.cli.main.Anonymizer"), pytest.raises(SystemExit) as exc_info:
+        app([*argv, "--source", str(csv_file)])
+    assert exc_info.value.code == code
+    out = capsys.readouterr()
+    lines = _error_lines(out.err)
+    assert len(lines) == 1 and lines[0].startswith(expected), out.err
+    assert "input_value" not in out.err and "╭" not in out.err + out.out
+
+
+def test_a_missing_hash_key_is_one_line_naming_the_variable(
+    csv_file: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("ANONYMIZER_HASH_KEY", raising=False)
+    with patch("anonymizer.interface.cli.main.Anonymizer"), pytest.raises(SystemExit) as exc_info:
+        app(["validate", "hash", "--source", str(csv_file)])
+    assert exc_info.value.code == 2
+    lines = _error_lines(capsys.readouterr().err)
+    assert lines == [lines[0]] and lines[0].startswith("Error: ANONYMIZER_HASH_KEY is not set")
+    assert "errors.pydantic.dev" not in lines[0] and "validation error" not in lines[0]

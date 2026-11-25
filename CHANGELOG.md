@@ -447,8 +447,14 @@ A missing column, an empty or whitespace-only id, or a duplicate id raises `Inva
 read: file records got generated ids, the output did not keep the id column, and `result.id_column` was `None`.
 - What to do: make the id column's values present and unique, or leave `id_column` unset.
 
-**CLI errors no longer echo input values.** A rejected flag or environment value is reported by location and
-message only, so a rejected `ANONYMIZER_HASH_KEY` is not printed. `--entity-labels` and `--regex-rules` take one value
+**CLI errors are one line, name the flag, and exit 2 for usage errors.** An error prints as `Error: <flag>: <message>`,
+naming the flag the user typed (`--protect`, not `privacy_goal.protect`), or `ANONYMIZER_HASH_KEY` for the key, and
+never echoes the input value. A missing key prints one line naming the variable. Exit codes:
+- 2: a usage or config error, such as an unknown flag, a value a model refuses, a missing hash key, or an unsupported
+  `--output` format. It used to be 1.
+- 1: an input or I/O error, such as an unreadable source, a missing text or id column, or blank or duplicate ids.
+- Any other error is a runtime fault: it prints a traceback and exits 1.
+- What to do: scripts that test for exit code 1 on a usage error should accept 2. `--entity-labels` and `--regex-rules` take one value
 per flag; repeat the flag for more. `--regex-rules` also takes a JSON list of rules.
 
 **SDK-only.** A `RegexRule.validator` given as a Python callable, the `Anonymizer` arguments that take live objects

@@ -69,6 +69,7 @@ uv run anonymizer validate hash --source $DATA_URL --text-column biography
 
 The mode is a subcommand: `redact`, `hash`, `annotate`, `substitute` or `rewrite`, after `run`, `preview` or
 `validate`. Each mode lists its own flags, named after the config fields: run `anonymizer run <mode> --help`.
+Errors print one `Error: ...` line. The exit code is 2 for a usage or config error and 1 for an input or I/O error.
 
 #### Python API
 

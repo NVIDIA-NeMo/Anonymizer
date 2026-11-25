@@ -70,7 +70,7 @@ def test_hash_without_a_key_names_the_variable(
 ) -> None:
     monkeypatch.delenv("ANONYMIZER_HASH_KEY")
     code, config, _ = _validate(["hash", "--source", str(csv_file)])
-    assert code == 1 and config is None
+    assert code == 2 and config is None
     assert "ANONYMIZER_HASH_KEY" in capsys.readouterr().err
 
 

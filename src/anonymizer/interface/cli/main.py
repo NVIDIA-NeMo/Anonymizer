@@ -30,6 +30,8 @@ logger = logging.getLogger("anonymizer.cli")
 
 import cyclopts
 from pydantic import BaseModel, ValidationError
+from rich.console import Console
+from rich.text import Text
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite
 from anonymizer.config.replace_strategies import ReplaceMethod
@@ -87,27 +89,138 @@ class RunOptions:
     debug: Annotated[bool, cyclopts.Parameter(help="Debug logging.", negative="")] = False
 
 
+# Exit codes. A usage or config error (an unknown flag, a value a model refuses, a bad config) exits 2, as cyclopts
+# does for parse errors; an input or I/O error (a bad input file or id column, an unreadable path) exits 1. Any other
+# error is a runtime fault and keeps its traceback.
+EXIT_USAGE = 2
+EXIT_INPUT = 1
+
+
+def _env_only(model: type[BaseModel]) -> dict[str, tuple[str, ...]]:
+    """The fields of ``model`` read only from the environment, with their variables."""
+    return {
+        name: tuple(meta.env_var)
+        for name, info in model.model_fields.items()
+        for meta in info.metadata
+        if isinstance(meta, cyclopts.Parameter) and meta.parse is False and meta.env_var
+    }
+
+
+def _flag_for(argument: Any, loc: tuple[Any, ...]) -> str | None:
+    """The flag for a pydantic error location, from the argument cyclopts was converting: the child whose field
+    path is the longest prefix of ``loc``. A field with no flag (the hash key) is named by its variable."""
+    best: tuple[int, str] | None = None
+    stack = [argument]
+    while stack:
+        node = stack.pop()
+        stack.extend(node.children)
+        keys = tuple(node.keys)
+        if keys and tuple(str(part) for part in loc[: len(keys)]) == keys and node.name.startswith("--"):
+            name = node.name if node.parse else " or ".join(node.parameter.env_var or ()) or node.name
+            if best is None or len(keys) > best[0]:
+                best = (len(keys), name)
+    return best[1] if best else None
+
+
+def _flag_for_path(mode: str, loc: tuple[Any, ...]) -> str | None:
+    """The flag for an error raised after parsing, from its location in ``AnonymizerConfig`` or the mode's model."""
+    parts = [str(part) for part in loc]
+    model: type[BaseModel] = MODES[mode]
+    if parts and parts[0] in ("replace", "rewrite"):
+        parts = parts[1:]
+        if parts and parts[0] == mode:  # the discriminator tag of a replace strategy
+            parts = parts[1:]
+    elif parts and parts[0] == "detect":
+        model, parts = Detect, parts[1:]
+    prefix = ""
+    for part in parts:
+        info = model.model_fields.get(part)
+        if info is None:
+            return None
+        if part in _env_only(model):
+            return " or ".join(_env_only(model)[part])
+        nested = _nested_model(info.annotation)
+        if nested is None:
+            return f"--{prefix}{part.replace('_', '-')}"
+        if not any(isinstance(meta, cyclopts.Parameter) and meta.name == ("*",) for meta in info.metadata):
+            prefix += f"{part.replace('_', '-')}."
+        model = nested
+    return None
+
+
+def _nested_model(annotation: Any) -> type[BaseModel] | None:
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    models = [arg for arg in get_args(annotation) if isinstance(arg, type) and issubclass(arg, BaseModel)]
+    return models[0] if len(models) == 1 else None
+
+
+def _describe(error: ValidationError, name_for: Callable[[tuple[Any, ...]], str | None]) -> str:
+    """A validation error by flag, without the input values, which can hold the hash key."""
+    parts = []
+    for item in error.errors(include_input=False, include_url=False):
+        where = name_for(item["loc"]) or ".".join(str(part) for part in item["loc"]) or "value"
+        parts.append(f"{where}: {item['msg'].removeprefix('Value error, ')}")
+    return "; ".join(parts)
+
+
+def _format_error(exc: cyclopts.CycloptsError) -> Text:
+    """cyclopts' parse errors, one line each. cyclopts validates the models through a ``TypeAdapter``, whose errors
+    print each input value and ignore ``hide_input_in_errors``, so validation errors are described here without
+    them. ``Text`` keeps rich from reading ``[REDACTED_{label}]`` as markup."""
+    cause = exc.__cause__
+    if isinstance(cause, ValidationError):
+        argument = exc.argument
+        message = _describe(cause, lambda loc: _flag_for(argument, loc) if argument is not None else None)
+    else:
+        message = str(exc)
+    return Text(f"Error: {message}")
+
+
 # ``--empty-<list>`` flags would only restate a list's empty default, so they are turned off.
 app = cyclopts.App(
     help="NeMo Anonymizer CLI",
     default_parameter=cyclopts.Parameter(negative_iterable=()),
     # Field descriptions are plain text; markup rendering would drop tokens such as <LABEL>.
     help_format="plaintext",
+    error_formatter=_format_error,
+    # Errors are plain, unwrapped lines, like the ones the commands print.
+    error_console=Console(stderr=True, soft_wrap=True, highlight=False),
 )
 
 
-def _cli_error_handler(fn: Callable[..., None]) -> Callable[..., None]:
+def _cli_error_handler(mode: str, fn: Callable[..., None]) -> Callable[..., None]:
+    """Errors raised after parsing: one line on stderr, no input values, and the exit codes above."""
+
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> None:
         try:
             return fn(*args, **kwargs)
         except GraphRejection:
             raise  # a graph wiring fault keeps its traceback
-        except (ValidationError, ValueError, InvalidConfigError, InvalidInputError, AnonymizerIOError, OSError) as exc:
+        except ValidationError as exc:
+            print(f"Error: {_describe(exc, lambda loc: _flag_for_path(mode, loc))}", file=sys.stderr)
+            raise SystemExit(EXIT_USAGE)
+        except InvalidConfigError as exc:
             print(f"Error: {exc}", file=sys.stderr)
-            raise SystemExit(1)
+            raise SystemExit(EXIT_USAGE)
+        except (InvalidInputError, AnonymizerIOError, OSError, ValueError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            raise SystemExit(EXIT_INPUT)
 
     return wrapper
+
+
+def _default_strategy(mode: str) -> BaseModel:
+    """The mode's model from its defaults, for a command given no flag of it. A field read only from the
+    environment that is unset is named by its variable."""
+    model = MODES[mode]
+    missing = [env[0] for env in _env_only(model).values() if not any(os.environ.get(var) for var in env)]
+    if missing:
+        raise InvalidConfigError(
+            f"{' and '.join(missing)} is not set. run {mode} reads its secret key from it; there is no flag."
+        )
+    return model()
 
 
 def _build(
@@ -115,7 +228,7 @@ def _build(
 ) -> tuple[AnonymizerConfig, Anonymizer]:
     """Build the config and the Anonymizer. A model the user gave no flag for is built from its defaults."""
     if strategy is None:
-        strategy = MODES[mode]()
+        strategy = _default_strategy(mode)
     detect = detect if detect is not None else Detect()
     if isinstance(strategy, Rewrite):
         config = AnonymizerConfig(rewrite=strategy, detect=detect, emit_telemetry=options.emit_telemetry)
@@ -239,7 +352,7 @@ def _command(verb: str, mode: str) -> Callable[..., None]:
     label = "rewrite" if mode == "rewrite" else f"replace with {mode}"
     command.__doc__ = f"{summary} ({label})."
     command.__name__ = mode
-    return _cli_error_handler(command)
+    return _cli_error_handler(mode, command)
 
 
 for _verb, _help in (
@@ -253,24 +366,6 @@ for _verb, _help in (
     app.command(_sub)
 
 
-def _describe(error: ValidationError) -> str:
-    """A validation error without the input values, which can hold the hash key."""
-    return "; ".join(
-        f"{'.'.join(str(part) for part in item['loc']) or 'value'}: {item['msg']}"
-        for item in error.errors(include_input=False, include_url=False)
-    )
-
-
 def main() -> None:
-    """Entry point for the anonymizer CLI.
-
-    cyclopts validates the config models through a ``TypeAdapter``, whose errors print each input value and ignore
-    the models' ``hide_input_in_errors``. Parse errors are printed here instead, without the inputs.
-    """
-    try:
-        app(sys.argv[1:], exit_on_error=False, print_error=False)
-    except cyclopts.CycloptsError as exc:
-        cause = exc.__cause__
-        message = _describe(cause) if isinstance(cause, ValidationError) else str(exc)
-        print(f"Error: {message}", file=sys.stderr)
-        raise SystemExit(1) from None
+    """Entry point for the anonymizer CLI. Errors are printed by ``_format_error`` and ``_cli_error_handler``."""
+    app(sys.argv[1:])
