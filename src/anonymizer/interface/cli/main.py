@@ -225,6 +225,24 @@ for _verb, _help in (
     app.command(_sub)
 
 
+def _describe(error: ValidationError) -> str:
+    """A validation error without the input values, which can hold the hash key."""
+    return "; ".join(
+        f"{'.'.join(str(part) for part in item['loc']) or 'value'}: {item['msg']}"
+        for item in error.errors(include_input=False, include_url=False)
+    )
+
+
 def main() -> None:
-    """Entry point for the anonymizer CLI."""
-    app()
+    """Entry point for the anonymizer CLI.
+
+    cyclopts validates the config models through a ``TypeAdapter``, whose errors print each input value and ignore
+    the models' ``hide_input_in_errors``. Parse errors are printed here instead, without the inputs.
+    """
+    try:
+        app(sys.argv[1:], exit_on_error=False, print_error=False)
+    except cyclopts.CycloptsError as exc:
+        cause = exc.__cause__
+        message = _describe(cause) if isinstance(cause, ValidationError) else str(exc)
+        print(f"Error: {message}", file=sys.stderr)
+        raise SystemExit(1) from None

@@ -115,3 +115,35 @@ def test_error_handler_lets_graph_rejection_propagate() -> None:
     with pytest.raises(SystemExit) as exit_info:
         _cli_error_handler(fail)(ValueError("plain"))
     assert exit_info.value.code == 1
+
+
+def test_a_hash_key_error_does_not_echo_the_key(
+    csv_file: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The entry point prints parse errors without input values: a rejected key is not echoed."""
+    from anonymizer.interface.cli.main import main
+
+    rejected_key = "*" * 17  # a masked placeholder, which Hash refuses
+    monkeypatch.setenv("ANONYMIZER_HASH_KEY", rejected_key)
+    monkeypatch.setattr("sys.argv", ["anonymizer", "validate", "hash", "--source", str(csv_file)])
+    with patch("anonymizer.interface.cli.main.Anonymizer"), pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+    out = capsys.readouterr()
+    assert "masked placeholder" in out.err
+    assert rejected_key not in out.out + out.err
+    assert "input_value" not in out.out + out.err
+
+
+def test_an_unknown_option_exits_through_the_entry_point(
+    csv_file: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from anonymizer.interface.cli.main import main
+
+    monkeypatch.setattr(
+        "sys.argv", ["anonymizer", "validate", "redact", "--source", str(csv_file), "--digest-length", "8"]
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+    assert "--digest-length" in capsys.readouterr().err
