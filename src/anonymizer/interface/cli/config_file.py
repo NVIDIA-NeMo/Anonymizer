@@ -1,17 +1,25 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""``--config FILE``: the file as the base, the flags the user gave laid over it, and one validation."""
+"""``--config FILE``: the file as the base, the flags the user gave laid over it, and one validation.
+
+pydantic-settings does the layering: a settings model in the SDK's shape whose sources are the given flags (init
+keyword arguments) over the YAML file, deep-merged and validated once. It has no environment source; the hash key
+still comes only from ``ANONYMIZER_HASH_KEY`` through the flag model. What pydantic-settings does not do is kept here:
+the refusals (mode, kind, key, unknown keys at any depth, a file that is not a mapping), one-line read errors that
+quote nothing from the file, and replacing a mapping a flag gives instead of merging into it.
+"""
 
 from __future__ import annotations
 
 import functools
 import os
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, ClassVar, get_args
 
 import yaml
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, create_model
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, YamlConfigSettingsSource
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect
 from anonymizer.config.replace_strategies import HASH_KEY_ENV
@@ -45,18 +53,17 @@ def _model_of(annotation: Any) -> type[BaseModel] | None:
     return models[0] if len(models) == 1 else None
 
 
-def _merge(base: dict[str, Any], top: dict[str, Any], model: type[BaseModel]) -> dict[str, Any]:
-    """``base`` (the file) with ``top`` (the given flags) laid over it. Nested settings merge field by field; any
-    other value from a flag, a list or a mapping included, replaces the file's whole value."""
-    merged = dict(base)
-    for key, value in top.items():
+def _drop_replaced(file: dict[str, Any], given: dict[str, Any], model: type[BaseModel]) -> None:
+    """Remove from the file's values each one a flag replaces whole. pydantic-settings deep-merges every mapping;
+    here only nested settings merge field by field, and a mapping a flag gives (``--entity-label-examples``)
+    replaces the file's whole value, as a list or a plain value does."""
+    for key, value in given.items():
         info = model.model_fields.get(key)
         nested = _model_of(info.annotation) if info is not None else None
-        if nested is not None and isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _merge(merged[key], value, nested)
-        else:
-            merged[key] = value
-    return merged
+        if nested is not None and isinstance(value, dict) and isinstance(file.get(key), dict):
+            _drop_replaced(file[key], value, nested)
+        elif isinstance(value, dict):
+            file.pop(key, None)
 
 
 def _unknown_fields(path: Path, data: dict[str, Any], model: type[BaseModel], where: str) -> None:
@@ -74,11 +81,43 @@ def _unknown_fields(path: Path, data: dict[str, Any], model: type[BaseModel], wh
 _CONFIG_SECTIONS = ("input", "detect", "replace", "rewrite", "emit_telemetry")
 
 
-def _read_config_file(path: Path, mode: str) -> dict[str, Any]:
-    """The ``--config`` file: an ``AnonymizerConfig`` in YAML or JSON (JSON is YAML) plus an optional ``input``
-    section. The file may set only this subcommand's mode, and never the hash key."""
+class _Layers(BaseSettings):
+    """The settings model's base: the given flags over the ``--config`` file, and no other source."""
+
+    _file: ClassVar[PydanticBaseSettingsSource]
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (init_settings, cls._file)
+
+
+def _settings_class(mode: str) -> type[_Layers]:
+    """The settings model for ``mode``: the SDK's ``AnonymizerConfig`` shape with this mode's section, and the
+    CLI's ``input`` section, which ``_input`` validates on its own."""
+    section = "rewrite" if mode == "rewrite" else "replace"
+    fields: dict[str, Any] = {
+        "input": (dict[str, Any] | None, None),
+        "detect": (Detect, Detect()),
+        section: (MODES[mode] | None, None),
+        "emit_telemetry": (bool, AnonymizerConfig.model_fields["emit_telemetry"].default),
+    }
+    return create_model(f"_{mode.title()}Settings", __base__=_Layers, **fields)
+
+
+def _read_config_file(path: Path, mode: str, settings_class: type[_Layers]) -> PydanticBaseSettingsSource:
+    """The ``--config`` file as a settings source: an ``AnonymizerConfig`` in YAML or JSON (JSON is YAML) plus an
+    optional ``input`` section. The file may set only this subcommand's mode, and never the hash key."""
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        path.read_bytes()  # pydantic-settings reads a missing file as empty; a missing file is an error here
+        source = YamlConfigSettingsSource(settings_class, yaml_file=path, yaml_file_encoding="utf-8")
+        data = source()
     except OSError as exc:
         raise InvalidConfigError(f"{path}: cannot read the config file ({exc.strerror or exc})") from None
     except UnicodeDecodeError:
@@ -90,10 +129,8 @@ def _read_config_file(path: Path, mode: str) -> dict[str, Any]:
         raise InvalidConfigError(
             f"{path}: not valid YAML or JSON{where}: {getattr(exc, 'problem', None) or 'parse error'}"
         ) from None
-    if data is None:
-        return {}
-    if not isinstance(data, dict):
-        raise InvalidConfigError(f"{path}: expected a mapping with {', '.join(_CONFIG_SECTIONS)}")
+    except (TypeError, ValueError):  # the file is a list or scalar, which the source cannot read as settings
+        raise InvalidConfigError(f"{path}: expected a mapping with {', '.join(_CONFIG_SECTIONS)}") from None
     unknown = sorted(str(key) for key in data if key not in _CONFIG_SECTIONS)
     if unknown:
         raise InvalidConfigError(
@@ -131,7 +168,7 @@ def _read_config_file(path: Path, mode: str) -> dict[str, Any]:
         _unknown_fields(
             path, {k: v for k, v in data[name].items() if not (name == "replace" and k == "kind")}, model, name
         )
-    return data
+    return source
 
 
 def _missing_env(mode: str) -> None:
@@ -144,11 +181,9 @@ def _missing_env(mode: str) -> None:
 
 
 def _input(
-    arguments: Arguments, mode: str, data: BaseModel | None, file: dict[str, Any], path: Path | None
+    arguments: Arguments, mode: str, given: dict[str, Any], merged: dict[str, Any], path: Path | None
 ) -> AnonymizerInput:
-    """The input: the file's ``input`` section with the input flags over it."""
-    given = _given(data)
-    merged = _merge(file.get("input") or {}, given, AnonymizerInput)
+    """The input: the file's ``input`` section with the input flags over it, as the settings merged them."""
     if merged.get("source") is None:
         raise InvalidConfigError("--source is required" + (f" (or input.source in {path})" if path else ""))
     try:
@@ -156,6 +191,27 @@ def _input(
     except ValidationError as exc:
         name_for = functools.partial(_flag_after_parse, arguments, mode=mode, given={"data": given}, path=path)
         raise InvalidConfigError(_describe(exc, lambda loc: name_for(("input", *loc)))) from None
+
+
+class _NoFile(PydanticBaseSettingsSource):
+    """No ``--config`` file: the flags alone."""
+
+    def get_field_value(self, field: Any, field_name: str) -> tuple[Any, str, bool]:
+        return None, field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        return {}
+
+
+def _settings_error(exc: ValidationError, name_for: Any, path: Path | None) -> str:
+    """The settings' validation errors, as the CLI names them. Errors in ``detect`` come first and alone, as they
+    did when Detect was validated before the rest. A check of the whole Detect has no flag to name: without a file
+    it reads "value", as it did at parse time; with a file it reads "detect"."""
+    detect = [item for item in exc.errors() if item["loc"][:1] == ("detect",)]
+    if detect:
+        exc = ValidationError.from_exception_data(exc.title, detect)  # ty: ignore[invalid-argument-type]
+    whole = "value" if path is None else "detect"
+    return _describe(exc, lambda loc: whole if tuple(loc) == ("detect",) else name_for(loc))
 
 
 def _config(
@@ -170,30 +226,33 @@ def _config(
     field, validated once. A model the user gave no flag for comes from the file, else from its defaults. Telemetry
     is off if either the file or ``--no-emit-telemetry`` turns it off."""
     path = options.config
-    file = _read_config_file(path, mode) if path is not None else {}
     section = "rewrite" if mode == "rewrite" else "replace"
     if strategy is None:
         _missing_env(mode)
         strategy = MODES[mode]()
-    flags = {"strategy": _given(strategy), "detect": _given(detect)}
-    merged = {key: value for key, value in file.items() if key != "input"}
-    merged[section] = _merge(file.get(section) or {}, flags["strategy"], MODES[mode])
-    merged["detect"] = _merge(file.get("detect") or {}, flags["detect"], Detect)
-    if section == "replace":
-        merged["replace"]["kind"] = mode
+    flags = {"strategy": _given(strategy), "detect": _given(detect), "data": _given(data)}
+    settings_class = _settings_class(mode)
+    file = _read_config_file(path, mode, settings_class) if path is not None else None
+    if file is not None:
+        values = file()
+        _drop_replaced(values.get(section) or {}, flags["strategy"], MODES[mode])
+        _drop_replaced(values.get("detect") or {}, flags["detect"], Detect)
+    settings_class._file = file if file is not None else _NoFile(settings_class)
     name_for = functools.partial(_flag_after_parse, arguments, mode=mode, given=flags, path=path)
     try:
-        # Detect's cross-field checks run here, once, on the merged settings (the flags were parsed without them).
-        # A check of the whole model has no flag to name: without a file it reads "value", as it did at parse time;
-        # with a file it reads "detect".
-        merged["detect"] = Detect.model_validate(merged["detect"])
+        # A replace strategy's kind is set, as AnonymizerConfig's discriminator needs it in a dump.
+        strategy_values = {**flags["strategy"], "kind": mode} if section == "replace" else flags["strategy"]
+        given: dict[str, Any] = {"input": flags["data"], section: strategy_values, "detect": flags["detect"]}
+        settings = settings_class(**given)
     except ValidationError as exc:
-        whole = "detect" if path is not None else None  # file and flags together: no single flag to name
-        raise InvalidConfigError(_describe(exc, lambda loc: name_for(("detect", *loc)) if loc else whole)) from None
+        raise InvalidConfigError(_settings_error(exc, name_for, path)) from None
+    layered: dict[str, Any] = dict(settings)  # the validated fields, models kept as models
     try:
-        config = AnonymizerConfig.model_validate(merged)
+        config = AnonymizerConfig.model_validate(
+            {section: layered[section], "detect": layered["detect"], "emit_telemetry": layered["emit_telemetry"]}
+        )
     except ValidationError as exc:
         raise InvalidConfigError(_describe(exc, name_for)) from None
     if not options.emit_telemetry and config.emit_telemetry:
         config = config.model_copy(update={"emit_telemetry": False})
-    return config, _input(arguments, mode, data, file, path)
+    return config, _input(arguments, mode, flags["data"], layered["input"] or {}, path)
