@@ -11,7 +11,8 @@ import pytest
 
 import anonymizer.graph as graph
 from anonymizer.engine.io.reader import read_input
-from anonymizer.interface.cli.main import _cli_error_handler, app
+from anonymizer.interface.cli.app import app
+from anonymizer.interface.cli.errors import _cli_error_handler
 from anonymizer.interface.errors import AnonymizerIOError, InvalidConfigError
 
 
@@ -63,7 +64,7 @@ def test_error_handler_exits_nonzero(csv_file: Path, exc: Exception, subcommand:
     mock_anonymizer = MagicMock()
     getattr(mock_anonymizer, method).side_effect = exc
 
-    with patch("anonymizer.interface.cli.main.Anonymizer", return_value=mock_anonymizer):
+    with patch("anonymizer.interface.cli.commands.Anonymizer", return_value=mock_anonymizer):
         with pytest.raises(SystemExit) as exc_info:
             app([subcommand, "redact", "--source", str(csv_file)])
 
@@ -72,7 +73,7 @@ def test_error_handler_exits_nonzero(csv_file: Path, exc: Exception, subcommand:
 
 def test_bad_output_format_exits_before_pipeline(csv_file: Path) -> None:
     """An unsupported output extension is rejected before the pipeline runs."""
-    with patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
+    with patch("anonymizer.interface.cli.commands.Anonymizer") as mock_cls:
         with pytest.raises(SystemExit) as exc_info:
             app(["run", "redact", "--source", str(csv_file), "--output", "/tmp/out.xyz"])
         assert exc_info.value.code != 0
@@ -81,7 +82,7 @@ def test_bad_output_format_exits_before_pipeline(csv_file: Path) -> None:
 
 def test_output_same_as_source_exits(csv_file: Path) -> None:
     """Output path identical to source is rejected before the pipeline runs."""
-    with patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
+    with patch("anonymizer.interface.cli.commands.Anonymizer") as mock_cls:
         with pytest.raises(SystemExit) as exc_info:
             app(["run", "redact", "--source", str(csv_file), "--output", str(csv_file)])
         assert exc_info.value.code != 0
@@ -127,7 +128,7 @@ def test_a_hash_key_error_does_not_echo_the_key(
     rejected_key = "*" * 17  # a masked placeholder, which Hash refuses
     monkeypatch.setenv("ANONYMIZER_HASH_KEY", rejected_key)
     monkeypatch.setattr("sys.argv", ["anonymizer", "validate", "hash", "--source", str(csv_file)])
-    with patch("anonymizer.interface.cli.main.Anonymizer"), pytest.raises(SystemExit) as exc_info:
+    with patch("anonymizer.interface.cli.commands.Anonymizer"), pytest.raises(SystemExit) as exc_info:
         main()
     assert exc_info.value.code == 2
     out = capsys.readouterr()
@@ -161,7 +162,7 @@ def test_an_unusable_id_column_is_one_error_line(
     pd.DataFrame({"doc": ids, "text": ["Alice", "Bob"]}).to_csv(source, index=False)
     argv = ["anonymizer", "run", "redact", "--source", str(source), "--id-column", "doc"]
     monkeypatch.setattr("sys.argv", argv)
-    with patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
+    with patch("anonymizer.interface.cli.commands.Anonymizer") as mock_cls:
         mock_cls.return_value.run.side_effect = lambda *, config, data: read_input(data)
         with pytest.raises(SystemExit) as exc_info:
             main()
@@ -191,7 +192,7 @@ def test_parse_errors_are_one_line_naming_the_flag_for_every_caller(
     csv_file: Path, capsys: pytest.CaptureFixture[str], argv: list[str], code: int, expected: str
 ) -> None:
     """Calling ``app`` directly (as tests and embedders do) prints the same one-line errors as the entry point."""
-    with patch("anonymizer.interface.cli.main.Anonymizer"), pytest.raises(SystemExit) as exc_info:
+    with patch("anonymizer.interface.cli.commands.Anonymizer"), pytest.raises(SystemExit) as exc_info:
         app([*argv, "--source", str(csv_file)])
     assert exc_info.value.code == code
     out = capsys.readouterr()
@@ -204,7 +205,7 @@ def test_a_missing_hash_key_is_one_line_naming_the_variable(
     csv_file: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.delenv("ANONYMIZER_HASH_KEY", raising=False)
-    with patch("anonymizer.interface.cli.main.Anonymizer"), pytest.raises(SystemExit) as exc_info:
+    with patch("anonymizer.interface.cli.commands.Anonymizer"), pytest.raises(SystemExit) as exc_info:
         app(["validate", "hash", "--source", str(csv_file)])
     assert exc_info.value.code == 2
     lines = _error_lines(capsys.readouterr().err)

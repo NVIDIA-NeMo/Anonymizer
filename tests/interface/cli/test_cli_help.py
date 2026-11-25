@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from anonymizer.interface.cli.main import app
+from anonymizer.interface.cli.app import app
 
 
 @pytest.mark.parametrize("subcommand", ["run", "preview", "validate"])

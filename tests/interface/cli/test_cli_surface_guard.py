@@ -14,7 +14,8 @@ import pytest
 from pydantic import BaseModel
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect, Rewrite
-from anonymizer.interface.cli.main import MODES, app
+from anonymizer.interface.cli.app import app
+from anonymizer.interface.cli.params import MODES
 
 # Fields with no flag of their own, and why. See CHANGELOG "CLI and config surface".
 NOT_A_FLAG: dict[tuple[str, str], str] = {

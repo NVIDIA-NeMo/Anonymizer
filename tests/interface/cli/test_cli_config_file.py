@@ -16,7 +16,7 @@ import yaml
 
 from anonymizer.config.replace_strategies import Hash
 from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT, RiskTolerance
-from anonymizer.interface.cli.main import app
+from anonymizer.interface.cli.app import app
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def _write(tmp_path: Path, data: dict[str, Any], suffix: str = ".yaml") -> Path:
 
 def _call(verb: str, args: list[str]) -> tuple[int, Any]:
     """Run ``anonymizer <verb> ...`` with a mocked Anonymizer; return the exit code and the mock."""
-    with mock.patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
+    with mock.patch("anonymizer.interface.cli.commands.Anonymizer") as mock_cls:
         mock_cls.return_value.preview.return_value.dataframe = pd.DataFrame()
         with pytest.raises(SystemExit) as exc:
             app([verb, *args])

@@ -11,7 +11,7 @@ import pytest
 
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.interface.cli._output import write_result
-from anonymizer.interface.cli.main import app
+from anonymizer.interface.cli.app import app
 from anonymizer.interface.results import AnonymizerResult, PreviewResult
 
 
@@ -82,7 +82,7 @@ def test_run_default_output_path(tmp_path: Path, capsys: pytest.CaptureFixture, 
     mock_anonymizer = MagicMock()
     mock_anonymizer.run.return_value = _make_result()
 
-    with patch("anonymizer.interface.cli.main.Anonymizer", return_value=mock_anonymizer):
+    with patch("anonymizer.interface.cli.commands.Anonymizer", return_value=mock_anonymizer):
         with pytest.raises(SystemExit) as exc_info:
             app(["run", "redact", "--source", str(source)])
     assert exc_info.value.code == 0
@@ -100,7 +100,7 @@ def test_run_rewrite_default_output_path(tmp_path: Path, capsys: pytest.CaptureF
     mock_anonymizer = MagicMock()
     mock_anonymizer.run.return_value = _make_result()
 
-    with patch("anonymizer.interface.cli.main.Anonymizer", return_value=mock_anonymizer):
+    with patch("anonymizer.interface.cli.commands.Anonymizer", return_value=mock_anonymizer):
         with pytest.raises(SystemExit) as exc_info:
             app(["run", "rewrite", "--source", str(source)])
     assert exc_info.value.code == 0
@@ -117,7 +117,7 @@ def test_run_explicit_output(tmp_path: Path, capsys: pytest.CaptureFixture, csv_
     mock_anonymizer = MagicMock()
     mock_anonymizer.run.return_value = _make_result()
 
-    with patch("anonymizer.interface.cli.main.Anonymizer", return_value=mock_anonymizer):
+    with patch("anonymizer.interface.cli.commands.Anonymizer", return_value=mock_anonymizer):
         with pytest.raises(SystemExit) as exc_info:
             app(["run", "redact", "--source", str(csv_source), "--output", str(out_file)])
     assert exc_info.value.code == 0
@@ -145,7 +145,7 @@ def test_preview_prints_dataframe(tmp_path: Path, capsys: pytest.CaptureFixture,
     mock_anonymizer = MagicMock()
     mock_anonymizer.preview.return_value = preview_result
 
-    with patch("anonymizer.interface.cli.main.Anonymizer", return_value=mock_anonymizer):
+    with patch("anonymizer.interface.cli.commands.Anonymizer", return_value=mock_anonymizer):
         with pytest.raises(SystemExit) as exc_info:
             app(["preview", "redact", "--source", str(csv_source)])
     assert exc_info.value.code == 0

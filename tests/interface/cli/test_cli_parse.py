@@ -16,7 +16,8 @@ from anonymizer.config.anonymizer_config import AnonymizerConfig, Detect
 from anonymizer.config.regex import BuiltinRegex, RegexRule
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT, PrivacyGoal, RiskTolerance
-from anonymizer.interface.cli.main import MODES, app
+from anonymizer.interface.cli.app import app
+from anonymizer.interface.cli.params import MODES
 
 
 @pytest.fixture
@@ -33,7 +34,7 @@ def _hash_key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _validate(args: list[str]) -> tuple[int, AnonymizerConfig | None, Any]:
     """Run ``anonymizer validate`` with a mocked Anonymizer; return the exit code, the config and the mock."""
-    with mock.patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
+    with mock.patch("anonymizer.interface.cli.commands.Anonymizer") as mock_cls:
         with pytest.raises(SystemExit) as exc:
             app(["validate", *args])
     call = mock_cls.return_value.validate_config.call_args
@@ -147,7 +148,7 @@ def test_run_options_reach_the_anonymizer(csv_file: Path) -> None:
 
 
 def test_preview_passes_num_records(csv_file: Path) -> None:
-    with mock.patch("anonymizer.interface.cli.main.Anonymizer") as mock_cls:
+    with mock.patch("anonymizer.interface.cli.commands.Anonymizer") as mock_cls:
         mock_cls.return_value.preview.return_value.dataframe = pd.DataFrame()
         with pytest.raises(SystemExit) as exc:
             app(["preview", "rewrite", "--source", str(csv_file), "--num-records", "3"])
@@ -202,7 +203,8 @@ def test_help_renders_descriptions_as_plain_text(capsys: pytest.CaptureFixture[s
 
 
 def test_cli_defaults_come_from_the_sdk() -> None:
-    from anonymizer.interface.cli.main import _PREVIEW_NUM_RECORDS, RunOptions
+    from anonymizer.interface.cli.commands import _PREVIEW_NUM_RECORDS
+    from anonymizer.interface.cli.params import RunOptions
 
     assert RunOptions().emit_telemetry is AnonymizerConfig.model_fields["emit_telemetry"].default
     assert _PREVIEW_NUM_RECORDS == 10
