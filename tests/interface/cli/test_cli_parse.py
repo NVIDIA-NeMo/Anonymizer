@@ -95,9 +95,11 @@ def test_rewrite_flags_reach_rewrite(csv_file: Path) -> None:
             "--protect", "SSNs, addresses and medical record numbers",
             "--risk-tolerance", "minimal", "--max-repair-iterations", "5",
             "--use-combined-graph", "--strict-entity-protection",
+            "--instructions", "Keep dates approximate",
         ]
     )  # fmt: skip
     assert code == 0 and config is not None and config.rewrite is not None
+    assert config.rewrite.instructions == "Keep dates approximate"
     assert config.replace is None
     assert config.rewrite.privacy_goal == PrivacyGoal(
         protect="SSNs, addresses and medical record numbers", preserve=DEFAULT_PRESERVE_TEXT
@@ -168,7 +170,6 @@ def test_preview_passes_num_records(csv_file: Path) -> None:
         ("hash", ["--key", "on-the-command-line"]),
         ("substitute", ["--format-template", "[{label}]"]),
         ("rewrite", ["--format-template", "[{label}]"]),
-        ("rewrite", ["--instructions", "Keep dates approximate"]),
         ("rewrite", ["--algorithm", "sha256"]),
         ("redact", ["--kind", "hash"]),
     ],

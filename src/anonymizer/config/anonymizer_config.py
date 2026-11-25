@@ -375,9 +375,12 @@ class Rewrite(BaseModel):
     privacy_goal: Annotated[PrivacyGoal | None, cyclopts.Parameter(name="*")] = Field(
         default=None, description="Structured privacy goal. Auto-populated with defaults if not provided."
     )
-    # Never read by the rewrite (config-flow audit F10); not offered on the CLI.
-    instructions: Annotated[str | None, cyclopts.Parameter(parse=False)] = Field(
-        default=None, description="Additional instructions for the rewrite LLM."
+    instructions: str | None = Field(
+        default=None,
+        description=(
+            "Additional instructions for the rewrite and repair LLM, passed as literal text. "
+            "The evaluator and judges do not see them."
+        ),
     )
     risk_tolerance: RiskTolerance = Field(
         default=RiskTolerance.low,

@@ -32,7 +32,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.postprocess import EntitySpan, build_tagged_text
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.ndd.model_response import no_response
-from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.prompt_utils import substitute_placeholders, user_instructions_section
 from anonymizer.engine.replace.strategies import (
     ReplacementEntry,
     _parse_replacements,
@@ -54,8 +54,14 @@ logger = logging.getLogger("anonymizer.rewrite.generation")
 # ---------------------------------------------------------------------------
 
 
-def _get_rewrite_prompt(privacy_goal: PrivacyGoal, data_summary: str | None = None) -> str:
-    """Build the full rewrite prompt with XML section headers."""
+def _get_rewrite_prompt(
+    privacy_goal: PrivacyGoal, data_summary: str | None = None, instructions: str | None = None
+) -> str:
+    """Build the full rewrite prompt with XML section headers.
+
+    ``instructions`` is the user's ``Rewrite.instructions``. It goes into the generation and repair prompts only,
+    never into the evaluator or the judges, which score the result.
+    """
     data_context_section = ""
     if data_summary and data_summary.strip():
         data_context_section = "\n<data_context>\nDataset description: " + data_summary.strip() + "\n</data_context>\n"
@@ -74,7 +80,7 @@ Do not add justification text or commentary in the output. Only output the rewri
 <privacy_goal>
 <<PRIVACY_GOAL>>
 </privacy_goal>
-<<DATA_CONTEXT>>
+<<DATA_CONTEXT>><<USER_INSTRUCTIONS>>
 <input>
 The text below contains inline entity tags marking identified entities.
 {% if <<TAG_NOTATION>> == 'bracket' %}Tags use the format [[entity_value|entity_label]]. Remove all [[...]] tags.
@@ -126,6 +132,7 @@ Rules:
         {
             "<<PRIVACY_GOAL>>": privacy_goal.to_prompt_string(),
             "<<DATA_CONTEXT>>": data_context_section,
+            "<<USER_INSTRUCTIONS>>": user_instructions_section(instructions, jinja=True),
             "<<TAG_NOTATION>>": COL_TAG_NOTATION,
             "<<TAGGED_TEXT>>": _jinja(COL_REWRITE_TAGGED_TEXT),
             "<<REWRITE_DISPOSITION_BLOCK>>": COL_REWRITE_DISPOSITION_BLOCK,
@@ -331,6 +338,7 @@ class RewriteGenerationWorkflow:
         selected_models: RewriteModelSelection,
         privacy_goal: PrivacyGoal,
         data_summary: str | None = None,
+        instructions: str | None = None,
     ) -> list[ColumnConfigT]:
         rewriter_alias = resolve_model_alias("rewriter", selected_models)
         return [
@@ -349,7 +357,7 @@ class RewriteGenerationWorkflow:
             # A rewrite response that never parses keeps the row with no rewritten text, which is never released.
             ResponseColumnConfig(
                 name=COL_FULL_REWRITE,
-                prompt=_get_rewrite_prompt(privacy_goal, data_summary),
+                prompt=_get_rewrite_prompt(privacy_goal, data_summary, instructions),
                 model_alias=rewriter_alias,
                 output_format=RewriteOutputSchema,
                 ask_only_if=[COL_REWRITE_DISPOSITION_BLOCK],

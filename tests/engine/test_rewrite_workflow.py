@@ -1820,7 +1820,7 @@ def test_combined_runner_overriding_build_graph_with_release_signature_runs(
     calls = []
 
     class GraphOverride(CombinedRewriteWorkflow):
-        def build_graph(  # 0.4.0 public signature
+        def build_graph(  # 0.4.0 public signature  # ty: ignore[invalid-method-override]
             self,
             *,
             selected_models: RewriteModelSelection,

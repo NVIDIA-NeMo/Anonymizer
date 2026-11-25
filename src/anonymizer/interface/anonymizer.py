@@ -1244,6 +1244,9 @@ class Anonymizer:
                 preview_num_records=preview_num_records,
                 strict_entity_protection=config.rewrite.strict_entity_protection,
             )
+            if config.rewrite.instructions:
+                # Only when set, so a caller's runner whose run() predates the option keeps working.
+                rewrite_options["instructions"] = config.rewrite.instructions
             if rewrite_runner.__class__.run not in (RewriteWorkflow.run, CombinedRewriteWorkflow.run):
                 # A caller's runner overrides run(): detect, then call that override with the detection frame.
                 detection_result = detect(input_df)

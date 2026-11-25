@@ -193,6 +193,12 @@ scored again. Now each repair sees the previous repair's text.
 - What to do: nothing. With `max_repair_iterations` above 1 (the default is 3), output and metrics can differ.
 - Changed in: #354.
 
+**`Rewrite.instructions` reaches the rewrite.** It used to be accepted and never read. It is now given to the rewrite
+and repair models as literal text, after the privacy goal, which takes precedence. The evaluator, the QA generator,
+the disposition and domain steps and the judges do not see it. `run rewrite --instructions ...` sets it.
+- What to do: nothing, unless you set it before; then expect it to change the rewritten text.
+- Changed in: #NNN.
+
 **The review flag follows the final checks.** `needs_human_review` is set when a required check on the final text
 does not pass, when the row keeps a replaced value or a placeholder as described below, or when the utility score is
 missing or below the preset's floor. The checks are `high_leak`, `replacements_applied`,
@@ -426,10 +432,9 @@ The CLI is generated from the config models, so a config field is a flag under t
 same holds for `preview` and `validate`.
 - What to do: move the strategy name, or `rewrite`, right after the command, and drop `--replace` and `--rewrite`.
 
-**A flag of another mode or strategy is an unknown option.** For example `run redact --digest-length 8`,
-`run rewrite --format-template ...` and `run rewrite --instructions ...` exit with `Unknown option`. They used to be
-dropped, most without a warning. `--instructions` now belongs to `substitute` only: `Rewrite.instructions` was never
-read and has no flag.
+**A flag of another mode or strategy is an unknown option.** For example `run redact --digest-length 8` and
+`run rewrite --format-template ...` exit with `Unknown option`. They used to be dropped, most without a warning.
+`--instructions` belongs to `substitute` and `rewrite`.
 - What to do: remove the flag, or use the subcommand it belongs to (`run substitute --help` lists its flags).
 
 **New flags from the models.** `substitute` gains `--consistency`; `rewrite` gains `--use-combined-graph` and

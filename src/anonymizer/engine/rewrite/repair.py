@@ -29,7 +29,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.ndd.model_response import RetryBudget, ask, log_unavailable, no_response, row_key
-from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.prompt_utils import substitute_placeholders, user_instructions_section
 from anonymizer.engine.rewrite.parsers import (
     parse_privacy_answers,
     parse_privacy_qa,
@@ -54,6 +54,7 @@ REPAIR_BUDGET = RetryBudget(corrections=3, restarts=0)
 class RepairParams(BaseModel):
     privacy_goal_str: str
     max_privacy_leak: float
+    instructions: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +92,7 @@ def _render_repair_prompt(row: dict[str, Any], params: RepairParams) -> str:
 <privacy_goal>
 <<PRIVACY_GOAL>>
 </privacy_goal>
-
+<<USER_INSTRUCTIONS>>
 <original_text>
 <<ORIGINAL_TEXT>>
 </original_text>
@@ -175,6 +176,7 @@ Provide ONLY the rewritten text.
     utility = row.get(COL_UTILITY_SCORE, 0.0)
     replacements = {
         "<<PRIVACY_GOAL>>": params.privacy_goal_str,
+        "<<USER_INSTRUCTIONS>>": user_instructions_section(params.instructions, jinja=False),
         "<<MAX_PRIVACY_LEAK>>": str(params.max_privacy_leak),
         "<<ORIGINAL_TEXT>>": str(baseline),
         "<<REWRITTEN_TEXT>>": str(row.get(COL_REWRITTEN_TEXT, "")),
@@ -260,6 +262,7 @@ class RepairWorkflow:
         selected_models: RewriteModelSelection,
         privacy_goal: PrivacyGoal,
         effective_threshold: float,
+        instructions: str | None = None,
     ) -> list[ColumnConfigT]:
         repairer_alias = resolve_model_alias("repairer", selected_models)
 
@@ -276,6 +279,7 @@ class RepairWorkflow:
                 generator_params=RepairParams(
                     privacy_goal_str=privacy_goal.to_prompt_string(),
                     max_privacy_leak=effective_threshold,
+                    instructions=instructions,
                 ),
             ),
         ]

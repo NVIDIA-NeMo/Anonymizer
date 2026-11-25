@@ -59,3 +59,32 @@ def substitute_placeholders(
 
     pattern = re.compile("|".join(re.escape(k) for k in replacements))
     return pattern.sub(lambda m: replacements[m.group(0)], template)
+
+
+def jinja_literal(text: str) -> str:
+    """``text`` wrapped so a Jinja render emits it verbatim.
+
+    Prompts built with :func:`substitute_placeholders` are rendered as Jinja afterwards (by DataDesigner, or by the
+    validation and augmentation renderers), so user text such as ``instructions`` or ``data_summary`` placed in one
+    would otherwise be read as template code. The text goes in a ``{% raw %}`` block; each ``{%`` inside it closes the
+    block, emits ``{%`` as a string expression and reopens it, so the text cannot end the block itself.
+    """
+    return "{% raw %}" + text.replace("{%", "{% endraw %}{{ '{%' }}{% raw %}") + "{% endraw %}"
+
+
+def user_instructions_section(instructions: str | None, *, jinja: bool) -> str:
+    """The ``<user_instructions>`` block of the rewrite and repair prompts, or ``""`` when none are given.
+
+    ``jinja`` is True for a prompt that is rendered as Jinja afterwards, so the text is wrapped by
+    :func:`jinja_literal`; the repair prompt is sent as built and takes the text as is.
+    """
+    if not instructions or not instructions.strip():
+        return ""
+    text = instructions.strip()
+    return (
+        "\n<user_instructions>\n"
+        "Additional instructions from the user. Follow them when rewriting, unless they conflict with the privacy "
+        "goal or the protection decisions; privacy takes precedence.\n"
+        f"{jinja_literal(text) if jinja else text}\n"
+        "</user_instructions>\n"
+    )

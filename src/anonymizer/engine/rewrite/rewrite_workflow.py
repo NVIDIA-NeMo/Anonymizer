@@ -632,6 +632,7 @@ class RewriteWorkflow:
         data_summary: str | None = None,
         preview_num_records: int | None = None,
         strict_entity_protection: bool = False,
+        instructions: str | None = None,
     ) -> RewriteResult:
         with stage_timer("RewriteWorkflow.run", input_row_count=len(dataframe)) as measurement:
             entity_rows, passthrough_rows = _split_rewrite_rows(dataframe)
@@ -662,6 +663,7 @@ class RewriteWorkflow:
                 data_summary=data_summary,
                 preview_num_records=preview_num_records,
                 strict_entity_protection=strict_entity_protection,
+                instructions=instructions,
             )
             result = _rewrite_lowered(entity_rows, passthrough_rows, rows, produce, evaluation)
             measurement.update(
@@ -774,6 +776,7 @@ class RewriteWorkflow:
         data_summary: str | None = None,
         preview_num_records: int | None = None,
         strict_entity_protection: bool = False,
+        instructions: str | None = None,
     ) -> Callable[[], None]:
         """The frame stages over ``rows``: label classification, replacement map, pipeline, then the evaluate-repair
         loop."""
@@ -796,6 +799,7 @@ class RewriteWorkflow:
                     data_summary=data_summary,
                     preview_num_records=preview_num_records,
                     strict_entity_protection=strict_entity_protection,
+                    instructions=instructions,
                 ),
             ),
             *self._evaluate_repair_stages(
@@ -805,6 +809,7 @@ class RewriteWorkflow:
                 privacy_goal=privacy_goal,
                 evaluation=evaluation,
                 preview_num_records=preview_num_records,
+                instructions=instructions,
             ),
         ]
 
@@ -839,6 +844,7 @@ class RewriteWorkflow:
         data_summary: str | None,
         preview_num_records: int | None,
         strict_entity_protection: bool,
+        instructions: str | None = None,
     ) -> None:
         pipeline_columns = [
             *self._domain_wf.columns(selected_models=selected_models, data_summary=data_summary),
@@ -853,6 +859,7 @@ class RewriteWorkflow:
                 selected_models=selected_models,
                 privacy_goal=privacy_goal,
                 data_summary=data_summary,
+                instructions=instructions,
             ),
         ]
         pipeline_result, _ = run_columns(
@@ -881,6 +888,7 @@ class RewriteWorkflow:
         privacy_goal: PrivacyGoal,
         evaluation: EvaluationCriteria,
         preview_num_records: int | None,
+        instructions: str | None = None,
     ) -> list[tuple[str, Callable[[], None]]]:
         """The initial evaluate, then one repair and one re-evaluate per allowed iteration, then the null-dtype guard.
 
@@ -892,6 +900,7 @@ class RewriteWorkflow:
             selected_models=selected_models,
             privacy_goal=privacy_goal,
             effective_threshold=evaluation.repair_threshold,
+            instructions=instructions,
         )
 
         def run_and_join(df: pd.DataFrame, columns: list, name: str, *, overwrite: bool = False) -> pd.DataFrame:
