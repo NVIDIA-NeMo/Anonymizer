@@ -632,10 +632,8 @@ without echoing its value. `TextRecord` still ignores extra keys. Dumps written 
 that holds `Hash`, which needs its key (see "`Hash` requires a secret key").
 - What to do: remove or correct the key the error names.
 
-**`Rewrite.instructions` is removed.** It never reached the rewrite model. Passing a value raises an error that points
-to `privacy_goal`. A dump with `instructions: null` still loads. `Rewrite.privacy_goal` is typed `PrivacyGoal`, and
-`None` gives the default goal.
-- What to do: move the text into `privacy_goal.protect` and `privacy_goal.preserve`.
+**`Rewrite.privacy_goal` is typed `PrivacyGoal`.** `None` gives the default goal.
+- What to do: nothing.
 
 **Custom detection workflows take an options object.** An object passed as `Anonymizer(detection_workflow=...)` is
 called as `run(dataframe, *, options, context, latent_goal=None)`. Import `DetectionWorkflow`, `DetectionOptions` and
@@ -646,8 +644,8 @@ keywords. A detector that still takes the old keywords fails with `TypeError` at
 
 **Custom rewrite runners take options and context.** A `rewrite_runner` or `combined_rewrite_runner` that overrides
 `run()` is called as `run(dataframe, *, options, context)`, where `options` is the `Rewrite` config. It used to be
-called with eight keywords: `model_configs`, `selected_models`, `replace_model_selection`, `privacy_goal`,
-`evaluation`, `data_summary`, `preview_num_records` and `strict_entity_protection`.
+called with eight keywords (`model_configs`, `selected_models`, `replace_model_selection`, `privacy_goal`,
+`evaluation`, `data_summary`, `preview_num_records` and `strict_entity_protection`), and `instructions` when set.
 - What to do: change the override's signature.
 
 **Detection export needs the builders.** `export_detection_config` and `export_detection_builder_for_seed` raise
