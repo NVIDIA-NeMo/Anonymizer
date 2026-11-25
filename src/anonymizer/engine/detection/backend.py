@@ -9,6 +9,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, SupportsFloat, SupportsIndex, SupportsInt
 
+from anonymizer.config.entity_labels import normalize_entity_label
 from anonymizer.engine.constants import COL_REGEX_DETECTION_RESULTS, COL_SEED_DETECTION_RESULT
 from anonymizer.engine.schemas import (
     AdmissionRoute,
@@ -99,7 +100,7 @@ class _GlinerDetectionBackend:
             candidates,
             key=lambda item: (
                 item[0],
-                item[1].strip().casefold(),
+                normalize_entity_label(item[1]),
                 item[2] is None,
                 -(item[2] or 0.0),
                 item[3],

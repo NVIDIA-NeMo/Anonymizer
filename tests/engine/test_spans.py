@@ -14,7 +14,7 @@ from itertools import product
 import numpy as np
 import pytest
 
-from anonymizer.engine.spans import Span, Spans
+from anonymizer.engine.spans import Span, Spans, within
 
 
 @pytest.mark.parametrize(("start", "end"), [(-1, 2), (3, 2), (-2, -1)])
@@ -194,3 +194,17 @@ def test_uncovered() -> None:
     detected = Spans([Span(0, 5), Span(10, 15)])
     matches = [Span(1, 3), Span(4, 7), Span(12, 15), Span(20, 22)]
     assert detected.uncovered(matches) == Spans([Span(4, 7), Span(20, 22)])
+
+
+def test_within_keeps_the_records_whose_range_lies_in_the_text() -> None:
+    @dataclasses.dataclass
+    class Record:
+        start_position: int
+        end_position: int
+
+    records = [Record(0, 4), Record(2, 2), Record(4, 4), Record(3, 5), Record(-1, 1), Record(3, 2)]
+    assert [(r.start_position, span) for r, span in within(4, records)] == [
+        (0, Span(0, 4)),
+        (2, Span(2, 2)),
+        (4, Span(4, 4)),
+    ]

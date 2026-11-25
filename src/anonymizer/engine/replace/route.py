@@ -40,6 +40,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.detect_step import DetectState, accepted_mentions, detect_step, missing
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
+from anonymizer.engine.edits import Edit, Edits
 from anonymizer.engine.graph_core.authoring import (
     DATUM,
     MENTIONS,
@@ -441,15 +442,12 @@ def _verify_patches(
     target: Datum,
 ) -> Assessment:
     """Reconstruct source-plus-patches, one patch per accepted mention, and compare with the candidate."""
-    parts: list[str] = []
-    cursor = 0
-    for m, synthetic in zip(mentions, _patches(source, mentions, replacement_map)):
-        if synthetic is None:
-            return Assessment(False, target, "unpatched_mention")
-        parts += [source[cursor : m.start], synthetic]
-        cursor = m.end
-    parts.append(source[cursor:])
-    satisfied = "".join(parts) == text and application.get("skipped_span_count") == 0
+    patches = _patches(source, mentions, replacement_map)
+    if any(synthetic is None for synthetic in patches):
+        return Assessment(False, target, "unpatched_mention")
+    # The kernel admits only in-range mentions that do not overlap, so these edits always stand together.
+    edits = Edits(source, (Edit(Span(m.start, m.end), p, m.label) for m, p in zip(mentions, patches) if p is not None))
+    satisfied = edits.apply() == text and application.get("skipped_span_count") == 0
     return Assessment(satisfied, target, "" if satisfied else "reconstruction_mismatch")
 
 

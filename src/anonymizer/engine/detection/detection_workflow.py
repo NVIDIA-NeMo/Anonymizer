@@ -19,6 +19,7 @@ from data_designer.config.models import ModelConfig
 
 from anonymizer.config.anonymizer_config import Detect as AnonymizerDetectConfig
 from anonymizer.config.anonymizer_config import resolve_effective_detection_labels
+from anonymizer.config.entity_labels import in_label_scope
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
 from anonymizer.config.rewrite import PrivacyGoal
@@ -50,7 +51,6 @@ from anonymizer.engine.detection.entity_label_examples import ResolvedEntityLabe
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     group_entities_by_value,
-    normalize_label,
     normalize_labels,
 )
 from anonymizer.engine.detection.regex_detection import (
@@ -218,7 +218,9 @@ class EntityDetectionWorkflow:
             rules=custom_rules,
         )
         normalized_regex_constrained_labels = normalize_labels(regex_constrained_labels)
-        model_labels = [label for label in labels if normalize_label(label) not in normalized_regex_constrained_labels]
+        model_labels = [
+            label for label in labels if in_label_scope(label, excluded=normalized_regex_constrained_labels)
+        ]
         resolved_regex_rules = resolve_regex_rules(
             labels=labels,
             builtin_regexes=builtin_regexes,
@@ -699,11 +701,7 @@ def _materialize_final_entities(
     parsed = EntitiesSchema.from_raw(raw)
     allowed = normalize_labels(allowed_labels) if allowed_labels is not None else None
     excluded = normalize_labels(excluded_entity_labels)
-    kept = [
-        e
-        for e in parsed.entities
-        if (allowed is None or normalize_label(e.label) in allowed) and normalize_label(e.label) not in excluded
-    ]
+    kept = [e for e in parsed.entities if in_label_scope(e.label, excluded=excluded, allowed=allowed)]
     return EntitiesSchema(entities=kept).model_dump()
 
 
@@ -714,7 +712,7 @@ def _filter_excluded_latent_entities(raw: object, excluded_entity_labels: list[s
         return raw
 
     if isinstance(raw, LatentEntitiesSchema):
-        kept = [entity for entity in raw.latent_entities if normalize_label(entity.label) not in excluded]
+        kept = [entity for entity in raw.latent_entities if in_label_scope(entity.label, excluded=excluded)]
         return LatentEntitiesSchema(latent_entities=kept).model_dump(mode="json")
 
     if isinstance(raw, str):
@@ -733,7 +731,7 @@ def _filter_excluded_latent_entities(raw: object, excluded_entity_labels: list[s
             "latent_entities": [
                 entity
                 for entity in entities
-                if not isinstance(entity, dict) or normalize_label(str(entity.get("label", ""))) not in excluded
+                if not isinstance(entity, dict) or in_label_scope(str(entity.get("label", "")), excluded=excluded)
             ],
         }
 
@@ -742,7 +740,7 @@ def _filter_excluded_latent_entities(raw: object, excluded_entity_labels: list[s
         return [
             entity
             for entity in raw
-            if not isinstance(entity, dict) or normalize_label(str(entity.get("label", ""))) not in excluded
+            if not isinstance(entity, dict) or in_label_scope(str(entity.get("label", "")), excluded=excluded)
         ]
 
     return raw

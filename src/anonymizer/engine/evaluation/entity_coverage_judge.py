@@ -13,6 +13,7 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
 from pydantic import BaseModel, Field
 
+from anonymizer.config.entity_labels import in_label_scope
 from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
@@ -25,7 +26,7 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
     _jinja,
 )
-from anonymizer.engine.detection.postprocess import normalize_label, normalize_labels
+from anonymizer.engine.detection.postprocess import normalize_labels
 from anonymizer.engine.evaluation.judge_base import JudgeResult, _BaseJudgeWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, exception_class_label
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
@@ -90,7 +91,7 @@ def _effective_entity_labels(
     if not excluded_entity_labels:
         return entity_labels
     excluded = normalize_labels(excluded_entity_labels)
-    effective = [label for label in entity_labels if normalize_label(label) not in excluded]
+    effective = [label for label in entity_labels if in_label_scope(label, excluded=excluded)]
     return effective
 
 
@@ -425,8 +426,7 @@ def _filter_out_of_scope_entities(
         label = str(entity.get("label", "")).strip()
         if not label:
             continue
-        normalized_label = normalize_label(label)
-        if (allowed is not None and normalized_label not in allowed) or normalized_label in excluded:
+        if not in_label_scope(label, excluded=excluded, allowed=allowed):
             continue
         result.append(entity)
     return result

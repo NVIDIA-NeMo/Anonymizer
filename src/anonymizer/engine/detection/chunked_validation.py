@@ -31,12 +31,14 @@ import functools
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import count
 from typing import Any
 
 from data_designer.engine.models.recipes.response_recipes import PydanticResponseRecipe
 from jinja2 import BaseLoader, Environment, StrictUndefined
 from pydantic import BaseModel, Field
 
+from anonymizer.config.entity_labels import normalize_entity_label
 from anonymizer.engine.constants import (
     COL_TAG_NOTATION,
     COL_TEXT,
@@ -50,6 +52,8 @@ from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     TagNotation,
     build_tagged_text,
+    conflict_group_ids,
+    group_marker,
     group_overlapping_spans,
 )
 from anonymizer.engine.schemas import (
@@ -189,7 +193,7 @@ def build_validation_conflict_groups(
         key=lambda item: (
             item.start_position,
             item.end_position,
-            item.label.strip().casefold(),
+            normalize_entity_label(item.label),
             item.detection_result_id,
             item.observation_id,
         ),
@@ -265,27 +269,11 @@ def prepare_validation_requests(
 
         entries: list[ValidationInventoryEntry] = []
         prompt_markers: list[EntitySpan] = []
-        next_alias = 1
-        next_group_alias = 1
+        aliases = (f"c{n}" for n in count(1))
+        group_ids = conflict_group_ids()
         for group in chunk:
-            conflict_group_id = None
-            if len(group) > 1:
-                conflict_group_id = f"g{next_group_alias}"
-                next_group_alias += 1
-                bounds = Span.cover(observation.span for observation in group)
-                marker = bounds.shifted(-context.start)
-                prompt_markers.append(
-                    EntitySpan(
-                        entity_id=conflict_group_id,
-                        value=canonical_text[bounds.slice],
-                        label=f"NAGROUP_{conflict_group_id}",
-                        start_position=marker.start,
-                        end_position=marker.end,
-                        score=0.0,
-                        source="validation_prompt",
-                    )
-                )
-            else:
+            conflict_group_id = next(group_ids) if len(group) > 1 else None
+            if conflict_group_id is None:
                 observation = group[0]
                 marker = observation.span.shifted(-context.start)
                 prompt_markers.append(
@@ -299,19 +287,25 @@ def prepare_validation_requests(
                         source="validation_prompt",
                     )
                 )
-            for observation in group:
-                entries.append(
-                    ValidationInventoryEntry(
-                        alias=f"c{next_alias}",
-                        conflict_group_id=conflict_group_id,
-                        observation_ref=observation.ref,
-                        value=observation.value,
-                        label=observation.label,
-                        start_position=observation.start_position,
-                        end_position=observation.end_position,
+            else:
+                spans = (observation.span for observation in group)
+                prompt_markers.append(
+                    group_marker(
+                        conflict_group_id, canonical_text, spans, source="validation_prompt", offset=context.start
                     )
                 )
-                next_alias += 1
+            entries.extend(
+                ValidationInventoryEntry(
+                    alias=next(aliases),
+                    conflict_group_id=conflict_group_id,
+                    observation_ref=observation.ref,
+                    value=observation.value,
+                    label=observation.label,
+                    start_position=observation.start_position,
+                    end_position=observation.end_position,
+                )
+                for observation in group
+            )
 
         context_view = SourceView(
             source_text_ref=detection_result.source_view.source_text_ref,

@@ -59,7 +59,7 @@ from anonymizer.engine.detection.entity_label_examples import (
     ResolvedEntityLabelConfig,
     resolve_entity_label_config,
 )
-from anonymizer.engine.detection.postprocess import TagNotation, _format_entity_tag
+from anonymizer.engine.detection.postprocess import TagNotation
 from anonymizer.engine.graph_core.kernel import CancelToken, run_in_frame
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import (
@@ -725,7 +725,7 @@ def test_validation_prompt_example_matches_conflict_skeleton_and_excerpt_offsets
         ("San Diego", "country"),
         ("Diego", "first_name"),
     ]
-    assert _format_entity_tag(value="San Diego", label="NAGROUP_g1", notation=notation) in example
+    assert notation.tag("San Diego", "NAGROUP_g1") in example
     assert output[3]["decision"] == "reclass"
     assert output[3]["proposed_label"] == "city"
     assert output[4]["decision"] == "drop"

@@ -192,3 +192,29 @@ def test_group_entities_by_value_sorts_by_value() -> None:
 
 def test_group_entities_by_value_empty() -> None:
     assert group_entities_by_value(entities=[]) == []
+
+
+def test_tagged_text_drops_a_tag_past_the_end() -> None:
+    entities = [
+        EntitySpan("e1", "Paris", "city", 10, 15, 1.0, "detector"),
+        EntitySpan("e2", "", "late", 30, 30, 1.0, "detector"),
+        EntitySpan("e3", "is.", "tail", 13, 20, 1.0, "detector"),
+    ]
+    assert build_tagged_text("We met in Paris.", entities[:1], notation="xml") == "We met in <city>Paris</city>."
+    assert build_tagged_text("We met in Paris.", entities[1:], notation="xml") == "We met in Paris."
+
+
+def test_a_tag_keeps_braces_in_its_value_and_label_verbatim() -> None:
+    """Each notation's tag is a ``str.format`` template: braces in the value or label are text, never fields."""
+    entities = [EntitySpan("id1", "{0}", "na{me}", 3, 6, 1.0, "detector")]
+    tagged = {n: build_tagged_text("ab {0} cd", entities, notation=n) for n in ("xml", "bracket", "paren", "sentinel")}
+    assert tagged == {
+        "xml": "ab <na{me}>{0}</na{me}> cd",
+        "bracket": "ab [[{0}|na{me}]] cd",
+        "paren": "ab ((SENSITIVE:na{me}|{0})) cd",
+        "sentinel": "ab <<SENSITIVE:na{me}>>{0}<</SENSITIVE:na{me}>> cd",
+    }
+
+
+def test_tied_notations_resolve_in_member_order() -> None:
+    assert get_tag_notation("< [[ ((SENSITIVE: <<SENSITIVE:") == "bracket"

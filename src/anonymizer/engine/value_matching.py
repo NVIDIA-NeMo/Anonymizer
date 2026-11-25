@@ -137,7 +137,7 @@ def entity_spans(source: str, entities: Iterable[EntitySchema]) -> list[tuple[Sp
     holds nothing."""
 
     def span_of(entity: EntitySchema) -> Span | None:
-        span = Span.in_text(entity.start_position, entity.end_position, source)
+        span = entity.span_in(source)
         return span if span is not None and source[span.slice] == entity.value else None
 
     return [(span_of(e), e.label) for e in sorted(entities, key=lambda e: e.start_position)]

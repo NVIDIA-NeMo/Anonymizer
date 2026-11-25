@@ -44,7 +44,6 @@ from anonymizer.engine.schemas import (
     EntityReplacementMapSchema,
     EntitySchema,
 )
-from anonymizer.engine.spans import Span
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +191,7 @@ def _render_highlighted_text(text: str, entities: list[EntitySchema]) -> str:
     parts: list[str] = []
     cursor = 0
     for entity in sorted_entities:
-        span = Span.in_text(entity.start_position, entity.end_position, text)
+        span = entity.span_in(text)
         if span is None or span.start < cursor:
             continue
 
@@ -249,7 +248,7 @@ def _build_replaced_entities(
     search_from = 0
 
     for entity in sorted_entities:
-        span = Span.in_text(entity.start_position, entity.end_position, original_text)
+        span = entity.span_in(original_text)
         if span is None or span.start < original_cursor:
             continue
 

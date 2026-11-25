@@ -24,8 +24,8 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
+from anonymizer.engine.protection_policy import FailureStep
 from anonymizer.engine.schemas.rewrite import SensitivityLevel
-from anonymizer.interface.anonymizer import _step_to_field
 from anonymizer.measurement.metrics.rewrite import _rewrite_record_fields
 from anonymizer.measurement.records.row import _EvaluationBoolField
 
@@ -49,7 +49,7 @@ _EVALUATE_ONLY = {"replace-judges"}
 def test_workflow_name_has_failure_count_key(name: str) -> None:
     # f-string names like ``rewrite-repair-{iteration}`` are captured by their prefix.
     step = f"{name}0" if name.endswith("-") else name
-    assert _step_to_field(step) != "unknown"
+    assert FailureStep.count_of(step) != "unknown"
 
 
 @pytest.mark.parametrize("tolerance", list(RiskTolerance))

@@ -4,47 +4,25 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from enum import Enum
-from typing import TypeVar
+from itertools import count
 
+from anonymizer.config.entity_labels import label_keys
 from anonymizer.config.entity_labels import normalize_entity_label as normalize_label
+from anonymizer.engine.edits import Edit, Edits, Prefer
 from anonymizer.engine.schemas import DetectionResult
-from anonymizer.engine.spans import Span
+from anonymizer.engine.spans import BY_START_END, Positioned, Span, group_overlapping_spans, within
 
 VALIDATION_CONTEXT_WINDOW = 32
-_ItemT = TypeVar("_ItemT")
-
-
-def group_overlapping_spans(
-    ordered_items: Iterable[_ItemT],
-    *,
-    span: Callable[[_ItemT], Span],
-) -> list[tuple[_ItemT, ...]]:
-    """Group start-ordered items into connected components of overlapping spans.
-
-    Callers supply items sorted by span start and choose their own tie
-    ordering. An item joins the current group when its span starts before
-    the group's furthest end, so touching spans remain separate while nested
-    and transitively overlapping spans stay together.
-    """
-    groups: list[list[_ItemT]] = []
-    reach = 0  # the current group's furthest end; unread until the first item starts a group
-    for item in ordered_items:
-        item_span = span(item)
-        if groups and item_span.start < reach:
-            groups[-1].append(item)
-            reach = max(reach, item_span.end)
-        else:
-            groups.append([item])
-            reach = item_span.end
-    return [tuple(group) for group in groups]
 
 
 @dataclass(frozen=True)
-class EntitySpan:
+class EntitySpan(Positioned):
     """Canonical standoff entity representation."""
+
+    _noun = "entity span"
 
     entity_id: str
     value: str
@@ -53,10 +31,6 @@ class EntitySpan:
     end_position: int
     score: float
     source: str
-
-    @property
-    def span(self) -> Span:
-        return Span(self.start_position, self.end_position)
 
     def as_dict(self) -> dict[str, str | int | float]:
         return {
@@ -70,9 +44,8 @@ class EntitySpan:
         }
 
 
-def normalize_labels(labels: Iterable[str] | None) -> set[str]:
-    """Normalize a collection of labels, dropping empty/whitespace-only entries."""
-    return {normalized for label in labels or [] if (normalized := normalize_label(label))}
+normalize_labels = label_keys
+"""The keys of a collection of labels, dropping empty and whitespace-only ones (``label_keys``)."""
 
 
 def is_reserved_entity_label(label: str) -> bool:
@@ -81,10 +54,29 @@ def is_reserved_entity_label(label: str) -> bool:
 
 
 class TagNotation(str, Enum):
-    xml = "xml"
-    bracket = "bracket"
-    paren = "paren"
-    sentinel = "sentinel"
+    """How prompt text marks an entity: the ``markers`` whose count in a text decides the notation, and the tag
+    ``template``. A text gets the first notation, in member order, whose markers occur least often in it."""
+
+    markers: tuple[str, ...]
+    template: str
+
+    def __new__(cls, value: str, markers: tuple[str, ...], template: str) -> TagNotation:
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.markers = markers
+        member.template = template
+        return member
+
+    xml = "xml", ("<", "</"), "<{label}>{value}</{label}>"
+    bracket = "bracket", ("[[", "]]"), "[[{value}|{label}]]"
+    paren = "paren", ("((SENSITIVE:", "))"), "((SENSITIVE:{label}|{value}))"
+    sentinel = "sentinel", ("<<SENSITIVE:", "<</SENSITIVE:"), "<<SENSITIVE:{label}>>{value}<</SENSITIVE:{label}>>"
+
+    def marker_count(self, text: str) -> int:
+        return sum(text.count(marker) for marker in self.markers)
+
+    def tag(self, value: str, label: str) -> str:
+        return self.template.format(value=value, label=label)
 
 
 def project_detection_result_to_entity_spans(result: DetectionResult) -> list[EntitySpan]:
@@ -114,20 +106,18 @@ def project_detection_result_to_entity_spans(result: DetectionResult) -> list[En
 def build_validation_candidates(text: str, entities: list[EntitySpan]) -> list[dict[str, str]]:
     """Build per-entity validation payload with context windows."""
     # TODO(lramaswamy): make validation context window configurable from AnonymizerConfig.
-    candidates: list[dict[str, str]] = []
-    for entity in entities:
-        before_start = max(0, entity.start_position - VALIDATION_CONTEXT_WINDOW)
-        after_end = min(len(text), entity.end_position + VALIDATION_CONTEXT_WINDOW)
-        candidates.append(
-            {
-                "id": entity.entity_id,
-                "value": entity.value,
-                "label": entity.label,
-                "context_before": text[before_start : entity.start_position],
-                "context_after": text[entity.end_position : after_end],
-            }
-        )
-    return candidates
+    return [
+        {
+            "id": entity.entity_id,
+            "value": entity.value,
+            "label": entity.label,
+            "context_before": text[max(0, entity.start_position - VALIDATION_CONTEXT_WINDOW) : entity.start_position],
+            "context_after": text[
+                entity.end_position : min(len(text), entity.end_position + VALIDATION_CONTEXT_WINDOW)
+            ],
+        }
+        for entity in entities
+    ]
 
 
 def build_tagged_text(
@@ -154,22 +144,32 @@ def build_tagged_text(
         resolved_notation = notation
     else:
         resolved_notation = TagNotation(notation)
-    cursor = 0
-    parts: list[str] = []
-    for entity in sorted(entities, key=lambda item: (item.start_position, item.end_position)):
-        if entity.start_position < cursor:
-            continue
-        parts.append(text[cursor : entity.start_position])
-        parts.append(
-            _format_entity_tag(
-                value=text[entity.start_position : entity.end_position],
-                label=entity.label,
-                notation=resolved_notation,
-            )
-        )
-        cursor = entity.end_position
-    parts.append(text[cursor:])
-    return "".join(parts)
+    # A tag whose range is not in the text is dropped.
+    tags = [Edit(span, resolved_notation.tag(text[span.slice], e.label)) for e, span in within(len(text), entities)]
+    # Among overlapping tags the earlier, then the shorter, stands; identical spans keep input order.
+    edits, _ = Edits.admit(text, tags, Prefer(BY_START_END))
+    return edits.apply()
+
+
+def conflict_group_ids() -> Iterator[str]:
+    """``g1``, ``g2``, ...: the ids of a prompt's conflict groups (groups of two or more), in order."""
+    return (f"g{n}" for n in count(1))
+
+
+def group_marker(group_id: str, text: str, spans: Iterable[Span], *, source: str, offset: int = 0) -> EntitySpan:
+    """The neutral ``NAGROUP_<group_id>`` marker over the span covering ``spans`` in ``text``, placed ``offset``
+    characters earlier (a prompt excerpt's start), with no score."""
+    bounds = Span.cover(spans)
+    placed = bounds.shifted(-offset)
+    return EntitySpan(
+        entity_id=group_id,
+        value=text[bounds.slice],
+        label=f"NAGROUP_{group_id}",
+        start_position=placed.start,
+        end_position=placed.end,
+        score=0.0,
+        source=source,
+    )
 
 
 def build_conflict_aware_tagged_text(text: str, entities: list[EntitySpan]) -> str:
@@ -185,27 +185,14 @@ def build_conflict_aware_tagged_text(text: str, entities: list[EntitySpan]) -> s
     )
     groups = group_overlapping_spans(ordered, span=lambda entity: entity.span)
 
-    markers: list[EntitySpan] = []
-    next_group_id = 1
-    for group in groups:
+    group_ids = conflict_group_ids()
+
+    def marker(group: tuple[EntitySpan, ...]) -> EntitySpan:
         if len(group) == 1:
-            markers.append(group[0])
-            continue
-        bounds = Span.cover(entity.span for entity in group)
-        group_id = f"g{next_group_id}"
-        next_group_id += 1
-        markers.append(
-            EntitySpan(
-                entity_id=group_id,
-                value=text[bounds.slice],
-                label=f"NAGROUP_{group_id}",
-                start_position=bounds.start,
-                end_position=bounds.end,
-                score=0.0,
-                source="prompt_marker",
-            )
-        )
-    return build_tagged_text(text=text, entities=markers)
+            return group[0]
+        return group_marker(next(group_ids), text, (entity.span for entity in group), source="prompt_marker")
+
+    return build_tagged_text(text=text, entities=[marker(group) for group in groups])
 
 
 def get_tag_notation(text: str) -> str:
@@ -230,24 +217,4 @@ def _build_entity_id(*, label: str, start: int, end: int) -> str:
 
 
 def _choose_tag_notation(text: str) -> TagNotation:
-    candidates: tuple[tuple[TagNotation, tuple[str, ...]], ...] = (
-        (TagNotation.xml, ("<", "</")),
-        (TagNotation.bracket, ("[[", "]]")),
-        (TagNotation.paren, ("((SENSITIVE:", "))")),
-        (TagNotation.sentinel, ("<<SENSITIVE:", "<</SENSITIVE:")),
-    )
-    scored = sorted(
-        ((sum(text.count(marker) for marker in markers), notation) for notation, markers in candidates),
-        key=lambda item: item[0],
-    )
-    return scored[0][1]
-
-
-def _format_entity_tag(*, value: str, label: str, notation: TagNotation) -> str:
-    if notation == TagNotation.xml:
-        return f"<{label}>{value}</{label}>"
-    if notation == TagNotation.bracket:
-        return f"[[{value}|{label}]]"
-    if notation == TagNotation.paren:
-        return f"((SENSITIVE:{label}|{value}))"
-    return f"<<SENSITIVE:{label}>>{value}<</SENSITIVE:{label}>>"
+    return min(TagNotation, key=lambda notation: notation.marker_count(text))

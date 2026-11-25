@@ -40,6 +40,7 @@ from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.backend import BackendRun, DataDesignerBackend
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.protection_policy import FailureStep
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema, EntityReplacementMapSchema
 from anonymizer.engine.schemas.shared import normalize_payload
@@ -112,7 +113,7 @@ class LlmReplaceWorkflow:
         if RECORD_ID_COLUMN not in source and not source.empty:
             raise AnonymizerWorkflowError(f"The Substitute map step's input has no {RECORD_ID_COLUMN} column")
         expected = [EntitiesByValueSchema.from_raw(raw) for raw in source[entities_column]]
-        missing = [_entity_pairs(entities) for entities in expected]
+        missing = [entity_pairs(entities) for entities in expected]
         accepted: list[dict[str, list[dict[str, str]]]] = [{"replacements": []} for _ in expected]
         pending = [position for position, pairs in enumerate(missing) if pairs]
         if preview_num_records is not None:
@@ -154,7 +155,7 @@ class LlmReplaceWorkflow:
                     failed.append(
                         FailedRecord(
                             record_id=str(source[RECORD_ID_COLUMN].iloc[position]),
-                            step="replace-map-generation",
+                            step=FailureStep.REPLACE_MAP_GENERATION,
                             reason="Replacement map retry failed before a complete map was returned",
                         )
                     )
@@ -199,7 +200,9 @@ class LlmReplaceWorkflow:
                     reported[record_id] -= 1
                 else:
                     failed.append(
-                        FailedRecord(record_id, "replace-map-generation", "Record missing from workflow output")
+                        FailedRecord(
+                            record_id, FailureStep.REPLACE_MAP_GENERATION, "Record missing from workflow output"
+                        )
                     )
             pending = [position for position in pending if position in returned and missing[position]]
             if pending and attempt == 0:
@@ -216,7 +219,7 @@ class LlmReplaceWorkflow:
             failed.append(
                 FailedRecord(
                     record_id=str(source[RECORD_ID_COLUMN].iloc[position]),
-                    step="replace-map-generation",
+                    step=FailureStep.REPLACE_MAP_GENERATION,
                     reason=f"Replacement map incomplete after one retry: {len(missing[position])} requested pair(s) "
                     f"have no mapping (missing_by_label={labels})",
                 )
@@ -336,7 +339,8 @@ class LlmReplaceWorkflow:
         )
 
 
-def _entity_pairs(entities: EntitiesByValueSchema) -> set[tuple[str, str]]:
+def entity_pairs(entities: EntitiesByValueSchema) -> set[tuple[str, str]]:
+    """The ``(value, label)`` pairs of a by-value entity list, skipping an empty value or label."""
     return {
         (entity.value, label)
         for entity in entities.entities_by_value
@@ -639,12 +643,7 @@ def _filter_replacement_map_to_input_entities(
 
     parsed_map = EntityReplacementMapSchema.model_validate(raw_map)
 
-    allowed_pairs = {
-        (entity.value, label)
-        for entity in parsed_entities.entities_by_value
-        for label in entity.labels
-        if entity.value and label
-    }
+    allowed_pairs = entity_pairs(parsed_entities)
     exact_pairs = {(entry.original, entry.label) for entry in parsed_map.replacements} & allowed_pairs
     equivalent_pairs: dict[tuple[str, str], set[tuple[str, str]]] = {}
     if reconcile_unicode_whitespace:

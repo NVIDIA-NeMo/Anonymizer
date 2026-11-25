@@ -18,6 +18,7 @@ from data_designer.engine.models.errors import (
 from data_designer.engine.models.recipes.response_recipes import PydanticResponseRecipe
 from jinja2 import BaseLoader, Environment, StrictUndefined
 
+from anonymizer.config.entity_labels import normalize_entity_label
 from anonymizer.engine.constants import (
     AUGMENTATION_DETECTION_RESULT_ID,
     COL_ADMITTED_CANDIDATES,
@@ -35,7 +36,6 @@ from anonymizer.engine.detection.admission import apply_validation_admission
 from anonymizer.engine.detection.candidates import (
     coalesce_exact_candidates,
     materialize_admitted_candidates,
-    normalize_candidate_label,
 )
 from anonymizer.engine.schemas import (
     AdmissionResults,
@@ -302,7 +302,7 @@ def _to_detection_result(
     """Assign source-ordered observation IDs after grounding and retry finish."""
     ordered_occurrences = sorted(
         occurrences,
-        key=lambda occurrence: (occurrence.span, normalize_candidate_label(occurrence.label), occurrence.item_index),
+        key=lambda occurrence: (occurrence.span, normalize_entity_label(occurrence.label), occurrence.item_index),
     )
     observations = tuple(
         Observation(

@@ -11,10 +11,17 @@ Operators, each with one meaning:
 - ``a & b``: the characters two spans share, as a ``Span``, or ``None`` when they share none.
 - ``a - b``: the characters of ``a`` outside ``b``, as ``Spans``.
 - ``a < b``: sort order by start, then end. It is not the subset test.
+- ``a.precedes(b)``: ``a`` ends at or before ``b`` starts, so the two apply in this order. Two edits conflict unless
+  one precedes the other: an insertion (an empty span) stands beside another edit unless it lies strictly inside it.
 - ``spans | other``: the spans of both sets.
 - ``len(spans)``, iteration and indexing: the spans in order. A slice is a plain tuple.
 
 ``text[span.slice]`` is the text a span covers.
+
+Every sort over spans is stable: items whose keys tie keep the order their producer gave. An ``Order`` names a sort
+key and ends with ``position``, the input order, so the last tie rule is written. The edits layer uses ``BY_START``
+and ``BY_START_END``; ``OUTER_FIRST`` (outer spans first) and ``CONTENT_ORDER`` (a tie on bounds broken by label, for
+a caller that wants one output whatever order a producer lists its spans in) are provided for callers that need them.
 """
 
 from __future__ import annotations
@@ -22,12 +29,16 @@ from __future__ import annotations
 import builtins
 import operator
 from bisect import bisect_right
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from operator import attrgetter
-from typing import Any, NoReturn, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, Protocol, TypeVar, overload
+
+from anonymizer.config.entity_labels import normalize_entity_label
 
 _BOUNDS = attrgetter("start", "end")
+_ItemT = TypeVar("_ItemT")
+_RangedT = TypeVar("_RangedT", bound="_Ranged")
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -105,8 +116,137 @@ class Span:
         """Whether the two spans share a character (touching spans do not)."""
         return self & other is not None
 
+    def precedes(self, other: Span) -> bool:
+        """This span ends at or before ``other`` starts, so the two apply in this order."""
+        return self.end <= other.start
+
     def shifted(self, offset: int) -> Span:
         return Span(self.start + offset, self.end + offset)
+
+
+def geometry_problem(noun: str, start: int, end: int, value: str | None = None, *, empty: bool = False) -> str:
+    """The first rule a record's range breaks, as its validation message, or "": the end does not precede the start
+    (``empty``) or the range holds at least one character, and a ``value`` fills it exactly."""
+    if empty:
+        if end < start:
+            return f"{noun} end must not precede its start"
+    elif end <= start:
+        return f"{noun} must cover a non-empty span"
+    if value is not None and len(value) != end - start:
+        return f"{noun} value length must match its source bounds"
+    return ""
+
+
+class Positioned:
+    """A record with ``start_position`` and ``end_position``: its ``span``, and the one geometry rule for a validator.
+
+    It holds no fields, so a pydantic model or a dataclass keeps its own fields and key order. ``_noun`` names the
+    record in messages; ``_empty`` allows an empty range.
+    """
+
+    __slots__ = ()
+    _noun: ClassVar[str]
+    _empty: ClassVar[bool] = False
+    if TYPE_CHECKING:
+        start_position: int
+        end_position: int
+
+    @property
+    def span(self) -> Span:
+        return Span(self.start_position, self.end_position)
+
+    def _check_geometry(self, value: str | None = None) -> None:
+        """Raise ``ValueError`` with ``geometry_problem``'s message when the range breaks the rule."""
+        if problem := geometry_problem(self._noun, self.start_position, self.end_position, value, empty=self._empty):
+            raise ValueError(problem)
+
+
+class _Ranged(Protocol):
+    @property
+    def start_position(self) -> int: ...
+    @property
+    def end_position(self) -> int: ...
+
+
+def within(length: int, records: Iterable[_RangedT]) -> Iterator[tuple[_RangedT, Span]]:
+    """Each record whose range lies in a text of ``length`` (an empty range included), with its span, in input
+    order; a record whose range does not is skipped."""
+    return (
+        (record, Span(record.start_position, record.end_position))
+        for record in records
+        if 0 <= record.start_position <= record.end_position <= length
+    )
+
+
+OrderField = Literal["start", "end", "-end", "label", "position"]
+
+
+@dataclass(frozen=True, slots=True)
+class Order:
+    """A sort order over spans, as a value: the fields compared in turn, the last always ``position`` (input order).
+
+    ``label`` compares labels by their key (``normalize_entity_label``).
+    """
+
+    fields: tuple[OrderField, ...]
+
+    def __post_init__(self) -> None:
+        if not self.fields or self.fields[-1] != "position" or "position" in self.fields[:-1]:
+            raise ValueError(f"an Order ends with 'position' and names it once, got {self.fields}")
+        if unknown := set(self.fields) - {"start", "end", "-end", "label", "position"}:
+            raise ValueError(f"unknown Order fields {sorted(unknown)}")
+
+    def key(self, span: Span, label: str, position: int) -> tuple[int | str, ...]:
+        values: dict[str, int | str] = {"start": span.start, "end": span.end, "-end": -span.end, "position": position}
+        if "label" in self.fields:
+            values["label"] = normalize_entity_label(label)
+        return tuple(values[name] for name in self.fields)
+
+    def sorted(
+        self, items: Iterable[_ItemT], *, span: Callable[[_ItemT], Span], label: Callable[[_ItemT], str] | None = None
+    ) -> list[_ItemT]:
+        """``items`` in this order; ``label`` is read only when the order names it."""
+        indexed = list(enumerate(items))
+        read = label or (lambda _item: "")
+        indexed.sort(key=lambda pair: self.key(span(pair[1]), read(pair[1]), pair[0]))
+        return [item for _, item in indexed]
+
+
+BY_START = Order(("start", "position"))
+"""Earlier start first; spans that start together keep input order."""
+BY_START_END = Order(("start", "end", "position"))
+"""Earlier, then shorter; identical spans keep input order."""
+OUTER_FIRST = Order(("start", "-end", "position"))
+"""Earlier, then longer; identical spans keep input order."""
+CONTENT_ORDER = Order(("start", "end", "label", "position"))
+"""Earlier, then shorter, then by label key: identical spans come out in one order whatever order they came in."""
+
+
+def group_overlapping_spans(
+    ordered_items: Iterable[_ItemT],
+    *,
+    span: Callable[[_ItemT], Span],
+) -> list[tuple[_ItemT, ...]]:
+    """Group start-ordered items into connected components of overlapping spans.
+
+    Callers supply items sorted by span start and choose their own tie
+    ordering. An item joins the current group when its span starts before
+    the group's furthest end, so touching spans remain separate while nested
+    and transitively overlapping spans stay together. On items sorted by
+    ``BY_START_END`` the groups are exactly the groups of edits that conflict
+    (neither ``precedes`` the other), insertions included.
+    """
+    groups: list[list[_ItemT]] = []
+    reach = 0  # the current group's furthest end; unread until the first item starts a group
+    for item in ordered_items:
+        item_span = span(item)
+        if groups and item_span.start < reach:
+            groups[-1].append(item)
+            reach = max(reach, item_span.end)
+        else:
+            groups.append([item])
+            reach = item_span.end
+    return [tuple(group) for group in groups]
 
 
 class Spans(Sequence[Span]):

@@ -585,3 +585,50 @@ def test_columns_includes_custom_configs_for_disposition_and_text_extraction(
     assert COL_REPLACEMENT_MAP_FOR_PROMPT in custom_names
     assert COL_REWRITE_TAGGED_TEXT in custom_names
     assert COL_REWRITTEN_TEXT in custom_names
+
+
+def test_prepare_rewrite_tagged_text_is_not_ready_when_entities_overlap() -> None:
+    """A runner override can hand Rewrite overlapping entities; the baseline cannot place both, so the row is not
+    ready instead of silently losing a tag."""
+    row = {
+        COL_TEXT: "Alice Lee met Bob",
+        COL_FINAL_ENTITIES: {
+            "entities": [
+                {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                {"value": "Alice Lee", "label": "person", "start_position": 0, "end_position": 9},
+            ]
+        },
+        COL_REPLACEMENT_MAP: {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maria"}]},
+        COL_REWRITE_DISPOSITION_BLOCK: [
+            {"entity_value": "Alice", "entity_label": "first_name", "protection_method_suggestion": "replace"},
+        ],
+        COL_TAG_NOTATION: "bracket",
+        COL_TAGGED_TEXT: "[[Alice Lee|person]] met Bob",
+    }
+    result = _prepare_rewrite_tagged_text(row)
+    assert result[COL_REWRITE_REPLACEMENT_READY] is False
+    assert result[COL_REWRITE_TAGGED_TEXT] == "[[Alice Lee|person]] met Bob"
+    assert result[COL_REWRITE_BASELINE_TEXT] is None
+
+
+def test_prepare_rewrite_tagged_text_keeps_an_empty_range_as_an_insertion() -> None:
+    row = {
+        COL_TEXT: "Alice met Bob",
+        COL_FINAL_ENTITIES: {
+            "entities": [
+                {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
+                {"value": "", "label": "marker", "start_position": 9, "end_position": 9},
+            ]
+        },
+        COL_REPLACEMENT_MAP: {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maria"}]},
+        COL_REWRITE_DISPOSITION_BLOCK: [
+            {"entity_value": "Alice", "entity_label": "first_name", "protection_method_suggestion": "replace"},
+        ],
+        COL_TAG_NOTATION: "bracket",
+        COL_TAGGED_TEXT: "",
+    }
+    result = _prepare_rewrite_tagged_text(row)
+    assert result[COL_REWRITE_REPLACEMENT_READY] is True
+    assert result[COL_REWRITE_BASELINE_TEXT] == "Maria met Bob"
+    assert result[COL_REWRITE_TAGGED_TEXT].startswith("[[Maria|first_name]] met")
+    assert "marker" in result[COL_REWRITE_TAGGED_TEXT]
