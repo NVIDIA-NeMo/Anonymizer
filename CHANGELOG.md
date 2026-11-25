@@ -423,6 +423,10 @@ The CLI is generated from the config models, so a config field is a flag under t
 
 - `RegexLimits.max_matches_per_rule` accepts a string of digits, such as `"5"`. Floats and bools are still refused.
   `--regex-limits.max-matches-per-rule` used to reject every value.
+- `Detect.entity_label_examples` also accepts a JSON object as text, and `Detect.regex_rules` a JSON list or one JSON
+  rule per item. On the CLI, `--entity-label-examples '{"first_name": ["Alice"]}'` and a repeatable
+  `--regex-rules '{"label": "ticket_id", "pattern": "TKT-[0-9]+"}'`; both flags used to fail for every value. A rule's
+  `validator` from the CLI is a registered validator name; a Python callable is SDK-only.
 
 ### Internal changes
 

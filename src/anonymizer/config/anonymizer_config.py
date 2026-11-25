@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlparse
 
+import cyclopts
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from anonymizer.config.entity_labels import normalize_entity_label
@@ -147,6 +149,13 @@ class DetectionScope(BaseModel):
     gliner_threshold: float = Field(description="GLiNER detection confidence threshold.")
 
 
+def _decode_json(text: str, field: str) -> Any:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{field} given as text must be JSON: {exc}") from exc
+
+
 class Detect(BaseModel):
     """Configuration for the entity detection stage."""
 
@@ -159,13 +168,14 @@ class Detect(BaseModel):
             "To inspect the default set, use `from anonymizer import DEFAULT_ENTITY_LABELS`."
         ),
     )
-    entity_label_examples: dict[str, list[str]] = Field(
+    entity_label_examples: Annotated[dict[str, list[str]], cyclopts.Parameter(accepts_keys=False, n_tokens=1)] = Field(
         default_factory=dict,
         repr=False,
         description=(
             "Configured positive detection examples organized by entity label. For default labels, these "
             "values are appended to the built-in examples. Non-default labels must also be declared "
-            "in an explicit entity_labels set; examples never activate labels implicitly."
+            "in an explicit entity_labels set; examples never activate labels implicitly. "
+            'On the CLI, a JSON object: \'{"first_name": ["Alice", "Bob"]}\'.'
         ),
     )
     excluded_entity_labels: list[str] | None = Field(
@@ -204,9 +214,13 @@ class Detect(BaseModel):
         default=True,
         description="Run built-in regex recognizers for labels in the effective detection scope.",
     )
-    regex_rules: list[BuiltinRegex | RegexRule] = Field(
+    regex_rules: Annotated[list[BuiltinRegex | RegexRule], cyclopts.Parameter(accepts_keys=False, n_tokens=-1)] = Field(
         default_factory=list,
-        description="Per-label built-in settings and user-defined regex candidate rules.",
+        description=(
+            "Per-label built-in settings and user-defined regex candidate rules. On the CLI, one JSON rule per "
+            'flag, repeatable: \'{"label": "ticket_id", "pattern": "TKT-[0-9]+"}\'. A validator given on the CLI '
+            "is a registered validator name; Python callables are SDK-only."
+        ),
     )
     regex_limits: RegexLimits = Field(
         default_factory=RegexLimits,
@@ -242,9 +256,21 @@ class Detect(BaseModel):
             logger.warning("excluded_entity_labels contained duplicates, removed automatically.")
         return deduped
 
+    @field_validator("regex_rules", mode="before")
+    @classmethod
+    def decode_regex_rules(cls, value: Any) -> Any:
+        """Decode rules given as JSON text (the CLI's form): a whole list, or one rule per item."""
+        if isinstance(value, str):
+            value = _decode_json(value, "regex_rules")
+        if isinstance(value, list):
+            return [_decode_json(item, "regex_rules") if isinstance(item, str) else item for item in value]
+        return value
+
     @field_validator("entity_label_examples", mode="before")
     @classmethod
     def validate_entity_label_examples(cls, value: Any) -> dict[str, list[str]]:
+        if isinstance(value, str):
+            value = _decode_json(value, "entity_label_examples")
         if not isinstance(value, dict):
             raise ValueError("entity_label_examples must be a dictionary of label names to lists of examples.")
 
