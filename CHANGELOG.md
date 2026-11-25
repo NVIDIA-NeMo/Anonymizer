@@ -173,18 +173,21 @@ count covers the whole replaced text, replacements included, so a substitute tha
 fails it, and a value that the source repeats outside the detected spans may stay. A failing check states
 `e<position>:N<n>,D<d>,O<o>` for each value over the bound in its `cause`: the entity's place among the detected spans
 and the counts, never record text. Annotate keeps the source text and is never marked protected. Rewrite rows carry no
-such advisory. A `not_met` row stays in the output frame.
+such advisory. A `not_met` row stays in the output frame. A second advisory, `undetected_value_kept`, counts the same
+way and fails when the replaced text keeps a detected value that the source also holds outside the detected spans (a
+case or accent variant such as "may" after a detected `May`); the row stays met.
 - What to do: read `result.outcome(row)` before releasing a row, and `result.leftovers(row)` to see the counted values.
-- Changed in: #319, #424, #426.
+- Changed in: #319, #424, #426, #451.
 
 **A custom detector must report a span for every occurrence of a value it reports.** With a custom detector, Redact,
-Hash, Annotate and Substitute fail a row at step `detect` with `unspanned_value` when a value the detector reports, in
-a span or in `_entities_by_value`, occurs in the text outside every kept span. That includes a span's value repeated
+Hash, Annotate and Substitute fail a row at step `detect` with `unspanned_value` when a value the detector reports, in a
+span or in `_entities_by_value`, occurs in the text outside every kept span. That includes a span's value repeated
 without a span, and a value that crosses two spans. Replace changes spans only, so v0.5.0 returned such a value
-unreplaced. Built-in detection protects such a repeat instead: Replace adds a span there (see "Detection contract"),
-and a repeat that crosses a kept span's edge fails the row with `unspanned_value`.
+unreplaced. An occurrence is a whole word spelled exactly as reported: a case or accent variant ("may" for a reported
+`May`, "hạn" for `Hàn`) does not fail the row. Built-in detection protects such a repeat instead: Replace adds a span
+there (see "Detection contract"), and a repeat that crosses a kept span's edge fails the row with `unspanned_value`.
 - What to do: report a span for each occurrence, or read `failed_records`.
-- Changed in: #432.
+- Changed in: #432, #451.
 
 ### Rewrite
 
@@ -509,11 +512,20 @@ class itself, including its subclasses and `Mock(spec=EntityDetectionWorkflow)`.
 - The "Detection complete — N entities found" log line counts the final (kept) entities for every detector, the
   built-in one included. Before, it counted the built-in detector's validated entities before label filtering, and 0
   for a custom detector.
-- Built-in detection in the Replace modes now replaces a missed repeat: where a detected value occurs again without a
-  span, a span with the first detected span's label is added (`"source": "repeat"` in `final_entities`), and the
-  occurrence is replaced like the others. It was released unreplaced before. The added span covers the whole matched
-  word, so `order #W3916020` becomes `order [REDACTED_ORDER_ID]`. A repeat that crosses a kept span's edge gets no
-  span, and its row fails at `detect` with `unspanned_value`; such a row was released before. Rewrite is unchanged.
+- Built-in detection in the Replace modes now replaces a missed repeat: where a detected value occurs again, spelled the
+  same, without a span, a span with the first detected span's label is added (`"source": "repeat"` in `final_entities`),
+  and the occurrence is replaced like the others. It was released unreplaced before. The added span covers the whole
+  matched word, so `order #W3916020` becomes `order [REDACTED_ORDER_ID]`. A case or accent variant gets no span and
+  keeps its text, so a detected name that is also a common word leaves the word alone: with `May` detected, "May said
+  she may come back in May." keeps "may". Such a row stays met, and a new advisory `undetected_value_kept` (Redact,
+  Hash, Substitute; not Annotate) fails when the replaced text keeps a detected value that the source also holds outside
+  the detected spans, counted with case and accents folded; `result.leftovers(row)` shows the count. The exact match
+  keeps whitespace and compatibility forms as spelled, with no Unicode normalization: "Mary Jane" gets no span on "Mary
+  Jane" split across two lines, "Alice" none on fullwidth "Ａlice", and "Le" none on a decomposed "Lê". A repeat that
+  crosses a kept span's edge gets no span, and its row fails at `detect` with `unspanned_value`; such a row was released
+  before. Rewrite is unchanged. Known limit: an occurrence spelled exactly like the detected value is still replaced
+  when it is a different word or entity, such as the month in "May said she may come back in May." or the country in
+  "Jordan flew to Jordan." with the name detected, because each repeat is not yet judged in its context.
 - A `replace_runner` whose `run_with_detection` override does not accept the `detector` keyword (or `**kwargs`) now
   raises `InvalidConfigError` before detection, naming the keyword. The facade passes
   `detector="builtin" | "custom"` on every call. With a custom detector such an override raised `TypeError` on an

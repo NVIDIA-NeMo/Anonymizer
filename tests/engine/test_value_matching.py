@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import random
 import re
+import unicodedata
 from collections.abc import Callable, Iterable
 from types import SimpleNamespace
 from typing import Any
@@ -20,6 +21,7 @@ from anonymizer.engine.schemas import EntitySchema
 from anonymizer.engine.spans import Span, Spans
 from anonymizer.engine.value_matching import (
     Leftover,
+    MatchMode,
     _mapped,
     _occurs,
     count_values,
@@ -45,7 +47,7 @@ def _counts(
     unusable but keeps its position."""
     ordered = sorted(spans, key=lambda span: span[0])
     usable = [Span(a, b) if 0 <= a < b <= len(source) else None for a, b in ordered]
-    return count_values(source, [(span, "name") for span in usable], output, values)
+    return count_values(source, [(span, "name") for span in usable], output, values, mode=MatchMode.FOLDED)
 
 
 def _nums(leftovers: tuple[Leftover, ...]) -> list[tuple[int | None, int, int, int]]:
@@ -147,7 +149,7 @@ _MIRA = "Mira\U0001d157\U0001d16d\U0001d16e"  # the last two marks are out of ca
 )
 def test_a_value_with_reordered_marks_is_found_where_it_occurs(value: str, output: str) -> None:
     source = f"{value} called."
-    leftovers = count_values(source, [(Span(0, len(value)), "first_name")], output)
+    leftovers = count_values(source, [(Span(0, len(value)), "first_name")], output, mode=MatchMode.FOLDED)
     assert format_cause(leftovers) == "e0:N1,D1,O1"
     assert leftovers[0].output_spans == Spans([Span(0, len(output) - len(" called."))])
 
@@ -365,7 +367,7 @@ def test_matching_holds_on_a_wide_unicode_corpus() -> None:
             assert plain == _normalized(t) and folded == plain.casefold()
             assert all(0 <= i < len(t) for i in origin + folded_origin)
         key = _normalized(value)
-        leftovers = count_values("", [], text, [value])
+        leftovers = count_values("", [], text, [value], mode=MatchMode.FOLDED)
         plain = _normalized(text)
         present = _occurs(key, plain, plain.casefold())
         assert any(x.in_output for x in leftovers) is present
@@ -378,3 +380,70 @@ def test_matching_holds_on_a_wide_unicode_corpus() -> None:
                     held if value_matching._short_code(key) else held.casefold()
                 )
     assert found > 300  # matches, not only misses
+
+
+@pytest.mark.parametrize(
+    ("source", "value", "folded", "exact"),
+    [
+        ("May said she may come.", "May", 2, 1),
+        ("Ông Hàn nói hết hạn.", "Hàn", 2, 1),
+        ("Alice met Alice.", "Alice", 2, 2),
+        ("Mark marked Mark.", "Mark", 2, 2),
+    ],
+)
+def test_exact_mode_counts_only_the_spelling_given(source: str, value: str, folded: int, exact: int) -> None:
+    """``EXACT`` matches the value as spelled, whole words; ``FOLDED`` folds case and accents."""
+    for mode, expected in ((MatchMode.FOLDED, folded), (MatchMode.EXACT, exact)):
+        [leftover] = count_values(source, [], "", [value], mode=mode)
+        assert leftover.in_source == expected, mode
+
+
+@pytest.mark.parametrize(
+    ("source", "value", "exact"),
+    [
+        ("สมชายบอกให้สมชายมา", "สมชาย", 2),
+        ("สมชายไปที่สมชาย", "สมชาย", 2),
+        ("सीता और राम सीता से मिले", "सीता", 2),
+        ("राम ने राम को देखा", "राम", 2),
+        (unicodedata.normalize("NFD", "Ông Le nói về Lê."), "Le", 1),
+        (unicodedata.normalize("NFD", "éLe met Le."), "Le", 1),
+        ("สมกินข้าว สมก", "สมก", 1),
+    ],
+    ids=[
+        "thai-1",
+        "thai-2",
+        "devanagari-sita",
+        "devanagari-ram",
+        "nfd-mark-after",
+        "nfd-mark-before",
+        "unspaced-ends-in-cluster",
+    ],
+)
+def test_exact_mode_never_splits_a_cluster(source: str, value: str, exact: int) -> None:
+    """``EXACT`` rejects a match that ends before a combining mark or starts on one, and a whole-word match right after
+    a mark; an unspaced match after a mark that belongs to the previous cluster still counts."""
+    [leftover] = count_values(source, [], "", [value], mode=MatchMode.EXACT)
+    assert leftover.in_source == exact
+
+
+@pytest.mark.parametrize("mode", list(MatchMode))
+def test_count_values_maps_each_text_once_for_every_value(monkeypatch: pytest.MonkeyPatch, mode: MatchMode) -> None:
+    """Every value reads the same offset map of each text it searches, so a long row with many values is mapped once
+    per text, not once per value."""
+    origins: dict[str, set[int]] = {}
+    spans = value_matching._Matcher.spans
+
+    def recorded(self: Any, text: str, origin: Any) -> Any:
+        origins.setdefault(text, set()).add(id(origin))
+        return spans(self, text, origin)
+
+    monkeypatch.setattr(value_matching._Matcher, "spans", recorded)
+    names = ["Alice", "Bruno", "Chen", "Dara", "Emeka"]
+    source = " ".join(f"{name} met {name}." for name in names)
+    output = source.replace("Alice", "[NAME]")
+    entities = [(Span(source.index(name), source.index(name) + len(name)), "first_name") for name in names]
+    leftovers = count_values(source, entities, output, mode=mode)
+
+    assert [x.in_source for x in leftovers] == [2] * len(names)
+    assert len(origins) == 2  # one view of the source and one of the output (folded mode searches casefolded text)
+    assert all(len(ids) == 1 for ids in origins.values())

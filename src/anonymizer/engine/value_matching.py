@@ -9,9 +9,25 @@ import re
 import unicodedata
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 
 from anonymizer.engine.schemas import EntitySchema
 from anonymizer.engine.spans import Span, Spans
+
+
+class MatchMode(StrEnum):
+    """How ``count_values`` matches a value. ``EXACT``: the value as spelled, whole words; for every check that edits
+    text or fails a row, so a common word that folds to a detected name ("may" for ``May``) is left alone. ``FOLDED``:
+    case and accents folded (``normalized``, casefold unless ``_short_code``), whole words; for advisories and audits,
+    where a variant spelling is flagged, never edited.
+
+    ``EXACT`` does not normalize: spans are sliced from the same text the value came from, so it compares code
+    points, keeps whitespace and compatibility forms as spelled ("Mary Jane" does not match "Mary\\nJane", "Alice"
+    does not match fullwidth "Ａlice"), and never matches a word that continues with a combining mark ("Le" in NFD
+    "Lê"). The folded audit still counts mixed normalization forms."""
+
+    EXACT = "exact"
+    FOLDED = "folded"
 
 
 @dataclass(frozen=True)
@@ -57,32 +73,45 @@ class Leftover:
 
 
 def count_values(
-    source: str, entities: Sequence[tuple[Span | None, str]], output: str, values: Iterable[str] | None = None
+    source: str,
+    entities: Sequence[tuple[Span | None, str]],
+    output: str,
+    values: Iterable[str] | None = None,
+    *,
+    mode: MatchMode,
 ) -> tuple[Leftover, ...]:
-    """Count each distinct normalized value (default: the detected spans' source text) in ``source`` and ``output``,
-    ordered by position, values with no position last.
+    """Count each distinct value (default: the detected spans' source text), keyed by ``value_key`` under ``mode``, in
+    ``source`` and ``output``, ordered by position, values with no position last.
 
     ``entities`` are the row's detected ``(span, label)`` pairs in position order (sorted by start), each span inside
     ``source``; an entity without a usable span has ``None`` and keeps its position. Every match start counts,
     overlapping matches included, and a match is detected when some detected span contains it.
     """
+    key_of = normalized if mode is MatchMode.FOLDED else _exact_key  # ``value_key`` for this mode
     usable = {i: span for i, (span, _) in enumerate(entities) if span is not None}
     detected = Spans(usable.values())
     position_of: dict[Span, int] = {}  # the first entity with each span
     own: dict[str, int] = {}  # the first entity whose text is each normalized value
     for i, span in usable.items():
         position_of.setdefault(span, i)
-        own.setdefault(normalized(source[span.slice]), i)
+        own.setdefault(key_of(source[span.slice]), i)
     if values is None:
         values = [source[span.slice] for span in usable.values()]
-    given: dict[str, str] = {}  # each normalized value's first given form
+    given: dict[str, str] = {}  # each key's first given form
     for value in values:
-        given.setdefault(normalized(value), value)
-    source_forms, output_forms = _mapped(source), _mapped(output)
+        given.setdefault(key_of(value), value)
+    source_forms: tuple[tuple[str, Sequence[int]], ...]
+    output_forms: tuple[tuple[str, Sequence[int]], ...]
+    if mode is MatchMode.FOLDED:
+        source_forms, output_forms = _mapped(source), _mapped(output)
+    else:  # the text as given, each character its own origin; built once for every value
+        source_forms = ((source, range(len(source))),) * 2
+        output_forms = ((output, range(len(output))),) * 2
     leftovers: list[tuple[str, Leftover]] = []
-    for key, matcher in _compiled(given).items():
+    for key, matcher in _compiled(given, exact=mode is MatchMode.EXACT).items():
         form = 0 if matcher.cased else 1
         matches = Spans(matcher.spans(*source_forms[form]))
+        output_spans = Spans(matcher.spans(*output_forms[form]))
         position = own.get(key)
         if position is None:
             containers = (detected.container_of(match) for match in matches)
@@ -95,7 +124,7 @@ def count_values(
             span=span,
             in_source=len(matches),
             undetected_spans=detected.uncovered(matches),
-            output_spans=Spans(matcher.spans(*output_forms[form])),
+            output_spans=output_spans,
         )
         leftovers.append((key, leftover))
     leftovers.sort(key=lambda item: (item[1].position is None, item[1].position or 0, item[0]))
@@ -130,31 +159,57 @@ class _Matcher:
     key: str
     cased: bool
     pattern: re.Pattern[str] | None
+    exact: bool = False
 
-    def spans(self, text: str, origin: list[int]) -> Iterator[Span]:
+    def spans(self, text: str, origin: Sequence[int]) -> Iterator[Span]:
         """Every match in the normalized ``text``, overlapping ones included, as a span of the original text
         (``origin`` maps each character back). ``str.find`` proposes each start; the pattern checks it."""
         pos = text.find(self.key)
         while pos >= 0:
-            if self.pattern is None or self.pattern.match(text, pos):
+            if (self.pattern is None or self.pattern.match(text, pos)) and not (
+                self.exact and _marked_edge(text, pos, pos + len(self.key), spaced=self.pattern is not None)
+            ):
                 covered = origin[pos : pos + len(self.key)]  # canonical reordering can move marks across sources
                 yield Span(min(covered), max(covered) + 1)
             pos = text.find(self.key, pos + 1)
 
 
-def _compiled(keys: Iterable[str]) -> dict[str, _Matcher]:
+def _compiled(keys: Iterable[str], *, exact: bool) -> dict[str, _Matcher]:
     """One matcher per distinct key, each already ``normalized`` (normalizing is not idempotent: a dropped mark can
-    leave marks out of canonical order, so a key is normalized once); a blank key and a one-character unspaced key
-    get none."""
+    leave marks out of canonical order, so a key is normalized once), or ``_exact_key`` and matched with its case when
+    ``exact``; a blank key and a one-character unspaced key get none."""
     matchers: dict[str, _Matcher] = {}
     for value in set(keys) - {""}:
-        cased = _short_code(value)
+        cased = exact or _short_code(value)
         key = value if cased else value.casefold()
         if not (_unspaced(key[0]) and _unspaced(key[-1])):
-            matchers[value] = _Matcher(key, cased, re.compile(r"(?<![^\W_])" + re.escape(key) + r"(?![^\W_])"))
+            pattern = re.compile(r"(?<![^\W_])" + re.escape(key) + r"(?![^\W_])")
+            matchers[value] = _Matcher(key, cased, pattern, exact)
         elif len(key) >= 2:
-            matchers[value] = _Matcher(key, cased, None)
+            matchers[value] = _Matcher(key, cased, None, exact)
     return matchers
+
+
+def _marked_edge(text: str, start: int, end: int, *, spaced: bool) -> bool:
+    """Whether ``MatchMode.EXACT`` rejects ``text[start:end]`` for splitting a cluster: a combining mark (category
+    ``M*``) directly follows its end, or the match starts on a mark, or, for a ``spaced`` (whole-word) key, a mark
+    directly precedes it ("Le" in NFD "Lê" or after a decomposed "é"). An unspaced key (Thai, Han) may follow a mark,
+    which belongs to the previous cluster, but still cannot end inside a cluster."""
+
+    def mark(i: int) -> bool:
+        return 0 <= i < len(text) and unicodedata.category(text[i]).startswith("M")
+
+    return mark(end) or mark(start) or (spaced and mark(start - 1))
+
+
+def _exact_key(text: str) -> str:
+    """The value as spelled, less surrounding whitespace: ``MatchMode.EXACT``'s key."""
+    return text.strip()
+
+
+def value_key(value: str, mode: MatchMode) -> str:
+    """The key ``count_values`` groups ``value`` under in ``mode``: a ``Leftover.value`` maps back to its key."""
+    return normalized(value) if mode is MatchMode.FOLDED else _exact_key(value)
 
 
 def normalized(text: str) -> str:

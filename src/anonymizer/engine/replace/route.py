@@ -6,9 +6,9 @@
 Each row lowers to one target datum whose exact, non-overlapping entity spans are its mentions. A row is a transform
 (``replace``: the 0.4.0 per-row replacement) followed by a verifier (``verify-patches``: one patch per accepted
 mention, checked by source-plus-patches reconstruction). Except under Annotate, a second verifier
-(``verify-no-original``) reports the non-required check ``no_detected_value_added`` as an
-advisory. The legacy DataFrame projection derives from the canonical result without rerunning work; Annotate
-output is an annotation result and is never Protected.
+(``verify-no-original``) reports the non-required check ``no_detected_value_added`` as an advisory, and a third
+(``verify-undetected-kept``) the advisory ``undetected_value_kept``. The legacy DataFrame projection derives from the
+canonical result without rerunning work; Annotate output is an annotation result and is never Protected.
 
 Substitute runs as one invocation. Its phase-scoped ``substitute-map`` step makes one ``LlmReplaceWorkflow`` call
 over the whole frame (DataDesigner batches it) and returns each row's replacement map; a row DataDesigner dropped gets
@@ -63,7 +63,7 @@ from anonymizer.engine.ndd.backend import (
     register_plain_kind,
     run_invocation,
 )
-from anonymizer.engine.protection_policy import missed_repeat
+from anonymizer.engine.protection_policy import ReviewFlag, missed_repeat
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
     LlmReplaceWorkflow,
@@ -78,7 +78,7 @@ from anonymizer.engine.replace.strategies import (
 from anonymizer.engine.row_partitioning import cell_text, resolve_source_positions
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
 from anonymizer.engine.spans import Span
-from anonymizer.engine.value_matching import count_values, format_cause
+from anonymizer.engine.value_matching import MatchMode, count_values, format_cause
 from anonymizer.logging import ProgressTracker
 from anonymizer.measurement import record_stage
 
@@ -411,7 +411,14 @@ def _protect_rows(
             checks=("no_detected_value_added",),
             subject=("text",),
         )
-        operations = (*operations, no_original)
+        kept = Operation.verifier(
+            "verify-undetected-kept",
+            _verify_undetected_kept,
+            {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "target": DATUM},
+            checks=(ReviewFlag.UNDETECTED_VALUE_KEPT.value,),
+            subject=("text",),
+        )
+        operations = (*operations, no_original, kept)
     operations = (*(s for s in (detect_op, map_step) if s is not None), *operations)
     release = "annotation" if annotate else "protected"
     workflow = Workflow(name, operations, release=release, requires=("replacements_applied",))
@@ -459,9 +466,27 @@ def _verify_no_original(text: str, source: str, mentions: tuple[Mention, ...], t
     names each value over that bound. Never raises: an error could not be assessed."""
     try:
         ordered = sorted(mentions, key=lambda m: m.start)
-        leftovers = count_values(source, [(Span(m.start, m.end), m.label) for m in ordered], text)
+        leftovers = count_values(
+            source, [(Span(m.start, m.end), m.label) for m in ordered], text, mode=MatchMode.FOLDED
+        )
         over = [x for x in leftovers if x.over_bound]
         return Assessment(not over, target, format_cause(over))
+    except Exception:
+        return Assessment(None, target, "check_error")
+
+
+def _verify_undetected_kept(text: str, source: str, mentions: tuple[Mention, ...], target: Datum) -> Assessment:
+    """Whether the replaced text keeps no detected value that the source also holds outside every mention, counted
+    folded (``count_values``, ``MatchMode.FOLDED``): a case or accent variant ("may" after a detected ``May``) that
+    no span replaced fails this advisory, as Rewrite's ``undetected_value_kept`` flags it. Edits nothing. Never
+    raises: an error could not be assessed."""
+    try:
+        ordered = sorted(mentions, key=lambda m: m.start)
+        leftovers = count_values(
+            source, [(Span(m.start, m.end), m.label) for m in ordered], text, mode=MatchMode.FOLDED
+        )
+        kept = [x for x in leftovers if x.undetected_kept]
+        return Assessment(not kept, target, format_cause(kept))
     except Exception:
         return Assessment(None, target, "check_error")
 

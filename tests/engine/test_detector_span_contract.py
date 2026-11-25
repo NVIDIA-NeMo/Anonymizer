@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import unicodedata
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import Mock, patch
@@ -50,7 +51,7 @@ from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteW
 from anonymizer.engine.rewrite.rewrite_generation import _prepare_rewrite_tagged_text
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.schemas import EntitiesSchema
-from anonymizer.engine.value_matching import count_values, entity_spans
+from anonymizer.engine.value_matching import MatchMode, count_values, entity_spans
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.interface.errors import InvalidConfigError
 from tests.detector_results import as_detector_result, builtin_stub, input_record_ids
@@ -1023,6 +1024,32 @@ def test_replace_fails_a_spans_unspanned_repeat_whatever_the_detectors_view(
     assert result.failed_records == [FailedRecord(_rid(tmp_path / "in.csv", 0), "detect", "unspanned_value")]
 
 
+@pytest.mark.parametrize("strategy", ["redact", "substitute"])
+@pytest.mark.parametrize(
+    ("text", "value", "fails"),
+    [
+        ("Qb Bob met Bob.", "Bob", True),
+        ("Qb Bob met bob.", "Bob", False),
+        ("Qb Hàn met han.", "Hàn", False),
+        ("Qb May said she may come.", "May", False),
+        (unicodedata.normalize("NFD", "Qb Le nói về Lê."), "Le", False),
+        (unicodedata.normalize("NFD", "Qb Lê nói về Lê."), unicodedata.normalize("NFD", "Lê"), True),
+        ("Qb สมชายบอกให้สมชายมา", "สมชาย", True),
+        ("Qb สมชายไปที่สมชาย", "สมชาย", True),
+        (unicodedata.normalize("NFD", "Qb éLe met Lee."), "Le", False),
+    ],
+)
+def test_unspanned_value_needs_the_reported_spelling(
+    text: str, value: str, fails: bool, strategy: str, tmp_path: Path
+) -> None:
+    """A custom detector's reported value fails the row only where it recurs as spelled outside every span; a case
+    or accent variant there does not fail it."""
+    result, _ = _one_row_run(tmp_path, text, [_at(text, value, "first_name")], _view((value, "first_name")), strategy)
+
+    expected = [FailedRecord(_rid(tmp_path / "in.csv", 0), "detect", "unspanned_value")] if fails else []
+    assert result.failed_records == expected
+
+
 @pytest.mark.parametrize("strategy", ["redact", "hash", "annotate", "substitute"])
 @pytest.mark.parametrize(
     ("text", "spans"),
@@ -1112,8 +1139,9 @@ def _random_row(rng: random.Random) -> tuple[str, list[dict[str, Any]] | None, o
 @pytest.mark.parametrize("mode", ["redact", "hash", "annotate", "substitute", "rewrite", "combined"])
 def test_every_reported_value_is_protected_or_fails_its_row(mode: str, tmp_path: Path) -> None:
     """The by-value invariant over random rows: every value the detector reports (span or by-value pair) that occurs
-    in the row's text, under the leftover check's matching rule, lies inside a kept span or is in the Rewrite view, or
-    the row fails at ``detect``. A released Replace row has every such value inside a span."""
+    in the row's text lies inside a kept span or is in the Rewrite view, or the row fails at ``detect``. Rewrite's view
+    counts occurrences folded; Replace's ``unspanned_value`` counts them as spelled, so a released Replace row has
+    every exact occurrence inside a span."""
     rng = random.Random(f"432-{mode}")
     for _ in range(40):
         text, spans, view = _random_row(rng)
@@ -1123,7 +1151,8 @@ def test_every_reported_value_is_protected_or_fails_its_row(mode: str, tmp_path:
         returned = EntitiesSchema.from_raw({"entities": spans or []})
         dropped = covered_spans(GraphScope().datum(text), returned)  # nested spans the detect step collapses
         kept = EntitiesSchema(entities=[e for i, e in enumerate(returned.entities) if i not in dropped])
-        outside = {value for value in reported if _occurs_outside(text, kept, value)}
+        match = MatchMode.FOLDED if mode in ("rewrite", "combined") else MatchMode.EXACT
+        outside = {value for value in reported if _occurs_outside(text, kept, value, match)}
         if result.failed_records:
             assert [f.step for f in result.failed_records] == ["detect"], (text, spans, view)
         elif mode in ("rewrite", "combined"):
@@ -1132,10 +1161,10 @@ def test_every_reported_value_is_protected_or_fails_its_row(mode: str, tmp_path:
             assert not outside, (text, spans, view)
 
 
-def _occurs_outside(text: str, kept: EntitiesSchema, value: str) -> bool:
-    """The test's oracle: the leftover check's rule, or, for a value it builds no matcher for, any plain occurrence
+def _occurs_outside(text: str, kept: EntitiesSchema, value: str, mode: MatchMode) -> bool:
+    """The test's oracle: ``count_values`` in ``mode``, or, for a value it builds no matcher for, any plain occurrence
     that no kept span contains."""
-    leftovers = count_values(text, entity_spans(text, kept.entities), "", [value])
+    leftovers = count_values(text, entity_spans(text, kept.entities), "", [value], mode=mode)
     if leftovers:
         return any(lo.undetected_spans for lo in leftovers)
     spans = [(e.start_position, e.end_position) for e in kept.entities]

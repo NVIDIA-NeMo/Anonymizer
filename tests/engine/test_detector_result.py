@@ -491,8 +491,9 @@ def test_a_built_in_repeat_takes_the_first_returned_label_when_labels_conflict()
     assert [(e["start_position"], e["label"]) for e in added] == [(10, "first_name")]
 
 
-def test_a_built_in_case_variant_repeat_gets_the_same_substitute() -> None:
-    """The repeat span keeps the text's case ("alice"); the map's fold gives both variants one substitute."""
+def test_a_built_in_case_variant_gains_no_repeat_span() -> None:
+    """A repeat span needs the detected spelling: "alice" after a detected "Alice" keeps its text, though the map
+    offers it a substitute."""
     pairs: list[object] = []
 
     def run_workflow(self: NddAdapter, df: pd.DataFrame, **_: Any) -> WorkflowRunResult:
@@ -514,7 +515,7 @@ def test_a_built_in_case_variant_repeat_gets_the_same_substitute() -> None:
             config=AnonymizerConfig(replace=Substitute()), data=data
         )
     assert result.failed_records == []
-    assert result.dataframe["text_replaced"].iloc[0] == "Carol met carol."
+    assert result.dataframe["text_replaced"].iloc[0] == "Carol met alice."
 
 
 @pytest.mark.parametrize(

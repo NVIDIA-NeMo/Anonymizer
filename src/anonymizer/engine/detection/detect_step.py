@@ -39,7 +39,7 @@ from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntitiesSchema
 from anonymizer.engine.schemas.detection import EntitySchema
 from anonymizer.engine.schemas.shared import to_python
-from anonymizer.engine.value_matching import count_values, entity_spans, normalized
+from anonymizer.engine.value_matching import MatchMode, count_values, entity_spans, normalized, value_key
 
 RecordId = NewType("RecordId", str)
 """The facade's label for one input record, from its ``_anonymizer_record_id``; it lives within one call."""
@@ -117,7 +117,9 @@ def _check_row(datum: Datum, record_id: RecordId, raw: object, listed: object, r
     # for it ``detected`` is the kept set.
     extras = _extra_pairs(datum.text, detected, listed, raw) + tuple((e.value, (e.label,)) for e in absorbed)
     unspanned = (
-        repeats is not RepeatHandling.RELEASE and sound and bool(values_outside_spans(datum.text, entities, values))
+        repeats is not RepeatHandling.RELEASE
+        and sound
+        and bool(values_outside_spans(datum.text, entities, values, MatchMode.EXACT))
     )
     return _RowCheck(
         RowDetections(record_id, entities, tuple(added), extras),
@@ -316,24 +318,28 @@ def _union(derived: dict[str, Any], extras: tuple[tuple[str, tuple[str, ...]], .
 
 def unspanned_pairs(listed: object, text: str, entities: EntitiesSchema) -> list[tuple[str, list[str]]]:
     """The pairs of the by-value cell ``listed`` whose value occurs in ``text`` outside every kept span of
-    ``entities``: values the detector reported that its spans do not protect."""
-    outside = values_outside_spans(text, entities, [value for value, _ in _listed_pairs(listed)])
+    ``entities``, case and accents folded (``MatchMode.FOLDED``): values the detector reported that its spans do not
+    protect, listed in the view (a variant spelling is listed, not edited or failed)."""
+    outside = values_outside_spans(text, entities, [value for value, _ in _listed_pairs(listed)], MatchMode.FOLDED)
     return [(value, labels) for value, labels in _listed_pairs(listed) if value in outside]
 
 
-def values_outside_spans(text: str, entities: EntitiesSchema, values: Iterable[str]) -> set[str]:
+def values_outside_spans(text: str, entities: EntitiesSchema, values: Iterable[str], mode: MatchMode) -> set[str]:
     """The ``values`` with a match in ``text`` that no kept span contains, under the leftover check's own matching
-    rule (``count_values``: whole words, case and accents folded). A match that crosses two spans is outside both.
+    rule in ``mode`` (``count_values``: whole words; ``MatchMode.EXACT`` for the ``unspanned_value`` failure, so a
+    case or accent variant does not fail the row). A match that crosses two spans is outside both.
 
     A value that rule cannot judge (it builds no matcher for a one-character key in an unspaced script, such as 王)
     fails closed: it is outside when a plain search finds it anywhere no kept span contains."""
     distinct = list(dict.fromkeys(values))
     spans = entity_spans(text, entities.entities)
-    judged = {normalized(leftover.value): leftover for leftover in count_values(text, spans, "", distinct)}
+    judged = {
+        value_key(leftover.value, mode): leftover for leftover in count_values(text, spans, "", distinct, mode=mode)
+    }
     kept = [(span.start, span.end) for span, _ in spans if span is not None]
     outside = set()
     for value in distinct:
-        leftover = judged.get(normalized(value))
+        leftover = judged.get(value_key(value, mode))
         if leftover is not None and leftover.undetected_spans:
             outside.add(value)
         elif leftover is None and value and _found_outside(value, text, kept):
@@ -394,20 +400,22 @@ def _first_labels(returned: list[EntitySchema], pairs: list[tuple[str, list[str]
 def _repeat_spans(text: str, kept: EntitiesSchema, values: list[str], labels: dict[str, str]) -> list[EntitySchema]:
     """A labelled span (``source="repeat"``) at each occurrence of a reported value outside every kept span.
 
-    Occurrences are ``count_values``' undetected spans, and for a value it cannot match (a one-character key in an
-    unspaced script) each plain match outside the kept spans. An occurrence that partly overlaps a kept or an earlier
-    added span is left out, so the row still fails ``unspanned_value``; one that contains a kept span is added, and the
-    collapse keeps it as the outer span."""
+    Occurrences are ``count_values``' undetected spans in ``MatchMode.EXACT`` (the reported spelling, so "may" gains
+    no span from a reported ``May``), and for a value it cannot match (a one-character key in an unspaced script)
+    each plain match outside the kept spans. An occurrence that partly overlaps a kept or an earlier added span is
+    left out, so the row still fails ``unspanned_value``; one that contains a kept span is added, and the collapse
+    keeps it as the outer span. ``labels`` stay keyed by the folded ``normalized`` value (``_first_labels``), so an
+    exact repeat can take the label of a case or accent variant the detector returned first."""
     distinct = [v for v in dict.fromkeys(values) if v]
     spans = entity_spans(text, kept.entities)
     taken = [(span.start, span.end) for span, _ in spans if span is not None]
     found: list[tuple[int, int, str]] = []
     judged = set()
-    for leftover in count_values(text, spans, "", distinct):
-        judged.add(normalized(leftover.value))
+    for leftover in count_values(text, spans, "", distinct, mode=MatchMode.EXACT):
+        judged.add(value_key(leftover.value, MatchMode.EXACT))
         found.extend((u.start, u.end, leftover.value) for u in leftover.undetected_spans)
     for value in distinct:
-        if normalized(value) not in judged:
+        if value_key(value, MatchMode.EXACT) not in judged:
             start = text.find(value)
             while start >= 0:
                 end = start + len(value)
