@@ -461,7 +461,7 @@ These are additions and break nothing.
 
 These are not on the #319 branch yet. Each lands with its change.
 
-### #NNN: one rule for applying edits
+### #455: one rule for applying edits
 
 **Five places that rebuild a text from replacement spans now follow one rule**: local replacement, tagged text for
 prompts, the `verify-patches` check and Rewrite's baseline use `anonymizer.engine.edits`, and `assemble_regions` keeps
