@@ -16,6 +16,7 @@ from typing import Any
 
 from data_designer.config import custom_column_generator
 
+from anonymizer.config.entity_labels import in_label_scope, label_keys
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
     COL_ADMITTED_CANDIDATES,
@@ -108,13 +109,13 @@ def parse_detected_entities(
         canonical_text=text,
         raw_output=row.get(COL_RAW_DETECTED, ""),
     )
-    constrained = {label.strip().casefold() for label in regex_constrained_entity_labels or []}
+    constrained = label_keys(regex_constrained_entity_labels)
     detection_result = detection_result.model_copy(
         update={
             "observations": tuple(
                 observation
                 for observation in detection_result.observations
-                if observation.label.strip().casefold() not in constrained
+                if in_label_scope(observation.label, excluded=constrained)
             )
         }
     )

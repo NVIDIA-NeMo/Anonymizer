@@ -8,6 +8,7 @@ from collections import Counter
 from collections.abc import Callable, Collection, Sequence
 from typing import TypeVar
 
+from anonymizer.config.entity_labels import in_label_scope, label_keys, normalize_entity_label
 from anonymizer.engine.constants import SOURCE_KIND_AUGMENTER
 from anonymizer.engine.detection.postprocess import is_reserved_entity_label
 from anonymizer.engine.schemas import (
@@ -136,19 +137,19 @@ def _apply_regex_label_eligibility(
     source_text_ref: SourceTextRef,
 ) -> tuple[AdmissionResult, ...]:
     """Restrict regex-only labels before any overlap can erase alternatives."""
-    constrained = {_normalize_label(label) for label in constrained_labels}
+    constrained = {normalize_entity_label(label) for label in constrained_labels}
     if not constrained:
         return results
     evidence: set[tuple[Span, str]] = {
-        (observations_by_ref[result.observation_ref].span, _normalize_label(result.effective_label or ""))
+        (observations_by_ref[result.observation_ref].span, normalize_entity_label(result.effective_label or ""))
         for result in results
         if result.status is AdmissionStatus.accepted
         and observations_by_ref[result.observation_ref].source_kind in {"regex_user", "regex_builtin"}
-        and _normalize_label(observations_by_ref[result.observation_ref].label)
-        == _normalize_label(result.effective_label or "")
+        and normalize_entity_label(observations_by_ref[result.observation_ref].label)
+        == normalize_entity_label(result.effective_label or "")
     }
     evidence.update(
-        (candidate.span, _normalize_label(candidate.label))
+        (candidate.span, normalize_entity_label(candidate.label))
         for candidate in evidence_candidates
         if candidate.source_text_ref == source_text_ref
         and any(origin.source_kind in {"regex_user", "regex_builtin"} for origin in candidate.accepted_origins)
@@ -156,11 +157,11 @@ def _apply_regex_label_eligibility(
     constrained_results: list[AdmissionResult] = []
     for result in results:
         observation = observations_by_ref[result.observation_ref]
-        label = _normalize_label(result.effective_label or "")
+        label = normalize_entity_label(result.effective_label or "")
         original_regex_fallback = (
             result.status is AdmissionStatus.fallback_protected
             and observation.source_kind in {"regex_user", "regex_builtin"}
-            and label == _normalize_label(observation.label)
+            and label == normalize_entity_label(observation.label)
         )
         if (
             result.status is not AdmissionStatus.rejected
@@ -184,14 +185,12 @@ def _apply_label_eligibility(
 ) -> AdmissionResult:
     if result.status is AdmissionStatus.rejected:
         return result
-    normalized_label = _normalize_label(result.effective_label or "")
-    allowed = None if policy.allowed_labels is None else {_normalize_label(label) for label in policy.allowed_labels}
-    excluded = {_normalize_label(label) for label in policy.excluded_labels}
+    normalized_label = normalize_entity_label(result.effective_label or "")
+    allowed = None if policy.allowed_labels is None else label_keys(policy.allowed_labels)
     if (
         not normalized_label
         or is_reserved_entity_label(normalized_label)
-        or normalized_label in excluded
-        or (allowed is not None and normalized_label not in allowed)
+        or not in_label_scope(normalized_label, excluded=label_keys(policy.excluded_labels), allowed=allowed)
     ):
         return AdmissionResult(
             observation_ref=result.observation_ref,
@@ -200,10 +199,6 @@ def _apply_label_eligibility(
             reason=AdmissionReason.ineligible_label,
         )
     return result.model_copy(update={"effective_label": normalized_label})
-
-
-def _normalize_label(label: str) -> str:
-    return label.strip().casefold()
 
 
 def find_duplicate_assigned_aliases(

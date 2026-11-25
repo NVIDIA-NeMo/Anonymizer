@@ -113,7 +113,7 @@ class LlmReplaceWorkflow:
         if RECORD_ID_COLUMN not in source and not source.empty:
             raise AnonymizerWorkflowError(f"The Substitute map step's input has no {RECORD_ID_COLUMN} column")
         expected = [EntitiesByValueSchema.from_raw(raw) for raw in source[entities_column]]
-        missing = [_entity_pairs(entities) for entities in expected]
+        missing = [entity_pairs(entities) for entities in expected]
         accepted: list[dict[str, list[dict[str, str]]]] = [{"replacements": []} for _ in expected]
         pending = [position for position, pairs in enumerate(missing) if pairs]
         if preview_num_records is not None:
@@ -339,7 +339,8 @@ class LlmReplaceWorkflow:
         )
 
 
-def _entity_pairs(entities: EntitiesByValueSchema) -> set[tuple[str, str]]:
+def entity_pairs(entities: EntitiesByValueSchema) -> set[tuple[str, str]]:
+    """The ``(value, label)`` pairs of a by-value entity list, skipping an empty value or label."""
     return {
         (entity.value, label)
         for entity in entities.entities_by_value
@@ -642,12 +643,7 @@ def _filter_replacement_map_to_input_entities(
 
     parsed_map = EntityReplacementMapSchema.model_validate(raw_map)
 
-    allowed_pairs = {
-        (entity.value, label)
-        for entity in parsed_entities.entities_by_value
-        for label in entity.labels
-        if entity.value and label
-    }
+    allowed_pairs = entity_pairs(parsed_entities)
     exact_pairs = {(entry.original, entry.label) for entry in parsed_map.replacements} & allowed_pairs
     equivalent_pairs: dict[tuple[str, str], set[tuple[str, str]]] = {}
     if reconcile_unicode_whitespace:

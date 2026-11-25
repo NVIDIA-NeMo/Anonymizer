@@ -8,6 +8,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from operator import attrgetter
 
+from anonymizer.config.entity_labels import normalize_entity_label
 from anonymizer.engine.constants import SOURCE_KIND_AUGMENTER
 from anonymizer.engine.schemas import (
     AcceptedOrigin,
@@ -31,11 +32,6 @@ _SOURCE_PRIORITY = {
     SOURCE_KIND_AUGMENTER: 3,
 }
 _UNKNOWN_SOURCE_PRIORITY = len(_SOURCE_PRIORITY)
-
-
-def normalize_candidate_label(label: str) -> str:
-    """Return the canonical identity form used for candidate labels."""
-    return label.strip().casefold()
 
 
 def materialize_admitted_candidates(
@@ -64,7 +60,7 @@ def materialize_admitted_candidates(
             continue
         if canonical_text[observation.span.slice] != observation.value:
             raise ValueError("observation value does not match canonical source offsets")
-        label = normalize_candidate_label(result.effective_label or "")
+        label = normalize_entity_label(result.effective_label or "")
         if not label:
             raise ValueError("retained admission result has no usable effective label")
         observation_ref = observation.ref
@@ -113,7 +109,7 @@ def coalesce_exact_candidates(candidates: Iterable[AdmittedCandidate]) -> tuple[
     """Combine admitted claims with the same source, normalized label, and bounds."""
     grouped: dict[tuple[SourceTextRef, str, Span], list[AdmittedCandidate]] = defaultdict(list)
     for candidate in candidates:
-        normalized_label = normalize_candidate_label(candidate.label)
+        normalized_label = normalize_entity_label(candidate.label)
         if not normalized_label:
             raise ValueError("candidate label must not be empty after normalization")
         grouped[(candidate.source_text_ref, normalized_label, candidate.span)].append(candidate)
@@ -230,7 +226,7 @@ def _rank_identical_geometry(candidates: list[AdmittedCandidate]) -> list[Admitt
             not candidate.has_explicit_acceptance,
             _effective_source_priority(candidate),
             score_rank[id(candidate)],
-            normalize_candidate_label(candidate.label),
+            normalize_entity_label(candidate.label),
             tuple(_ref_key(ref) for ref in candidate.lineage),
         ),
     )
@@ -292,6 +288,6 @@ def _publication_key(
         _source_ref_key(candidate.source_text_ref),
         candidate.start_position,
         candidate.end_position,
-        normalize_candidate_label(candidate.label),
+        normalize_entity_label(candidate.label),
         tuple(_ref_key(ref) for ref in candidate.lineage),
     )

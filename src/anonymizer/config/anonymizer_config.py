@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
-from anonymizer.config.entity_labels import normalize_entity_label
+from anonymizer.config.entity_labels import in_label_scope, label_keys, normalize_entity_label
 from anonymizer.config.regex import BuiltinRegex, RegexLimits, RegexRule
 from anonymizer.config.replace_strategies import HASH_KEY_REQUIRED_MESSAGE, Hash, ReplaceMethod
 from anonymizer.config.rewrite import (
@@ -56,8 +56,8 @@ def resolve_effective_detection_labels(
                 labels.append(rule.label)
                 known.add(normalized)
 
-    excluded = {normalize_entity_label(label) for label in excluded_entity_labels or []}
-    return [label for label in labels if normalize_entity_label(label) not in excluded]
+    excluded = label_keys(excluded_entity_labels)
+    return [label for label in labels if in_label_scope(label, excluded=excluded)]
 
 
 def is_remote_input_source(value: str) -> bool:

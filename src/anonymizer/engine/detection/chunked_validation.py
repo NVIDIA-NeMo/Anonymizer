@@ -37,6 +37,7 @@ from data_designer.engine.models.recipes.response_recipes import PydanticRespons
 from jinja2 import BaseLoader, Environment, StrictUndefined
 from pydantic import BaseModel, Field
 
+from anonymizer.config.entity_labels import normalize_entity_label
 from anonymizer.engine.constants import (
     COL_TAG_NOTATION,
     COL_TEXT,
@@ -189,7 +190,7 @@ def build_validation_conflict_groups(
         key=lambda item: (
             item.start_position,
             item.end_position,
-            item.label.strip().casefold(),
+            normalize_entity_label(item.label),
             item.detection_result_id,
             item.observation_id,
         ),

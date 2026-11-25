@@ -4,10 +4,10 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 
+from anonymizer.config.entity_labels import label_keys
 from anonymizer.config.entity_labels import normalize_entity_label as normalize_label
 from anonymizer.engine.edits import Edit, Edits, Prefer
 from anonymizer.engine.schemas import DetectionResult
@@ -42,9 +42,8 @@ class EntitySpan(Positioned):
         }
 
 
-def normalize_labels(labels: Iterable[str] | None) -> set[str]:
-    """Normalize a collection of labels, dropping empty/whitespace-only entries."""
-    return {normalized for label in labels or [] if (normalized := normalize_label(label))}
+normalize_labels = label_keys
+"""The keys of a collection of labels, dropping empty and whitespace-only ones (``label_keys``)."""
 
 
 def is_reserved_entity_label(label: str) -> bool:
