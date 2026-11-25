@@ -523,7 +523,9 @@ class itself, including its subclasses and `Mock(spec=EntityDetectionWorkflow)`.
   keeps whitespace and compatibility forms as spelled, with no Unicode normalization: "Mary Jane" gets no span on "Mary
   Jane" split across two lines, "Alice" none on fullwidth "Ａlice", and "Le" none on a decomposed "Lê". A repeat that
   crosses a kept span's edge gets no span, and its row fails at `detect` with `unspanned_value`; such a row was released
-  before. Rewrite is unchanged.
+  before. Rewrite is unchanged. Known limit: an occurrence spelled exactly like the detected value is still replaced
+  when it is a different word or entity, such as the month in "May said she may come back in May." or the country in
+  "Jordan flew to Jordan." with the name detected, because each repeat is not yet judged in its context.
 - A `replace_runner` whose `run_with_detection` override does not accept the `detector` keyword (or `**kwargs`) now
   raises `InvalidConfigError` before detection, naming the keyword. The facade passes
   `detector="builtin" | "custom"` on every call. With a custom detector such an override raised `TypeError` on an
