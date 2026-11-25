@@ -116,8 +116,11 @@ By default, Anonymizer runs GLiNER2 detection locally and uses OpenRouter for LL
 
 `--config FILE` reads a YAML or JSON file in the same shape as `AnonymizerConfig`: `detect`, then `replace` or
 `rewrite`, and `emit_telemetry`. An optional `input` section holds `source`, `text_column`, `id_column` and
-`data_summary`. Flags you pass on the command line replace the file's values, field by field; a flag you leave out
-keeps the file's value. Telemetry is off if either the file or `--no-emit-telemetry` turns it off.
+`data_summary`. Flags you pass on the command line replace the file's values: nested settings merge field by field
+(`--preserve` keeps the file's `protect`), while a list or mapping given by a flag (`--entity-labels`,
+`--entity-label-examples`) replaces the file's whole value. A flag you leave out keeps the file's value. A relative
+`input.source` is read from the working directory, not from the file's directory. Telemetry is off if either the file
+or `--no-emit-telemetry` turns it off.
 
 A replace file, for `anonymizer run substitute --config substitute.yaml`:
 
@@ -151,7 +154,8 @@ emit_telemetry: false
 
 The file must match the subcommand: a `rewrite` file with `run redact`, or `replace.kind: annotate` with
 `run hash`, is refused. `kind` may be left out. A file for `run hash` must not hold the key, which is read from
-`ANONYMIZER_HASH_KEY` only. A bad file prints one line naming the file and the field, and exits 2.
+`ANONYMIZER_HASH_KEY` only. A key the settings do not have, such as a misspelt `glinr_threshold`, is refused. A bad
+file prints one line naming the file and the field, and exits 2.
 
 ## Language And Regional Coverage
 

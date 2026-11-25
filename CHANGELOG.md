@@ -461,11 +461,12 @@ JSON list of rules.
 
 **`--config FILE`.** Every `run`, `preview` and `validate` subcommand reads an optional YAML or JSON file in the
 `AnonymizerConfig` shape (`detect`, `replace` or `rewrite`, `emit_telemetry`) plus an optional `input` section
-(`source`, `text_column`, `id_column`, `data_summary`). Flags given on the command line replace the file's values
-field by field; a flag left out keeps the file's value. Telemetry is off if either the file or `--no-emit-telemetry`
-turns it off. A file whose mode differs from the subcommand, a hash key in the file (the key is read from
-`ANONYMIZER_HASH_KEY` only), an unknown section or a bad value is refused with one line naming the file and the field,
-exit 2. `--source` is no longer marked required in help: it may come from the file, and is required when neither
+(`source`, `text_column`, `id_column`, `data_summary`). Flags given on the command line replace the file's values:
+nested settings merge field by field, while a list or mapping given by a flag replaces the file's whole value; a flag
+left out keeps the file's value. A relative `input.source` is read from the working directory. Telemetry is off if
+either the file or `--no-emit-telemetry` turns it off. A file whose mode differs from the subcommand, a hash key in
+the file (the key is read from `ANONYMIZER_HASH_KEY` only), an unknown key at any level, or a bad value is refused
+with one line naming the file and the field, exit 2. `--source` is no longer marked required in help: it may come from the file, and is required when neither
 gives it.
 
 **SDK-only.** A `RegexRule.validator` given as a Python callable, the `Anonymizer` arguments that take live objects

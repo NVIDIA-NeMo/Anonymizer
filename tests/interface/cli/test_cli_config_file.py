@@ -138,7 +138,7 @@ def test_a_mode_mismatch_is_refused(
     code, config = _validated([mode, "--config", str(config_path), "--source", str(csv_file)])
     assert code == 2 and config is None
     assert _error(capsys) == f"Error: {config_path}: {message}; use " + (
-        "run annotate" if "kind" in message else "the matching subcommand"
+        "the annotate subcommand" if "kind" in message else "the matching subcommand"
     )
 
 
@@ -236,3 +236,112 @@ def test_without_a_source_anywhere_the_error_names_both_places(
     code, _ = _validated(["redact"])
     assert code == 2
     assert _error(capsys) == "Error: --source is required"
+
+
+@pytest.mark.parametrize(
+    ("mode", "data", "where"),
+    [
+        ("redact", {"detect": {"glinr_threshold": 0.5}}, "detect.glinr_threshold"),
+        ("redact", {"detect": {"regex_limits": {"max_matches": 5}}}, "detect.regex_limits.max_matches"),
+        ("redact", {"replace": {"formt": "[{label}]"}}, "replace.formt"),
+        ("redact", {"replace": {"digest_length": 8}}, "replace.digest_length"),
+        ("rewrite", {"rewrite": {"risk_tolerence": "high"}}, "rewrite.risk_tolerence"),
+        ("rewrite", {"rewrite": {"privacy_goal": {"protects": "x"}}}, "rewrite.privacy_goal.protects"),
+        ("redact", {"input": {"bogus": 1}}, "input.bogus"),
+    ],
+)
+def test_an_unknown_key_in_the_file_is_refused(
+    csv_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str, data: dict[str, Any], where: str
+) -> None:
+    config_path = _write(tmp_path, data)
+    code, config = _validated([mode, "--config", str(config_path), "--source", str(csv_file)])
+    assert code == 2 and config is None
+    assert _error(capsys) == f"Error: {config_path}: {where}: unknown field"
+
+
+@pytest.mark.parametrize("spelling", ["Key", "KEY"])
+def test_a_case_variant_of_the_key_is_the_key(
+    csv_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], spelling: str
+) -> None:
+    monkeypatch.setenv("ANONYMIZER_HASH_KEY", "from-the-environment")
+    secret = "file-held-secret-value"
+    config_path = _write(tmp_path, {"replace": {"kind": "hash", spelling: secret}})
+    code, config = _validated(["hash", "--config", str(config_path), "--source", str(csv_file)])
+    assert code == 2 and config is None
+    out = capsys.readouterr()
+    assert "replace.key is not read from a file; set ANONYMIZER_HASH_KEY" in out.err
+    assert secret not in out.out + out.err
+
+
+def test_an_unknown_kind_is_not_echoed(csv_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    config_path = _write(tmp_path, {"replace": {"kind": "sk-SECRET123"}})
+    code, config = _validated(["redact", "--config", str(config_path), "--source", str(csv_file)])
+    assert code == 2 and config is None
+    line = _error(capsys)
+    assert line == f"Error: {config_path}: replace.kind is not one of annotate, redact, hash, substitute"
+    assert "sk-SECRET123" not in line
+
+
+def test_a_file_that_is_not_utf8_is_one_line(
+    csv_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_path = tmp_path / "latin1.yaml"
+    config_path.write_bytes("detect:\n  gliner_threshold: 0.5 # caf\xe9\n".encode("latin-1"))
+    code, config = _validated(["redact", "--config", str(config_path), "--source", str(csv_file)])
+    assert code == 2 and config is None
+    assert _error(capsys) == f"Error: {config_path}: cannot read the config file (not UTF-8 text)"
+
+
+def test_a_mapping_given_by_a_flag_replaces_the_files_whole_value(csv_file: Path, tmp_path: Path) -> None:
+    config_path = _write(tmp_path, {"detect": {"entity_label_examples": {"first_name": ["Ada"], "city": ["Paris"]}}})
+    code, config = _validated(
+        [
+            "redact",
+            "--config",
+            str(config_path),
+            "--source",
+            str(csv_file),
+            "--entity-label-examples",
+            '{"first_name": ["Bob"]}',
+        ]
+    )
+    assert code == 0 and config is not None
+    assert config.detect.entity_label_examples == {"first_name": ["Bob"]}
+
+
+def test_a_list_given_by_a_flag_replaces_the_files_list(csv_file: Path, tmp_path: Path) -> None:
+    config_path = _write(tmp_path, {"detect": {"entity_labels": ["first_name", "city"]}})
+    code, config = _validated(
+        ["redact", "--config", str(config_path), "--source", str(csv_file), "--entity-labels", "email"]
+    )
+    assert code == 0 and config is not None
+    assert config.detect.entity_labels == ["email"]
+
+
+def test_a_flag_equal_to_its_default_still_replaces_the_file(csv_file: Path, tmp_path: Path) -> None:
+    config_path = _write(tmp_path, {"detect": {"gliner_threshold": 0.5}})
+    code, config = _validated(
+        ["redact", "--config", str(config_path), "--source", str(csv_file), "--gliner-threshold", "0.3"]
+    )
+    assert code == 0 and config is not None
+    assert config.detect.gliner_threshold == pytest.approx(0.3)
+
+
+def test_a_field_filled_by_a_validator_does_not_replace_the_file(csv_file: Path, tmp_path: Path) -> None:
+    """Rewrite fills privacy_goal with PrivacyGoal() after any rewrite flag, which marks the field as set. Its own
+    fields are unset, so the file's goal survives."""
+    config_path = _write(tmp_path, _REWRITE)
+    code, config = _validated(
+        ["rewrite", "--config", str(config_path), "--source", str(csv_file), "--risk-tolerance", "low"]
+    )
+    assert code == 0 and config is not None and config.rewrite is not None
+    assert config.rewrite.privacy_goal.protect == "Names, addresses and phone numbers"
+    assert config.rewrite.risk_tolerance == RiskTolerance.low
+
+
+def test_help_shows_the_input_defaults_and_puts_config_with_input(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        app(["run", "redact", "--help"])
+    out = capsys.readouterr().out
+    input_panel = out.split("╭─ Input and output")[1].split("╰")[0]
+    assert "[default: text]" in input_panel and "--config" in input_panel
