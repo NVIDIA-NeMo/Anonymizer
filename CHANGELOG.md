@@ -189,6 +189,29 @@ there (see "Detection contract"), and a repeat that crosses a kept span's edge f
 - What to do: report a span for each occurrence, or read `failed_records`.
 - Changed in: #432, #451.
 
+**Value matching never splits a character cluster.** Every check that counts where a detected value occurs (the
+`unspanned_value` failure, missed-repeat spans, `replacements_applied`, `no_detected_value_added`,
+`undetected_value_kept` and `result.leftovers(row)`) no longer starts a match on, or ends one before, a combining mark
+or a spacing mark (such as a Devanagari or Myanmar vowel sign): "राम" no longer occurs in "रामायण". Folded matching no
+longer finds a value inside another word: "स" no longer occurs in "सीता". A zero-width joiner or variation selector
+after a value blocks it only when it joins an emoji or a mark, so "Alice" before a joiner is still found, and an emoji
+value followed by a joiner inside an emoji sequence is not; the last member of a sequence still matches, as before. In
+exact matching, a variation selector before a value no longer blocks it ("Ana" now occurs in "❤️Ana"). A zero-width
+non-joiner, an emoji modifier or a Prepend character next to a value does not block it, and a Thai repeat after a tone
+mark is still found.
+- What to do: nothing, unless you relied on those matches.
+- Changed in: #NNN.
+
+**Folded matching ignores invisible format characters.** Folded matching (Rewrite's `replacements_applied` check, the
+Replace advisories `no_detected_value_added` and `undetected_value_kept`, and `result.leftovers(row)`) now drops a soft
+hyphen, zero-width space, word joiner, bidi mark or isolate, or byte-order mark before matching, so a name with one
+inside (an invisible soft hyphen in "Ana", common in text copied from web pages and PDFs) is counted. A zero-width space
+or word joiner between two words still separates them; a soft hyphen or bidi mark inside a word joins it ("Analyn"
+written with a soft hyphen after "Ana" no longer holds "Ana" in folded matching). Exact matching (`unspanned_value` and
+missed-repeat spans) is unchanged.
+- What to do: nothing.
+- Changed in: #NNN.
+
 ### Rewrite
 
 **Every repair iteration takes effect.** In v0.5.0, repairs after the first were discarded and the same text was
